@@ -35,6 +35,7 @@ TOTP_SECRET = os.getenv("SIMHUB_TOTP_SECRET", "").strip().replace(" ", "")
 ENROLL_TTL = int(os.getenv("SIMHUB_ENROLL_TTL", "600"))
 COMMAND_TTL = int(os.getenv("SIMHUB_COMMAND_TTL", "120"))
 OFFLINE_AFTER = int(os.getenv("SIMHUB_OFFLINE_AFTER", "180"))
+EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "0")))
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
 NOTIFY_BEARER = os.getenv("SIMHUB_NOTIFY_WEBHOOK_BEARER", "").strip()
@@ -157,6 +158,11 @@ def init_db() -> None:
         _migrate_v2(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         con.execute("PRAGMA user_version=2")
+        if EVENT_RETENTION_DAYS>0:
+            con.execute("DELETE FROM events WHERE received_at<?",(now()-EVENT_RETENTION_DAYS*86400,))
+        con.execute("DELETE FROM admin_sessions WHERE expires_at<=?",(now(),))
+        con.execute("DELETE FROM enrollment_tokens WHERE expires_at<? AND used_at IS NOT NULL",(now()-86400,))
+        con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(now()-30*86400,))
 
 
 def audit(action: str, target: str, result: str, ip: str) -> None:
@@ -558,6 +564,22 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             self.ack_command(p[3],p[5],body); return
+        self.send_error_json(404,"not_found","API endpoint not found")
+
+    def do_DELETE(self) -> None:
+        path,p,q=self.route()
+        if path=="/api/v1/events":
+            if not self.require_admin():return
+            try: before=int(q.get("before",["0"])[0])
+            except ValueError:
+                self.send_error_json(400,"invalid_query","before must be a Unix timestamp");return
+            if before<=0 or before>now()+300:
+                self.send_error_json(400,"invalid_query","before must be a valid past Unix timestamp");return
+            with open_db() as con:
+                cur=con.execute("DELETE FROM events WHERE received_at<?",(before,))
+                deleted=cur.rowcount
+            audit("events.purge",str(before),"ok",self.ip);signal_stream()
+            self.send_json(200,{"ok":True,"deleted":deleted,"before":before});return
         self.send_error_json(404,"not_found","API endpoint not found")
 
     def do_PATCH(self) -> None:

@@ -27,6 +27,7 @@ public final class ApiClient {
     public void syncCycle(){
         if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
         try{
+            LocalStore.get(c).recoverStaleClaims();
             flushEvents();
             flushCommandAcks();
             fetchCommands();

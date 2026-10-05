@@ -13,7 +13,7 @@ Caddy / Nginx / Traefik
   |
 SIM Hub relay
   |
-./data/simhub.db
+Docker named volume: simhub-data → /data/simhub.db
 ```
 
 The relay intentionally binds to loopback in the Docker Compose example. Do not expose port 8787 directly to the public Internet without TLS termination.
@@ -23,8 +23,6 @@ The relay intentionally binds to loopback in the Docker Compose example. Do not 
 ```bash
 cp .env.example .env
 python3 scripts/gen_admin_token.py
-mkdir -p data
-chmod 700 data
 ```
 
 Set `SIMHUB_PUBLIC_BASE_URL` to the HTTPS URL that Android nodes will reach.
@@ -42,7 +40,7 @@ Then configure your reverse proxy. `Caddyfile.example` is the shortest path.
 
 ## 3. Backups
 
-The only durable relay data is the `data/` volume. SQLite runs in WAL mode. For a consistent online backup use SQLite's backup command from a host with sqlite3 installed, or briefly stop the container and copy `simhub.db` plus any `-wal`/`-shm` files.
+The default Compose file stores relay state in the Docker named volume `simhub-data`. SQLite runs in WAL mode. For a consistent backup, briefly stop the service and archive the volume, or use SQLite's online backup API from a trusted maintenance container. If you replace the named volume with a Linux bind mount, ensure UID/GID `65534:65534` can write the directory because the relay intentionally runs as an unprivileged user.
 
 The relay backup does **not** contain the Vault Key. A database backup alone therefore cannot decrypt SMS bodies.
 

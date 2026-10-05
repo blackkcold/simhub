@@ -1,0 +1,17 @@
+.env
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.gradle/
+android/local.properties
+android/**/build/
+server/data/
+*.apk
+*.aab
+*.jks
+*.keystore
+release/

@@ -1,0 +1,130 @@
+name: Publish v0.1.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release/v0.1.0.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify server and web
+        run: |
+          python3 server/test_simhub.py
+          python3 -m py_compile server/simhub_server.py scripts/gen_admin_token.py
+          node --check web/app.js
+          node --check web/sw.js
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android API 37
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Build Android debug APK
+        run: gradle -p android :app:assembleDebug --stacktrace
+
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/docs
+          cp android/app/build/outputs/apk/debug/app-debug.apk release/simhub-agent-v0.1.0-debug.apk
+          git archive --format=zip --output=release/simhub-v0.1.0-source.zip HEAD
+          cp README.md SECURITY.md THREAT_MODEL.md THIRD_PARTY_NOTICES.md LICENSE release/docs/
+          cp docs/*.md release/docs/
+          (cd release/docs && zip -q -r ../simhub-v0.1.0-docs.zip .)
+          cp docs/ARCHITECTURE.md release/ARCHITECTURE.md
+          cp docs/ANDROID_SETUP.md release/ANDROID_SETUP.md
+          cp docs/SERVER.md release/SERVER.md
+          cp docs/INSTALLATION.md release/INSTALLATION.md
+          cp docs/DEPLOYMENT.md release/DEPLOYMENT.md
+          cp docs/PROTOCOL.md release/PROTOCOL.md
+          cp docs/SECURITY_ARCHITECTURE.md release/SECURITY_ARCHITECTURE.md
+          cp docs/COMPATIBILITY.md release/COMPATIBILITY.md
+          sha256sum release/simhub-agent-v0.1.0-debug.apk release/simhub-v0.1.0-source.zip release/simhub-v0.1.0-docs.zip > release/SHA256SUMS.txt
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release/RELEASE_NOTES.md <<'EOF'
+          # SIM Hub v0.1.0 — Personal Relay MVP
+
+          First public release of SIM Hub: a personal, self-hosted Android SIM/SMS management system where your own server acts as an encrypted relay.
+
+          ## Included
+
+          - Android 10–17 / API 29–37 SIM Node
+          - Default SMS app path for reliable SMS/OTP handling
+          - SMS receive/history/remote send
+          - OTP parsing
+          - Dual-SIM/eSIM routing by Android subscriptionId
+          - SIM/carrier/signal/device telemetry
+          - Durable offline event queue and durable command queue
+          - AES-256-GCM application-layer encryption; relay does not hold the Vault Key
+          - Web/PWA controller
+          - Single-user admin token + optional TOTP
+          - Docker Compose deployment and reverse-proxy example
+          - Architecture, Android, server, installation, deployment, protocol, security and compatibility documentation
+
+          ## Scope
+
+          This release intentionally contains **no phone-call functionality**: no dialer role, call control, call log, cellular-call audio, SIP/WebRTC or PSTN bridging.
+
+          ## Android package
+
+          `simhub-agent-v0.1.0-debug.apk` is a **debug-signed test APK** intended for personal installation/testing. For long-term production use, build/sign the same source with your own release signing key.
+
+          ## Verification
+
+          The release workflow runs server tests, Python/JavaScript checks and a full Android API 37 debug APK build before publishing.
+
+          ## Assets
+
+          - `simhub-agent-v0.1.0-debug.apk` — installable Android test APK
+          - `simhub-v0.1.0-source.zip` — source snapshot at the tagged commit
+          - `simhub-v0.1.0-docs.zip` — complete documentation bundle
+          - individual Markdown architecture/setup/server/security documents
+          - `SHA256SUMS.txt`
+          EOF
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v0.1.0"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               release/simhub-agent-v0.1.0-debug.apk               release/simhub-v0.1.0-source.zip               release/simhub-v0.1.0-docs.zip               release/ARCHITECTURE.md               release/ANDROID_SETUP.md               release/SERVER.md               release/INSTALLATION.md               release/DEPLOYMENT.md               release/PROTOCOL.md               release/SECURITY_ARCHITECTURE.md               release/COMPATIBILITY.md               release/SHA256SUMS.txt               --clobber
+          else
+            gh release create "$TAG"               --target "$GITHUB_SHA"               --title "SIM Hub v0.1.0 — Personal Relay MVP"               --notes-file release/RELEASE_NOTES.md               release/simhub-agent-v0.1.0-debug.apk               release/simhub-v0.1.0-source.zip               release/simhub-v0.1.0-docs.zip               release/ARCHITECTURE.md               release/ANDROID_SETUP.md               release/SERVER.md               release/INSTALLATION.md               release/DEPLOYMENT.md               release/PROTOCOL.md               release/SECURITY_ARCHITECTURE.md               release/COMPATIBILITY.md               release/SHA256SUMS.txt
+          fi

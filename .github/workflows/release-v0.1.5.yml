@@ -1,0 +1,139 @@
+name: Publish v0.1.5
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release/v0.1.5.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify server and web
+        run: |
+          python3 server/test_simhub.py
+          python3 -m py_compile server/simhub_server.py scripts/gen_admin_token.py
+          node --check web/app.js
+          node --check web/sw.js
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android API 37
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Build Android artifact
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" && -n "${ANDROID_KEYSTORE_PASSWORD:-}" && -n "${ANDROID_KEY_ALIAS:-}" && -n "${ANDROID_KEY_PASSWORD:-}" ]]; then
+            export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/simhub-release.jks"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_FILE"
+            gradle -p android :app:assembleRelease --stacktrace
+            echo "APK_PATH=android/app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_ENV"
+            echo "APK_NAME=simhub-agent-v0.1.5-release.apk" >> "$GITHUB_ENV"
+            echo "SIGNING_MODE=release-signed" >> "$GITHUB_ENV"
+          else
+            gradle -p android :app:assembleDebug --stacktrace
+            echo "APK_PATH=android/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_ENV"
+            echo "APK_NAME=simhub-agent-v0.1.5-debug.apk" >> "$GITHUB_ENV"
+            echo "SIGNING_MODE=debug-signed fallback" >> "$GITHUB_ENV"
+          fi
+
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/docs
+          cp "$APK_PATH" "release/$APK_NAME"
+          git archive --format=zip --output=release/simhub-v0.1.5-source.zip HEAD
+          cp README.md README.zh-CN.md CHANGELOG.md SECURITY.md THREAT_MODEL.md THIRD_PARTY_NOTICES.md LICENSE release/docs/
+          cp docs/*.md release/docs/
+          (cd release/docs && zip -q -r ../simhub-v0.1.5-docs.zip .)
+          cp docs/ARCHITECTURE.md release/ARCHITECTURE.md
+          cp docs/INSTALLATION.md release/INSTALLATION.md
+          cp docs/UPGRADE_0.1.5.md release/UPGRADE_0.1.5.md
+          cp docs/SECURITY_ARCHITECTURE.md release/SECURITY_ARCHITECTURE.md
+          cp docs/PROTOCOL.md release/PROTOCOL.md
+          cp docs/RELEASE_SIGNING.md release/RELEASE_SIGNING.md
+          sha256sum "release/$APK_NAME" release/simhub-v0.1.5-source.zip release/simhub-v0.1.5-docs.zip > release/SHA256SUMS.txt
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release/RELEASE_NOTES.md <<EOF
+          # SIM Hub v0.1.5 — Reliability & Security
+
+          Reliability-focused update for the personal self-hosted Android SIM/SMS hub.
+
+          ## Highlights
+
+          - device-scoped event identity for true multi-node operation;
+          - atomic Android command claim + serialized sync to reduce duplicate-send risk;
+          - lossless SMS history watermark and durable command acknowledgements;
+          - SMS lifecycle states: submitted, sent, delivered, failed;
+          - per-device HKDF keys, v2 AES-256-GCM envelopes, kid and metadata-bound AAD;
+          - rolling compatibility with v0.1.0 ciphertext and Android agents;
+          - HttpOnly browser sessions for Admin Token + optional TOTP;
+          - recovery-key import, SSE realtime refresh and polling fallback;
+          - notification filtering, push/tickle adapter hook, metrics, retention/purge controls and online backup helper;
+          - automatic relay/Android database migrations.
+
+          ## Android signing
+
+          This release artifact is **$SIGNING_MODE**.
+
+          If the APK is debug-signed, it is suitable for personal testing but may not install over an APK produced by another debug signing key. Configure the documented repository signing secrets for stable in-place upgrades.
+
+          ## Scope
+
+          Phone-call functionality remains intentionally excluded. Full carrier-specific MMS send/download is not implemented.
+
+          See CHANGELOG.md and UPGRADE_0.1.5.md in the assets/source for details.
+          EOF
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v0.1.5"
+          ASSETS=("release/$APK_NAME" release/simhub-v0.1.5-source.zip release/simhub-v0.1.5-docs.zip release/ARCHITECTURE.md release/INSTALLATION.md release/UPGRADE_0.1.5.md release/SECURITY_ARCHITECTURE.md release/PROTOCOL.md release/RELEASE_SIGNING.md release/SHA256SUMS.txt)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "SIM Hub v0.1.5 — Reliability & Security" --notes-file release/RELEASE_NOTES.md "${ASSETS[@]}"
+          fi

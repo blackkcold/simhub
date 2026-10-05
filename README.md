@@ -51,7 +51,6 @@ Web / PWA Controller
 cp .env.example .env
 python3 scripts/gen_admin_token.py
 # put the generated value into SIMHUB_ADMIN_TOKEN in .env
-mkdir -p data
 docker compose up -d --build
 ```
 

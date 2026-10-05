@@ -66,17 +66,13 @@ loads the PWA.
 
 1. Open the PWA in a modern browser.
 2. Enter the server admin token.
-3. If TOTP is enabled, enter the current six-digit TOTP when requested.
-4. Create/unlock the local Vault.
+3. If TOTP is enabled, enter the current six-digit TOTP once to create the browser session.
+4. Create, import, or unlock the local Vault.
 5. Keep the Vault recovery material secure. The server does not possess the Vault Key and cannot recover encrypted SMS for you.
 
 ## 5. Install the Android Agent
 
-For v0.1.0 the GitHub Release contains an installable **debug-signed test APK** named similarly to:
-
-```text
-simhub-agent-v0.1.0-debug.apk
-```
+For v0.1.5 the GitHub Release contains either `simhub-agent-v0.1.5-release.apk` when stable signing secrets are configured, or an explicitly labelled `simhub-agent-v0.1.5-debug.apk` fallback.
 
 Install it manually on the SIM Node. If Android blocks sideloading, allow installation from the app/browser/file manager you use for the APK.
 
@@ -119,7 +115,7 @@ Run these checks in order:
 
 ## 9. Backups
 
-Back up the Docker `simhub-data` volume for relay metadata/ciphertext. Separately protect the controller's Vault recovery material. The relay database by itself is intentionally insufficient to decrypt SMS content.
+Run `./scripts/backup.sh` for a consistent SQLite online backup, or back up the Docker `simhub-data` volume for relay metadata/ciphertext. Separately protect the controller's Vault recovery material. The relay database by itself is intentionally insufficient to decrypt SMS content.
 
 ## 10. Updating
 
@@ -131,3 +127,8 @@ docker compose up -d --build
 ```
 
 Android updates should be installed from a trusted GitHub Release or your own signed build. The OTA endpoint only advertises an update; it does not silently install APKs.
+
+
+## Rolling upgrade from v0.1.0
+
+Upgrade the server/PWA first, then Android nodes. The v0.1.5 controller automatically sends legacy v1 commands to older agents and v2 commands to v0.1.5+ agents. Existing v1 events remain decryptable. Do not reset/re-enroll a node unless you intentionally want to pair it with another Vault; v0.1.5 requires an explicit reset before re-enrollment.

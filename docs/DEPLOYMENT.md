@@ -27,7 +27,7 @@ python3 scripts/gen_admin_token.py
 
 Set `SIMHUB_PUBLIC_BASE_URL` to the HTTPS URL that Android nodes will reach.
 
-Optional TOTP can be enabled by placing an RFC 4648 Base32 secret in `SIMHUB_TOTP_SECRET`. The PWA sends the 6-digit code only at request time and does not persist it.
+Optional TOTP can be enabled with `SIMHUB_TOTP_SECRET`. The PWA submits the code only when creating a short-lived browser session; normal API requests then use the Secure HttpOnly session cookie.
 
 ## 2. Start
 
@@ -40,7 +40,7 @@ Then configure your reverse proxy. `Caddyfile.example` is the shortest path.
 
 ## 3. Backups
 
-The default Compose file stores relay state in the Docker named volume `simhub-data`. SQLite runs in WAL mode. For a consistent backup, briefly stop the service and archive the volume, or use SQLite's online backup API from a trusted maintenance container. If you replace the named volume with a Linux bind mount, ensure UID/GID `65534:65534` can write the directory because the relay intentionally runs as an unprivileged user.
+The default Compose file stores relay state in the Docker named volume `simhub-data`. SQLite runs in WAL mode. For a consistent backup, run `./scripts/backup.sh`, which uses SQLite's online backup API through the running container. You can also stop the service and archive the volume. If you replace the named volume with a Linux bind mount, ensure UID/GID `65534:65534` can write the directory because the relay intentionally runs as an unprivileged user.
 
 The relay backup does **not** contain the Vault Key. A database backup alone therefore cannot decrypt SMS bodies.
 
@@ -70,3 +70,10 @@ Mount a JSON file to `SIMHUB_OTA_FILE`, for example:
 ```
 
 The Android app only checks and opens the HTTPS download URL. It does not silently install APKs.
+
+
+## Retention, notifications and push tickle
+
+- `SIMHUB_EVENT_RETENTION_DAYS=0` keeps relay ciphertext indefinitely; set a positive number to purge older events at server startup. Admins may also call `DELETE /api/v1/events?before=<unix-seconds>`.
+- `SIMHUB_NOTIFY_OTP_ONLY`, `SIMHUB_NOTIFY_MAX_AGE` and `SIMHUB_NOTIFY_DEVICE_IDS` constrain metadata-only notification delivery. History-sync events never trigger new-message notifications.
+- `SIMHUB_PUSH_TICKLE_URL` is an optional metadata-only adapter hook. It receives only device ID/reason/time and can map that device to FCM or an OEM push provider; command content remains on the relay and is fetched over authenticated HTTPS. Always-on relay + JobScheduler remain the built-in fallback.

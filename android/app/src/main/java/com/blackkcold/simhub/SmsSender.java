@@ -21,7 +21,7 @@ public final class SmsSender {
         ContentValues v=new ContentValues();v.put(Telephony.Sms.ADDRESS,to);v.put(Telephony.Sms.BODY,body);v.put(Telephony.Sms.DATE,System.currentTimeMillis());v.put(Telephony.Sms.TYPE,Telephony.Sms.MESSAGE_TYPE_OUTBOX);v.put(Telephony.Sms.READ,1);v.put(Telephony.Sms.SUBSCRIPTION_ID,subId);
         Uri provider=c.getContentResolver().insert(Telephony.Sms.Outbox.CONTENT_URI,v);if(provider==null)throw new IllegalStateException("Unable to write SMS provider");
         long providerId=ContentUris.parseId(provider);
-        JSONObject eventPayload=new JSONObject().put("direction","out").put("recipient",to).put("body",body).put("occurredAt",ts).put("subscriptionId",subId).put("commandId",commandId);
+        JSONObject eventPayload=new JSONObject().put("direction","out").put("recipient",to).put("body",body).put("occurredAt",ts).put("subscriptionId",subId).put("commandId",commandId).put("providerId",providerId);
         JSONObject localCipher=new CryptoBox(c).encryptLocal(eventPayload);
         SmsManager base=c.getSystemService(SmsManager.class);SmsManager sms=base.createForSubscriptionId(subId);ArrayList<String> parts=sms.divideMessage(body);if(parts.isEmpty())parts.add(body);
         LocalStore.get(c).createPendingSms(commandId,provider.toString(),parts.size(),localCipher,subId);

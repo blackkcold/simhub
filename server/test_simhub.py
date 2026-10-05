@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, socket, subprocess, sys, tempfile, time, unittest, urllib.error, urllib.request
+import json, os, socket, sqlite3, subprocess, sys, tempfile, time, unittest, urllib.error, urllib.request
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -7,53 +7,103 @@ SERVER=ROOT/'server'/'simhub_server.py'
 TOKEN='A'*48
 
 def free_port():
-    s=socket.socket(); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); return p
+    s=socket.socket();s.bind(('127.0.0.1',0));p=s.getsockname()[1];s.close();return p
 
 class ApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp=tempfile.TemporaryDirectory(); cls.port=free_port(); cls.base=f'http://127.0.0.1:{cls.port}'
-        env=os.environ.copy(); env.update({'SIMHUB_ADMIN_TOKEN':TOKEN,'SIMHUB_BIND':'127.0.0.1','SIMHUB_PORT':str(cls.port),'SIMHUB_DB':str(Path(cls.tmp.name)/'test.db'),'SIMHUB_WEB_ROOT':str(ROOT/'web')})
+        cls.tmp=tempfile.TemporaryDirectory();cls.port=free_port();cls.base=f'http://127.0.0.1:{cls.port}';cls.db=Path(cls.tmp.name)/'test.db'
+        env=os.environ.copy();env.update({'SIMHUB_ADMIN_TOKEN':TOKEN,'SIMHUB_BIND':'127.0.0.1','SIMHUB_PORT':str(cls.port),'SIMHUB_DB':str(cls.db),'SIMHUB_WEB_ROOT':str(ROOT/'web'),'SIMHUB_SESSION_TTL':'900'})
         cls.proc=subprocess.Popen([sys.executable,str(SERVER)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        for _ in range(50):
-            try:
-                urllib.request.urlopen(cls.base+'/healthz',timeout=.2).read(); break
+        for _ in range(80):
+            try: urllib.request.urlopen(cls.base+'/healthz',timeout=.2).read();break
             except Exception: time.sleep(.05)
         else: raise RuntimeError('server failed to start')
     @classmethod
     def tearDownClass(cls):
-        cls.proc.terminate(); cls.proc.wait(timeout=3); cls.tmp.cleanup()
-    def req(self, method, path, body=None, device_token=None, admin=True):
+        cls.proc.terminate();cls.proc.wait(timeout=3);cls.tmp.cleanup()
+
+    def req(self,method,path,body=None,device_token=None,admin=True,headers=None):
         data=None if body is None else json.dumps(body).encode()
         h={'Content-Type':'application/json'}
-        if device_token: h['Authorization']='Device '+device_token
-        elif admin: h['Authorization']='Bearer '+TOKEN
+        if headers:h.update(headers)
+        if device_token:h['Authorization']='Device '+device_token
+        elif admin and 'Authorization' not in h:h['Authorization']='Bearer '+TOKEN
         req=urllib.request.Request(self.base+path,data=data,headers=h,method=method)
         try:
-            with urllib.request.urlopen(req,timeout=2) as r: return r.status,json.loads(r.read())
-        except urllib.error.HTTPError as e: return e.code,json.loads(e.read())
-    def enroll(self):
-        st,x=self.req('POST','/api/v1/enrollments',{}); self.assertEqual(st,201)
-        st,d=self.req('POST','/api/v1/enroll',{'token':x['token'],'name':'Pixel SIM Node','model':'Pixel'},admin=False); self.assertEqual(st,201)
-        return d
-    def test_end_to_end(self):
-        d=self.enroll(); did=d['deviceId']; dt=d['deviceToken']
-        cipher={'v':1,'alg':'A256GCM','iv':'AAAAAAAAAAAAAAAA','ct':'A'*32}
-        ev={'eventId':'evt-1','kind':'sms.received','occurredAt':int(time.time()),'subscriptionId':'1','hasOtp':True,'metadata':{'sender':'must-strip','parts':1},'ciphertext':cipher}
-        st,r=self.req('POST',f'/api/v1/devices/{did}/events',ev,device_token=dt,admin=False); self.assertEqual(st,201)
-        st,r2=self.req('POST',f'/api/v1/devices/{did}/events',ev,device_token=dt,admin=False); self.assertEqual(st,200); self.assertTrue(r2['duplicate'])
-        st,e=self.req('GET','/api/v1/events?since=0'); self.assertEqual(st,200); self.assertEqual(len(e['events']),1); self.assertNotIn('sender',e['events'][0]['metadata'])
-        cmd={'commandId':'cmd-1','idempotencyKey':'idem-1','type':'sms.send','expiresAt':int(time.time())+60,'ciphertext':cipher}
-        st,c=self.req('POST',f'/api/v1/devices/{did}/commands',cmd); self.assertEqual(st,201)
-        st,p=self.req('GET',f'/api/v1/devices/{did}/commands/pending',device_token=dt,admin=False); self.assertEqual(st,200); self.assertEqual(p['commands'][0]['commandId'],'cmd-1')
-        st,a=self.req('POST',f'/api/v1/devices/{did}/commands/cmd-1/ack',{'state':'succeeded','result':{'recipient':'must-strip','parts':1}},device_token=dt,admin=False); self.assertEqual(st,200)
-    def test_phone_commands_rejected(self):
-        d=self.enroll(); cipher={'v':1,'alg':'A256GCM','iv':'AAAAAAAAAAAAAAAA','ct':'A'*32}
-        st,r=self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands",{'type':'call.place','ciphertext':cipher})
-        self.assertEqual(st,400); self.assertEqual(r['error'],'command_not_allowed')
-    def test_enrollment_single_use(self):
-        st,x=self.req('POST','/api/v1/enrollments',{}); self.assertEqual(st,201)
-        st,_=self.req('POST','/api/v1/enroll',{'token':x['token']},admin=False); self.assertEqual(st,201)
-        st,_=self.req('POST','/api/v1/enroll',{'token':x['token']},admin=False); self.assertEqual(st,401)
+            with urllib.request.urlopen(req,timeout=3) as r:
+                raw=r.read();return r.status,(json.loads(raw) if raw else {}),dict(r.headers)
+        except urllib.error.HTTPError as e:
+            raw=e.read();return e.code,(json.loads(raw) if raw else {}),dict(e.headers)
 
-if __name__=='__main__': unittest.main(verbosity=2)
+    def enroll(self,name='Pixel SIM Node'):
+        st,x,_=self.req('POST','/api/v1/enrollments',{});self.assertEqual(st,201)
+        st,d,_=self.req('POST','/api/v1/enroll',{'token':x['token'],'name':name,'model':'Pixel'},admin=False);self.assertEqual(st,201)
+        return d
+
+    @staticmethod
+    def cipher(v=1):
+        x={'v':v,'alg':'A256GCM','iv':'AAAAAAAAAAAAAAAA','ct':'A'*32}
+        if v==2:x['kid']='abcdefgh1234'
+        return x
+
+    def test_end_to_end(self):
+        d=self.enroll();did=d['deviceId'];dt=d['deviceToken']
+        ev={'eventId':'evt-1-'+did,'kind':'sms.received','occurredAt':int(time.time()),'subscriptionId':'1','hasOtp':True,'metadata':{'sender':'must-strip','parts':1},'ciphertext':self.cipher()}
+        st,r,_=self.req('POST',f'/api/v1/devices/{did}/events',ev,device_token=dt,admin=False);self.assertEqual(st,201)
+        st,r2,_=self.req('POST',f'/api/v1/devices/{did}/events',ev,device_token=dt,admin=False);self.assertEqual(st,200);self.assertTrue(r2['duplicate'])
+        st,e,_=self.req('GET','/api/v1/events?since=0');self.assertEqual(st,200)
+        found=[x for x in e['events'] if x['eventId']==ev['eventId']][0];self.assertNotIn('sender',found['metadata']);self.assertEqual(found['metadata'].get('parts'),1)
+        cmd={'commandId':'cmd-1-'+did,'idempotencyKey':'idem-1','type':'sms.send','createdAt':int(time.time()),'expiresAt':int(time.time())+60,'ciphertext':self.cipher(2)}
+        st,c,_=self.req('POST',f'/api/v1/devices/{did}/commands',cmd);self.assertEqual(st,201)
+        st,p,_=self.req('GET',f'/api/v1/devices/{did}/commands/pending',device_token=dt,admin=False);self.assertEqual(st,200);self.assertEqual(p['commands'][0]['commandId'],cmd['commandId'])
+        st,_,_=self.req('POST',f"/api/v1/devices/{did}/commands/{cmd['commandId']}/ack",{'state':'submitted','result':{'recipient':'must-strip','parts':1}},device_token=dt,admin=False);self.assertEqual(st,200)
+
+    def test_multidevice_event_ids_are_scoped(self):
+        a=self.enroll('A');b=self.enroll('B')
+        for d in (a,b):
+            ev={'eventId':'sms-provider-42','kind':'sms.received','occurredAt':int(time.time()),'subscriptionId':'1','hasOtp':False,'metadata':{'parts':1},'ciphertext':self.cipher(2)}
+            st,_,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/events",ev,device_token=d['deviceToken'],admin=False);self.assertEqual(st,201)
+        st,e,_=self.req('GET','/api/v1/events?since=0&limit=1000');self.assertEqual(st,200)
+        matches=[x for x in e['events'] if x['eventId']=='sms-provider-42'];self.assertEqual(len(matches),2);self.assertNotEqual(matches[0]['deviceId'],matches[1]['deviceId'])
+
+    def test_old_event_time_is_preserved(self):
+        d=self.enroll('Archive');old=1577836800
+        ev={'eventId':'old-'+d['deviceId'],'kind':'sms.history','occurredAt':old,'subscriptionId':'1','hasOtp':False,'metadata':{'history':True},'ciphertext':self.cipher(2)}
+        st,_,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/events",ev,device_token=d['deviceToken'],admin=False);self.assertEqual(st,201)
+        st,e,_=self.req('GET','/api/v1/events?since=0&limit=1000');row=[x for x in e['events'] if x['eventId']==ev['eventId']][0];self.assertEqual(row['occurredAt'],old)
+
+    def test_admin_session_cookie(self):
+        st,data,h=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN,'totp':''},admin=False);self.assertEqual(st,201);self.assertTrue(data['ok'])
+        cookie=h.get('Set-Cookie','').split(';',1)[0];self.assertIn('simhub_session=',cookie)
+        st,data,_=self.req('GET','/api/v1/auth/check',admin=False,headers={'Cookie':cookie});self.assertEqual(st,200);self.assertTrue(data['ok'])
+
+    def test_state_allowlist_and_subscription_projection(self):
+        d=self.enroll('State')
+        state={'androidVersion':'17','sdk':37,'body':'must-drop','nested':{'otp':'must-drop'},'subscriptions':[{'subscriptionId':7,'slotIndex':0,'carrierName':'Carrier','displayName':'SIM A','secret':'drop'}]}
+        st,_,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/state",state,device_token=d['deviceToken'],admin=False);self.assertEqual(st,200)
+        st,out,_=self.req('GET',f"/api/v1/devices/{d['deviceId']}/state");self.assertEqual(st,200);self.assertNotIn('body',out['state']);self.assertNotIn('nested',out['state']);self.assertNotIn('secret',out['state']['subscriptions'][0])
+        with sqlite3.connect(self.db) as con:
+            n=con.execute('SELECT COUNT(*) FROM subscriptions WHERE device_id=?',(d['deviceId'],)).fetchone()[0]
+        self.assertEqual(n,1)
+
+    def test_command_state_does_not_regress(self):
+        d=self.enroll('Command');ts=int(time.time());cid='state-'+d['deviceId']
+        cmd={'commandId':cid,'idempotencyKey':cid,'type':'sms.send','createdAt':ts,'expiresAt':ts+60,'ciphertext':self.cipher(2)}
+        self.assertEqual(self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands",cmd)[0],201)
+        self.assertEqual(self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands/{cid}/ack",{'state':'sent','result':{}},device_token=d['deviceToken'],admin=False)[0],200)
+        self.assertEqual(self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands/{cid}/ack",{'state':'submitted','result':{}},device_token=d['deviceToken'],admin=False)[0],200)
+        with sqlite3.connect(self.db) as con: state=con.execute('SELECT state FROM commands WHERE id=?',(cid,)).fetchone()[0]
+        self.assertEqual(state,'sent')
+
+    def test_phone_commands_rejected(self):
+        d=self.enroll()
+        st,r,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands",{'type':'call.place','ciphertext':self.cipher()})
+        self.assertEqual(st,400);self.assertEqual(r['error'],'command_not_allowed')
+
+    def test_enrollment_single_use(self):
+        st,x,_=self.req('POST','/api/v1/enrollments',{});self.assertEqual(st,201)
+        st,_,_=self.req('POST','/api/v1/enroll',{'token':x['token']},admin=False);self.assertEqual(st,201)
+        st,_,_=self.req('POST','/api/v1/enroll',{'token':x['token']},admin=False);self.assertEqual(st,401)
+
+if __name__=='__main__':unittest.main(verbosity=2)

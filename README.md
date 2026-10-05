@@ -89,9 +89,9 @@ The relay is intentionally **blind to SMS plaintext**. The Vault Key is shared b
 | **Devices** | Multiple Android nodes, aliases, groups and online state |
 | **Telemetry** | Carrier, service state, signal, battery, charging, network and agent status |
 | **Offline reliability** | Durable Android event queue + durable server command queue |
-| **Security** | AES-256-GCM E2EE, Android Keystore, hashed device tokens, command expiry/idempotency |
-| **Controller** | Installable PWA with inbox, OTP copy, search, send, devices and diagnostics |
-| **Authentication** | High-entropy admin token + optional TOTP |
+| **Security** | AES-256-GCM E2EE, per-device HKDF keys, Android Keystore, hashed device tokens, bound metadata, command expiry/idempotency |
+| **Controller** | Installable PWA with inbox, OTP copy, search, send, devices, recovery import, SSE realtime updates and diagnostics |
+| **Authentication** | High-entropy admin token + optional TOTP at login, then short-lived HttpOnly session |
 | **Notifications** | Optional metadata-only webhook for Bark/ntfy/custom bridges |
 | **Operations** | Docker deployment, health endpoint, audit log, backups, OTA metadata |
 
@@ -143,8 +143,8 @@ Open your HTTPS SIM Hub URL in a modern browser.
 Then:
 
 1. enter the admin token;
-2. optionally enter TOTP;
-3. create/unlock the local Vault;
+2. optionally enter TOTP to create a short-lived HttpOnly browser session;
+3. create, import, or unlock the local Vault;
 4. create a one-time Android enrollment link.
 
 ### 3. Install the Android Agent
@@ -153,7 +153,7 @@ Download the latest APK from:
 
 **[GitHub Releases →](https://github.com/blackkcold/simhub/releases/latest)**
 
-For v0.1.0, the provided APK is **debug-signed** and intended for personal installation/testing.
+For v0.1.5, the release workflow uses a stable release signing key when repository signing secrets are configured; otherwise the APK is explicitly published as **debug-signed**.
 
 On the Android SIM Node:
 
@@ -297,6 +297,20 @@ This allows the system to recover from temporary mobile-network loss, Wi-Fi chan
 
 ---
 
+### v0.1.5 reliability changes
+
+- Event identity is scoped by device, so multiple Android nodes can safely have the same local SMS Provider ID.
+- Remote commands are atomically claimed on Android and all sync entry points share one process-level coordinator.
+- SMS history uses a `(date, providerId)` watermark and advances only after durable local queueing.
+- SMS lifecycle states are tracked as `submitted → sent → delivered` or `failed`.
+- New ciphertext uses per-device HKDF-derived AES-256-GCM keys with a `kid` and metadata-bound AAD; legacy v1 ciphertext remains readable.
+- Admin Token + TOTP now create a short-lived HttpOnly browser session instead of reusing an old TOTP on every poll.
+- PWA supports recovery-key import and SSE-driven realtime refresh with polling only as fallback.
+- Fresh-message notification rules prevent history synchronization from flooding Bark/ntfy.
+- Relay schema migrations, subscription projection, retention controls, metrics, online backup helper and rolling-upgrade compatibility are included.
+
+---
+
 ## Current limitations
 
 ### No phone-call functionality
@@ -370,7 +384,7 @@ CI also performs a complete API 37 debug APK build.
 
 Current release:
 
-**[v0.1.0 — Personal Relay MVP](https://github.com/blackkcold/simhub/releases/tag/v0.1.0)**
+**[v0.1.5 — Reliability & Security](https://github.com/blackkcold/simhub/releases/tag/v0.1.5)**
 
 Release assets include the Android APK, tagged source snapshot, documentation bundle and SHA-256 checksums.
 

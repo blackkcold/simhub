@@ -2,16 +2,22 @@ package com.blackkcold.simhub;
 
 import android.content.Context;
 import org.json.JSONObject;
+import android.os.SystemClock;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class EventQueue {
+    private static final AtomicLong LAST_WAKE=new AtomicLong(0);
     private EventQueue(){}
+    private static void wake(Context c){long now=SystemClock.elapsedRealtime();long prev=LAST_WAKE.get();if(now-prev>1000&&LAST_WAKE.compareAndSet(prev,now))SyncJobService.scheduleNow(c);}
     public static boolean queue(Context c,String id,String kind,long occurredAt,int subId,boolean hasOtp,JSONObject payload,JSONObject metadata){
         try{
-            if(!new AgentConfig(c).isEnrolled()) return false;
-            JSONObject cipher=new CryptoBox(c).encrypt(payload,CryptoBox.AAD_EVENT);
-            LocalStore.get(c).queueEvent(id,kind,occurredAt,String.valueOf(subId),hasOtp,metadata==null?new JSONObject():metadata,cipher);
-            if(new AgentConfig(c).alwaysOn()) RelayForegroundService.kick(c);
-            return true;
+            AgentConfig cfg=new AgentConfig(c);
+            if(!cfg.isEnrolled())return false;
+            String sub=String.valueOf(subId);
+            JSONObject cipher=new CryptoBox(c).encryptEvent(payload,id,kind,occurredAt,sub,hasOtp);
+            boolean ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
+            if(ok)wake(c);
+            return ok;
         }catch(Exception ignored){return false;}
     }
     public static boolean diagnostics(Context c,JSONObject payload){return queue(c,"diag-"+java.util.UUID.randomUUID(),"device.diagnostics",System.currentTimeMillis()/1000,-1,false,payload,new JSONObject());}

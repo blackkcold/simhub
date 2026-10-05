@@ -27,7 +27,7 @@ Install the resulting APK with Android Studio or `adb install`.
 5. Tap **Make default SMS app** and approve Android's system role dialog.
 6. Grant SMS/SIM permissions.
 7. Optionally grant Contacts permission for contact-name mapping.
-8. Start **always-on relay** if you want low-latency remote sending without relying on Google/vendor push.
+8. Start **always-on relay** for the built-in lowest-latency mode. v0.1.5 also exposes an optional server-side metadata-only push/tickle adapter hook for FCM/OEM integrations; JobScheduler remains the recovery path.
 
 ## Background behavior
 
@@ -42,3 +42,8 @@ The Agent is designed to hold the SMS role instead of depending on a generic `SM
 ## MMS limitation
 
 The manifest includes the WAP push receiver required by the default-SMS role and the Agent can surface MMS push/history metadata. It does not implement a full carrier/APN-specific MMS PDU download or send stack. If MMS is important on a specific carrier, validate it separately before making SIM Hub the permanent default handler for that line.
+
+
+## Re-enrollment safety
+
+v0.1.5 blocks silent re-enrollment. To pair an existing Android node with another Vault/relay, use **Reset enrollment / pair another vault** first. This clears SIM Hub relay queues and local credentials but does not delete SMS stored in Android's SMS Provider.

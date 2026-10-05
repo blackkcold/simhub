@@ -33,7 +33,7 @@ SIM Hub is a **personal, self-hosted Android SIM/SMS management system**. Androi
 │ No Vault Key             │
 └────────────┬─────────────┘
              │ HTTPS
-             │ admin token + optional TOTP
+             │ short-lived browser session
              │ encrypted content
              ▼
 ┌──────────────────────────┐
@@ -52,7 +52,7 @@ SIM Hub is a **personal, self-hosted Android SIM/SMS management system**. Androi
 
 The relay is intentionally blind to SMS content. A random 256-bit Vault Key is created by the controller and transferred to the Android node only through the one-time enrollment deep link. The relay stores ciphertext, routing metadata and operational state, but does not receive the Vault Key through an API endpoint.
 
-Android stores the Vault Key wrapped by Android Keystore. The controller keeps the Vault Key locally while the vault is unlocked. SMS body, OTP value, contact name, destination number and outbound SMS body are encrypted with AES-256-GCM before the relay receives them.
+Android stores the recovery/master Vault Key wrapped by Android Keystore. For v2 traffic, both Android and the controller derive a device-specific AES-256 key using HKDF-SHA256 and the device ID. The controller keeps the master Vault Key only while unlocked. SMS body, OTP value, contact name, destination number and outbound SMS body are encrypted before the relay receives them.
 
 ## Data flow
 
@@ -91,7 +91,7 @@ Controller
 - Event IDs are unique and relay ingestion is idempotent.
 - Commands are written durably before delivery attempts.
 - Commands have command IDs, sequence/order metadata, expiry and idempotency keys.
-- Processed command IDs are retained on Android to prevent replay.
+- Android atomically claims command IDs before side effects, persists command state, and durably queues acknowledgements to prevent concurrent duplicate execution.
 - A user-started foreground relay provides low-latency private operation; JobScheduler remains a recovery path.
 - The server is stateless except for the SQLite data volume and optional OTA metadata file.
 
@@ -101,12 +101,19 @@ The app targets API 37 with minSdk 29. It is designed to hold `ROLE_SMS`, which 
 
 The app deliberately requests no dialer role and contains no call-control or call-log path.
 
+## Realtime and wake-up model
+
+- Android reliability does not depend on a permanently alive WebSocket.
+- Incoming events are written to a local durable queue first and wake a JobScheduler sync path; optional always-on foreground mode provides lower latency.
+- Server command creation can invoke a metadata-only push/tickle adapter hook for FCM/OEM integrations, but command content is always fetched over authenticated HTTPS.
+- The PWA uses authenticated Server-Sent Events as a wake-up signal and retains a 60-second polling fallback.
+
 ## Server model
 
 The relay uses Python's standard library and SQLite WAL. It provides:
 
 - single-user admin authentication using a high-entropy bearer token;
-- optional RFC 6238 TOTP second factor;
+- Admin Token + optional RFC 6238 TOTP login, exchanged for short-lived HttpOnly browser sessions;
 - one-time enrollment tokens;
 - hashed device bearer tokens;
 - encrypted event storage;
@@ -133,4 +140,4 @@ Caddyfile.example        HTTPS reverse-proxy example
 
 ## Explicit non-goals
 
-SIM Hub v0.1.0 does not implement phone calls, dialer replacement, call history, call audio capture, SIP/WebRTC, PSTN media bridging, carrier provisioning, RCS replacement, or a full carrier-specific MMS transport stack.
+SIM Hub v0.1.5 does not implement phone calls, dialer replacement, call history, call audio capture, SIP/WebRTC, PSTN media bridging, carrier provisioning, RCS replacement, or a full carrier-specific MMS transport stack.

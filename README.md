@@ -1,62 +1,267 @@
+<div align="center">
+
 # SIM Hub
 
-A personal, self-hosted Android SIM/SMS hub. One or more Android phones act as **SIM Nodes** and your own server acts only as an encrypted relay between them and the Web/PWA controller.
+**Turn an Android phone into a private, self-hosted SIM / SMS hub.**
 
-> Scope: SMS/SIM management only. **No phone calls, dialer, call log, call audio, SIP, or PSTN bridging.**
+Use your own server as an encrypted relay to remotely receive SMS, extract OTPs, manage multiple SIMs, and send SMS from a Web/PWA controller.
 
-## What is implemented
+[简体中文](README.zh-CN.md) · **English**
 
-- Android 10–17 / API 29–37 Agent, designed to become the default SMS app.
-- Receive SMS, persist it to the Android SMS provider, encrypt it locally, queue durably, and relay it to your server.
-- Client-side OTP detection; OTP plaintext stays inside the E2EE payload.
-- Dual-SIM / eSIM aware routing by Android `subscriptionId`.
-- Remote SMS sending with explicit device/subscription selection.
-- SMS history synchronization and client-side full-text search.
-- Optional local contact-name mapping (requires `READ_CONTACTS`; contact data is encrypted before upload).
-- SIM/carrier/signal/service/battery/network/device telemetry.
-- Multiple Android nodes, device naming, and device groups.
-- Device-side durable offline event queue; server-side durable command queue, expiry, replay/idempotency protection.
-- AES-256-GCM application-layer E2EE. The relay does not receive the vault key and cannot decrypt message bodies or OTP values.
-- PWA controller with encrypted vault, inbox, OTP copy, send SMS, devices, diagnostics and enrollment deep links.
-- Single-user relay auth with a strong admin token and optional TOTP.
-- Generic metadata-only notification webhook for ntfy/Bark bridge/custom push relays.
-- OTA metadata endpoint and Android update check hook.
-- SQLite WAL storage, Docker deployment, health endpoint, audit log, backup-friendly single data volume.
+[![CI](https://github.com/blackkcold/simhub/actions/workflows/ci.yml/badge.svg)](https://github.com/blackkcold/simhub/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/blackkcold/simhub?display_name=tag)](https://github.com/blackkcold/simhub/releases/latest)
+[![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
+[![Android](https://img.shields.io/badge/Android-10--17%20%7C%20API%2029--37-3DDC84?logo=android&logoColor=white)](docs/ANDROID_SETUP.md)
+[![Docker](https://img.shields.io/badge/Self--hosted-Docker-2496ED?logo=docker&logoColor=white)](docs/DEPLOYMENT.md)
+
+[Download latest release](https://github.com/blackkcold/simhub/releases/latest) · [Installation](docs/INSTALLATION.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY_ARCHITECTURE.md)
+
+</div>
+
+---
+
+## What is SIM Hub?
+
+SIM Hub is a **personal, self-hosted remote SIM/SMS management system**.
+
+One or more Android phones act as **SIM Nodes**. Your own server provides only the relay, queue and device-control plane. A Web/PWA controller decrypts and displays messages locally.
+
+It is designed for use cases such as:
+
+- keeping one or more physical SIM/eSIM cards online at home or in another location;
+- remotely receiving SMS and OTP messages;
+- copying verification codes from another device;
+- sending SMS remotely through a selected SIM;
+- monitoring SIM, carrier, signal, battery and device state;
+- managing several Android SIM Nodes from one private control panel.
+
+> **Scope:** SIM Hub is an SMS/SIM product. It intentionally does **not** implement phone calls, dialer replacement, call logs, cellular-call audio, SIP/WebRTC or PSTN bridging.
+
+---
 
 ## Architecture
 
-```text
-Android SIM Node(s)
-  SMS / SIM / OTP / local queue
-        │
-        │ HTTPS + device token
-        │ AES-GCM ciphertext payloads
-        ▼
-┌───────────────────────────────┐
-│ Your personal SIM Hub Relay   │
-│ SQLite + event/command queue  │
-│ no vault key / no SMS decrypt │
-└───────────────────────────────┘
-        ▲
-        │ HTTPS
-        │ encrypted events/commands
-        │
-Web / PWA Controller
-  vault key + decrypt/search/copy/send
+```mermaid
+flowchart LR
+    SIM["SIM / eSIM"] --> A["Android SIM Node"]
+    A -->|"HTTPS · encrypted events"| R["Personal Relay Server"]
+    R -->|"encrypted events / commands"| W["Web / PWA Controller"]
+    W -->|"encrypted SMS command"| R
+    R -->|"durable command queue"| A
+
+    A --- K["Android Keystore"]
+    R --- DB[("SQLite WAL")]
+    W --- V["Local Vault Key"]
 ```
+
+### Trust boundary
+
+```text
+Android SIM Node
+  ├─ SMS / OTP / SIM state
+  ├─ local durable queue
+  └─ AES-256-GCM encryption
+             │
+             ▼
+Personal Relay Server
+  ├─ ciphertext
+  ├─ routing metadata
+  ├─ device / command state
+  └─ NO Vault Key
+             │
+             ▼
+Web / PWA Controller
+  └─ local decrypt / search / copy / send
+```
+
+The relay is intentionally **blind to SMS plaintext**. The Vault Key is shared between the controller and Android node during enrollment and is not provided to the relay during normal operation.
+
+---
+
+## Features
+
+| Area | Capability |
+|---|---|
+| **SMS** | Receive SMS, history sync, remote send, multipart handling |
+| **OTP** | Local OTP detection; OTP value remains inside the encrypted payload |
+| **Multi-SIM** | Dual-SIM/eSIM aware routing using Android `subscriptionId` |
+| **Remote control** | Select device + SIM and send SMS from the PWA |
+| **Devices** | Multiple Android nodes, aliases, groups and online state |
+| **Telemetry** | Carrier, service state, signal, battery, charging, network and agent status |
+| **Offline reliability** | Durable Android event queue + durable server command queue |
+| **Security** | AES-256-GCM E2EE, Android Keystore, hashed device tokens, command expiry/idempotency |
+| **Controller** | Installable PWA with inbox, OTP copy, search, send, devices and diagnostics |
+| **Authentication** | High-entropy admin token + optional TOTP |
+| **Notifications** | Optional metadata-only webhook for Bark/ntfy/custom bridges |
+| **Operations** | Docker deployment, health endpoint, audit log, backups, OTA metadata |
+
+### Android compatibility
+
+- **minSdk:** Android 10 / API 29
+- **targetSdk / compileSdk:** Android 17 / API 37
+- Designed to operate as the **default SMS app** for reliable arbitrary SMS/OTP handling on modern Android.
+- Multi-SIM routing uses subscription IDs rather than fixed SIM1/SIM2 assumptions.
+
+See [Compatibility](docs/COMPATIBILITY.md) for OEM/background considerations.
+
+---
 
 ## Quick start
 
+### 1. Deploy the relay
+
 ```bash
+git clone https://github.com/blackkcold/simhub.git
+cd simhub
+
 cp .env.example .env
 python3 scripts/gen_admin_token.py
-# put the generated value into SIMHUB_ADMIN_TOKEN in .env
-docker compose up -d --build
 ```
 
-Put Caddy/Nginx/Traefik in front of port `8787` and expose the service only over HTTPS. Open the server URL, enter the admin token, create/unlock a local vault, then create an enrollment link and open it on the Android SIM Node.
+Put the generated token into:
 
-For a no-Docker smoke test:
+```env
+SIMHUB_ADMIN_TOKEN=<your-random-token>
+SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
+```
+
+Start the service:
+
+```bash
+docker compose up -d --build
+curl http://127.0.0.1:8787/healthz
+```
+
+Expose the relay only through **HTTPS** using Caddy, Nginx or Traefik.
+
+A ready-to-adapt Caddy example is included in [Caddyfile.example](Caddyfile.example).
+
+### 2. Open the Web/PWA controller
+
+Open your HTTPS SIM Hub URL in a modern browser.
+
+Then:
+
+1. enter the admin token;
+2. optionally enter TOTP;
+3. create/unlock the local Vault;
+4. create a one-time Android enrollment link.
+
+### 3. Install the Android Agent
+
+Download the latest APK from:
+
+**[GitHub Releases →](https://github.com/blackkcold/simhub/releases/latest)**
+
+For v0.1.0, the provided APK is **debug-signed** and intended for personal installation/testing.
+
+On the Android SIM Node:
+
+1. install the APK;
+2. open the enrollment link from the PWA;
+3. enroll the device;
+4. grant the requested SMS/SIM permissions;
+5. set SIM Hub as the **default SMS app**;
+6. optionally allow Contacts access;
+7. enable the always-on relay mode if low-latency remote access is required.
+
+Full procedure: [Installation Guide](docs/INSTALLATION.md).
+
+---
+
+## Security model
+
+SIM Hub handles SMS and OTP data as authentication-grade secrets.
+
+Core security properties:
+
+- SMS body, OTP, contact names and outbound SMS content are encrypted before reaching the relay.
+- The relay does not store the Vault Key.
+- Device bearer tokens are stored as hashes.
+- Enrollment tokens are short-lived and single-use.
+- Commands include expiry and idempotency protection.
+- Sensitive SMS/OTP values are excluded from normal server logs and notification webhooks.
+- Android keeps local cryptographic material protected by Android Keystore.
+- TLS is required for public relay access.
+
+For the full design and threat model:
+
+- [Security Architecture](docs/SECURITY_ARCHITECTURE.md)
+- [Threat Model](THREAT_MODEL.md)
+- [Security Policy](SECURITY.md)
+
+---
+
+## Reliability model
+
+SIM Hub does not assume that an Android background process or WebSocket will remain alive forever.
+
+Instead:
+
+```text
+Incoming SMS
+  → persist locally
+  → encrypt
+  → durable queue
+  → upload when network is available
+
+Remote command
+  → persist on relay
+  → Android fetches
+  → validate expiry / idempotency
+  → execute
+  → report result
+```
+
+This allows the system to recover from temporary mobile-network loss, Wi-Fi changes, process restarts and relay outages without treating a single HTTP failure as lost business state.
+
+---
+
+## Current limitations
+
+### No phone-call functionality
+
+SIM Hub intentionally does not include:
+
+- phone-call answering/rejection;
+- remote dialing;
+- call logs;
+- cellular-call audio capture;
+- SIP/RTP/WebRTC;
+- PSTN media bridging.
+
+### MMS
+
+The project includes default-SMS eligibility and **MMS metadata/history observation**, but does not implement a complete carrier-specific MMS PDU download/send transport.
+
+SMS and OTP are the supported production path.
+
+### Release signing
+
+Public release APKs may be debug-signed unless explicitly marked otherwise. For long-term personal deployment, build and sign the Android Agent with your own release key.
+
+---
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [Installation](docs/INSTALLATION.md) | End-to-end server + PWA + Android setup |
+| [Architecture](docs/ARCHITECTURE.md) | Components, trust boundary and data flow |
+| [Android Setup](docs/ANDROID_SETUP.md) | Android build and device requirements |
+| [Relay Server](docs/SERVER.md) | Server runtime, configuration and responsibilities |
+| [Deployment](docs/DEPLOYMENT.md) | Docker, HTTPS, backup and OTA deployment |
+| [Protocol](docs/PROTOCOL.md) | Enrollment, event and command protocol |
+| [Security Architecture](docs/SECURITY_ARCHITECTURE.md) | Encryption and trust model |
+| [Compatibility](docs/COMPATIBILITY.md) | Android/OEM behavior and test notes |
+
+---
+
+## Build from source
+
+### Server
+
+The relay is intentionally lightweight and uses Python's standard library + SQLite.
 
 ```bash
 export SIMHUB_ADMIN_TOKEN="$(python3 scripts/gen_admin_token.py --raw)"
@@ -64,29 +269,35 @@ export SIMHUB_DB=/tmp/simhub.db
 python3 server/simhub_server.py
 ```
 
-## Android build
+### Android
 
-The Android module targets API 37 and AGP 9.4.1. CI builds a debug APK. For a local build, install JDK 17, Android SDK Platform 37 and Gradle 9.6+, then:
+Requirements:
+
+- JDK 17
+- Android SDK Platform 37
+- Gradle 9.6+
 
 ```bash
 cd android
 gradle :app:assembleDebug
 ```
 
-Production signing keys are intentionally not part of this repository.
+CI also performs a complete API 37 debug APK build.
 
-## Security model
+---
 
-The relay is intentionally "blind" to high-value content. Device and browser share a random 256-bit Vault Key out-of-band during enrollment. SMS bodies, OTP values, contact names and outbound SMS bodies are encrypted using AES-GCM before reaching the relay. See `docs/SECURITY_ARCHITECTURE.md` and `SECURITY.md`.
+## Release
 
-## Important Android behavior
+Current release:
 
-For Android 17/API 37, real-time arbitrary OTP access cannot be designed around a normal background `RECEIVE_SMS` listener. The Agent is therefore built as a real default SMS handler. On Android 14+ the optional always-on private relay mode runs as a user-started `specialUse` foreground service; a persisted JobScheduler job remains as a recovery path.
+**[v0.1.0 — Personal Relay MVP](https://github.com/blackkcold/simhub/releases/tag/v0.1.0)**
 
-## MMS
+Release assets include the Android APK, tagged source snapshot, documentation bundle and SHA-256 checksums.
 
-The project includes the default-SMS eligibility receiver and **MMS metadata/history observation**, but it does not implement a complete carrier-specific MMS PDU download/send stack. SMS/OTP is the production path. This limitation is deliberate rather than pretending MMS is reliable across carrier APNs without a full MMS transport implementation.
+---
 
 ## License
 
-MIT. See `THIRD_PARTY_NOTICES.md` for platform/tooling notices.
+SIM Hub is released under the [MIT License](LICENSE).
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for platform/tooling notices.

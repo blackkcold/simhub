@@ -769,13 +769,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def ack_command(self,device_id:str,command_id:str,body:dict[str,Any]) -> None:
         state=str(body.get("state",""))
-        allowed={"submitted","sent","delivered","failed","rejected","expired"}
+        allowed={"submitted","sent","delivered","succeeded","failed","rejected","expired"}
         if state not in allowed:
             self.send_error_json(400,"invalid_state","Invalid command state"); return
         result=body.get("result",{})
         if not isinstance(result,dict): result={}
         result={k:v for k,v in result.items() if k.lower() not in {"body","text","otp","code","recipient","sender","number","phone"} and isinstance(v,(str,int,float,bool,type(None)))}
-        rank={"queued":0,"dispatched":1,"submitted":2,"sent":3,"delivered":4,"failed":4,"rejected":4,"expired":4}
+        rank={"queued":0,"dispatched":1,"submitted":2,"sent":3,"delivered":4,"succeeded":4,"failed":4,"rejected":4,"expired":4}
         with open_db() as con:
             row=con.execute("SELECT state FROM commands WHERE id=? AND device_id=?",(command_id,device_id)).fetchone()
             if not row:

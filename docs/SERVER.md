@@ -41,6 +41,8 @@ SIMHUB_PORT=8787
 SIMHUB_OFFLINE_AFTER=180
 SIMHUB_ENROLL_TTL=600
 SIMHUB_COMMAND_TTL=120
+SIMHUB_SESSION_TTL=28800
+SIMHUB_EVENT_RETENTION_DAYS=0
 ```
 
 Optional integrations:
@@ -72,3 +74,14 @@ Internet
 ```
 
 Do not expose the relay directly over plaintext HTTP on the public Internet. See `DEPLOYMENT.md` for the complete deployment procedure.
+
+
+### v0.1.5 operational endpoints
+
+- `POST /api/v1/auth/session` — exchange Admin Token + optional TOTP for a short-lived HttpOnly session.
+- `GET /api/v1/stream` — authenticated Server-Sent Events wake-up channel for the PWA.
+- `GET /api/v1/metrics` — compact authenticated operational counters.
+- `DELETE /api/v1/events?before=<unix-seconds>` — purge old relay ciphertext.
+- Optional `SIMHUB_PUSH_TICKLE_URL` — metadata-only command-available hook for an external FCM/OEM push adapter.
+
+SQLite remains the default for the personal/single-user deployment. PostgreSQL/Redis are intentionally not introduced in v0.1.5 because they do not improve the core reliability guarantees at this scale.

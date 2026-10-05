@@ -28,6 +28,7 @@ jobs:
       - name: Verify server and web
         run: |
           python3 server/test_simhub.py
+          PYTHONPATH=server python3 server/test_migration.py
           python3 -m py_compile server/simhub_server.py scripts/gen_admin_token.py
           node --check web/app.js
           node --check web/sw.js

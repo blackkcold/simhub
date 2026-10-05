@@ -95,7 +95,9 @@ public final class LocalStore extends SQLiteOpenHelper {
     public synchronized PendingStatus recordDeliveredPart(String id)throws Exception{getWritableDatabase().execSQL("UPDATE pending_sms SET delivered_parts=delivered_parts+1 WHERE command_id=?",new Object[]{id});return status(id);}
     public synchronized void removePendingSms(String id){getWritableDatabase().delete("pending_sms","command_id=?",new String[]{id});}
 
-    public synchronized void recoverStaleClaims(){getWritableDatabase().execSQL("DELETE FROM processed_commands WHERE state='claimed' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{System.currentTimeMillis()/1000-120});}\n\n    public synchronized void resetForReenrollment(){
+    public synchronized void recoverStaleClaims(){getWritableDatabase().execSQL("DELETE FROM processed_commands WHERE state='claimed' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{System.currentTimeMillis()/1000-120});}
+
+    public synchronized void resetForReenrollment(){
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try{

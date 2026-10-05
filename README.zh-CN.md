@@ -89,9 +89,9 @@ Relay 的设计目标就是**默认看不到短信明文**。Vault Key 在注册
 | **设备管理** | 多 Android Node、别名、设备分组、在线状态 |
 | **状态监控** | 运营商、服务状态、信号、电量、充电、网络、Agent 状态 |
 | **离线可靠性** | Android 本地持久化 Event Queue + Server Command Queue |
-| **安全** | AES-256-GCM E2EE、Android Keystore、Token Hash、命令过期/幂等 |
+| **安全** | AES-256-GCM E2EE、按设备 HKDF 派生密钥、Android Keystore、Token Hash、元数据绑定、命令过期/幂等 |
 | **Controller** | 可安装 PWA：Inbox、OTP复制、搜索、发短信、设备、诊断 |
-| **认证** | 高强度 Admin Token + 可选 TOTP |
+| **认证** | 高强度 Admin Token + 可选 TOTP 登录，之后使用短时 HttpOnly Session |
 | **通知** | 可选 Bark / ntfy / 自定义 Metadata-only Webhook |
 | **运维** | Docker、Health Check、Audit、Backup、OTA Metadata |
 
@@ -143,8 +143,8 @@ curl http://127.0.0.1:8787/healthz
 然后：
 
 1. 输入 Admin Token；
-2. 如已配置，输入 TOTP；
-3. 创建或解锁本地 Vault；
+2. 如已配置，输入 TOTP 创建短时 HttpOnly 浏览器 Session；
+3. 创建、导入或解锁本地 Vault；
 4. 生成一次性 Android Enrollment Link。
 
 ### 3. 安装 Android Agent
@@ -153,7 +153,7 @@ curl http://127.0.0.1:8787/healthz
 
 **[GitHub Releases →](https://github.com/blackkcold/simhub/releases/latest)**
 
-v0.1.0 提供的是 **debug-signed APK**，用于个人安装测试。
+v0.1.5 的发布流程会在仓库已配置稳定签名 Secrets 时生成正式签名 APK；若未配置，则会明确以 **debug-signed** 文件名发布。
 
 在作为 SIM Node 的 Android 手机上：
 
@@ -299,6 +299,20 @@ SIM Hub 不假设 Android 后台进程或 WebSocket 永远在线。
 
 ---
 
+## v0.1.5 可靠性升级
+
+- Event ID 改为按设备作用域唯一，多台 Android 可以安全出现相同 SMS Provider ID。
+- Android 对 Remote Command 先做 SQLite 原子 Claim，所有同步入口共用单进程协调锁，降低重复发短信风险。
+- SMS History 使用 `(date, providerId)` 双游标，只有成功进入本地 Durable Queue 后才推进。
+- 短信发送状态明确跟踪为 `submitted → sent → delivered` 或 `failed`。
+- 新密文按设备使用 HKDF 派生 AES-256-GCM Key，带 `kid` 并把不可变元数据纳入 AAD；旧 v1 密文保持兼容。
+- Admin Token + TOTP 只在登录时换取短时 HttpOnly Session，不再每次轮询重复使用旧 TOTP。
+- PWA 增加 Recovery Key 导入与 SSE 实时刷新，轮询仅作兜底。
+- 新短信通知增加新鲜度/OTP/设备过滤，历史同步不会刷屏。
+- 增加数据库自动迁移、Subscription 投影、密文保留期、Metrics、在线备份脚本和滚动升级兼容。
+
+---
+
 ## 当前限制
 
 ### 不做电话模块
@@ -372,7 +386,7 @@ GitHub Actions CI 同样会执行完整的 Android API 37 Debug APK 构建验证
 
 当前版本：
 
-**[v0.1.0 — Personal Relay MVP](https://github.com/blackkcold/simhub/releases/tag/v0.1.0)**
+**[v0.1.5 — Reliability & Security](https://github.com/blackkcold/simhub/releases/tag/v0.1.5)**
 
 Release 中包含 Android APK、对应 Tag 的源码快照、文档包以及 SHA-256 校验文件。
 

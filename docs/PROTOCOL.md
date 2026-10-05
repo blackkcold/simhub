@@ -33,7 +33,21 @@ The plaintext is a JSON object. For `sms.received`, it can include sender, conta
 
 ## Command encryption
 
-AAD: `simhub-command-v1`
+v1 compatibility AAD: `simhub-command-v1`
+
+v2 command AAD:
+
+```text
+simhub-command-v2 |
+base64url(deviceId) |
+base64url(commandId) |
+base64url(type) |
+createdAt |
+expiresAt |
+base64url(idempotencyKey)
+```
+
+v2 event AAD similarly binds deviceId, eventId, kind, occurredAt, subscriptionId and hasOtp. v2 envelopes include a per-device key identifier (`kid`).
 
 Plaintext contains at least:
 
@@ -54,7 +68,12 @@ The relay sees `type=sms.send`, ID, device routing and expiry. It cannot read de
 
 ## Replay and duplicates
 
-- Server enforces unique event IDs and command idempotency keys.
-- Device persists processed command IDs for 30 days.
+- Server enforces unique event IDs **per device** and command idempotency keys per device.
+- Device atomically claims command IDs before side effects, persists command state for 30 days, and durably queues command acknowledgements.
 - Commands expire server-side and device-side.
 - SMS Provider row IDs are reused as event IDs when possible so history re-sync does not duplicate live SMS.
+
+
+## Browser session authentication
+
+The PWA posts the Admin Token and optional TOTP to `POST /api/v1/auth/session`. The relay stores only a hash of the generated random session token and sets a Secure/HttpOnly/SameSite=Strict cookie. Subsequent PWA API calls and the SSE endpoint use that session cookie; the Admin Token is not persisted in browser localStorage. Direct Bearer + TOTP authentication remains available for trusted CLI/admin integrations.

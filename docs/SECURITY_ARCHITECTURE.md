@@ -4,6 +4,14 @@
 
 The relay stores SMS/OTP/contact/outbound text only as AES-256-GCM ciphertext. TLS protects transport, but E2EE means confidentiality does not depend on the reverse proxy or relay database remaining secret.
 
+## v0.1.5 per-device key derivation
+
+The 32-byte recovery/master Vault Key is no longer used directly for new device traffic. Both Controller and Android derive a device-specific key with HKDF-SHA256 using the device ID as HKDF info and `simhub-device-v1` as the salt. The first 12 bytes of SHA-256(deviceKey), base64url encoded, form the ciphertext `kid`.
+
+New v2 AES-GCM envelopes authenticate immutable routing metadata as AAD. Event AAD binds device ID, event ID, kind, timestamp, subscription ID and OTP flag. Command AAD binds device ID, command ID, type, creation/expiry timestamps and idempotency key. The relay may route these fields but cannot modify them without causing decryption failure.
+
+Legacy v1 envelopes remain supported for rolling upgrades and old stored events.
+
 ## Local browser vault
 
 The PWA creates a random 32-byte Vault Key. The browser stores only a wrapped copy:
@@ -28,7 +36,7 @@ The relay URL/device ID are not secrets and remain in normal SharedPreferences.
 
 ## Relay authentication
 
-- Controller: high-entropy `SIMHUB_ADMIN_TOKEN`, optionally plus TOTP.
+- Controller login: high-entropy `SIMHUB_ADMIN_TOKEN`, optionally plus TOTP. Successful login creates a random short-lived session whose token is stored server-side only as a hash and delivered to the browser in a Secure, HttpOnly, SameSite=Strict cookie.
 - Android node: independent per-device high-entropy token.
 - Relay stores only SHA-256 hashes of device and enrollment tokens.
 

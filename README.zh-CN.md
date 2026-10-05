@@ -169,6 +169,88 @@ v0.1.0 提供的是 **debug-signed APK**，用于个人安装测试。
 
 ---
 
+## 安装与使用流程
+
+### 第一次安装
+
+```text
+1. 部署 Relay Server
+        ↓
+2. 配置 HTTPS + SIMHUB_PUBLIC_BASE_URL
+        ↓
+3. 浏览器打开 Web / PWA Controller
+        ↓
+4. 创建 / 解锁本地 Vault
+        ↓
+5. 生成一次性 Enrollment Link
+        ↓
+6. Android 手机安装 Agent
+        ↓
+7. 注册为 SIM Node
+        ↓
+8. 设置 SIM Hub 为默认短信 App
+        ↓
+9. 授予 SMS / SIM 所需权限
+        ↓
+10. 按需开启 Always-on Relay
+```
+
+完成后，这台 Android 手机就成为一个长期在线的 **SIM Node**。日常通常不需要再直接操作这台手机，只需要保持手机有电、网络在线，并能正常接收运营商短信。
+
+### 日常接收短信 / OTP
+
+```text
+运营商短信到达
+    ↓
+Android SIM Node 接收并写入本机短信库
+    ↓
+如为验证码，在 Android 本地识别 OTP
+    ↓
+Android 本地加密消息 Payload
+    ↓
+通过你的 Relay Server 转发密文
+    ↓
+PWA 拉取并在本地解密
+    ↓
+查看短信 / 一键复制验证码
+```
+
+实际使用时，只需要在电脑、平板或另一台手机打开 PWA。新的短信同步后会出现在 Inbox，识别出的 OTP 可以直接复制。
+
+### 远程发送短信
+
+```text
+PWA 选择 Android 设备
+    ↓
+选择具体 SIM / subscription
+    ↓
+填写号码和短信
+    ↓
+PWA 本地加密命令
+    ↓
+Relay Server 持久化排队
+    ↓
+Android SIM Node 拉取命令
+    ↓
+指定 SIM 发送短信
+    ↓
+发送结果回传 Controller
+```
+
+Relay Server 不需要获得短信正文明文，也能完成命令中转。
+
+### Android 手机暂时离线时
+
+系统不依赖“WebSocket 永远在线”。Event 和 Command 都会先进入持久化队列；手机恢复网络后会继续同步。因此短暂断网、Wi-Fi 切换或后台进程被系统回收，不应直接造成短信业务状态丢失。
+
+如果希望验证码尽可能实时到达 Controller，建议开启 Android Agent 的 **Always-on Relay**，并在 vivo / OPPO / Xiaomi / HONOR / Huawei 等系统中按需关闭该 App 的激进省电限制、允许自启动。
+
+### 增加更多 SIM Node
+
+每增加一台 Android 手机，只需重新生成一次性 Enrollment Link 并重复注册流程。每个 Node 都有独立设备身份和 Token；之后可在 PWA 中选择目标设备及对应 Android subscription 来收发短信。
+
+---
+
 ## 安全模型
 
 SIM Hub 将短信和 OTP 按“认证基础设施”级别的数据处理。

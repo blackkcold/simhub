@@ -169,6 +169,86 @@ Full procedure: [Installation Guide](docs/INSTALLATION.md).
 
 ---
 
+## Installation and usage flow
+
+### First-time setup
+
+```text
+1. Deploy Relay Server
+        ↓
+2. Configure HTTPS + SIMHUB_PUBLIC_BASE_URL
+        ↓
+3. Open Web/PWA Controller
+        ↓
+4. Create/unlock local Vault
+        ↓
+5. Generate one-time enrollment link
+        ↓
+6. Install Android Agent
+        ↓
+7. Enroll Android SIM Node
+        ↓
+8. Set SIM Hub as default SMS app
+        ↓
+9. Grant SMS/SIM permissions
+        ↓
+10. Enable always-on relay if required
+```
+
+After enrollment, the Android phone becomes a SIM Node and normally does not need to be operated directly. Keep it powered, connected to the network and able to receive cellular SMS.
+
+### Receiving SMS / OTP
+
+```text
+Carrier sends SMS
+    ↓
+Android SIM Node receives and stores it
+    ↓
+OTP is detected locally when applicable
+    ↓
+Message payload is encrypted on Android
+    ↓
+Encrypted event is relayed through your server
+    ↓
+PWA fetches and decrypts it locally
+    ↓
+Read SMS / copy OTP
+```
+
+In daily use, open the PWA on your computer, tablet or another phone. New messages appear in the inbox after the Android node uploads them. OTP values can be copied directly from the controller.
+
+### Sending SMS remotely
+
+```text
+PWA: choose Android device
+    ↓
+choose SIM / subscription
+    ↓
+enter recipient + message
+    ↓
+encrypt command locally
+    ↓
+Relay Server queues encrypted command
+    ↓
+Android SIM Node fetches command
+    ↓
+selected SIM sends the SMS
+    ↓
+result/status is reported back
+```
+
+The relay server does not need the plaintext SMS body to perform delivery.
+
+### When the Android node is offline
+
+Events and commands are persisted in queues rather than relying on a permanently alive WebSocket. When connectivity returns, the node retries synchronization. For the lowest latency, keep the Android Agent's always-on relay enabled and exempt it from aggressive OEM battery restrictions where necessary.
+
+### Adding another SIM Node
+
+Repeat the enrollment process for each additional Android phone. Each node receives its own device identity/token while sharing access to the same private controller vault. You can then select the target device and Android subscription from the PWA.
+
+---
+
 ## Security model
 
 SIM Hub handles SMS and OTP data as authentication-grade secrets.

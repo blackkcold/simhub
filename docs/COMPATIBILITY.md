@@ -24,3 +24,27 @@ Before relying on a device unattended, test: reboot, Doze, OEM battery saver, du
 ## Rolling upgrade
 
 The 0.2 controller/relay retain legacy v1/v2 ciphertext compatibility for rolling upgrades. Upgrade server/PWA first, then Android nodes individually. New nodes use independent Node Keys; legacy v0.1.5 nodes can migrate online through `node.rotate_key`. Remote SMS on 0.2 Android requires stable Channel identity/revision.
+
+
+## Hardware release gates
+
+CI/build success is not equivalent to unattended hardware validation. Before treating a node type as production-ready, run:
+
+### Android
+- physical Android 17 default-SMS receive and remote send;
+- OTP parsing on real carrier messages;
+- dual-SIM routing plus remove/reinsert/replace-SIM scenarios;
+- reboot/unlock/autostart;
+- Doze, background restriction and 24–72 hour idle recovery;
+- 24 hour relay/network outage followed by reconciliation.
+
+### DJI / Linux modem
+- enumerate the actual USB device;
+- validate `dji4g` or ModemManager adapter selection;
+- receive SMS, queue it locally, upload, then delete/archive it from modem storage;
+- remote SMS send;
+- unplug/replug recovery;
+- signal telemetry;
+- SIM replacement increments Channel revision and stale commands fail closed.
+
+DJI Cellular Dongle 2 remains capability-gated until the actual model exposes a supported SMS control path.

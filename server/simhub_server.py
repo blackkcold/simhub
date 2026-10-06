@@ -359,26 +359,44 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
         if isinstance(v,(str,int,float,bool)) or v is None:
             out[k]=v
+    capabilities=[]
+    for cap in body.get("capabilities",[]) if isinstance(body.get("capabilities"),list) else []:
+        if isinstance(cap,str) and re.fullmatch(r"[a-z0-9._-]{1,64}",cap):
+            capabilities.append(cap)
+    out["capabilities"]=capabilities[:64]
+
     subs=[]
-    for s in body.get("subscriptions",[]) if isinstance(body.get("subscriptions"),list) else []:
-        if not isinstance(s,dict):
+    for item in body.get("subscriptions",[]) if isinstance(body.get("subscriptions"),list) else []:
+        if not isinstance(item,dict):
             continue
         x={}
-        for k in {"subscriptionId","slotIndex","carrierName","displayName","isEmbedded","opportunistic","signalLevel","serviceState","roaming","networkType"}:
-            v=s.get(k)
+        for k in {"subscriptionId","channelId","channelRevision","slotIndex","carrierName","displayName","isEmbedded","opportunistic","signalLevel","signalRsrp","signalRsrq","signalSinr","serviceState","roaming","networkType"}:
+            v=item.get(k)
             if isinstance(v,(str,int,float,bool)) or v is None:
                 x[k]=v
         if "subscriptionId" in x:
             subs.append(x)
     out["subscriptions"]=subs[:32]
-    return out
 
+    channels=[]
+    for item in body.get("channels",[]) if isinstance(body.get("channels"),list) else []:
+        if not isinstance(item,dict):
+            continue
+        x={}
+        for k in {"id","localId","kind","revision","slotIndex","carrierName","displayName","isEmbedded","opportunistic","signalLevel","signalRsrp","signalRsrq","signalSinr","serviceState","roaming","networkType"}:
+            v=item.get(k)
+            if isinstance(v,(str,int,float,bool)) or v is None:
+                x[k]=v
+        if isinstance(x.get("id"),str) and x["id"]:
+            channels.append(x)
+    out["channels"]=channels[:64]
+    return out
 
 def signal_stream() -> None:
     global _stream_epoch

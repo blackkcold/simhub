@@ -119,6 +119,15 @@ class ApiTest(unittest.TestCase):
         with sqlite3.connect(self.db) as con: state=con.execute('SELECT state FROM commands WHERE id=?',(cid,)).fetchone()[0]
         self.assertEqual(state,'sent')
 
+    def test_two_phase_device_token_rotation(self):
+        d=self.enroll('Rotate');did=d['deviceId'];old=d['deviceToken']
+        st,p,_=self.req('POST',f'/api/v1/devices/{did}/token/prepare',{},device_token=old,admin=False);self.assertEqual(st,201)
+        new=p['deviceToken'];self.assertNotEqual(old,new)
+        self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=old,admin=False)[0],200)
+        st,c,_=self.req('POST',f'/api/v1/devices/{did}/token/commit',{},device_token=new,admin=False);self.assertEqual(st,200);self.assertTrue(c['ok'])
+        self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=old,admin=False)[0],401)
+        self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=new,admin=False)[0],200)
+
     def test_phone_commands_rejected(self):
         d=self.enroll()
         st,r,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands",{'type':'call.place','ciphertext':self.cipher()})

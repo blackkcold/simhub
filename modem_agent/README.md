@@ -6,20 +6,15 @@ The Linux Modem Agent lets a cellular USB modem appear in SIM Hub as the same ki
 
 ### DJI Gen1 / QDC507
 
-For the first-generation DJI 4G module, install a compatible `dji4g` CLI and use:
+For the first-generation DJI 4G module / QDC507, use the built-in direct Quectel AT adapter:
 
 ```bash
---adapter dji4g
+--adapter dji-at
 ```
 
-The adapter uses:
+It discovers the `Quectel USB AT Port` (including known DJI/Quectel USB IDs), then directly uses standard/Quectel AT commands for SIM identity, inbox polling, deletion, operator/signal state and outbound SMS. Outbound messages use UCS2 SMS-SUBMIT PDU; long messages use standard concatenation UDH.
 
-- `dji4g status --json`
-- `dji4g cell --json`
-- `dji4g at ...` for SMS listing / SIM identity
-- `dji4g sms send ...` for outbound SMS
-
-No third-party source is copied into SIM Hub; the CLI is an external adapter dependency.
+The external `dji4g` project is optional and can still be used separately to configure/connect the DJI module's Linux network interface. SIM Hub does not depend on undocumented `dji4g` subcommands for SMS reliability.
 
 ### Generic Linux modem
 

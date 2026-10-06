@@ -1,6 +1,6 @@
 # SIM Hub installation
 
-This guide installs the personal relay server, opens the PWA controller, and enrolls an Android phone as the SIM Node.
+This guide installs the personal relay server, opens the PWA controller, and enrolls Android and/or Linux/DJI modem SIM Nodes.
 
 ## 1. Requirements
 
@@ -33,16 +33,22 @@ Copy the generated token into `SIMHUB_ADMIN_TOKEN` in `.env` and set:
 SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
 ```
 
-Optional: configure `SIMHUB_TOTP_SECRET` for a second factor.
+Generate and configure TOTP before first public deployment:
+
+```bash
+python3 scripts/gen_totp_secret.py
+```
+
+Put the result in `SIMHUB_TOTP_SECRET`. The example config enables `SIMHUB_REQUIRE_TOTP=true`.
 
 Start the relay:
 
 ```bash
 docker compose up -d --build
-curl http://127.0.0.1:8787/healthz
+curl http://127.0.0.1:8787/readyz
 ```
 
-The health endpoint should return successfully before you continue.
+The readiness endpoint must report the current database schema before you continue.
 
 ## 3. Enable HTTPS
 
@@ -68,7 +74,7 @@ loads the PWA.
 2. Enter the server admin token.
 3. If TOTP is enabled, enter the current six-digit TOTP once to create the browser session.
 4. Create, import, or unlock the local Vault.
-5. Keep the Vault recovery material secure. The server does not possess the Vault Key and cannot recover encrypted SMS for you.
+5. Keep the Master Vault recovery material secure. The server does not possess it and cannot recover encrypted SMS for you. New nodes receive independent Node Keys, not the Master Vault Key.
 
 ## 5. Install the Android Agent
 
@@ -95,13 +101,24 @@ See `ANDROID_SETUP.md` for Android build requirements.
 6. Optionally grant Contacts access if you want local contact-name mapping.
 7. Enable **always-on relay** for the lowest-latency personal remote operation.
 
-The enrollment deep link includes temporary sensitive enrollment material. Do not store or publish it; generate a new one when needed.
+The enrollment deep link contains a one-time token and only that Android node's independent Node Key. It is still sensitive: do not log/store/publish it after enrollment.
 
-## 7. OEM background settings
+## 7. Enroll a Linux / DJI Modem Node
+
+1. In PWA Settings choose **Linux / DJI Modem Node**.
+2. Create the enrollment package and save the JSON temporarily on the Linux host.
+3. Install the agent with `sudo ./modem_agent/install.sh`.
+4. Run the enrollment command shown in `modem_agent/README.md`.
+5. Delete the temporary enrollment JSON.
+6. Enable `simhub-modem.service`.
+
+The Agent automatically tries the external `dji4g` adapter first when available, then ModemManager/`mmcli`.
+
+## 8. OEM background settings
 
 On vivo/OPPO/Xiaomi/HONOR/Huawei and other aggressive battery-management ROMs, allow autostart and remove battery restrictions for SIM Hub if those controls exist. Keep the persistent foreground-service notification enabled when using always-on relay mode.
 
-## 8. Test the installation
+## 9. Test the installation
 
 Run these checks in order:
 
@@ -113,11 +130,11 @@ Run these checks in order:
 6. Turn off the Android phone's network, receive/send test data, restore network and verify queued synchronization recovers.
 7. Reboot the phone and verify the Agent recovers after boot/unlock according to the configured background mode.
 
-## 9. Backups
+## 10. Backups
 
 Run `./scripts/backup.sh` for a consistent SQLite online backup, or back up the Docker `simhub-data` volume for relay metadata/ciphertext. Separately protect the controller's Vault recovery material. The relay database by itself is intentionally insufficient to decrypt SMS content.
 
-## 10. Updating
+## 11. Updating
 
 Server:
 
@@ -129,6 +146,6 @@ docker compose up -d --build
 Android updates should be installed from a trusted GitHub Release or your own signed build. The OTA endpoint only advertises an update; it does not silently install APKs.
 
 
-## Rolling upgrade from v0.1.0
+## Rolling upgrade from v0.1.x
 
-Upgrade the server/PWA first, then Android nodes. The v0.1.5 controller automatically sends legacy v1 commands to older agents and v2 commands to v0.1.5+ agents. Existing v1 events remain decryptable. Do not reset/re-enroll a node unless you intentionally want to pair it with another Vault; v0.1.5 requires an explicit reset before re-enrollment.
+Upgrade the server/PWA first, then Android nodes. Existing v1/v2 events remain decryptable. Once a legacy Android node reports 0.2.x, use **Isolate key** in the PWA to migrate it from the old Master-derived key to an independent Node Key. Remote 0.2 SMS commands use Channel ID + revision and fail closed when the SIM identity has changed. Do not reset/re-enroll unless intentionally moving the node to another Vault/relay.

@@ -252,7 +252,7 @@ Repeat enrollment for each Android or Linux modem node. Each node receives its o
 
 ## Linux / DJI modem node
 
-A Linux Modem Agent is included under `modem_agent/`. It supports a generic ModemManager/`mmcli` path and an external `dji4g` CLI adapter for first-generation DJI/QDC507-style hardware. The agent provides durable local queues, SMS receive/send, radio metrics, SIM-change channel revisions and the same E2EE protocol used by Android.
+A Linux Modem Agent is included under `modem_agent/`. It supports direct Quectel AT serial control for first-generation DJI/QDC507-style hardware and a generic ModemManager/`mmcli` path. The agent provides durable local queues, SMS receive/send, radio metrics, SIM-change channel revisions and the same E2EE protocol used by Android.
 
 Create a **Linux / DJI Modem Node** enrollment package in the PWA, then follow `modem_agent/README.md`. DJI Cellular Dongle 2 is capability-gated rather than assumed compatible; use ModemManager detection first.
 

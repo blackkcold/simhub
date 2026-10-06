@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -36,6 +37,11 @@ ENROLL_TTL = int(os.getenv("SIMHUB_ENROLL_TTL", "600"))
 COMMAND_TTL = int(os.getenv("SIMHUB_COMMAND_TTL", "120"))
 OFFLINE_AFTER = int(os.getenv("SIMHUB_OFFLINE_AFTER", "180"))
 EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "0")))
+AUDIT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_AUDIT_RETENTION_DAYS", "180")))
+COMMAND_RETENTION_DAYS = max(1, int(os.getenv("SIMHUB_COMMAND_RETENTION_DAYS", "30")))
+MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL", "3600")), 86400))
+REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "false").lower() in {"1","true","yes","on"}
+TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
 NOTIFY_BEARER = os.getenv("SIMHUB_NOTIFY_WEBHOOK_BEARER", "").strip()
@@ -77,6 +83,25 @@ def sha256_text(value: str) -> str:
 
 def new_token(nbytes: int = 36) -> str:
     return secrets.token_urlsafe(nbytes)
+
+
+def trusted_proxy(peer: str) -> bool:
+    try:
+        addr=ipaddress.ip_address(peer)
+        return any(addr in ipaddress.ip_network(cidr,strict=False) for cidr in TRUSTED_PROXY_CIDRS)
+    except ValueError:
+        return False
+
+
+def forwarded_client_ip(peer: str, headers) -> str:
+    if not trusted_proxy(peer):
+        return peer
+    raw=headers.get("X-Forwarded-For","")
+    candidate=raw.split(",",1)[0].strip() if raw else ""
+    try:
+        return str(ipaddress.ip_address(candidate)) if candidate else peer
+    except ValueError:
+        return peer
 
 
 def safe_json_loads(value: str | None, default: Any) -> Any:
@@ -188,11 +213,31 @@ def init_db() -> None:
         _migrate_v3(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         con.execute("PRAGMA user_version=3")
+        pass
+    run_maintenance()
+
+
+def run_maintenance() -> dict[str,int]:
+    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0}
+    with open_db() as con:
         if EVENT_RETENTION_DAYS>0:
-            con.execute("DELETE FROM events WHERE received_at<?",(now()-EVENT_RETENTION_DAYS*86400,))
-        con.execute("DELETE FROM admin_sessions WHERE expires_at<=?",(now(),))
-        con.execute("DELETE FROM enrollment_tokens WHERE expires_at<? AND used_at IS NOT NULL",(now()-86400,))
-        con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(now()-30*86400,))
+            result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
+        if AUDIT_RETENTION_DAYS>0:
+            result["audit"]=con.execute("DELETE FROM audit WHERE occurred_at<?",(ts-AUDIT_RETENTION_DAYS*86400,)).rowcount
+        result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
+        result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=?",(ts,)).rowcount
+        result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
+    return result
+
+
+def maintenance_loop() -> None:
+    while True:
+        time.sleep(MAINTENANCE_INTERVAL)
+        try:
+            removed=run_maintenance()
+            if any(removed.values()): log.info("maintenance removed=%s",removed)
+        except Exception:
+            log.exception("maintenance_failed")
 
 
 def audit(action: str, target: str, result: str, ip: str) -> None:
@@ -487,7 +532,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     @property
     def ip(self) -> str:
-        return self.client_address[0]
+        return forwarded_client_ip(self.client_address[0],self.headers)
 
     def security_headers(self) -> None:
         self.send_header("X-Content-Type-Options","nosniff")
@@ -561,6 +606,16 @@ class SimHubHandler(BaseHTTPRequestHandler):
         path,p,q=self.route()
         if path=="/healthz":
             self.send_json(200,{"ok":True,"version":APP_VERSION,"time":now()}); return
+        if path=="/readyz":
+            try:
+                with open_db() as con:
+                    version=con.execute("PRAGMA user_version").fetchone()[0]
+                    con.execute("SELECT 1").fetchone()
+                if version<3:
+                    self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
+                self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
+            except Exception:
+                self.send_error_json(503,"database_not_ready","Database is not ready"); return
         if path=="/api/v1/auth/check":
             if not self.require_admin(): return
             self.send_json(200,{"ok":True,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL}); return
@@ -580,8 +635,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin(): return
             self.stream_events(); return
         if path=="/api/v1/ota":
-            if not (admin_auth(self.headers) or self.device_auth_from_headers()):
-                self.send_error_json(401,"unauthorized","Authentication required"); return
+            if self.device_auth_from_headers():
+                self.get_ota(); return
+            if not self.require_admin(): return
             self.get_ota(); return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="state":
             if not self.require_admin(): return
@@ -1010,6 +1066,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
 def main() -> None:
     if len(ADMIN_TOKEN)<32 or ADMIN_TOKEN.startswith("change-me"):
         raise SystemExit("SIMHUB_ADMIN_TOKEN must be set to a strong >=32 character random token")
+    if REQUIRE_TOTP and not TOTP_SECRET:
+        raise SystemExit("SIMHUB_REQUIRE_TOTP is enabled but SIMHUB_TOTP_SECRET is empty")
+    if not TOTP_SECRET:
+        log.warning("TOTP is disabled; enable SIMHUB_REQUIRE_TOTP=true and configure SIMHUB_TOTP_SECRET for internet-facing deployments")
     if TOTP_SECRET:
         try:
             padded=TOTP_SECRET.upper()+"="*((8-len(TOTP_SECRET)%8)%8)
@@ -1017,6 +1077,7 @@ def main() -> None:
         except Exception as exc:
             raise SystemExit("SIMHUB_TOTP_SECRET must be valid Base32") from exc
     init_db()
+    threading.Thread(target=maintenance_loop,name="simhub-maintenance",daemon=True).start()
     server=ThreadingHTTPServer((BIND,PORT),SimHubHandler); server.daemon_threads=True
     log.info("SIM Hub relay %s listening on %s:%s, db=%s",APP_VERSION,BIND,PORT,DB_PATH)
     try: server.serve_forever()

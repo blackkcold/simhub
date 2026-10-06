@@ -78,7 +78,7 @@ loads the PWA.
 
 ## 5. Install the Android Agent
 
-For v0.1.5 the GitHub Release contains either `simhub-agent-v0.1.5-release.apk` when stable signing secrets are configured, or an explicitly labelled `simhub-agent-v0.1.5-debug.apk` fallback.
+Install the Android APK from the release/build you intend to use. Signing policy is intentionally outside this hardening change; keep using a consistent trusted APK source for in-place updates.
 
 Install it manually on the SIM Node. If Android blocks sideloading, allow installation from the app/browser/file manager you use for the APK.
 
@@ -122,8 +122,8 @@ On vivo/OPPO/Xiaomi/HONOR/Huawei and other aggressive battery-management ROMs, a
 
 Run these checks in order:
 
-1. PWA shows the Android device online.
-2. SIM/subscription information is visible.
+1. PWA shows each Android / Modem node online.
+2. Generic Channel/SIM information is visible.
 3. Send a normal SMS to the SIM and confirm it appears in the PWA after local decryption.
 4. Send an OTP-style SMS and confirm OTP detection/copy works.
 5. Send a test SMS remotely from the PWA through a selected subscription.
@@ -149,3 +149,10 @@ Android updates should be installed from a trusted GitHub Release or your own si
 ## Rolling upgrade from v0.1.x
 
 Upgrade the server/PWA first, then Android nodes. Existing v1/v2 events remain decryptable. Once a legacy Android node reports 0.2.x, use **Isolate key** in the PWA to migrate it from the old Master-derived key to an independent Node Key. Remote 0.2 SMS commands use Channel ID + revision and fail closed when the SIM identity has changed. Do not reset/re-enroll unless intentionally moving the node to another Vault/relay.
+
+
+## 12. Device token lifecycle
+
+Android and Linux Modem nodes automatically rotate their per-node API bearer token after 60 days. Rotation is a two-phase prepare/commit exchange: the old token remains usable until the node has durably stored the replacement, so a network/process interruption cannot permanently lock out an unattended node.
+
+This token is independent from the E2EE Node Key. Rotating one does not rotate the other.

@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.2.0"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -213,7 +213,6 @@ def init_db() -> None:
         _migrate_v3(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         con.execute("PRAGMA user_version=3")
-        pass
     run_maintenance()
 
 
@@ -524,7 +523,7 @@ def push_tickle_async(device_id: str, reason: str) -> None:
 
 
 class SimHubHandler(BaseHTTPRequestHandler):
-    server_version = "SimHubRelay/0.1.5"
+    server_version = "SimHubRelay/0.2.0"
     sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:

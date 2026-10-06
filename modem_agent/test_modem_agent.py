@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+import tempfile, unittest
+from pathlib import Path
+
+from simhub_modem_agent import (
+    Store, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2
+)
+
+class ModemAgentTest(unittest.TestCase):
+    def test_v2_crypto_roundtrip_and_metadata_binding(self):
+        key=bytes(range(32));kid=key_id(key)
+        payload={'action':'sms.send','commandId':'cmd-1','expiresAt':200,'channelId':'ch-1','body':'hello'}
+        aad=command_aad('dev-1','cmd-1','sms.send',100,200,'idem-1')
+        envelope=encrypt_payload(key,kid,payload,aad)
+        self.assertEqual(decrypt_payload(key,kid,envelope,aad),payload)
+        with self.assertRaises(Exception):
+            decrypt_payload(key,kid,envelope,command_aad('dev-2','cmd-1','sms.send',100,200,'idem-1'))
+
+    def test_event_aad_is_channel_bound(self):
+        self.assertNotEqual(event_aad('d','e','sms.received',1,'channel-a',False),event_aad('d','e','sms.received',1,'channel-b',False))
+
+    def test_store_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            store=Store(Path(td)/'agent.db')
+            cipher={'v':2,'alg':'A256GCM','kid':'abcdefgh1234','iv':'a','ct':'b'}
+            self.assertTrue(store.queue_event('evt','sms.received',1,'ch',False,{},cipher))
+            self.assertTrue(store.queue_event('evt','sms.received',1,'ch',False,{},cipher))
+            self.assertEqual(len(store.pending_events()),1)
+            self.assertTrue(store.claim_command('cmd'))
+            self.assertFalse(store.claim_command('cmd'))
+
+    def test_ucs2_decode(self):
+        self.assertEqual(decode_ucs2('4F60597D'),'你好')
+        self.assertEqual(decode_ucs2('hello'),'hello')
+
+if __name__=='__main__':
+    unittest.main(verbosity=2)

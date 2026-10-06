@@ -27,7 +27,9 @@ public final class ApiClient {
     public void syncCycle(){
         if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
         try{
-            LocalStore.get(c).recoverStaleClaims();
+            LocalStore store=LocalStore.get(c);
+            store.recoverStaleClaims();
+            for(String id:store.expireStalePendingSms(48L*3600)){store.finishCommand(id,"failed");store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));}
             SmsHistorySync.sync(c,200);
             flushEvents();
             flushCommandAcks();

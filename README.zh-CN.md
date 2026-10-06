@@ -2,7 +2,7 @@
 
 # SIM Hub
 
-**把 Android 手机变成私有、自托管的 SIM / 短信远程管理中心。**
+**把 Android 手机和受支持的蜂窝 Modem 变成私有、自托管的 SIM / 短信远程管理中心。**
 
 使用你自己的服务器作为加密 Relay，在另一台设备上远程收短信、提取验证码、管理多张 SIM，并通过 Web/PWA 远程发送短信。
 
@@ -22,9 +22,9 @@
 
 ## SIM Hub 是什么？
 
-SIM Hub 是一个 **个人自用、自托管的 Android SIM / SMS 远程管理系统**。
+SIM Hub 是一个 **个人自用、自托管的多节点 SIM / SMS 远程管理系统**。
 
-一台或多台 Android 手机作为 **SIM Node**，插入实体 SIM / eSIM；你自己的服务器只承担 Relay、队列和设备控制平面；Web/PWA Controller 在本地完成短信内容解密、搜索、复制验证码和远程发送。
+一台或多台 Android 手机，以及受支持的 Linux / DJI / USB 蜂窝 Modem 作为 **SIM Node**；你自己的服务器只承担 Relay、队列和设备控制平面；Web/PWA Controller 在本地完成短信内容解密、搜索、复制验证码和远程发送。
 
 适合：
 
@@ -331,6 +331,21 @@ SIM Hub 不假设 Android 后台进程或 WebSocket 永远在线。
 - PWA 增加 Recovery Key 导入与 SSE 实时刷新，轮询仅作兜底。
 - 新短信通知增加新鲜度/OTP/设备过滤，历史同步不会刷屏。
 - 增加数据库自动迁移、Subscription 投影、密文保留期、Metrics、在线备份脚本和滚动升级兼容。
+
+---
+
+## 无人值守上线前的硬件验收 Gate
+
+当前 CI 已覆盖 Server 数据库迁移/保留策略、Generic Node/Channel 协议、Modem Agent 加密与队列、Web 语法、Android JVM OTP 单测以及 Android API 37 APK 构建。但下面这些必须在真实硬件上验收，CI **不会伪装成已通过**：
+
+- Android 17 真机默认 SMS App 收信与 OTP；
+- Doze + OEM 电池策略下连续 24–72 小时恢复；
+- 双卡收发与实体 SIM 换卡后的 Channel Revision 拒绝旧命令；
+- vivo / OPPO / Xiaomi / Huawei / HONOR 的重启、自启动与后台限制；
+- DJI Gen1 / QDC507 真机短信收发与 Modem 短信存储清理；
+- DJI Cellular Dongle 2 在实际硬件确认能力后才启用对应 Adapter。
+
+详见 [Compatibility](docs/COMPATIBILITY.md)。
 
 ---
 

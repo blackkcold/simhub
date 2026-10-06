@@ -33,7 +33,7 @@ SIM Hub 是一个 **个人自用、自托管的 Android SIM / SMS 远程管理�
 - 快速复制验证码 / OTP；
 - 指定某台设备、某张 SIM 远程发送短信；
 - 查看 SIM、运营商、信号、电量、网络和设备状态；
-- 用一个私有控制台统一管理多台 Android SIM Node。
+- 用一个私有控制台统一管理多台 Android 与 Linux/DJI Modem SIM Node。
 
 > **产品边界：** SIM Hub 只做 SIM / SMS 管理。项目明确**不包含**电话接听、拨号、Call Log、蜂窝通话音频、SIP/WebRTC 或 PSTN 音频桥接。
 
@@ -74,7 +74,7 @@ Web / PWA Controller
   └─ 本地解密 / 搜索 / 复制 / 发送
 ```
 
-Relay 的设计目标就是**默认看不到短信明文**。Vault Key 在注册过程中由 Controller 与 Android Node 建立共享，正常运行时不会交给 Relay Server。
+Relay 的设计目标就是**默认看不到短信明文**。新节点注册时由 Controller 生成独立 Node Key，Master Vault Key 不再下发到节点；Relay 仅保存被 Master Vault 加密包裹的 Node Key envelope 与密文/路由元数据。旧 v0.1.5 节点可在线旋转到独立 Node Key。
 
 ---
 
@@ -84,12 +84,12 @@ Relay 的设计目标就是**默认看不到短信明文**。Vault Key 在注册
 |---|---|
 | **SMS** | 接收短信、历史同步、远程发送、multipart 处理 |
 | **OTP** | Android 端识别验证码；OTP 明文仍只存在于加密 Payload 内 |
-| **多卡** | 双卡 / eSIM，按 Android `subscriptionId` 精确路由 |
+| **多卡 / Modem** | 使用稳定的 `channelId + revision` 统一路由 Android subscription 与 Linux/DJI Modem SIM |
 | **远程控制** | 在 PWA 中选择设备 + SIM 发送短信 |
 | **设备管理** | 多 Android Node、别名、设备分组、在线状态 |
 | **状态监控** | 运营商、服务状态、信号、电量、充电、网络、Agent 状态 |
 | **离线可靠性** | Android 本地持久化 Event Queue + Server Command Queue |
-| **安全** | AES-256-GCM E2EE、按设备 HKDF 派生密钥、Android Keystore、Token Hash、元数据绑定、命令过期/幂等 |
+| **安全** | AES-256-GCM E2EE、独立 Node Key、Android Keystore/受保护 Modem 配置、AAD 元数据绑定、两阶段 Device Token 轮换 |
 | **Controller** | 可安装 PWA：Inbox、OTP复制、搜索、发短信、设备、诊断 |
 | **认证** | 高强度 Admin Token + 可选 TOTP 登录，之后使用短时 HttpOnly Session |
 | **通知** | 可选 Bark / ntfy / 自定义 Metadata-only Webhook |
@@ -100,7 +100,7 @@ Relay 的设计目标就是**默认看不到短信明文**。Vault Key 在注册
 - **minSdk：** Android 10 / API 29
 - **targetSdk / compileSdk：** Android 17 / API 37
 - 项目按真正的 **默认 SMS App** 路径设计，以适配现代 Android 对任意短信/OTP 的访问限制。
-- 多卡路由基于 Android subscription ID，不把业务逻辑写死成 SIM1 / SIM2。
+- 远程短信路由基于稳定 Channel ID 与 revision；Android `subscriptionId` 只作为本地适配器 ID，换卡后旧命令会被拒绝。
 
 OEM 后台限制、保活和测试说明见 [Compatibility](docs/COMPATIBILITY.md)。
 
@@ -247,7 +247,15 @@ Relay Server 不需要获得短信正文明文，也能完成命令中转。
 
 ### 增加更多 SIM Node
 
-每增加一台 Android 手机，只需重新生成一次性 Enrollment Link 并重复注册流程。每个 Node 都有独立设备身份和 Token；之后可在 PWA 中选择目标设备及对应 Android subscription 来收发短信。
+每增加一台 Android 或 Linux Modem 节点，都重新生成一次性 Enrollment Package。每个 Node 都有独立设备身份、Bearer Token 与独立 Node Key；PWA 统一选择 SMS Channel，因此 Android subscription 与 DJI/USB Modem SIM 共用同一 Inbox/发送流程。
+
+---
+
+## Linux / DJI Modem Node
+
+仓库新增 `modem_agent/` Linux Modem Agent：优先支持通用 ModemManager/`mmcli`，同时提供第一代 DJI/QDC507 类硬件的外部 `dji4g` CLI adapter。它具备本地 durable queue、短信收发、无线指标、SIM 更换 revision 与和 Android 一致的 E2EE 协议。
+
+在 PWA 中创建 **Linux / DJI Modem Node** Enrollment Package，然后按 `modem_agent/README.md` 部署。DJI Cellular Dongle 2 不假定兼容，先通过 ModemManager/硬件能力检测，再决定 adapter。
 
 ---
 
@@ -298,6 +306,19 @@ SIM Hub 不假设 Android 后台进程或 WebSocket 永远在线。
 因此临时移动网络断开、Wi-Fi 切换、进程被回收或 Relay 暂时不可达，不会被简单等同为业务数据丢失。
 
 ---
+
+## 0.2.0 加固分支
+
+- 新节点使用真正独立的 Node Key；Master Vault Key 不再离开 Controller。
+- 引入 Generic Node + Channel 模型，统一 Android 与 Linux/DJI Modem。
+- Live SMS 入队失败后自动从 Android SMS Provider reconciliation。
+- Android 后台执行器共享化、Job 可取消、陈旧短信 callback 自动超时收敛。
+- Multipart 短信按 part 幂等跟踪 sent/delivered/resultCode。
+- 远程短信发送前校验稳定 channel identity/revision，防换卡后发错 SIM。
+- Linux Modem Agent 支持 ModemManager 与 DJI/Quectel adapter。
+- 持续 retention/maintenance、可信反代 IP、readyz 与 Docker context 加固。
+- Device Bearer Token 两阶段自动轮换，网络中断可恢复。
+- CI 增加 v1→v4 migration、maintenance、Modem 加密/队列测试与 Android JVM 单测。
 
 ## v0.1.5 可靠性升级
 

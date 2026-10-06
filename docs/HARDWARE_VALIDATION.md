@@ -30,9 +30,9 @@ Software CI cannot prove radio/OS behavior that requires physical SIMs, OEM powe
 
 ## DJI Gen1 / QDC507 path
 
-- Confirm the connected unit is accessible through the installed external `dji4g` CLI.
+- Confirm the connected unit exposes the expected `Quectel USB AT Port` (known DJI/Quectel USB identity or explicit `SIMHUB_AT_PORT`).
 - Receive plain GSM and UCS2 Chinese SMS.
-- Send plain GSM and Chinese/UCS2 SMS supported by the CLI/modem.
+- Send short and concatenated long SMS, including Chinese/UCS2, through the direct PDU path.
 - USB unplug/replug and host reboot.
 - Signal/operator/cell telemetry.
 - SIM replacement revision safety.

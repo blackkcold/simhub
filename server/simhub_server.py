@@ -680,10 +680,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def create_enrollment(self,body:dict[str,Any]) -> None:
         eid=str(uuid.uuid4()); token=new_token(); ts=now()
         ttl=max(60,min(int(body.get("ttlSeconds",ENROLL_TTL)),3600))
+        node_type=normalize_node_type(body.get("nodeType","android"))
+        capabilities=normalize_capabilities(body.get("capabilities",[]))
+        try:
+            key_id,wrapped=normalize_wrapped_key(body.get("keyId",""),body.get("wrappedKey",{}))
+        except ValueError as exc:
+            self.send_error_json(400,"invalid_key",str(exc)); return
         with open_db() as con:
-            con.execute("INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at) VALUES(?,?,?,?)",(eid,sha256_text(token),ts,ts+ttl))
+            con.execute(
+                "INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at,node_type,capabilities_json,key_id,wrapped_key_json) VALUES(?,?,?,?,?,?,?,?)",
+                (eid,sha256_text(token),ts,ts+ttl,node_type,json.dumps(capabilities,separators=(",",":")),key_id,json.dumps(wrapped,separators=(",",":"))),
+            )
         audit("enrollment.create",eid,"ok",self.ip)
-        self.send_json(201,{"id":eid,"token":token,"expiresAt":ts+ttl,"server":PUBLIC_BASE_URL or None})
+        self.send_json(201,{"id":eid,"token":token,"expiresAt":ts+ttl,"server":PUBLIC_BASE_URL or None,"nodeType":node_type,"keyId":key_id or None})
 
     def enroll_device(self,body:dict[str,Any]) -> None:
         token=str(body.get("token",""))
@@ -696,14 +705,18 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 audit("enrollment.consume","","denied",self.ip)
                 self.send_error_json(401,"invalid_enrollment","Enrollment token invalid, expired, or already used"); return
             device_id=str(uuid.uuid4()); device_token=new_token(48)
-            name=str(body.get("name") or body.get("model") or "Android SIM Node")[:80]
+            node_type=normalize_node_type(row["node_type"] or body.get("nodeType","android"))
+            capabilities=normalize_capabilities(safe_json_loads(row["capabilities_json"],[]) or body.get("capabilities",[]))
+            default_name="Android SIM Node" if node_type=="android" else "Modem SIM Node"
+            name=str(body.get("name") or body.get("model") or default_name)[:80]
             con.execute(
-                "INSERT INTO devices(id,token_hash,name,group_name,model,os_version,app_version,created_at,last_seen_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts),
+                """INSERT INTO devices(id,token_hash,name,group_name,model,os_version,app_version,created_at,last_seen_at,node_type,capabilities_json,key_id,wrapped_key_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}")),
             )
             con.execute("UPDATE enrollment_tokens SET used_at=? WHERE id=?",(ts,row["id"]))
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
-        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"serverTime":ts})
+        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None})
 
     def get_devices(self) -> None:
         ts=now()
@@ -714,6 +727,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
             last=r["last_seen_at"] or 0
             out.append({
                 "id":r["id"],"name":r["name"],"group":r["group_name"],"model":r["model"],"osVersion":r["os_version"],"appVersion":r["app_version"],
+                "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,
+                "wrappedKey":safe_json_loads(r["wrapped_key_json"],{}) if r["key_id"] else None,
+                "pendingKeyId":r["pending_key_id"] or None,
                 "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),
                 "state":safe_json_loads(r["state_json"],{}) if r["state_json"] else None,
             })

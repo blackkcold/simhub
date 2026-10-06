@@ -128,6 +128,15 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=old,admin=False)[0],401)
         self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=new,admin=False)[0],200)
 
+    def test_expired_pending_token_keeps_current_token_valid(self):
+        d=self.enroll('RotateExpiry');did=d['deviceId'];old=d['deviceToken']
+        st,p,_=self.req('POST',f'/api/v1/devices/{did}/token/prepare',{},device_token=old,admin=False);self.assertEqual(st,201)
+        with sqlite3.connect(self.db) as con:
+            con.execute("UPDATE devices SET pending_token_expires_at=? WHERE id=?",(int(time.time())-1,did))
+        import simhub_server as _unused  # documentation of server-side maintenance semantics
+        self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=old,admin=False)[0],200)
+        st,_,_=self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=p['deviceToken'],admin=False);self.assertEqual(st,401)
+
     def test_phone_commands_rejected(self):
         d=self.enroll()
         st,r,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands",{'type':'call.place','ciphertext':self.cipher()})

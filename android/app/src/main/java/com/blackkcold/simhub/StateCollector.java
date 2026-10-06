@@ -103,7 +103,7 @@ public final class StateCollector {
         }catch(Exception ignored){}
     }
 
-    private static void putAvailable(JSONObject out,String key,int value){if(value!=CellInfo.UNAVAILABLE)out.put(key,value);}
+    private static void putAvailable(JSONObject out,String key,int value){if(value!=CellInfo.UNAVAILABLE)try{out.put(key,value);}catch(Exception ignored){}}
     private static String network(Context c){try{ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);NetworkCapabilities n=cm.getNetworkCapabilities(cm.getActiveNetwork());if(n==null)return "OFFLINE";if(n.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))return "WIFI";if(n.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR))return "CELLULAR";if(n.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))return "ETHERNET";if(n.hasTransport(NetworkCapabilities.TRANSPORT_VPN))return "VPN";return "OTHER";}catch(Exception e){return "UNKNOWN";}}
     private static String service(ServiceState s){if(s==null)return "UNKNOWN";return switch(s.getState()){case ServiceState.STATE_IN_SERVICE->"IN_SERVICE";case ServiceState.STATE_OUT_OF_SERVICE->"OUT_OF_SERVICE";case ServiceState.STATE_EMERGENCY_ONLY->"EMERGENCY_ONLY";case ServiceState.STATE_POWER_OFF->"POWER_OFF";default->"UNKNOWN";};}
     private static String networkType(int t){return switch(t){case TelephonyManager.NETWORK_TYPE_NR->"5G";case TelephonyManager.NETWORK_TYPE_LTE->"LTE";case TelephonyManager.NETWORK_TYPE_HSPAP,TelephonyManager.NETWORK_TYPE_HSPA,TelephonyManager.NETWORK_TYPE_UMTS->"3G";case TelephonyManager.NETWORK_TYPE_EDGE,TelephonyManager.NETWORK_TYPE_GPRS,TelephonyManager.NETWORK_TYPE_GSM->"2G";default->String.valueOf(t);};}

@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ApiClient {
     private static final AtomicBoolean SYNC_BUSY=new AtomicBoolean(false);
+    private static final long TOKEN_ROTATE_AFTER=60L*86400;
     private final Context c;private final AgentConfig cfg;
     public ApiClient(Context c){this.c=c.getApplicationContext();cfg=new AgentConfig(c);}
 
@@ -27,6 +28,7 @@ public final class ApiClient {
     public void syncCycle(){
         if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
         try{
+            rotateDeviceTokenIfNeeded();
             LocalStore store=LocalStore.get(c);
             store.recoverStaleClaims();
             for(String id:store.expireStalePendingSms(48L*3600)){store.finishCommand(id,"failed");store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));}
@@ -38,6 +40,22 @@ public final class ApiClient {
             putState();
             heartbeat();
         }catch(Exception ignored){}finally{SYNC_BUSY.set(false);}
+    }
+
+    private void rotateDeviceTokenIfNeeded()throws Exception{
+        long ts=System.currentTimeMillis()/1000;
+        if(cfg.tokenRotationPending()){
+            JSONObject committed=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject());
+            cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));
+            return;
+        }
+        long issued=cfg.tokenIssuedAt();
+        if(issued>0&&ts-issued<TOKEN_ROTATE_AFTER)return;
+        JSONObject prepared=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/prepare",new JSONObject());
+        String next=prepared.getString("deviceToken");
+        cfg.stageDeviceToken(next);
+        JSONObject committed=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject());
+        cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));
     }
 
     public void flushEvents()throws Exception{

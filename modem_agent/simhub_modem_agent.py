@@ -265,6 +265,11 @@ class Store:
         self.db.execute("DELETE FROM command_acks WHERE command_id=?", (command_id,))
         self.db.commit()
 
+    def prune(self) -> None:
+        self.db.execute("DELETE FROM seen_sms WHERE seen_at<?",(now()-30*86400,))
+        self.db.execute("DELETE FROM processed_commands WHERE processed_at<? AND state!='claimed'",(now()-30*86400,))
+        self.db.commit()
+
     def recover_interrupted_claims(self) -> None:
         rows = self.db.execute("SELECT id FROM processed_commands WHERE state='claimed' AND processed_at<?", (now() - 120,)).fetchall()
         for r in rows:
@@ -279,6 +284,7 @@ class SmsRecord:
     sender: str
     body: str
     occurred_at: int
+    ref: str = ""
 
 
 class ModemAdapter:
@@ -295,6 +301,9 @@ class ModemAdapter:
 
     def send_sms(self, to: str, body: str) -> dict[str, Any]:
         raise NotImplementedError
+
+    def delete_sms(self, sms: SmsRecord) -> None:
+        return
 
 
 def run_command(argv: list[str], timeout: int = 20) -> str:
@@ -412,13 +421,19 @@ class Dji4gAdapter(ModemAdapter):
                     body_lines.append(lines[i].strip())
                 i += 1
             body = decode_ucs2("\n".join(body_lines))
-            records.append(SmsRecord(local_id=f"dji4g-{idx}", sender=sender, body=body, occurred_at=now()))
+            occurred=now()
+            digest=hashlib.sha256((sender+"\0"+body+"\0"+str(occurred)).encode()).hexdigest()[:16]
+            records.append(SmsRecord(local_id=f"dji4g-{idx}-{digest}", sender=sender, body=body, occurred_at=occurred, ref=idx))
         return records[:MAX_SMS_PER_CYCLE]
 
     def send_sms(self, to: str, body: str) -> dict[str, Any]:
         out = run_command(["dji4g", "sms", "send", to, body], timeout=60)
         match = re.search(r"\+CMGS:\s*(\d+)", out)
         return {"adapter": self.name, "messageRef": int(match.group(1)) if match else None}
+
+    def delete_sms(self, sms: SmsRecord) -> None:
+        if sms.ref and str(sms.ref).isdigit():
+            self.at("AT+CMGD="+str(sms.ref))
 
 
 class MmcliAdapter(ModemAdapter):
@@ -481,7 +496,8 @@ class MmcliAdapter(ModemAdapter):
                     ts = int(datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp())
                 except Exception:
                     pass
-            out.append(SmsRecord(local_id="mm-"+path.rsplit("/", 1)[-1], sender=str(number), body=str(text), occurred_at=ts))
+            digest=hashlib.sha256((str(number)+"\0"+str(text)+"\0"+str(ts)).encode()).hexdigest()[:16]
+            out.append(SmsRecord(local_id="mm-"+path.rsplit("/", 1)[-1]+"-"+digest, sender=str(number), body=str(text), occurred_at=ts, ref=path))
         return out
 
     def send_sms(self, to: str, body: str) -> dict[str, Any]:
@@ -493,6 +509,10 @@ class MmcliAdapter(ModemAdapter):
         path=match.group(1)
         run_command(["mmcli","-s",path,"--send"],timeout=60)
         return {"adapter":self.name,"smsObject":path}
+
+    def delete_sms(self, sms: SmsRecord) -> None:
+        if sms.ref:
+            run_command(["mmcli","-m",self.modem,"--messaging-delete-sms="+sms.ref],timeout=20)
 
 
 def build_adapter(name: str) -> ModemAdapter:
@@ -561,6 +581,10 @@ class Agent:
             cipher = self.encrypt_event(event_id, "sms.received", sms.occurred_at, False, payload)
             if self.store.queue_event(event_id, "sms.received", sms.occurred_at, self.channel_id, False, {"source": self.adapter.name, "parts": 1}, cipher):
                 self.store.mark_seen(sms.local_id)
+                try:
+                    self.adapter.delete_sms(sms)
+                except Exception:
+                    pass
 
     def flush_events(self) -> None:
         for event in self.store.pending_events():
@@ -668,6 +692,7 @@ class Agent:
         )
 
     def cycle(self) -> None:
+        self.store.prune()
         self.store.recover_interrupted_claims()
         self._sync_channel_identity()
         self.receive()

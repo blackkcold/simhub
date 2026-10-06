@@ -398,6 +398,30 @@ def sanitize_state(body: Any) -> dict[str,Any]:
     out["channels"]=channels[:64]
     return out
 
+def normalize_node_type(value: Any) -> str:
+    v=str(value or "android").lower()
+    return v if v in {"android","modem","gateway"} else "android"
+
+
+def normalize_capabilities(value: Any) -> list[str]:
+    out=[]
+    for cap in value if isinstance(value,list) else []:
+        if isinstance(cap,str) and re.fullmatch(r"[a-z0-9._-]{1,64}",cap):
+            out.append(cap)
+    return out[:64]
+
+
+def normalize_wrapped_key(key_id: Any, wrapped: Any) -> tuple[str,dict[str,Any]]:
+    kid=str(key_id or "")
+    if not kid:
+        return "",{}
+    if len(kid)>80 or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}",kid):
+        raise ValueError("Invalid keyId")
+    if not validate_cipher(wrapped):
+        raise ValueError("Invalid wrapped key envelope")
+    return kid,wrapped
+
+
 def signal_stream() -> None:
     global _stream_epoch
     with _stream_condition:

@@ -37,8 +37,14 @@ public final class CommandProcessor {
             JSONObject result=new JSONObject();
             switch(type){
                 case "sms.send" -> {
-                    SmsSender.send(c,id,p.getInt("subscriptionId"),p.getString("to"),p.getString("body"));
-                    ack(id,"submitted",new JSONObject().put("submitted",true));
+                    int subId;
+                    if(p.has("channelId")){
+                        ChannelIdentity.Channel ch=ChannelIdentity.resolve(c,p.getString("channelId"),p.optLong("channelRevision",0));
+                        if(ch==null){ack(id,"failed",new JSONObject().put("reason","subscription_changed"));return;}
+                        subId=ch.subscriptionId;
+                    }else subId=p.getInt("subscriptionId");
+                    SmsSender.send(c,id,subId,p.getString("to"),p.getString("body"));
+                    ack(id,"submitted",new JSONObject().put("submitted",true).put("subscriptionId",subId));
                 }
                 case "sms.sync_history" -> {result.put("queued",SmsHistorySync.sync(c,Math.min(10000,p.optInt("maxMessages",5000))));ack(id,"succeeded",result);}
                 case "device.refresh_state","subscription.refresh" -> {api.putState();result.put("refreshed",true);ack(id,"succeeded",result);}

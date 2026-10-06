@@ -205,14 +205,25 @@ def _migrate_v3(con: sqlite3.Connection) -> None:
         _add_column(con,"devices",name,ddl)
 
 
+def _migrate_v4(con: sqlite3.Connection) -> None:
+    for name,ddl in (
+        ("token_issued_at","INTEGER NOT NULL DEFAULT 0"),
+        ("pending_token_hash","TEXT NOT NULL DEFAULT ''"),
+        ("pending_token_expires_at","INTEGER NOT NULL DEFAULT 0"),
+    ):
+        _add_column(con,"devices",name,ddl)
+    con.execute("UPDATE devices SET token_issued_at=created_at WHERE token_issued_at<=0")
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         _migrate_v2(con)
         _migrate_v3(con)
+        _migrate_v4(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=3")
+        con.execute("PRAGMA user_version=4")
     run_maintenance()
 
 
@@ -351,16 +362,19 @@ def delete_session(headers) -> None:
             con.execute("DELETE FROM admin_sessions WHERE token_hash=?", (sha256_text(token),))
 
 
-def device_for_token(device_id: str, token: str) -> sqlite3.Row | None:
+def device_for_token(device_id: str, token: str, allow_pending: bool=False) -> sqlite3.Row | None:
     if not token or not TOKEN_RE.match(token):
         return None
+    digest=sha256_text(token); ts=now()
     with open_db() as con:
         row = con.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
     if not row or row["revoked_at"] is not None:
         return None
-    if not hmac.compare_digest(row["token_hash"], sha256_text(token)):
-        return None
-    return row
+    if hmac.compare_digest(row["token_hash"], digest):
+        return row
+    if allow_pending and row["pending_token_hash"] and row["pending_token_expires_at"]>=ts and hmac.compare_digest(row["pending_token_hash"],digest):
+        return row
+    return None
 
 
 def validate_cipher(obj: Any) -> bool:
@@ -610,7 +624,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<3:
+                if version<4:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -765,13 +779,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
             default_name="Android SIM Node" if node_type=="android" else "Modem SIM Node"
             name=str(body.get("name") or body.get("model") or default_name)[:80]
             con.execute(
-                """INSERT INTO devices(id,token_hash,name,group_name,model,os_version,app_version,created_at,last_seen_at,node_type,capabilities_json,key_id,wrapped_key_json)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}")),
+                """INSERT INTO devices(id,token_hash,name,group_name,model,os_version,app_version,created_at,last_seen_at,node_type,capabilities_json,key_id,wrapped_key_json,token_issued_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}"),ts),
             )
             con.execute("UPDATE enrollment_tokens SET used_at=? WHERE id=?",(ts,row["id"]))
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
-        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None})
+        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None})
 
     def get_devices(self) -> None:
         ts=now()
@@ -782,7 +796,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             last=r["last_seen_at"] or 0
             out.append({
                 "id":r["id"],"name":r["name"],"group":r["group_name"],"model":r["model"],"osVersion":r["os_version"],"appVersion":r["app_version"],
-                "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,
+                "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,"tokenIssuedAt":r["token_issued_at"],
                 "wrappedKey":safe_json_loads(r["wrapped_key_json"],{}) if r["key_id"] else None,
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
                 "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),

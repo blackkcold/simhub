@@ -33,6 +33,10 @@ public final class AgentConfig {
     public long lastQueueFailureAt(){return prefs.getLong("last_queue_failure_at",0);}
     public void clearQueueFailures(){prefs.edit().remove("queue_failures").remove("last_queue_failure_at").apply();}
     public String deviceToken(){try{return secrets.getString(SECRET_DEVICE_TOKEN);}catch(Exception e){return null;}}
+    public long tokenIssuedAt(){return prefs.getLong("token_issued_at",0);}
+    public boolean tokenRotationPending(){return prefs.getBoolean("token_rotation_pending",false);}
+    public void stageDeviceToken(String token)throws Exception{secrets.putString(SECRET_DEVICE_TOKEN,token);prefs.edit().putBoolean("token_rotation_pending",true).apply();}
+    public void commitDeviceToken(long issuedAt){prefs.edit().putLong("token_issued_at",issuedAt).putBoolean("token_rotation_pending",false).apply();}
     public byte[] vaultKey(){try{return secrets.getBytes(SECRET_VAULT_KEY);}catch(Exception e){return null;}}
     public byte[] nodeKey(){try{return secrets.getBytes(SECRET_NODE_KEY);}catch(Exception e){return null;}}
     public String nodeKeyId(){return prefs.getString("node_key_id","");}
@@ -47,7 +51,7 @@ public final class AgentConfig {
     }
 
     private void setBaseEnrollment(String server,String deviceId,String deviceName,String token)throws Exception{
-        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").apply();
+        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
         localQueueKey();
     }
@@ -75,7 +79,7 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").putBoolean("always_on",false).apply();
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").putBoolean("always_on",false).apply();
         secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);
     }
 }

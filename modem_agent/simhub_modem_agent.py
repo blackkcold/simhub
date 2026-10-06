@@ -2,7 +2,7 @@
 """SIM Hub Linux Modem Agent.
 
 Supports:
-- DJI Gen1/QDC507 via the external MIT-licensed dji4g CLI when installed.
+- DJI Gen1/QDC507 through the Quectel USB AT serial port; the external dji4g CLI is optional for documented outbound SMS/network helpers.
 - Generic Linux cellular modems through ModemManager/mmcli.
 
 The relay remains blind to SMS plaintext: the agent uses the same v2 AES-GCM
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import csv
 import hashlib
 import json
 import os
@@ -26,10 +27,13 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import serial
+from serial.tools import list_ports
 
 VERSION = "0.2.0"
 DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/config.json"))

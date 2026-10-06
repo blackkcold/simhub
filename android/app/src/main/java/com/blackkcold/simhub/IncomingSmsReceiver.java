@@ -33,10 +33,7 @@ public final class IncomingSmsReceiver extends BroadcastReceiver {
             if(contact!=null)payload.put("contactName",contact); if(otp.detected)payload.put("otp",new JSONObject().put("value",otp.value).put("confidence",otp.confidence));
             JSONObject meta=new JSONObject().put("parts",msgs.length).put("source","sms_deliver");
             boolean queued=EventQueue.queue(c,eventId,"sms.received",ts/1000,subId,otp.detected,payload,meta);
-            if(!queued){
-                new AgentConfig(c).recordQueueFailure();
-                SyncJobService.scheduleNow(c);
-            }
+            if(!queued)SyncJobService.scheduleNow(c);
         }catch(Exception ignored){
             new AgentConfig(c).recordQueueFailure();
             SyncJobService.scheduleNow(c);

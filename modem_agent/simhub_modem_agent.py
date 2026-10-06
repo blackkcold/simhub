@@ -346,12 +346,32 @@ def deep_pick(value: Any, *names: str) -> Any:
 
 def decode_ucs2(value: str) -> str:
     v = value.strip().strip('"')
-    if len(v) >= 4 and len(v) % 4 == 0 and re.fullmatch(r"[0-9A-Fa-f]+", v):
+    looks_encoded = (
+        len(v) >= 8
+        and len(v) % 4 == 0
+        and bool(re.fullmatch(r"[0-9A-Fa-f]+", v))
+        and (bool(re.search(r"[A-Fa-f]", v)) or "00" in v)
+    )
+    if looks_encoded:
         try:
             return bytes.fromhex(v).decode("utf-16-be")
         except Exception:
             pass
     return v
+
+
+def decode_message_body(body: str, dcs: int | None) -> str:
+    compact = "".join(body.split())
+    is_hex = bool(compact) and len(compact) % 4 == 0 and bool(re.fullmatch(r"[0-9A-Fa-f]+", compact))
+    dcs_is_ucs2 = dcs is not None and (dcs & 0x0C) == 0x08
+    if dcs_is_ucs2 and is_hex:
+        try:
+            return bytes.fromhex(compact).decode("utf-16-be")
+        except Exception:
+            return body
+    if dcs is None:
+        return decode_ucs2(body)
+    return body
 
 
 class DjiAtAdapter(ModemAdapter):
@@ -555,8 +575,16 @@ class DjiAtAdapter(ModemAdapter):
             try:
                 fields = next(csv.reader([line.split(":", 1)[1].strip()], skipinitialspace=True))
                 index = str(fields[0]).strip()
+                status = str(fields[1]).strip().upper() if len(fields) > 1 else ""
+                if status and not status.startswith("REC"):
+                    i += 1
+                    continue
                 sender = decode_ucs2(fields[2] if len(fields) > 2 else "")
                 stamp = fields[4] if len(fields) > 4 else ""
+                try:
+                    dcs = int(str(fields[8]).strip(), 0) if len(fields) > 8 and str(fields[8]).strip() else None
+                except ValueError:
+                    dcs = None
             except Exception:
                 i += 1
                 continue
@@ -569,7 +597,7 @@ class DjiAtAdapter(ModemAdapter):
                 if candidate:
                     body_lines.append(candidate)
                 i += 1
-            body = decode_ucs2("\n".join(body_lines))
+            body = decode_message_body("\n".join(body_lines), dcs)
             occurred = self._timestamp(stamp)
             digest = hashlib.sha256((index + "\0" + sender + "\0" + body + "\0" + stamp).encode()).hexdigest()[:20]
             records.append(SmsRecord(local_id=f"dji-at-{digest}", sender=sender, body=body, occurred_at=occurred, ref=index))

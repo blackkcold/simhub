@@ -20,7 +20,7 @@ public final class ApiClient {
 
     public static JSONObject enroll(String server,String token,String name)throws Exception{
         requireHttps(server);
-        JSONObject b=new JSONObject().put("token",token).put("name",name).put("model",Build.MANUFACTURER+" "+Build.MODEL).put("osVersion",Build.VERSION.RELEASE).put("appVersion",BuildConfig.VERSION_NAME);
+        JSONObject b=new JSONObject().put("token",token).put("name",name).put("model",Build.MANUFACTURER+" "+Build.MODEL).put("osVersion",Build.VERSION.RELEASE).put("appVersion",BuildConfig.VERSION_NAME).put("nodeType","android").put("capabilities",new JSONArray().put("sms.receive").put("sms.send").put("sms.history").put("signal.basic").put("dual-sim"));
         return raw(server+"/api/v1/enroll","POST",b,null,null);
     }
 

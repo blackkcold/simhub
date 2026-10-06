@@ -228,7 +228,7 @@ def init_db() -> None:
 
 
 def run_maintenance() -> dict[str,int]:
-    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0}
+    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0,"pendingTokens":0}
     with open_db() as con:
         if EVENT_RETENTION_DAYS>0:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
@@ -237,6 +237,7 @@ def run_maintenance() -> dict[str,int]:
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=?",(ts,)).rowcount
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
+        result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
     return result
 
 

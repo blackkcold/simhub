@@ -695,6 +695,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             self.heartbeat(p[3],body); return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["token","prepare"]:
+            if not self.require_device(p[3]):return
+            self.prepare_device_token(p[3]); return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["token","commit"]:
+            auth=self.headers.get("Authorization","")
+            if not auth.startswith("Device ") or not device_for_token(p[3],auth[7:],allow_pending=True):
+                self.send_error_json(401,"unauthorized","Current or pending device token required"); return
+            self.commit_device_token(p[3],auth[7:]); return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="commands":
             if not self.require_admin():return
             body=self.read_json()
@@ -835,6 +843,29 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(404,"device_not_found","Device not found"); return
         audit("device.patch",device_id,"ok",self.ip); signal_stream()
         self.send_json(200,{"ok":True})
+
+    def prepare_device_token(self,device_id:str) -> None:
+        token=new_token(48);ts=now();expires=ts+3600
+        with open_db() as con:
+            cur=con.execute("UPDATE devices SET pending_token_hash=?,pending_token_expires_at=? WHERE id=? AND revoked_at IS NULL",(sha256_text(token),expires,device_id))
+        if not cur.rowcount:
+            self.send_error_json(404,"device_not_found","Active device not found"); return
+        audit("device.token.prepare",device_id,"ok",self.ip)
+        self.send_json(201,{"deviceToken":token,"expiresAt":expires})
+
+    def commit_device_token(self,device_id:str,token:str) -> None:
+        digest=sha256_text(token);ts=now()
+        with open_db() as con:
+            row=con.execute("SELECT token_hash,pending_token_hash,pending_token_expires_at FROM devices WHERE id=? AND revoked_at IS NULL",(device_id,)).fetchone()
+            if not row:
+                self.send_error_json(404,"device_not_found","Active device not found"); return
+            if hmac.compare_digest(row["token_hash"],digest):
+                self.send_json(200,{"ok":True,"alreadyCommitted":True,"tokenIssuedAt":ts}); return
+            if not row["pending_token_hash"] or row["pending_token_expires_at"]<ts or not hmac.compare_digest(row["pending_token_hash"],digest):
+                self.send_error_json(401,"invalid_pending_token","Pending token is invalid or expired"); return
+            con.execute("UPDATE devices SET token_hash=?,token_issued_at=?,pending_token_hash='',pending_token_expires_at=0 WHERE id=?",(digest,ts,device_id))
+        audit("device.token.commit",device_id,"ok",self.ip);signal_stream()
+        self.send_json(200,{"ok":True,"tokenIssuedAt":ts})
 
     def heartbeat(self,device_id:str,body:dict[str,Any]) -> None:
         ts=now()

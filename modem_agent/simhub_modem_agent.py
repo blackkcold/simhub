@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -756,6 +757,9 @@ class MmcliAdapter(ModemAdapter):
         out: list[SmsRecord] = []
         for path in self._sms_paths()[:MAX_SMS_PER_CYCLE]:
             data = maybe_json(run_command(["mmcli", "-s", path, "-J"], timeout=20))
+            sms_state = str(deep_pick(data, "state") or "").lower()
+            if sms_state and "received" not in sms_state:
+                continue
             text = deep_pick(data, "text") or ""
             number = deep_pick(data, "number") or ""
             timestamp = deep_pick(data, "timestamp")
@@ -771,13 +775,28 @@ class MmcliAdapter(ModemAdapter):
         return out
 
     def send_sms(self, to: str, body: str) -> dict[str, Any]:
-        spec=f"text='{body.replace(chr(39), '')}',number='{to}'"
-        created=run_command(["mmcli", "-m", self.modem, f"--messaging-create-sms={spec}"], timeout=30)
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", prefix="simhub-sms-", suffix=".txt", delete=False) as handle:
+                handle.write(body)
+                temp_path = handle.name
+            os.chmod(temp_path, 0o600)
+            spec=f"number='{to}'"
+            created=run_command(
+                ["mmcli", "-m", self.modem, f"--messaging-create-sms={spec}", f"--messaging-create-sms-with-text={temp_path}"],
+                timeout=30,
+            )
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
         match=re.search(r"(/org/freedesktop/ModemManager1/SMS/\d+)",created)
         if not match:
             raise RuntimeError("ModemManager did not return an SMS object")
         path=match.group(1)
-        run_command(["mmcli","-s",path,"--send"],timeout=60)
+        run_command(["mmcli","-s",path,"--send"],timeout=90)
         return {"adapter":self.name,"smsObject":path}
 
     def delete_sms(self, sms: SmsRecord) -> None:

@@ -3,7 +3,7 @@ import tempfile, unittest
 from pathlib import Path
 
 from simhub_modem_agent import (
-    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2
+    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2, decode_message_body
 )
 
 class ModemAgentTest(unittest.TestCase):
@@ -32,6 +32,11 @@ class ModemAgentTest(unittest.TestCase):
     def test_ucs2_decode(self):
         self.assertEqual(decode_ucs2('4F60597D'),'你好')
         self.assertEqual(decode_ucs2('hello'),'hello')
+
+    def test_numeric_otp_is_not_misdecoded_as_ucs2(self):
+        self.assertEqual(decode_ucs2('12345678'),'12345678')
+        self.assertEqual(decode_message_body('12345678',0),'12345678')
+        self.assertEqual(decode_message_body('9A8C8BC17801',8),'验证码')
 
     def test_dji_pdu_supports_unicode_and_multipart(self):
         single=DjiAtAdapter._submit_pdus('+8613800138000','你好123')

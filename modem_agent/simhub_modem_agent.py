@@ -575,37 +575,99 @@ class DjiAtAdapter(ModemAdapter):
             records.append(SmsRecord(local_id=f"dji-at-{digest}", sender=sender, body=body, occurred_at=occurred, ref=index))
         return records[:MAX_SMS_PER_CYCLE]
 
-    def _direct_send(self, to: str, body: str) -> dict[str, Any]:
-        with self._open() as ser:
-            self._initialize(ser)
-            unicode_mode = any(ord(ch) > 127 for ch in body)
-            if unicode_mode:
-                self._command(ser, 'AT+CSCS="UCS2"', timeout=4)
-                self._command(ser, "AT+CSMP=17,167,0,8", timeout=4)
-                number = to.encode("utf-16-be").hex().upper()
-                content = body.encode("utf-16-be").hex().upper()
+    @staticmethod
+    def _ucs2_chunks(body: str, max_octets: int) -> list[str]:
+        chunks: list[str] = []
+        current = ""
+        for ch in body:
+            candidate = current + ch
+            if len(candidate.encode("utf-16-be")) > max_octets:
+                if not current:
+                    raise ValueError("A single Unicode character exceeds SMS payload capacity")
+                chunks.append(current)
+                current = ch
             else:
-                self._command(ser, 'AT+CSCS="GSM"', timeout=4)
-                number = to
-                content = body
-            ser.reset_input_buffer()
-            ser.write((f'AT+CMGS="{number}"\r').encode("ascii"))
-            ser.flush()
-            self._read_until(ser, 8, prompt=True)
-            ser.write(content.encode("ascii", "strict") + b"\x1a")
-            ser.flush()
-            result = self._read_until(ser, 90)
-        match = re.search(r"\+CMGS:\s*(\d+)", result)
-        return {"adapter": self.name, "messageRef": int(match.group(1)) if match else None}
+                current = candidate
+        if current:
+            chunks.append(current)
+        return chunks
+
+    @staticmethod
+    def _destination(to: str) -> tuple[int, str, str]:
+        digits = re.sub(r"[^0-9]", "", to)
+        if not digits:
+            raise ValueError("SMS destination has no digits")
+        padded = digits + ("F" if len(digits) % 2 else "")
+        swapped = "".join(padded[i + 1] + padded[i] for i in range(0, len(padded), 2))
+        return len(digits), ("91" if to.startswith("+") else "81"), swapped
+
+    @classmethod
+    def _submit_pdus(cls, to: str, body: str) -> list[str]:
+        if not body:
+            raise ValueError("SMS body is empty")
+        da_len, toa, da = cls._destination(to)
+        raw = body.encode("utf-16-be")
+        if len(raw) <= 140:
+            chunks = [body]
+            multipart = False
+        else:
+            chunks = cls._ucs2_chunks(body, 134)
+            multipart = True
+        if len(chunks) > 255:
+            raise ValueError("SMS requires too many multipart segments")
+        ref = os.urandom(1)[0]
+        pdus: list[str] = []
+        for index, chunk in enumerate(chunks, start=1):
+            user = chunk.encode("utf-16-be")
+            if multipart:
+                udh = bytes([0x05, 0x00, 0x03, ref, len(chunks), index])
+                user = udh + user
+                first_octet = 0x51
+            else:
+                first_octet = 0x11
+            if len(user) > 140:
+                raise ValueError("Encoded SMS segment exceeds 140 octets")
+            tpdu = (
+                f"{first_octet:02X}"
+                "00"
+                f"{da_len:02X}"
+                f"{toa}"
+                f"{da}"
+                "00"
+                "08"
+                "AA"
+                f"{len(user):02X}"
+                + user.hex().upper()
+            )
+            pdus.append("00" + tpdu)
+        return pdus
+
+    def _direct_send(self, to: str, body: str) -> dict[str, Any]:
+        pdus = self._submit_pdus(to, body)
+        refs: list[int] = []
+        with self._open() as ser:
+            self._command(ser, "ATE0", timeout=4)
+            self._command(ser, "AT+CMGF=0", timeout=4)
+            for pdu in pdus:
+                tpdu_octets = len(bytes.fromhex(pdu)) - 1
+                ser.reset_input_buffer()
+                ser.write((f"AT+CMGS={tpdu_octets}\r").encode("ascii"))
+                ser.flush()
+                self._read_until(ser, 8, prompt=True)
+                ser.write(pdu.encode("ascii") + b"\x1a")
+                ser.flush()
+                result = self._read_until(ser, 90)
+                match = re.search(r"\+CMGS:\s*(\d+)", result)
+                if match:
+                    refs.append(int(match.group(1)))
+        return {
+            "adapter": self.name,
+            "messageRef": refs[0] if refs else None,
+            "messageRefs": refs,
+            "parts": len(pdus),
+        }
 
     def send_sms(self, to: str, body: str) -> dict[str, Any]:
-        if shutil.which("dji4g"):
-            try:
-                out = run_command(["dji4g", "sms", "send", to, body], timeout=90)
-                match = re.search(r"\+CMGS:\s*(\d+)", out)
-                return {"adapter": "dji4g", "messageRef": int(match.group(1)) if match else None}
-            except Exception:
-                pass
         return self._direct_send(to, body)
 
     def delete_sms(self, sms: SmsRecord) -> None:

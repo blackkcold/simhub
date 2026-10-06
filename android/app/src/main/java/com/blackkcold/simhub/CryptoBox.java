@@ -1,7 +1,6 @@
 package com.blackkcold.simhub;
 
 import android.content.Context;
-import android.util.Base64;
 import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -119,6 +118,6 @@ public final class CryptoBox {
     public static String commandAad(String deviceId,String commandId,String type,long createdAt,long expiresAt,String idempotencyKey){
         return "simhub-command-v2|"+field(deviceId)+"|"+field(commandId)+"|"+field(type)+"|"+createdAt+"|"+expiresAt+"|"+field(idempotencyKey);
     }
-    public static String b64(byte[] b){return Base64.encodeToString(b,Base64.URL_SAFE|Base64.NO_WRAP|Base64.NO_PADDING);}
-    public static byte[] ub64(String s){return Base64.decode(s,Base64.URL_SAFE|Base64.NO_WRAP|Base64.NO_PADDING);}
+    public static String b64(byte[] b){return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(b);}
+    public static byte[] ub64(String s){return java.util.Base64.getUrlDecoder().decode(s);}
 }

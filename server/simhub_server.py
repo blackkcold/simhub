@@ -739,6 +739,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
         sets=[]; vals=[]
         if "name" in body: sets.append("name=?"); vals.append(str(body["name"])[:80])
         if "group" in body: sets.append("group_name=?"); vals.append(str(body["group"])[:80])
+        if "pendingKeyId" in body or "pendingWrappedKey" in body:
+            try:
+                kid,wrapped=normalize_wrapped_key(body.get("pendingKeyId",""),body.get("pendingWrappedKey",{}))
+            except ValueError as exc:
+                self.send_error_json(400,"invalid_key",str(exc)); return
+            if not kid:
+                self.send_error_json(400,"invalid_key","pendingKeyId and pendingWrappedKey are required"); return
+            sets.extend(["pending_key_id=?","pending_wrapped_key_json=?"])
+            vals.extend([kid,json.dumps(wrapped,separators=(",",":"))])
         if body.get("revoke") is True: sets.append("revoked_at=?"); vals.append(now())
         if body.get("restore") is True:
             self.send_error_json(400,"reenroll_required","Revoked devices must be re-enrolled"); return
@@ -808,18 +817,48 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if len(raw)>200_000:
             self.send_error_json(413,"state_too_large","State exceeds 200 KB"); return
         ts=now()
+        node_type=normalize_node_type(state.get("nodeType","android"))
+        capabilities=normalize_capabilities(state.get("capabilities",[]))
+        active_key=str(state.get("cryptoKeyId") or "")[:80]
         with open_db() as con:
             con.execute("INSERT INTO device_state(device_id,state_json,updated_at) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET state_json=excluded.state_json,updated_at=excluded.updated_at",(device_id,raw,ts))
-            con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(ts,device_id))
-            for s in state.get("subscriptions",[]):
-                sub_id=str(s.get("subscriptionId",""))
+            row=con.execute("SELECT pending_key_id,pending_wrapped_key_json FROM devices WHERE id=?",(device_id,)).fetchone()
+            if row and active_key and row["pending_key_id"]==active_key:
+                con.execute(
+                    "UPDATE devices SET last_seen_at=?,node_type=?,capabilities_json=?,key_id=pending_key_id,wrapped_key_json=pending_wrapped_key_json,pending_key_id='',pending_wrapped_key_json='{}' WHERE id=?",
+                    (ts,node_type,json.dumps(capabilities,separators=(",",":")),device_id),
+                )
+            else:
+                con.execute("UPDATE devices SET last_seen_at=?,node_type=?,capabilities_json=? WHERE id=?",(ts,node_type,json.dumps(capabilities,separators=(",",":")),device_id))
+
+            for item in state.get("subscriptions",[]):
+                sub_id=str(item.get("subscriptionId",""))
                 if not sub_id: continue
                 sid=str(uuid.uuid5(uuid.NAMESPACE_URL,f"simhub:{device_id}:{sub_id}"))
                 con.execute(
                     """INSERT INTO subscriptions(id,device_id,android_sub_id,slot_index,carrier_name,display_name,is_embedded,state_json,first_seen_at,last_seen_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(device_id,android_sub_id) DO UPDATE SET slot_index=excluded.slot_index,carrier_name=excluded.carrier_name,display_name=excluded.display_name,is_embedded=excluded.is_embedded,state_json=excluded.state_json,last_seen_at=excluded.last_seen_at""",
-                    (sid,device_id,sub_id,int(s.get("slotIndex",-1)),str(s.get("carrierName",""))[:120],str(s.get("displayName",""))[:120],1 if s.get("isEmbedded") else 0,json.dumps(s,separators=(",",":")),ts,ts),
+                    (sid,device_id,sub_id,int(item.get("slotIndex",-1)),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],1 if item.get("isEmbedded") else 0,json.dumps(item,separators=(",",":")),ts,ts),
+                )
+
+            channels=state.get("channels",[])
+            if not channels and state.get("subscriptions"):
+                channels=[{
+                    "id":str(x.get("channelId") or uuid.uuid5(uuid.NAMESPACE_URL,f"simhub:{device_id}:{x.get('subscriptionId','')}")),
+                    "localId":str(x.get("subscriptionId","")),
+                    "kind":"android-sim",
+                    "revision":int(x.get("channelRevision",1) or 1),
+                    **x,
+                } for x in state["subscriptions"]]
+            for item in channels:
+                cid=str(item.get("id",""))[:160]
+                if not cid: continue
+                con.execute(
+                    """INSERT INTO channels(id,device_id,local_id,kind,revision,slot_index,carrier_name,display_name,state_json,first_seen_at,last_seen_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(device_id,id) DO UPDATE SET local_id=excluded.local_id,kind=excluded.kind,revision=excluded.revision,slot_index=excluded.slot_index,carrier_name=excluded.carrier_name,display_name=excluded.display_name,state_json=excluded.state_json,last_seen_at=excluded.last_seen_at""",
+                    (cid,device_id,str(item.get("localId",""))[:120],str(item.get("kind","sim"))[:40],max(1,int(item.get("revision",1) or 1)),int(item.get("slotIndex",-1) or -1),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],json.dumps(item,separators=(",",":")),ts,ts),
                 )
         signal_stream()
         self.send_json(200,{"ok":True,"updatedAt":ts})

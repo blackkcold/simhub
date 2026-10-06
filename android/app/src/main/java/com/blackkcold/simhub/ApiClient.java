@@ -45,16 +45,22 @@ public final class ApiClient {
     private void rotateDeviceTokenIfNeeded()throws Exception{
         long ts=System.currentTimeMillis()/1000;
         if(cfg.tokenRotationPending()){
-            JSONObject committed=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject());
-            cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));
-            return;
+            String pending=cfg.pendingDeviceToken();
+            if(pending==null||pending.isBlank()||cfg.pendingTokenExpiresAt()<=ts){
+                cfg.discardPendingDeviceToken();
+            }else{
+                JSONObject committed=requestWithToken("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject(),pending);
+                cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));
+                return;
+            }
         }
         long issued=cfg.tokenIssuedAt();
         if(issued>0&&ts-issued<TOKEN_ROTATE_AFTER)return;
         JSONObject prepared=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/prepare",new JSONObject());
         String next=prepared.getString("deviceToken");
-        cfg.stageDeviceToken(next);
-        JSONObject committed=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject());
+        long expiresAt=prepared.optLong("expiresAt",ts+3600);
+        cfg.stageDeviceToken(next,expiresAt);
+        JSONObject committed=requestWithToken("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject(),next);
         cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));
     }
 
@@ -86,6 +92,11 @@ public final class ApiClient {
         if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");
         requireHttps(cfg.server());
         return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());
+    }
+    private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{
+        if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");
+        requireHttps(cfg.server());
+        return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());
     }
     private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId)throws Exception{
         HttpURLConnection con=(HttpURLConnection)new URL(url).openConnection();

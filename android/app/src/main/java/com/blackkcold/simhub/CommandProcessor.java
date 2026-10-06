@@ -37,12 +37,10 @@ public final class CommandProcessor {
             JSONObject result=new JSONObject();
             switch(type){
                 case "sms.send" -> {
-                    int subId;
-                    if(p.has("channelId")){
-                        ChannelIdentity.Channel ch=ChannelIdentity.resolve(c,p.getString("channelId"),p.optLong("channelRevision",0));
-                        if(ch==null){ack(id,"failed",new JSONObject().put("reason","subscription_changed"));return;}
-                        subId=ch.subscriptionId;
-                    }else subId=p.getInt("subscriptionId");
+                    if(!p.has("channelId")||p.optLong("channelRevision",0)<=0){ack(id,"failed",new JSONObject().put("reason","channel_identity_required"));return;}
+                    ChannelIdentity.Channel ch=ChannelIdentity.resolve(c,p.getString("channelId"),p.getLong("channelRevision"));
+                    if(ch==null){ack(id,"failed",new JSONObject().put("reason","subscription_changed"));return;}
+                    int subId=ch.subscriptionId;
                     SmsSender.send(c,id,subId,p.getString("to"),p.getString("body"));
                     ack(id,"submitted",new JSONObject().put("submitted",true).put("subscriptionId",subId));
                 }

@@ -2,9 +2,9 @@
 
 ## Trust boundaries
 
-- **Controller/PWA**: holds the Vault Key while unlocked.
-- **Android node**: stores the Vault Key wrapped by Android Keystore.
-- **Relay**: never receives the Vault Key through an API endpoint.
+- **Controller/PWA**: holds the Master Vault Key while unlocked and unwraps per-node Node Keys locally.
+- **Android node / Linux Modem Agent**: stores only its own independent Node Key.
+- **Relay**: stores only wrapped Node Key envelopes and never receives the Master Vault Key or Node Keys in plaintext.
 
 ## Enrollment
 
@@ -29,7 +29,7 @@ AAD: `simhub-event-v1`
 }
 ```
 
-The plaintext is a JSON object. For `sms.received`, it can include sender, contact name, body, OTP result and subscription ID. Only `hasOtp` is duplicated as relay-readable metadata, never the OTP value.
+The plaintext is a JSON object. For `sms.received`, it can include sender, contact name, body, OTP result and Channel identity. Only `hasOtp` is duplicated as relay-readable metadata, never the OTP value.
 
 ## Command encryption
 
@@ -47,7 +47,7 @@ expiresAt |
 base64url(idempotencyKey)
 ```
 
-v2 event AAD similarly binds deviceId, eventId, kind, occurredAt, subscriptionId and hasOtp. v2 envelopes include a per-device key identifier (`kid`).
+v2 event AAD binds deviceId, eventId, kind, occurredAt, the relay routing field (Channel ID for 0.2 nodes; legacy subscription ID for older events) and hasOtp. v2 envelopes include the active Node Key identifier (`kid`).
 
 Plaintext contains at least:
 
@@ -58,7 +58,8 @@ Plaintext contains at least:
   "commandId": "uuid",
   "issuedAt": 1791190000,
   "expiresAt": 1791190120,
-  "subscriptionId": 2,
+  "channelId": "57d8…",
+  "channelRevision": 3,
   "to": "+86...",
   "body": "..."
 }
@@ -77,3 +78,43 @@ The relay sees `type=sms.send`, ID, device routing and expiry. It cannot read de
 ## Browser session authentication
 
 The PWA posts the Admin Token and optional TOTP to `POST /api/v1/auth/session`. The relay stores only a hash of the generated random session token and sets a Secure/HttpOnly/SameSite=Strict cookie. Subsequent PWA API calls and the SSE endpoint use that session cookie; the Admin Token is not persisted in browser localStorage. Direct Bearer + TOTP authentication remains available for trusted CLI/admin integrations.
+
+
+## Generic channel binding
+
+0.2 nodes expose a stable Channel identity:
+
+```json
+{
+  "id": "channel-uuid",
+  "localId": "7",
+  "kind": "android-sim",
+  "revision": 2
+}
+```
+
+A remote `sms.send` command contains both `channelId` and `channelRevision`. Android resolves that Channel to the current local `subscriptionId`; a Linux modem resolves it through its adapter. If the SIM fingerprint changed and the revision no longer matches, the command is rejected with `subscription_changed` / `channel_changed`.
+
+## Independent Node Key migration
+
+New nodes are provisioned directly with independent random Node Keys. For a legacy v0.1.5 Android node:
+
+1. Controller generates a new Node Key and stores its Master-wrapped envelope on the relay as `pending`.
+2. Controller sends `node.rotate_key` encrypted under the existing legacy-derived key.
+3. Android refuses rotation while an outbound SMS is still pending.
+4. Android stores the new Node Key, deletes the legacy Master Vault Key, and reports the new `cryptoKeyId`.
+5. Relay promotes the pending wrapped Node Key only after that confirmation.
+
+This makes rotation fail-safe across network or process interruption.
+
+## Device bearer-token rotation
+
+Device authentication tokens use a separate two-phase rotation:
+
+1. authenticated node calls `POST /api/v1/devices/{id}/token/prepare`;
+2. relay creates a pending token while leaving the current token active;
+3. node stores the new token locally;
+4. node calls `POST /api/v1/devices/{id}/token/commit` with the pending token;
+5. relay atomically promotes it.
+
+If the process crashes between steps 3 and 4, the node retains the pending token locally and retries only the commit on the next sync cycle.

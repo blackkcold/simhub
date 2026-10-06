@@ -2,7 +2,7 @@
 
 # SIM Hub
 
-**Turn an Android phone into a private, self-hosted SIM / SMS hub.**
+**Turn Android phones and supported cellular modems into a private, self-hosted SIM / SMS hub.**
 
 Use your own server as an encrypted relay to remotely receive SMS, extract OTPs, manage multiple SIMs, and send SMS from a Web/PWA controller.
 
@@ -24,7 +24,7 @@ Use your own server as an encrypted relay to remotely receive SMS, extract OTPs,
 
 SIM Hub is a **personal, self-hosted remote SIM/SMS management system**.
 
-One or more Android phones act as **SIM Nodes**. Your own server provides only the relay, queue and device-control plane. A Web/PWA controller decrypts and displays messages locally.
+Android phones and supported Linux cellular modems act as **SIM Nodes**. Your own server provides only the relay, durable queue and device-control plane. A Web/PWA controller decrypts and displays messages locally.
 
 It is designed for use cases such as:
 
@@ -33,7 +33,7 @@ It is designed for use cases such as:
 - copying verification codes from another device;
 - sending SMS remotely through a selected SIM;
 - monitoring SIM, carrier, signal, battery and device state;
-- managing several Android SIM Nodes from one private control panel.
+- managing several Android and Linux/DJI modem SIM Nodes from one private control panel.
 
 > **Scope:** SIM Hub is an SMS/SIM product. It intentionally does **not** implement phone calls, dialer replacement, call logs, cellular-call audio, SIP/WebRTC or PSTN bridging.
 
@@ -44,6 +44,7 @@ It is designed for use cases such as:
 ```mermaid
 flowchart LR
     SIM["SIM / eSIM"] --> A["Android SIM Node"]
+    MODEM["DJI / USB cellular modem"] --> M["Linux Modem Agent"]
     A -->|"HTTPS · encrypted events"| R["Personal Relay Server"]
     R -->|"encrypted events / commands"| W["Web / PWA Controller"]
     W -->|"encrypted SMS command"| R
@@ -74,7 +75,7 @@ Web / PWA Controller
   └─ local decrypt / search / copy / send
 ```
 
-The relay is intentionally **blind to SMS plaintext**. The Vault Key is shared between the controller and Android node during enrollment and is not provided to the relay during normal operation.
+The relay is intentionally **blind to SMS plaintext**. New nodes receive a random independent Node Key; the Master Vault Key stays in the controller. The relay stores only a Master-wrapped Node Key envelope plus ciphertext/routing metadata. Legacy v0.1.5 nodes can rotate online to independent Node Keys.
 
 ---
 
@@ -84,12 +85,12 @@ The relay is intentionally **blind to SMS plaintext**. The Vault Key is shared b
 |---|---|
 | **SMS** | Receive SMS, history sync, remote send, multipart handling |
 | **OTP** | Local OTP detection; OTP value remains inside the encrypted payload |
-| **Multi-SIM** | Dual-SIM/eSIM aware routing using Android `subscriptionId` |
+| **Multi-SIM / modem** | Stable `channelId + revision` routing across Android subscriptions and Linux/DJI modem channels |
 | **Remote control** | Select device + SIM and send SMS from the PWA |
-| **Devices** | Multiple Android nodes, aliases, groups and online state |
+| **Devices** | Multiple Android and Linux/modem nodes, aliases, groups and online state |
 | **Telemetry** | Carrier, service state, signal, battery, charging, network and agent status |
 | **Offline reliability** | Durable Android event queue + durable server command queue |
-| **Security** | AES-256-GCM E2EE, per-device HKDF keys, Android Keystore, hashed device tokens, bound metadata, command expiry/idempotency |
+| **Security** | AES-256-GCM E2EE, independent Node Keys, Android Keystore/local protected modem config, metadata-bound AAD, two-phase rotating bearer tokens |
 | **Controller** | Installable PWA with inbox, OTP copy, search, send, devices, recovery import, SSE realtime updates and diagnostics |
 | **Authentication** | High-entropy admin token + optional TOTP at login, then short-lived HttpOnly session |
 | **Notifications** | Optional metadata-only webhook for Bark/ntfy/custom bridges |
@@ -100,7 +101,7 @@ The relay is intentionally **blind to SMS plaintext**. The Vault Key is shared b
 - **minSdk:** Android 10 / API 29
 - **targetSdk / compileSdk:** Android 17 / API 37
 - Designed to operate as the **default SMS app** for reliable arbitrary SMS/OTP handling on modern Android.
-- Multi-SIM routing uses subscription IDs rather than fixed SIM1/SIM2 assumptions.
+- Remote SMS routing uses stable Channel IDs and revisions. Android `subscriptionId` is only a local adapter identifier and stale commands are rejected after SIM replacement.
 
 See [Compatibility](docs/COMPATIBILITY.md) for OEM/background considerations.
 
@@ -145,7 +146,7 @@ Then:
 1. enter the admin token;
 2. optionally enter TOTP to create a short-lived HttpOnly browser session;
 3. create, import, or unlock the local Vault;
-4. create a one-time Android enrollment link.
+4. create an Android deep-link or Linux/DJI modem enrollment package.
 
 ### 3. Install the Android Agent
 
@@ -220,7 +221,7 @@ In daily use, open the PWA on your computer, tablet or another phone. New messag
 ### Sending SMS remotely
 
 ```text
-PWA: choose Android device
+PWA: choose node
     ↓
 choose SIM / subscription
     ↓
@@ -230,9 +231,9 @@ encrypt command locally
     ↓
 Relay Server queues encrypted command
     ↓
-Android SIM Node fetches command
+Android / Modem Node fetches command
     ↓
-selected SIM sends the SMS
+selected Channel sends the SMS
     ↓
 result/status is reported back
 ```
@@ -245,7 +246,15 @@ Events and commands are persisted in queues rather than relying on a permanently
 
 ### Adding another SIM Node
 
-Repeat the enrollment process for each additional Android phone. Each node receives its own device identity/token while sharing access to the same private controller vault. You can then select the target device and Android subscription from the PWA.
+Repeat enrollment for each Android or Linux modem node. Each node receives its own identity, bearer token and independent Node Key. The PWA selects a generic SMS Channel, so Android subscriptions and DJI/USB modem SIMs share the same inbox/send workflow.
+
+---
+
+## Linux / DJI modem node
+
+A Linux Modem Agent is included under `modem_agent/`. It supports direct Quectel AT serial control for first-generation DJI/QDC507-style hardware and a generic ModemManager/`mmcli` path. The agent provides durable local queues, SMS receive/send, radio metrics, SIM-change channel revisions and the same E2EE protocol used by Android.
+
+Create a **Linux / DJI Modem Node** enrollment package in the PWA, then follow `modem_agent/README.md`. DJI Cellular Dongle 2 is capability-gated rather than assumed compatible; use ModemManager detection first.
 
 ---
 
@@ -297,6 +306,19 @@ This allows the system to recover from temporary mobile-network loss, Wi-Fi chan
 
 ---
 
+### 0.2.0 hardening branch
+
+- Independent per-node content keys; the Master Vault Key no longer leaves the controller for new nodes.
+- Generic Node + Channel model for Android and Linux/DJI modem nodes.
+- Automatic SMS Provider reconciliation after live-receiver queue failures.
+- Shared Android executors, cancellable JobService work and stale callback cleanup.
+- Per-part SMS sent/delivery tracking with failure result codes.
+- Stable channel identity/revision checks before remote SMS send.
+- Linux Modem Agent with ModemManager and DJI/Quectel adapter paths.
+- Continuous retention/maintenance, trusted reverse-proxy client IP handling, readiness checks and Docker context hardening.
+- Crash-safe two-phase device bearer-token rotation.
+- Expanded server migration/maintenance/modem tests plus Android JVM tests.
+
 ### v0.1.5 reliability changes
 
 - Event identity is scoped by device, so multiple Android nodes can safely have the same local SMS Provider ID.
@@ -308,6 +330,21 @@ This allows the system to recover from temporary mobile-network loss, Wi-Fi chan
 - PWA supports recovery-key import and SSE-driven realtime refresh with polling only as fallback.
 - Fresh-message notification rules prevent history synchronization from flooding Bark/ntfy.
 - Relay schema migrations, subscription projection, retention controls, metrics, online backup helper and rolling-upgrade compatibility are included.
+
+---
+
+## Release gates for unattended deployment
+
+Software CI now validates relay migrations/maintenance, generic node/channel protocol, Modem Agent crypto/queue behavior, Web syntax, Android JVM OTP tests and an API 37 APK build. The following still require real hardware and are intentionally **not** represented as passed by CI:
+
+- Android 17 default-SMS receive/OTP on a physical phone;
+- Doze + OEM battery manager recovery after 24–72 hours;
+- dual-SIM receive/send and physical SIM replacement revision handling;
+- reboot/unlock/autostart behavior on target vivo/OPPO/Xiaomi/Huawei/HONOR ROMs;
+- DJI Gen1/QDC507 physical SMS receive/send and modem storage cleanup;
+- DJI Cellular Dongle 2 capability detection before enabling that hardware path.
+
+See [Compatibility](docs/COMPATIBILITY.md).
 
 ---
 

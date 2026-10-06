@@ -20,14 +20,14 @@ Install the resulting APK with Android Studio or `adb install`.
 
 ## First-time setup order
 
-1. Open the PWA on your HTTPS relay and unlock/create the local Vault.
-2. In Settings, create an enrollment link.
+1. Open the PWA on your HTTPS relay and unlock/create the local Master Vault.
+2. In Settings, create an Android enrollment link. It contains only this node's independent Node Key, never the Master Vault Key.
 3. Open the `simhub://enroll?...` link on the Android SIM Node, or paste it into the Agent.
 4. Tap **Enroll this SIM Node**.
 5. Tap **Make default SMS app** and approve Android's system role dialog.
 6. Grant SMS/SIM permissions.
 7. Optionally grant Contacts permission for contact-name mapping.
-8. Start **always-on relay** for the built-in lowest-latency mode. v0.1.5 also exposes an optional server-side metadata-only push/tickle adapter hook for FCM/OEM integrations; JobScheduler remains the recovery path.
+8. Start **always-on relay** for the built-in lowest-latency mode. The server also exposes an optional metadata-only push/tickle adapter hook for FCM/OEM integrations; JobScheduler and SMS Provider reconciliation remain recovery paths.
 
 ## Background behavior
 
@@ -46,4 +46,15 @@ The manifest includes the WAP push receiver required by the default-SMS role and
 
 ## Re-enrollment safety
 
-v0.1.5 blocks silent re-enrollment. To pair an existing Android node with another Vault/relay, use **Reset enrollment / pair another vault** first. This clears SIM Hub relay queues and local credentials but does not delete SMS stored in Android's SMS Provider.
+0.2.x blocks silent re-enrollment. To pair an existing Android node with another Vault/relay, use **Reset enrollment / pair another vault** first. This clears SIM Hub relay queues and local credentials but does not delete SMS stored in Android's SMS Provider.
+
+
+## Remote SIM routing safety
+
+The controller addresses a stable `channelId` plus `channelRevision`. Android maps that identity to the current `subscriptionId` immediately before send. If a physical SIM/eSIM identity change increments the revision, a stale remote command is rejected rather than sent through the replacement line.
+
+## Token and key rotation
+
+- Device bearer tokens rotate automatically every 60 days using a crash-safe prepare/commit flow.
+- New installations hold only an independent Node Key.
+- Upgraded legacy 0.1.5 nodes can receive `node.rotate_key` after pending outbound SMS completes; the legacy Master Vault Key is then deleted from the node.

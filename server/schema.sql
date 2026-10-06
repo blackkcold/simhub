@@ -6,7 +6,11 @@ CREATE TABLE IF NOT EXISTS enrollment_tokens(
   token_hash TEXT NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
-  used_at INTEGER
+  used_at INTEGER,
+  node_type TEXT NOT NULL DEFAULT 'android',
+  capabilities_json TEXT NOT NULL DEFAULT '[]',
+  key_id TEXT NOT NULL DEFAULT '',
+  wrapped_key_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS admin_sessions(
@@ -28,7 +32,16 @@ CREATE TABLE IF NOT EXISTS devices(
   app_version TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER,
-  revoked_at INTEGER
+  revoked_at INTEGER,
+  node_type TEXT NOT NULL DEFAULT 'android',
+  capabilities_json TEXT NOT NULL DEFAULT '[]',
+  key_id TEXT NOT NULL DEFAULT '',
+  wrapped_key_json TEXT NOT NULL DEFAULT '{}',
+  pending_key_id TEXT NOT NULL DEFAULT '',
+  pending_wrapped_key_json TEXT NOT NULL DEFAULT '{}',
+  token_issued_at INTEGER NOT NULL DEFAULT 0,
+  pending_token_hash TEXT NOT NULL DEFAULT '',
+  pending_token_expires_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS events(
@@ -96,3 +109,21 @@ CREATE TABLE IF NOT EXISTS audit(
   result TEXT NOT NULL,
   ip TEXT NOT NULL DEFAULT ''
 );
+
+
+CREATE TABLE IF NOT EXISTS channels(
+  id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL,
+  local_id TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'sim',
+  revision INTEGER NOT NULL DEFAULT 1,
+  slot_index INTEGER NOT NULL DEFAULT -1,
+  carrier_name TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT '',
+  state_json TEXT NOT NULL DEFAULT '{}',
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  FOREIGN KEY(device_id) REFERENCES devices(id),
+  UNIQUE(device_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_channels_device ON channels(device_id,last_seen_at);

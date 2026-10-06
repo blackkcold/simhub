@@ -33,7 +33,7 @@ CREATE TABLE audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at INTEGER NOT
 """
 
 class MigrationTest(unittest.TestCase):
-    def test_v1_to_v2_preserves_data_and_scopes_uniqueness(self):
+    def test_v1_to_v4_preserves_data_and_adds_generic_nodes(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/"legacy.db"
             with sqlite3.connect(db) as con:
@@ -49,8 +49,13 @@ class MigrationTest(unittest.TestCase):
             finally:
                 srv.DB_PATH=old
             with sqlite3.connect(db) as con:
-                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],2)
+                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],4)
                 self.assertEqual(con.execute("SELECT COUNT(*) FROM events").fetchone()[0],1)
+                device_cols={r[1] for r in con.execute("PRAGMA table_info(devices)")}
+                token_cols={r[1] for r in con.execute("PRAGMA table_info(enrollment_tokens)")}
+                self.assertTrue({"node_type","capabilities_json","key_id","wrapped_key_json","pending_key_id","pending_wrapped_key_json","token_issued_at","pending_token_hash","pending_token_expires_at"} <= device_cols)
+                self.assertTrue({"node_type","capabilities_json","key_id","wrapped_key_json"} <= token_cols)
+                self.assertIsNotNone(con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channels'").fetchone())
                 con.execute("INSERT INTO events(id,device_id,kind,occurred_at,received_at,ciphertext_json) VALUES(?,?,?,?,?,?)",("sms-provider-42","dev-b","sms.received",2,2,'{"v":2,"alg":"A256GCM","kid":"abcdefgh1234","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
                 con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json) VALUES(?,?,?,?,?,?,?)",("cmd-b","dev-b","sms.send",1,9999999999,"same-idem",'{"v":2,"alg":"A256GCM","kid":"abcdefgh1234","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
                 self.assertEqual(con.execute("SELECT COUNT(*) FROM events WHERE id='sms-provider-42'").fetchone()[0],2)

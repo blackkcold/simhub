@@ -1,0 +1,26 @@
+[Unit]
+Description=SIM Hub Linux Modem Agent
+After=network-online.target ModemManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=simhub-modem
+Group=simhub-modem
+SupplementaryGroups=dialout
+ExecStart=/opt/simhub-modem/venv/bin/python /opt/simhub-modem/simhub_modem_agent.py --config /var/lib/simhub-modem/config.json --db /var/lib/simhub-modem/agent.db run
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/simhub-modem
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

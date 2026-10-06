@@ -18,7 +18,7 @@ public final class EventQueue {
             boolean ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
             if(ok)wake(c);
             return ok;
-        }catch(Exception ignored){return false;}
+        }catch(Exception ignored){new AgentConfig(c).recordQueueFailure();SyncJobService.scheduleNow(c);return false;}
     }
     public static boolean diagnostics(Context c,JSONObject payload){return queue(c,"diag-"+java.util.UUID.randomUUID(),"device.diagnostics",System.currentTimeMillis()/1000,-1,false,payload,new JSONObject());}
 }

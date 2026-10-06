@@ -16,32 +16,47 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
 
     @Override public void onReceive(Context c,Intent i){
         PendingResult pending=goAsync();
-        new Thread(()->{try{handle(c,i);}finally{pending.finish();}},"simhub-sms-status").start();
+        int resultCode=getResultCode();
+        AgentExecutors.io().execute(()->{try{handle(c,i,resultCode);}finally{pending.finish();}});
     }
 
-    private void handle(Context c,Intent i){
+    private void handle(Context c,Intent i,int resultCode){
         String id=i.getStringExtra("command_id");if(id==null)return;
+        int partIndex=i.getIntExtra("part_index",-1);
         try{
             LocalStore store=LocalStore.get(c);
             if(ACTION_SENT.equals(i.getAction())){
-                boolean ok=getResultCode()==Activity.RESULT_OK;
-                LocalStore.PendingStatus st=store.recordSentPart(id,ok);
+                boolean ok=resultCode==Activity.RESULT_OK;
+                LocalStore.PendingStatus st=store.recordSentPart(id,partIndex,ok,resultCode);
                 if(st.exists&&(st.complete||st.failed)){
                     Uri u=Uri.parse(st.providerUri);long pid=ContentUris.parseId(u);
                     ContentValues v=new ContentValues();v.put(Telephony.Sms.TYPE,st.failed?Telephony.Sms.MESSAGE_TYPE_FAILED:Telephony.Sms.MESSAGE_TYPE_SENT);c.getContentResolver().update(u,v,null,null);
                     JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
                     String state=st.failed?"failed":"sent";
-                    EventQueue.queue(c,"sms-provider-"+pid+"-"+state,st.failed?"sms.failed":"sms.sent",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage",st.failed?"modem_failed":"modem_sent").put("resultCode",getResultCode()));
-                    store.finishCommand(id,state);store.queueCommandAck(id,state,new JSONObject().put("modemAccepted",!st.failed));
+                    EventQueue.queue(c,"sms-provider-"+pid+"-"+state,st.failed?"sms.failed":"sms.sent",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage",st.failed?"modem_failed":"modem_sent").put("resultCode",resultCode).put("partIndex",partIndex));
+                    store.finishCommand(id,state);
+                    store.queueCommandAck(id,state,new JSONObject().put("modemAccepted",!st.failed).put("resultCode",resultCode));
                     if(st.failed)store.removePendingSms(id);
                     SyncJobService.scheduleNow(c);
                 }
             }else if(ACTION_DELIVERED.equals(i.getAction())){
-                LocalStore.PendingStatus st=store.recordDeliveredPart(id);
-                if(st.exists&&st.delivered){
-                    Uri u=Uri.parse(st.providerUri);long pid=ContentUris.parseId(u);JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
+                boolean ok=resultCode==Activity.RESULT_OK;
+                LocalStore.PendingStatus st=store.recordDeliveredPart(id,partIndex,ok,resultCode);
+                if(!st.exists)return;
+                Uri u=Uri.parse(st.providerUri);long pid=ContentUris.parseId(u);
+                JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
+                if(st.deliveryFailed){
+                    EventQueue.queue(c,"sms-provider-"+pid+"-delivery-failed","sms.failed",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage","delivery_failed").put("resultCode",resultCode).put("partIndex",partIndex));
+                    store.finishCommand(id,"failed");
+                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","delivery_failed").put("resultCode",resultCode));
+                    store.removePendingSms(id);
+                    SyncJobService.scheduleNow(c);
+                }else if(st.delivered){
                     EventQueue.queue(c,"sms-provider-"+pid+"-delivered","sms.delivered",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("delivery",true));
-                    store.finishCommand(id,"delivered");store.queueCommandAck(id,"delivered",new JSONObject().put("delivered",true));store.removePendingSms(id);SyncJobService.scheduleNow(c);
+                    store.finishCommand(id,"delivered");
+                    store.queueCommandAck(id,"delivered",new JSONObject().put("delivered",true));
+                    store.removePendingSms(id);
+                    SyncJobService.scheduleNow(c);
                 }
             }
         }catch(Exception ignored){}

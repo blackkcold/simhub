@@ -15,19 +15,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ApiClient {
     private static final AtomicBoolean SYNC_BUSY=new AtomicBoolean(false);
+    private static final long TOKEN_ROTATE_AFTER=60L*86400;
     private final Context c;private final AgentConfig cfg;
     public ApiClient(Context c){this.c=c.getApplicationContext();cfg=new AgentConfig(c);}
 
     public static JSONObject enroll(String server,String token,String name)throws Exception{
         requireHttps(server);
-        JSONObject b=new JSONObject().put("token",token).put("name",name).put("model",Build.MANUFACTURER+" "+Build.MODEL).put("osVersion",Build.VERSION.RELEASE).put("appVersion",BuildConfig.VERSION_NAME);
+        JSONObject b=new JSONObject().put("token",token).put("name",name).put("model",Build.MANUFACTURER+" "+Build.MODEL).put("osVersion",Build.VERSION.RELEASE).put("appVersion",BuildConfig.VERSION_NAME).put("nodeType","android").put("capabilities",new JSONArray().put("sms.receive").put("sms.send").put("sms.history").put("signal.basic").put("dual-sim"));
         return raw(server+"/api/v1/enroll","POST",b,null,null);
     }
 
     public void syncCycle(){
         if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
         try{
-            LocalStore.get(c).recoverStaleClaims();
+            rotateDeviceTokenIfNeeded();
+            LocalStore store=LocalStore.get(c);
+            store.recoverStaleClaims();
+            for(String id:store.expireStalePendingSms(48L*3600)){store.finishCommand(id,"failed");store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));}
+            SmsHistorySync.sync(c,200);
             flushEvents();
             flushCommandAcks();
             fetchCommands();
@@ -35,6 +40,28 @@ public final class ApiClient {
             putState();
             heartbeat();
         }catch(Exception ignored){}finally{SYNC_BUSY.set(false);}
+    }
+
+    private void rotateDeviceTokenIfNeeded()throws Exception{
+        long ts=System.currentTimeMillis()/1000;
+        if(cfg.tokenRotationPending()){
+            String pending=cfg.pendingDeviceToken();
+            if(pending==null||pending.isBlank()||cfg.pendingTokenExpiresAt()<=ts){
+                cfg.discardPendingDeviceToken();
+            }else{
+                JSONObject committed=requestWithToken("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject(),pending);
+                cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));
+                return;
+            }
+        }
+        long issued=cfg.tokenIssuedAt();
+        if(issued>0&&ts-issued<TOKEN_ROTATE_AFTER)return;
+        JSONObject prepared=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/prepare",new JSONObject());
+        String next=prepared.getString("deviceToken");
+        long expiresAt=prepared.optLong("expiresAt",ts+3600);
+        cfg.stageDeviceToken(next,expiresAt);
+        JSONObject committed=requestWithToken("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject(),next);
+        cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));
     }
 
     public void flushEvents()throws Exception{
@@ -65,6 +92,11 @@ public final class ApiClient {
         if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");
         requireHttps(cfg.server());
         return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());
+    }
+    private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{
+        if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");
+        requireHttps(cfg.server());
+        return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());
     }
     private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId)throws Exception{
         HttpURLConnection con=(HttpURLConnection)new URL(url).openConnection();

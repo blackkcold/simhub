@@ -37,13 +37,24 @@ public final class CommandProcessor {
             JSONObject result=new JSONObject();
             switch(type){
                 case "sms.send" -> {
-                    SmsSender.send(c,id,p.getInt("subscriptionId"),p.getString("to"),p.getString("body"));
-                    ack(id,"submitted",new JSONObject().put("submitted",true));
+                    if(!p.has("channelId")||p.optLong("channelRevision",0)<=0){ack(id,"failed",new JSONObject().put("reason","channel_identity_required"));return;}
+                    ChannelIdentity.Channel ch=ChannelIdentity.resolve(c,p.getString("channelId"),p.getLong("channelRevision"));
+                    if(ch==null){ack(id,"failed",new JSONObject().put("reason","subscription_changed"));return;}
+                    int subId=ch.subscriptionId;
+                    SmsSender.send(c,id,subId,p.getString("to"),p.getString("body"));
+                    ack(id,"submitted",new JSONObject().put("submitted",true).put("subscriptionId",subId));
                 }
                 case "sms.sync_history" -> {result.put("queued",SmsHistorySync.sync(c,Math.min(10000,p.optInt("maxMessages",5000))));ack(id,"succeeded",result);}
                 case "device.refresh_state","subscription.refresh" -> {api.putState();result.put("refreshed",true);ack(id,"succeeded",result);}
                 case "diagnostics.request" -> {JSONObject d=StateCollector.collect(c).put("diagnosticAt",now);EventQueue.diagnostics(c,d);result.put("queued",true);ack(id,"succeeded",result);}
                 case "ota.check" -> {JSONObject ota=api.ota();EventQueue.diagnostics(c,new JSONObject().put("ota",ota));result.put("checked",true);ack(id,"succeeded",result);}
+                case "node.rotate_key" -> {
+                    if(store.pendingSmsCount()>0){ack(id,"failed",new JSONObject().put("reason","pending_sms"));return;}
+                    String keyId=p.getString("keyId");byte[] nodeKey=CryptoBox.ub64(p.getString("nodeKey"));
+                    if(nodeKey.length!=32||!CryptoBox.keyId(nodeKey).equals(keyId)){ack(id,"rejected",new JSONObject().put("reason","invalid_node_key"));return;}
+                    new AgentConfig(c).rotateNodeKey(keyId,nodeKey);
+                    ack(id,"succeeded",new JSONObject().put("rotated",true).put("keyId",keyId));
+                }
                 default -> throw new SecurityException("Unsupported command");
             }
         }catch(Exception e){ack(id,"failed",new JSONObject().put("reason",e.getClass().getSimpleName()));}

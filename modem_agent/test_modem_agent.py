@@ -3,7 +3,7 @@ import tempfile, unittest
 from pathlib import Path
 
 from simhub_modem_agent import (
-    Store, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2
+    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2
 )
 
 class ModemAgentTest(unittest.TestCase):
@@ -32,6 +32,21 @@ class ModemAgentTest(unittest.TestCase):
     def test_ucs2_decode(self):
         self.assertEqual(decode_ucs2('4F60597D'),'你好')
         self.assertEqual(decode_ucs2('hello'),'hello')
+
+    def test_dji_pdu_supports_unicode_and_multipart(self):
+        single=DjiAtAdapter._submit_pdus('+8613800138000','你好123')
+        self.assertEqual(len(single),1)
+        self.assertTrue(single[0].startswith('00'))
+        self.assertIn('4F60597D',single[0])
+
+        parts=DjiAtAdapter._submit_pdus('+8613800138000','验'*160)
+        self.assertGreater(len(parts),1)
+        total=len(parts)
+        for index,pdu in enumerate(parts,start=1):
+            raw=bytes.fromhex(pdu)
+            self.assertLessEqual(len(raw)-1,160)
+            self.assertIn(bytes([0x05,0x00,0x03]),raw)
+            self.assertIn(bytes([total,index]),raw)
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

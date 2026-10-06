@@ -784,7 +784,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 "id":r["id"],"name":r["name"],"group":r["group_name"],"model":r["model"],"osVersion":r["os_version"],"appVersion":r["app_version"],
                 "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,
                 "wrappedKey":safe_json_loads(r["wrapped_key_json"],{}) if r["key_id"] else None,
-                "pendingKeyId":r["pending_key_id"] or None,
+                "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
                 "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),
                 "state":safe_json_loads(r["state_json"],{}) if r["state_json"] else None,
             })
@@ -801,6 +801,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(400,"invalid_key",str(exc)); return
             if not kid:
                 self.send_error_json(400,"invalid_key","pendingKeyId and pendingWrappedKey are required"); return
+            with open_db() as check:
+                current=check.execute("SELECT pending_key_id FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not current:
+                self.send_error_json(404,"device_not_found","Device not found"); return
+            if current["pending_key_id"] and current["pending_key_id"]!=kid:
+                self.send_error_json(409,"key_rotation_in_progress","A different node-key rotation is already pending"); return
             sets.extend(["pending_key_id=?","pending_wrapped_key_json=?"])
             vals.extend([kid,json.dumps(wrapped,separators=(",",":"))])
         if body.get("revoke") is True: sets.append("revoked_at=?"); vals.append(now())

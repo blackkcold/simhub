@@ -404,7 +404,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -421,7 +421,7 @@ def sanitize_state(body: Any) -> dict[str,Any]:
         if not isinstance(item,dict):
             continue
         x={}
-        for k in {"subscriptionId","channelId","channelRevision","slotIndex","carrierName","displayName","isEmbedded","opportunistic","signalLevel","signalRsrp","signalRsrq","signalSinr","serviceState","roaming","networkType"}:
+        for k in {"subscriptionId","channelId","channelRevision","slotIndex","carrierName","displayName","isEmbedded","opportunistic","signalLevel","signalDbm","signalRssi","signalRsrp","signalRsrq","signalSinr","serviceState","roaming","networkType"}:
             v=item.get(k)
             if isinstance(v,(str,int,float,bool)) or v is None:
                 x[k]=v

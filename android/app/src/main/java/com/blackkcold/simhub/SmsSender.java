@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.regex.Pattern;
 
 public final class SmsSender {
-    private static final Pattern DEST=Pattern.compile("^\\+?[0-9*# ()-]{3,40}$");
+    private static final Pattern DEST=Pattern.compile("^\\+?[0-9 ()-]{3,40}$");
     public static void send(Context c,String commandId,int subId,String to,String body)throws Exception{
         if(to==null||!DEST.matcher(to).matches())throw new IllegalArgumentException("Invalid destination");
         if(body==null||body.isBlank()||body.length()>4000)throw new IllegalArgumentException("Invalid SMS body");

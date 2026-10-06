@@ -73,7 +73,23 @@ function renderInbox(){const q=$('search').value.trim().toLowerCase(),dev=$('dev
 
 async function queueCommand(deviceId,type,payload,ttl){ttl=ttl||120;const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
 async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9*# ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
-async function createEnrollment(){if(!vaultRaw)throw new Error('Vault must be unlocked.');const name=$('enrollName').value.trim()||'Android SIM Node',nodeRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw),wrapped=await wrapNodeKey(nodeRaw,kid),r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:'android',capabilities:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'],keyId:kid,wrappedKey:wrapped}}),server=location.origin,link='simhub://enroll?v=3&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&key='+encodeURIComponent(b64u(nodeRaw))+'&keyId='+encodeURIComponent(kid)+'&name='+encodeURIComponent(name);nodeRaw.fill(0);$('enrollLink').value=link;$('openEnroll').href=link;$('enrollResult').hidden=false;toast('Independent-key enrollment link created for 10 minutes');}
+async function createEnrollment(){
+  if(!vaultRaw)throw new Error('Vault must be unlocked.');
+  const type=$('enrollType').value==='modem'?'modem':'android',name=$('enrollName').value.trim()||(type==='modem'?'DJI / Modem SIM Node':'Android SIM Node');
+  const nodeRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw),wrapped=await wrapNodeKey(nodeRaw,kid);
+  const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
+  const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped}}),server=location.origin;
+  let value;
+  if(type==='modem'){
+    value=JSON.stringify({version:3,server:server,token:r.token,key:b64u(nodeRaw),keyId:kid,name:name,nodeType:'modem'},null,2);
+    $('openEnroll').hidden=true;
+  }else{
+    value='simhub://enroll?v=3&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&key='+encodeURIComponent(b64u(nodeRaw))+'&keyId='+encodeURIComponent(kid)+'&name='+encodeURIComponent(name);
+    $('openEnroll').href=value;$('openEnroll').hidden=false;
+  }
+  nodeRaw.fill(0);$('enrollLink').value=value;$('enrollResult').hidden=false;
+  toast(type==='modem'?'Modem enrollment JSON created for 10 minutes':'Android enrollment link created for 10 minutes');
+}
 async function rotateDeviceKey(deviceId){const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
 async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||'Copied');}
 function updateCharCount(){const value=$('sendBody').value,n=value.length,per=n>0&&/^[\x00-\x7F]*$/.test(value)?160:70;$('smsCount').textContent=n+' characters · approx. '+Math.max(1,Math.ceil(n/per))+' SMS part(s)';}

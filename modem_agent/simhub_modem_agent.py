@@ -422,7 +422,7 @@ class Dji4gAdapter(ModemAdapter):
                 i += 1
             body = decode_ucs2("\n".join(body_lines))
             occurred=now()
-            digest=hashlib.sha256((sender+"\0"+body+"\0"+str(occurred)).encode()).hexdigest()[:16]
+            digest=hashlib.sha256((sender+"\0"+body).encode()).hexdigest()[:16]
             records.append(SmsRecord(local_id=f"dji4g-{idx}-{digest}", sender=sender, body=body, occurred_at=occurred, ref=idx))
         return records[:MAX_SMS_PER_CYCLE]
 

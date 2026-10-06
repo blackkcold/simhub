@@ -132,10 +132,10 @@ class Relay:
         self.device_id = device_id
         self.device_token = device_token
 
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None, auth: bool = True) -> dict[str, Any]:
+    def request(self, method: str, path: str, body: dict[str, Any] | None = None, auth: bool = True, token_override: str | None = None) -> dict[str, Any]:
         headers = {"Accept": "application/json"}
         if auth:
-            headers["Authorization"] = "Device " + self.device_token
+            headers["Authorization"] = "Device " + (token_override or self.device_token)
             headers["X-SimHub-Device-Id"] = self.device_id
         data = None
         if body is not None:
@@ -853,24 +853,50 @@ class Agent:
 
     def rotate_device_token(self) -> None:
         ts=now()
-        if self.config.get("tokenRotationPending"):
-            self.relay.device_token=str(self.config["deviceToken"])
-            committed=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/commit",{})
-            self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
-            self.config["tokenRotationPending"]=False
-            atomic_write_json(self.config_path,self.config)
-            return
+        pending=str(self.config.get("pendingDeviceToken") or "")
+        pending_exp=int(self.config.get("pendingTokenExpiresAt",0) or 0)
+        if pending:
+            if pending_exp<=ts:
+                self.config.pop("pendingDeviceToken",None)
+                self.config.pop("pendingTokenExpiresAt",None)
+                self.config["tokenRotationPending"]=False
+                atomic_write_json(self.config_path,self.config)
+            else:
+                committed=self.relay.request(
+                    "POST",
+                    f"/api/v1/devices/{self.config['deviceId']}/token/commit",
+                    {},
+                    token_override=pending,
+                )
+                self.config["deviceToken"]=pending
+                self.relay.device_token=pending
+                self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
+                self.config["tokenRotationPending"]=False
+                self.config.pop("pendingDeviceToken",None)
+                self.config.pop("pendingTokenExpiresAt",None)
+                atomic_write_json(self.config_path,self.config)
+                return
         issued=int(self.config.get("tokenIssuedAt",0) or 0)
         if issued>0 and ts-issued<TOKEN_ROTATE_AFTER:
             return
         prepared=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/prepare",{})
-        self.config["deviceToken"]=str(prepared["deviceToken"])
+        pending=str(prepared["deviceToken"])
+        self.config["pendingDeviceToken"]=pending
+        self.config["pendingTokenExpiresAt"]=int(prepared.get("expiresAt",ts+3600))
         self.config["tokenRotationPending"]=True
         atomic_write_json(self.config_path,self.config)
-        self.relay.device_token=str(self.config["deviceToken"])
-        committed=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/commit",{})
+        committed=self.relay.request(
+            "POST",
+            f"/api/v1/devices/{self.config['deviceId']}/token/commit",
+            {},
+            token_override=pending,
+        )
+        self.config["deviceToken"]=pending
+        self.relay.device_token=pending
         self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
         self.config["tokenRotationPending"]=False
+        self.config.pop("pendingDeviceToken",None)
+        self.config.pop("pendingTokenExpiresAt",None)
         atomic_write_json(self.config_path,self.config)
 
     def receive(self) -> None:

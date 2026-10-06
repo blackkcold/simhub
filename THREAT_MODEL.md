@@ -10,8 +10,11 @@
 | Android device offline | Durable local queue + foreground relay + JobScheduler recovery |
 | Server offline | Commands remain durable; events/ACKs retry after connectivity returns |
 | Relay metadata tampering | v2 AES-GCM AAD binds immutable event/command routing fields; modification causes decryption failure |
+| One node compromised | Independent Node Key limits plaintext/key exposure to that node; sibling keys and Master Vault remain unavailable |
+| Device bearer token stolen | Token hashes only on relay; two-phase automatic rotation every 60 days; revoke node immediately if compromise is suspected |
+| Reverse-proxy spoofing | Forwarded IP headers are accepted only from configured trusted proxy CIDRs |
 | Logs leak secrets | Redacted structured logging; only metadata in audit rows |
-| SIM change | Subscription snapshot changes are surfaced to controller |
+| SIM change / subscription reuse | Stable Channel identity + revision is revalidated before remote SMS; stale commands fail closed |
 | Malicious remote SMS | Only encrypted `sms.send` payloads that authenticate under the target device-derived key and bound command metadata execute |
 
 The public source repository contains no deployment secrets.

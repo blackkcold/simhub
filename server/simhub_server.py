@@ -53,6 +53,7 @@ ALLOWED_COMMANDS = {
     "subscription.refresh",
     "diagnostics.request",
     "ota.check",
+    "node.rotate_key",
 }
 PHONE_COMMAND_PREFIXES = ("call.", "dialer.", "phone.")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.~]{20,512}$")
@@ -151,13 +152,42 @@ def _migrate_v2(con: sqlite3.Connection) -> None:
         """)
 
 
+def _columns(con: sqlite3.Connection, name: str) -> set[str]:
+    return {str(r["name"]) for r in con.execute(f"PRAGMA table_info({name})").fetchall()}
+
+
+def _add_column(con: sqlite3.Connection, table: str, name: str, ddl: str) -> None:
+    if name not in _columns(con, table):
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
+def _migrate_v3(con: sqlite3.Connection) -> None:
+    for name,ddl in (
+        ("node_type","TEXT NOT NULL DEFAULT 'android'"),
+        ("capabilities_json","TEXT NOT NULL DEFAULT '[]'"),
+        ("key_id","TEXT NOT NULL DEFAULT ''"),
+        ("wrapped_key_json","TEXT NOT NULL DEFAULT '{}'"),
+    ):
+        _add_column(con,"enrollment_tokens",name,ddl)
+    for name,ddl in (
+        ("node_type","TEXT NOT NULL DEFAULT 'android'"),
+        ("capabilities_json","TEXT NOT NULL DEFAULT '[]'"),
+        ("key_id","TEXT NOT NULL DEFAULT ''"),
+        ("wrapped_key_json","TEXT NOT NULL DEFAULT '{}'"),
+        ("pending_key_id","TEXT NOT NULL DEFAULT ''"),
+        ("pending_wrapped_key_json","TEXT NOT NULL DEFAULT '{}'"),
+    ):
+        _add_column(con,"devices",name,ddl)
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         _migrate_v2(con)
+        _migrate_v3(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=2")
+        con.execute("PRAGMA user_version=3")
         if EVENT_RETENTION_DAYS>0:
             con.execute("DELETE FROM events WHERE received_at<?",(now()-EVENT_RETENTION_DAYS*86400,))
         con.execute("DELETE FROM admin_sessions WHERE expires_at<=?",(now(),))

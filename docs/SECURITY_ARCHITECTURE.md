@@ -29,9 +29,11 @@ After unlock, the raw Master Vault Key lives only in page memory and auto-locks 
 
 The Android node uses an AES key generated inside Android Keystore to wrap:
 
-- device bearer token
-- Master Vault Key
-- plaintext Node Keys
+- device bearer token;
+- the node's independent Node Key;
+- a separate local queue key used for pending outbound state.
+
+Only legacy v0.1.x nodes may temporarily retain the old Master Vault Key during online migration. After `node.rotate_key` succeeds, that legacy Master material is deleted from the node.
 
 The relay URL/device ID are not secrets and remain in normal SharedPreferences.
 
@@ -47,7 +49,7 @@ Allowed plaintext metadata is intentionally small: event kind, time, node, Chann
 
 ## Recovery and rotation
 
-If the server is compromised, rotate the admin token and re-enroll devices to rotate device bearer tokens. Existing SMS ciphertext remains protected if the Vault Key was not exposed.
+If the server is compromised, rotate the admin token. Device bearer tokens rotate automatically every 60 days and can also be revoked by revoking/re-enrolling the affected node. Existing SMS ciphertext remains protected if the Vault Key was not exposed.
 
 If the controller/browser containing the Master Vault Key is compromised, create a new Vault and rotate/re-enroll all nodes. If one Android or Modem Node is compromised, rotate/re-enroll only that node: independent Node Keys prevent that node from deriving sibling Node Keys.
 

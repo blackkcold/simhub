@@ -8,6 +8,7 @@ import java.util.Arrays;
 public final class AgentConfig {
     private static final String PREF="simhub_config";
     private static final String SECRET_DEVICE_TOKEN="device_token";
+    private static final String SECRET_PENDING_DEVICE_TOKEN="pending_device_token";
     private static final String SECRET_VAULT_KEY="vault_key";
     private static final String SECRET_NODE_KEY="node_key";
     private static final String SECRET_LOCAL_QUEUE_KEY="local_queue_key";
@@ -35,8 +36,23 @@ public final class AgentConfig {
     public String deviceToken(){try{return secrets.getString(SECRET_DEVICE_TOKEN);}catch(Exception e){return null;}}
     public long tokenIssuedAt(){return prefs.getLong("token_issued_at",0);}
     public boolean tokenRotationPending(){return prefs.getBoolean("token_rotation_pending",false);}
-    public void stageDeviceToken(String token)throws Exception{secrets.putString(SECRET_DEVICE_TOKEN,token);prefs.edit().putBoolean("token_rotation_pending",true).apply();}
-    public void commitDeviceToken(long issuedAt){prefs.edit().putLong("token_issued_at",issuedAt).putBoolean("token_rotation_pending",false).apply();}
+    public String pendingDeviceToken(){try{return secrets.getString(SECRET_PENDING_DEVICE_TOKEN);}catch(Exception e){return null;}}
+    public long pendingTokenExpiresAt(){return prefs.getLong("pending_token_expires_at",0);}
+    public void stageDeviceToken(String token,long expiresAt)throws Exception{
+        secrets.putString(SECRET_PENDING_DEVICE_TOKEN,token);
+        prefs.edit().putBoolean("token_rotation_pending",true).putLong("pending_token_expires_at",expiresAt).apply();
+    }
+    public void discardPendingDeviceToken(){
+        secrets.remove(SECRET_PENDING_DEVICE_TOKEN);
+        prefs.edit().putBoolean("token_rotation_pending",false).remove("pending_token_expires_at").apply();
+    }
+    public void commitDeviceToken(long issuedAt)throws Exception{
+        String pending=pendingDeviceToken();
+        if(pending==null||pending.isBlank())throw new IllegalStateException("Pending device token missing");
+        secrets.putString(SECRET_DEVICE_TOKEN,pending);
+        secrets.remove(SECRET_PENDING_DEVICE_TOKEN);
+        prefs.edit().putLong("token_issued_at",issuedAt).putBoolean("token_rotation_pending",false).remove("pending_token_expires_at").apply();
+    }
     public byte[] vaultKey(){try{return secrets.getBytes(SECRET_VAULT_KEY);}catch(Exception e){return null;}}
     public byte[] nodeKey(){try{return secrets.getBytes(SECRET_NODE_KEY);}catch(Exception e){return null;}}
     public String nodeKeyId(){return prefs.getString("node_key_id","");}
@@ -79,7 +95,7 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").putBoolean("always_on",false).apply();
-        secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").putBoolean("always_on",false).apply();
+        secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);
     }
 }

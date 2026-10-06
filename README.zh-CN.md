@@ -253,7 +253,7 @@ Relay Server 不需要获得短信正文明文，也能完成命令中转。
 
 ## Linux / DJI Modem Node
 
-仓库新增 `modem_agent/` Linux Modem Agent：优先支持通用 ModemManager/`mmcli`，同时提供第一代 DJI/QDC507 类硬件的外部 `dji4g` CLI adapter。它具备本地 durable queue、短信收发、无线指标、SIM 更换 revision 与和 Android 一致的 E2EE 协议。
+仓库新增 `modem_agent/` Linux Modem Agent 对第一代 DJI/QDC507 采用直接 Quectel AT 串口控制，并保留通用 ModemManager/`mmcli` 路径。它具备本地 durable queue、短信收发、无线指标、SIM 更换 revision 与和 Android 一致的 E2EE 协议。
 
 在 PWA 中创建 **Linux / DJI Modem Node** Enrollment Package，然后按 `modem_agent/README.md` 部署。DJI Cellular Dongle 2 不假定兼容，先通过 ModemManager/硬件能力检测，再决定 adapter。
 

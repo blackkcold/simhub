@@ -25,6 +25,7 @@ jobs:
       - run: python3 -m pip install -r modem_agent/requirements.txt
       - run: python3 server/test_simhub.py
       - run: PYTHONPATH=server python3 server/test_migration.py
+      - run: PYTHONPATH=server python3 server/test_maintenance.py
       - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
       - run: node --check web/app.js && node --check web/sw.js
       - run: python3 -m py_compile server/simhub_server.py scripts/gen_admin_token.py modem_agent/simhub_modem_agent.py

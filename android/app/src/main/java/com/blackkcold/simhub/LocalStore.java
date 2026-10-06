@@ -152,10 +152,16 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     public synchronized List<String> expireStalePendingSms(long ageSeconds){
-        long cutoff=System.currentTimeMillis()/1000-Math.max(3600,ageSeconds);List<String> ids=new ArrayList<>();
-        try(Cursor c=getReadableDatabase().query("pending_sms",new String[]{"command_id"},"created_at<?",new String[]{String.valueOf(cutoff)},null,null,null)){while(c.moveToNext())ids.add(c.getString(0));}
-        for(String id:ids)removePendingSms(id);
-        return ids;
+        long cutoff=System.currentTimeMillis()/1000-Math.max(3600,ageSeconds);List<String> stale=new ArrayList<>(),uncertain=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().query("pending_sms",new String[]{"command_id"},"created_at<?",new String[]{String.valueOf(cutoff)},null,null,null)){while(c.moveToNext())stale.add(c.getString(0));}
+        for(String id:stale){
+            try{
+                PendingStatus st=status(id);
+                if(!st.complete||st.failed)uncertain.add(id);
+            }catch(Exception ignored){uncertain.add(id);}
+            removePendingSms(id);
+        }
+        return uncertain;
     }
 
     public synchronized int pendingSmsCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM pending_sms",null)){return c.moveToFirst()?c.getInt(0):0;}}

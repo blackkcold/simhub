@@ -36,6 +36,7 @@ DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/co
 DEFAULT_DB = Path(os.getenv("SIMHUB_MODEM_DB", "/var/lib/simhub-modem/agent.db"))
 POLL_SECONDS = max(3, int(os.getenv("SIMHUB_MODEM_POLL_SECONDS", "10")))
 MAX_SMS_PER_CYCLE = max(10, min(int(os.getenv("SIMHUB_MODEM_MAX_SMS_PER_CYCLE", "200")), 5000))
+TOKEN_ROTATE_AFTER = 60 * 86400
 
 
 def now() -> int:
@@ -564,6 +565,28 @@ class Agent:
     def encrypt_event(self, event_id: str, kind: str, occurred_at: int, has_otp: bool, payload: dict[str, Any]) -> dict[str, Any]:
         return encrypt_payload(self.node_key, self.kid, payload, event_aad(str(self.config["deviceId"]), event_id, kind, occurred_at, self.channel_id, has_otp))
 
+    def rotate_device_token(self) -> None:
+        ts=now()
+        if self.config.get("tokenRotationPending"):
+            self.relay.device_token=str(self.config["deviceToken"])
+            committed=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/commit",{})
+            self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
+            self.config["tokenRotationPending"]=False
+            atomic_write_json(self.config_path,self.config)
+            return
+        issued=int(self.config.get("tokenIssuedAt",0) or 0)
+        if issued>0 and ts-issued<TOKEN_ROTATE_AFTER:
+            return
+        prepared=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/prepare",{})
+        self.config["deviceToken"]=str(prepared["deviceToken"])
+        self.config["tokenRotationPending"]=True
+        atomic_write_json(self.config_path,self.config)
+        self.relay.device_token=str(self.config["deviceToken"])
+        committed=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/commit",{})
+        self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
+        self.config["tokenRotationPending"]=False
+        atomic_write_json(self.config_path,self.config)
+
     def receive(self) -> None:
         for sms in self.adapter.list_sms():
             if self.store.seen(sms.local_id):
@@ -692,6 +715,7 @@ class Agent:
         )
 
     def cycle(self) -> None:
+        self.rotate_device_token()
         self.store.prune()
         self.store.recover_interrupted_claims()
         self._sync_channel_identity()
@@ -734,6 +758,8 @@ def enroll(args: argparse.Namespace) -> None:
         "server": server.rstrip("/"),
         "deviceId": response["deviceId"],
         "deviceToken": response["deviceToken"],
+        "tokenIssuedAt": int(response.get("tokenIssuedAt", now())),
+        "tokenRotationPending": False,
         "nodeKey": b64u(node_key),
         "keyId": kid,
         "name": name,

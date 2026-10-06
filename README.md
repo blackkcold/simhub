@@ -2,7 +2,7 @@
 
 # SIM Hub
 
-**Turn an Android phone into a private, self-hosted SIM / SMS hub.**
+**Turn Android phones and supported cellular modems into a private, self-hosted SIM / SMS hub.**
 
 Use your own server as an encrypted relay to remotely receive SMS, extract OTPs, manage multiple SIMs, and send SMS from a Web/PWA controller.
 
@@ -87,7 +87,7 @@ The relay is intentionally **blind to SMS plaintext**. New nodes receive a rando
 | **OTP** | Local OTP detection; OTP value remains inside the encrypted payload |
 | **Multi-SIM / modem** | Stable `channelId + revision` routing across Android subscriptions and Linux/DJI modem channels |
 | **Remote control** | Select device + SIM and send SMS from the PWA |
-| **Devices** | Multiple Android nodes, aliases, groups and online state |
+| **Devices** | Multiple Android and Linux/modem nodes, aliases, groups and online state |
 | **Telemetry** | Carrier, service state, signal, battery, charging, network and agent status |
 | **Offline reliability** | Durable Android event queue + durable server command queue |
 | **Security** | AES-256-GCM E2EE, independent Node Keys, Android Keystore/local protected modem config, metadata-bound AAD, two-phase rotating bearer tokens |
@@ -146,7 +146,7 @@ Then:
 1. enter the admin token;
 2. optionally enter TOTP to create a short-lived HttpOnly browser session;
 3. create, import, or unlock the local Vault;
-4. create a one-time Android enrollment link.
+4. create an Android deep-link or Linux/DJI modem enrollment package.
 
 ### 3. Install the Android Agent
 
@@ -221,7 +221,7 @@ In daily use, open the PWA on your computer, tablet or another phone. New messag
 ### Sending SMS remotely
 
 ```text
-PWA: choose Android device
+PWA: choose node
     ↓
 choose SIM / subscription
     ↓
@@ -231,9 +231,9 @@ encrypt command locally
     ↓
 Relay Server queues encrypted command
     ↓
-Android SIM Node fetches command
+Android / Modem Node fetches command
     ↓
-selected SIM sends the SMS
+selected Channel sends the SMS
     ↓
 result/status is reported back
 ```
@@ -330,6 +330,21 @@ This allows the system to recover from temporary mobile-network loss, Wi-Fi chan
 - PWA supports recovery-key import and SSE-driven realtime refresh with polling only as fallback.
 - Fresh-message notification rules prevent history synchronization from flooding Bark/ntfy.
 - Relay schema migrations, subscription projection, retention controls, metrics, online backup helper and rolling-upgrade compatibility are included.
+
+---
+
+## Release gates for unattended deployment
+
+Software CI now validates relay migrations/maintenance, generic node/channel protocol, Modem Agent crypto/queue behavior, Web syntax, Android JVM OTP tests and an API 37 APK build. The following still require real hardware and are intentionally **not** represented as passed by CI:
+
+- Android 17 default-SMS receive/OTP on a physical phone;
+- Doze + OEM battery manager recovery after 24–72 hours;
+- dual-SIM receive/send and physical SIM replacement revision handling;
+- reboot/unlock/autostart behavior on target vivo/OPPO/Xiaomi/Huawei/HONOR ROMs;
+- DJI Gen1/QDC507 physical SMS receive/send and modem storage cleanup;
+- DJI Cellular Dongle 2 capability detection before enabling that hardware path.
+
+See [Compatibility](docs/COMPATIBILITY.md).
 
 ---
 

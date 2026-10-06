@@ -7,6 +7,18 @@ from simhub_modem_agent import (
 )
 
 class ModemAgentTest(unittest.TestCase):
+    def test_shared_crypto_vector(self):
+        import json
+        vector=json.loads((Path(__file__).resolve().parents[1]/'test_vectors'/'crypto-v2.json').read_text('utf-8'))
+        key=__import__('base64').urlsafe_b64decode(vector['keyBase64Url']+'==')
+        self.assertEqual(key_id(key),vector['kid'])
+        aad=event_aad(vector['deviceId'],vector['eventId'],vector['kind'],vector['occurredAt'],vector['subscriptionId'],vector['hasOtp'])
+        self.assertEqual(aad.decode(),vector['aad'])
+        envelope=encrypt_payload(key,vector['kid'],json.loads(vector['plaintext']),aad)
+        # encrypt_payload uses a random IV, so verify the shared vector by decrypting its fixed envelope.
+        fixed={'v':2,'alg':'A256GCM','kid':vector['kid'],'iv':vector['ivBase64Url'],'ct':vector['ciphertextBase64Url']}
+        self.assertEqual(json.dumps(decrypt_payload(key,vector['kid'],fixed,aad),separators=(',',':')),vector['plaintext'])
+
     def test_v2_crypto_roundtrip_and_metadata_binding(self):
         key=bytes(range(32));kid=key_id(key)
         payload={'action':'sms.send','commandId':'cmd-1','expiresAt':200,'channelId':'ch-1','body':'hello'}

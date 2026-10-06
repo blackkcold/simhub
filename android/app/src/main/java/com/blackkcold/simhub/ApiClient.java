@@ -28,6 +28,7 @@ public final class ApiClient {
         if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
         try{
             LocalStore.get(c).recoverStaleClaims();
+            SmsHistorySync.sync(c,200);
             flushEvents();
             flushCommandAcks();
             fetchCommands();

@@ -97,7 +97,9 @@ The provided Caddy example sets `X-Forwarded-For` explicitly. Never configure `0
 
 Install from `modem_agent/`. The built-in adapter order is:
 
-1. external `dji4g` CLI when present and usable;
-2. ModemManager/`mmcli`.
+1. direct Quectel AT serial detection for DJI Gen1/QDC507;
+2. ModemManager/`mmcli` for generic Linux cellular modems.
+
+The external `dji4g` utility may still be used separately for DJI network-interface setup, but SIM Hub SMS receive/send does not rely on undocumented CLI AT commands.
 
 Use the PWA to create a Linux/DJI enrollment JSON, then run the documented `enroll` command and enable `simhub-modem.service`. The temporary enrollment JSON should be deleted after successful consumption.

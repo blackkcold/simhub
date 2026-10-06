@@ -64,7 +64,7 @@ public final class ChannelIdentity {
     private static String rawFingerprint(SubscriptionInfo s){
         String mcc="",mnc="";
         try{mcc=String.valueOf(s.getMccString());mnc=String.valueOf(s.getMncString());}catch(Exception ignored){}
-        return s.getSimSlotIndex()+"|"+mcc+"|"+mnc+"|"+String.valueOf(s.getCarrierName())+"|"+String.valueOf(s.getDisplayName())+"|"+s.isEmbedded();
+        String number="";try{number=String.valueOf(s.getNumber());}catch(Exception ignored){}return s.getSimSlotIndex()+"|"+mcc+"|"+mnc+"|"+String.valueOf(s.getCarrierName())+"|"+String.valueOf(s.getDisplayName())+"|"+number+"|"+s.isEmbedded();
     }
 
     private static String hash(String value){

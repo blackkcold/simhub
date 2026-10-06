@@ -8,13 +8,13 @@ This file records the repository audit findings closed by the 0.2 hardening bran
 | Live SMS queue failure can be silent | Central failure accounting + JobScheduler wake + SMS Provider reconciliation each sync |
 | Multipart callbacks can double-count | Per-command/per-part persistent status rows and idempotent updates |
 | Delivery callback result ignored | SENT and DELIVERED result codes are both evaluated; delivery failure is explicit |
-| Pending delivery can live forever | 48-hour status timeout fails tracking without retrying the SMS |
+| Pending delivery can live forever | 48-hour status timeout stops delivery tracking without resending; already-SENT messages remain sent, while unconfirmed sends become status_timeout |
 | Android subscriptionId treated as stable identity | Stable Channel UUID + revision; remote send fails closed after SIM identity change |
 | Master Vault Key present on every Android node | New nodes receive independent Node Keys; legacy Android supports online key isolation |
 | Local pending SMS encrypted with traffic/master key | Dedicated local Keystore-backed queue key |
 | Device bearer tokens effectively permanent | Crash-safe prepare/store/commit rotation every 60 days on Android and modem agents |
 | Relay is Android-specific | Generic Node + Channel + capability model added |
-| No DJI/USB modem runtime | Linux Modem Agent with ModemManager and external dji4g adapter paths |
+| No DJI/USB modem runtime | Linux Modem Agent with direct Quectel AT (DJI Gen1/QDC507) and ModemManager paths |
 | Signal state too coarse | Android LTE/NR dBm/RSRP/RSRQ/SINR plus modem radio metrics |
 | Docker build context includes unnecessary files | Root .dockerignore excludes env, git, Android/build artifacts, keys |
 | Reverse proxy collapses audit/rate-limit IP | Trusted-proxy CIDR model; XFF accepted only from trusted peers |

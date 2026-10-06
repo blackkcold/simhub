@@ -354,91 +354,266 @@ def decode_ucs2(value: str) -> str:
     return v
 
 
-class Dji4gAdapter(ModemAdapter):
-    name = "dji4g"
+class DjiAtAdapter(ModemAdapter):
+    name = "dji-at"
+    USB_IDS = {(0x2CA3, 0x4006), (0x2C7C, 0x0125)}
 
-    def __init__(self) -> None:
-        if not shutil.which("dji4g"):
-            raise RuntimeError("dji4g CLI not found")
+    def __init__(self, port: str | None = None) -> None:
+        self.port = port or os.getenv("SIMHUB_AT_PORT") or self._detect_port()
+        with self._open() as ser:
+            self._command(ser, "AT", timeout=3)
+            self._initialize(ser)
 
-    def at(self, command: str) -> str:
-        return run_command(["dji4g", "at", command], timeout=20)
-
-    def fingerprint(self) -> str:
-        for cmd in ("AT+CCID", "AT+CIMI", "ATI"):
+    def _detect_port(self) -> str:
+        candidates: list[tuple[int, str]] = []
+        for p in list_ports.comports():
+            desc = " ".join(
+                str(v or "") for v in (
+                    getattr(p, "description", ""),
+                    getattr(p, "interface", ""),
+                    getattr(p, "hwid", ""),
+                )
+            )
+            score = 0
+            if "Quectel USB AT Port".casefold() in desc.casefold():
+                score += 250
+            elif "Quectel".casefold() in desc.casefold() and "AT".casefold() in desc.casefold():
+                score += 180
+            if isinstance(getattr(p, "vid", None), int) and isinstance(getattr(p, "pid", None), int):
+                if (p.vid, p.pid) in self.USB_IDS:
+                    score += 120
+            if score:
+                candidates.append((score, str(p.device)))
+        for _, device in sorted(candidates, reverse=True):
             try:
-                out = self.at(cmd)
-                values = re.findall(r"[0-9A-Za-z._-]{8,}", out)
-                if values:
-                    return hashlib.sha256((cmd + "|" + "|".join(values)).encode()).hexdigest()
+                with self._open(device) as ser:
+                    out = self._command(ser, "ATI", timeout=3)
+                    if "OK" in out:
+                        return device
             except Exception:
                 continue
-        return "dji4g-unknown"
+        raise RuntimeError("DJI/QDC507 Quectel USB AT Port not found; set SIMHUB_AT_PORT or use ModemManager")
+
+    def _open(self, device: str | None = None):
+        baud = int(os.getenv("SIMHUB_AT_BAUD", "115200"))
+        return serial.Serial(device or self.port, baudrate=baud, timeout=0.2, write_timeout=5)
+
+    @staticmethod
+    def _read_until(ser, timeout: float, prompt: bool = False) -> str:
+        deadline = time.monotonic() + timeout
+        buf = bytearray()
+        while time.monotonic() < deadline:
+            waiting = getattr(ser, "in_waiting", 0)
+            chunk = ser.read(waiting if waiting else 1)
+            if chunk:
+                buf.extend(chunk)
+                text = buf.decode("utf-8", "replace")
+                if prompt and ">" in text:
+                    return text
+                if "\r\nOK\r\n" in text or "\nOK\r" in text:
+                    return text
+                if "+CMS ERROR" in text or "+CME ERROR" in text or "\r\nERROR\r\n" in text:
+                    raise RuntimeError(text.strip()[-500:])
+            else:
+                time.sleep(0.03)
+        text = buf.decode("utf-8", "replace")
+        if prompt and ">" in text:
+            return text
+        raise TimeoutError(f"AT response timeout: {text[-300:]}")
+
+    def _command(self, ser, command: str, timeout: float = 5) -> str:
+        ser.reset_input_buffer()
+        ser.write((command + "\r").encode("ascii"))
+        ser.flush()
+        return self._read_until(ser, timeout)
+
+    def _initialize(self, ser) -> None:
+        for command in (
+            "ATE0",
+            "AT+CMGF=1",
+            'AT+CSCS="GSM"',
+            "AT+CSDH=1",
+            'AT+CPMS="ME","ME","ME"',
+            "AT+CNMI=2,1,0,0,0",
+        ):
+            try:
+                self._command(ser, command, timeout=4)
+            except Exception:
+                if command.startswith("AT+CPMS"):
+                    self._command(ser, 'AT+CPMS="SM","SM","SM"', timeout=4)
+                elif command.startswith("AT+CNMI"):
+                    continue
+                else:
+                    raise
+
+    @staticmethod
+    def _timestamp(value: str) -> int:
+        raw = (value or "").strip().strip('"')
+        m = re.fullmatch(r"(\d{2}/\d{2}/\d{2},\d{2}:\d{2}:\d{2})([+-])(\d{2})", raw)
+        try:
+            if m:
+                offset = int(m.group(3)) * 15 * (1 if m.group(2) == "+" else -1)
+                dt = datetime.strptime(m.group(1), "%y/%m/%d,%H:%M:%S").replace(tzinfo=timezone(timedelta(minutes=offset)))
+                return int(dt.timestamp())
+            return int(datetime.strptime(raw, "%y/%m/%d,%H:%M:%S").timestamp())
+        except Exception:
+            return now()
+
+    def fingerprint(self) -> str:
+        values: list[str] = []
+        with self._open() as ser:
+            self._initialize(ser)
+            for command in ("AT+QCCID", "AT+CCID", "AT+CIMI", "AT+CGMM"):
+                try:
+                    response = self._command(ser, command, timeout=4)
+                    found = re.findall(r"[0-9A-Za-z._-]{8,}", response)
+                    if found:
+                        values.extend(found)
+                except Exception:
+                    continue
+        if not values:
+            values = [self.port]
+        return hashlib.sha256("|".join(values).encode()).hexdigest()
 
     def state(self) -> dict[str, Any]:
-        status = maybe_json(run_command(["dji4g", "status", "--json"], timeout=20))
-        try:
-            cell = maybe_json(run_command(["dji4g", "cell", "--json"], timeout=20))
-        except Exception:
-            cell = {}
-        carrier = deep_pick(status, "operator", "carrier", "network") or deep_pick(cell, "operator", "carrier") or ""
-        rsrp = deep_pick(cell, "rsrp")
-        rsrq = deep_pick(cell, "rsrq")
-        sinr = deep_pick(cell, "sinr", "snr")
-        rssi = deep_pick(status, "rssi", "signal") or deep_pick(cell, "rssi")
-        network = deep_pick(cell, "rat", "technology", "networktype") or deep_pick(status, "rat", "technology") or "CELLULAR"
+        carrier = ""
+        network = "CELLULAR"
         level = None
-        try:
-            rv = float(str(rsrp).replace("dBm", "").strip())
-            level = 4 if rv >= -90 else 3 if rv >= -100 else 2 if rv >= -110 else 1 if rv >= -120 else 0
-        except Exception:
-            pass
-        return {
-            "carrierName": str(carrier),
+        signal_dbm = None
+        rsrp = rsrq = sinr = None
+        with self._open() as ser:
+            self._initialize(ser)
+            try:
+                cops = self._command(ser, "AT+COPS?", timeout=4)
+                m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]*)"', cops)
+                if m:
+                    carrier = decode_ucs2(m.group(1))
+            except Exception:
+                pass
+            try:
+                csq = self._command(ser, "AT+CSQ", timeout=4)
+                m = re.search(r"\+CSQ:\s*(\d+)", csq)
+                if m and 0 <= int(m.group(1)) <= 31:
+                    q = int(m.group(1))
+                    signal_dbm = -113 + 2 * q
+                    level = 4 if signal_dbm >= -85 else 3 if signal_dbm >= -95 else 2 if signal_dbm >= -105 else 1 if signal_dbm >= -115 else 0
+            except Exception:
+                pass
+            try:
+                qnw = self._command(ser, "AT+QNWINFO", timeout=4)
+                m = re.search(r'\+QNWINFO:\s*"([^"]+)"', qnw)
+                if m:
+                    network = m.group(1)
+            except Exception:
+                pass
+            try:
+                qeng = self._command(ser, 'AT+QENG="servingcell"', timeout=4)
+                line = next((x for x in qeng.splitlines() if "+QENG:" in x), "")
+                fields = [x.strip().strip('"') for x in line.split(",")]
+                if len(fields) >= 17 and "LTE" in fields[2].upper():
+                    def number_at(index: int):
+                        try:
+                            return float(fields[index])
+                        except Exception:
+                            return None
+                    rsrp = number_at(13)
+                    rsrq = number_at(14)
+                    rssi = number_at(15)
+                    sinr = number_at(16)
+                    if signal_dbm is None and rssi is not None:
+                        signal_dbm = rssi
+            except Exception:
+                pass
+        out = {
+            "carrierName": carrier,
             "displayName": "DJI 4G / QDC507",
-            "serviceState": "IN_SERVICE" if status else "UNKNOWN",
-            "networkType": str(network),
+            "serviceState": "IN_SERVICE" if carrier or signal_dbm is not None else "UNKNOWN",
+            "networkType": network,
             "signalLevel": level,
-            "signalRsrp": rsrp,
-            "signalRsrq": rsrq,
-            "signalSinr": sinr,
-            "signalRssi": rssi,
+            "signalDbm": signal_dbm,
         }
+        if rsrp is not None:
+            out["signalRsrp"] = rsrp
+        if rsrq is not None:
+            out["signalRsrq"] = rsrq
+        if sinr is not None:
+            out["signalSinr"] = sinr
+        return out
 
     def list_sms(self) -> list[SmsRecord]:
-        self.at("AT+CMGF=1")
-        out = self.at('AT+CMGL="ALL"')
-        lines = [x.rstrip() for x in out.splitlines()]
+        with self._open() as ser:
+            self._initialize(ser)
+            raw = self._command(ser, 'AT+CMGL="ALL"', timeout=15)
+        lines = [x.rstrip("\r") for x in raw.splitlines()]
         records: list[SmsRecord] = []
-        header = re.compile(r'^\+CMGL:\s*(\d+),"([^"]*)","([^"]*)"(?:,"([^"]*)")?(?:,"([^"]*)")?')
         i = 0
         while i < len(lines):
-            m = header.match(lines[i].strip())
-            if not m:
+            line = lines[i].strip()
+            if not line.startswith("+CMGL:"):
                 i += 1
                 continue
-            idx = m.group(1)
-            sender = decode_ucs2(m.group(3) or "")
+            try:
+                fields = next(csv.reader([line.split(":", 1)[1].strip()], skipinitialspace=True))
+                index = str(fields[0]).strip()
+                sender = decode_ucs2(fields[2] if len(fields) > 2 else "")
+                stamp = fields[4] if len(fields) > 4 else ""
+            except Exception:
+                i += 1
+                continue
             body_lines: list[str] = []
             i += 1
-            while i < len(lines) and not lines[i].startswith("+CMGL:") and lines[i].strip() not in {"OK", "ERROR"}:
-                if lines[i].strip():
-                    body_lines.append(lines[i].strip())
+            while i < len(lines):
+                candidate = lines[i].strip()
+                if candidate.startswith("+CMGL:") or candidate in {"OK", "ERROR"}:
+                    break
+                if candidate:
+                    body_lines.append(candidate)
                 i += 1
             body = decode_ucs2("\n".join(body_lines))
-            occurred=now()
-            digest=hashlib.sha256((sender+"\0"+body).encode()).hexdigest()[:16]
-            records.append(SmsRecord(local_id=f"dji4g-{idx}-{digest}", sender=sender, body=body, occurred_at=occurred, ref=idx))
+            occurred = self._timestamp(stamp)
+            digest = hashlib.sha256((index + "\0" + sender + "\0" + body + "\0" + stamp).encode()).hexdigest()[:20]
+            records.append(SmsRecord(local_id=f"dji-at-{digest}", sender=sender, body=body, occurred_at=occurred, ref=index))
         return records[:MAX_SMS_PER_CYCLE]
 
-    def send_sms(self, to: str, body: str) -> dict[str, Any]:
-        out = run_command(["dji4g", "sms", "send", to, body], timeout=60)
-        match = re.search(r"\+CMGS:\s*(\d+)", out)
+    def _direct_send(self, to: str, body: str) -> dict[str, Any]:
+        with self._open() as ser:
+            self._initialize(ser)
+            unicode_mode = any(ord(ch) > 127 for ch in body)
+            if unicode_mode:
+                self._command(ser, 'AT+CSCS="UCS2"', timeout=4)
+                self._command(ser, "AT+CSMP=17,167,0,8", timeout=4)
+                number = to.encode("utf-16-be").hex().upper()
+                content = body.encode("utf-16-be").hex().upper()
+            else:
+                self._command(ser, 'AT+CSCS="GSM"', timeout=4)
+                number = to
+                content = body
+            ser.reset_input_buffer()
+            ser.write((f'AT+CMGS="{number}"\r').encode("ascii"))
+            ser.flush()
+            self._read_until(ser, 8, prompt=True)
+            ser.write(content.encode("ascii", "strict") + b"\x1a")
+            ser.flush()
+            result = self._read_until(ser, 90)
+        match = re.search(r"\+CMGS:\s*(\d+)", result)
         return {"adapter": self.name, "messageRef": int(match.group(1)) if match else None}
 
+    def send_sms(self, to: str, body: str) -> dict[str, Any]:
+        if shutil.which("dji4g"):
+            try:
+                out = run_command(["dji4g", "sms", "send", to, body], timeout=90)
+                match = re.search(r"\+CMGS:\s*(\d+)", out)
+                return {"adapter": "dji4g", "messageRef": int(match.group(1)) if match else None}
+            except Exception:
+                pass
+        return self._direct_send(to, body)
+
     def delete_sms(self, sms: SmsRecord) -> None:
-        if sms.ref and str(sms.ref).isdigit():
-            self.at("AT+CMGD="+str(sms.ref))
+        if not sms.ref or not str(sms.ref).isdigit():
+            return
+        with self._open() as ser:
+            self._initialize(ser)
+            self._command(ser, "AT+CMGD=" + str(sms.ref), timeout=8)
 
 
 class MmcliAdapter(ModemAdapter):
@@ -522,16 +697,14 @@ class MmcliAdapter(ModemAdapter):
 
 def build_adapter(name: str) -> ModemAdapter:
     n = (name or "auto").lower()
-    if n == "dji4g":
-        return Dji4gAdapter()
+    if n in {"dji4g","dji-at","dji"}:
+        return DjiAtAdapter()
     if n in {"mmcli", "modemmanager"}:
         return MmcliAdapter()
-    if shutil.which("dji4g"):
-        try:
-            return Dji4gAdapter()
-        except Exception:
-            pass
-    return MmcliAdapter()
+    try:
+        return DjiAtAdapter()
+    except Exception:
+        return MmcliAdapter()
 
 
 class Agent:
@@ -784,7 +957,7 @@ def main() -> None:
     sub = p.add_subparsers(dest="command", required=True)
     e = sub.add_parser("enroll")
     e.add_argument("--file", required=True, help="Enrollment JSON exported by the SIM Hub PWA")
-    e.add_argument("--adapter", choices=["auto", "dji4g", "modemmanager", "mmcli"], default="auto")
+    e.add_argument("--adapter", choices=["auto", "dji-at", "dji4g", "modemmanager", "mmcli"], default="auto")
     sub.add_parser("run")
     sub.add_parser("once")
     args = p.parse_args()

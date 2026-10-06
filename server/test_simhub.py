@@ -16,7 +16,7 @@ class ApiTest(unittest.TestCase):
         env=os.environ.copy();env.update({'SIMHUB_ADMIN_TOKEN':TOKEN,'SIMHUB_BIND':'127.0.0.1','SIMHUB_PORT':str(cls.port),'SIMHUB_DB':str(cls.db),'SIMHUB_WEB_ROOT':str(ROOT/'web'),'SIMHUB_SESSION_TTL':'900'})
         cls.proc=subprocess.Popen([sys.executable,str(SERVER)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         for _ in range(80):
-            try: urllib.request.urlopen(cls.base+'/healthz',timeout=.2).read();break
+            try: urllib.request.urlopen(cls.base+'/readyz',timeout=.2).read();break
             except Exception: time.sleep(.05)
         else: raise RuntimeError('server failed to start')
     @classmethod
@@ -78,14 +78,37 @@ class ApiTest(unittest.TestCase):
         cookie=h.get('Set-Cookie','').split(';',1)[0];self.assertIn('simhub_session=',cookie)
         st,data,_=self.req('GET','/api/v1/auth/check',admin=False,headers={'Cookie':cookie});self.assertEqual(st,200);self.assertTrue(data['ok'])
 
-    def test_state_allowlist_and_subscription_projection(self):
+    def test_state_allowlist_and_channel_projection(self):
         d=self.enroll('State')
-        state={'androidVersion':'17','sdk':37,'body':'must-drop','nested':{'otp':'must-drop'},'subscriptions':[{'subscriptionId':7,'slotIndex':0,'carrierName':'Carrier','displayName':'SIM A','secret':'drop'}]}
+        state={'androidVersion':'17','sdk':37,'nodeType':'android','cryptoKeyId':'active-key-1','queueFailures':2,'body':'must-drop','nested':{'otp':'must-drop'},'capabilities':['sms.receive','sms.send'],'subscriptions':[{'subscriptionId':7,'channelId':'channel-a','channelRevision':2,'slotIndex':0,'carrierName':'Carrier','displayName':'SIM A','signalRsrp':-95,'secret':'drop'}],'channels':[{'id':'channel-a','localId':'7','kind':'android-sim','revision':2,'slotIndex':0,'carrierName':'Carrier','displayName':'SIM A','signalRsrp':-95,'secret':'drop'}]}
         st,_,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/state",state,device_token=d['deviceToken'],admin=False);self.assertEqual(st,200)
-        st,out,_=self.req('GET',f"/api/v1/devices/{d['deviceId']}/state");self.assertEqual(st,200);self.assertNotIn('body',out['state']);self.assertNotIn('nested',out['state']);self.assertNotIn('secret',out['state']['subscriptions'][0])
+        st,out,_=self.req('GET',f"/api/v1/devices/{d['deviceId']}/state");self.assertEqual(st,200);self.assertNotIn('body',out['state']);self.assertNotIn('nested',out['state']);self.assertNotIn('secret',out['state']['subscriptions'][0]);self.assertEqual(out['state']['channels'][0]['id'],'channel-a')
         with sqlite3.connect(self.db) as con:
             n=con.execute('SELECT COUNT(*) FROM subscriptions WHERE device_id=?',(d['deviceId'],)).fetchone()[0]
-        self.assertEqual(n,1)
+            ch=con.execute('SELECT id,revision FROM channels WHERE device_id=?',(d['deviceId'],)).fetchone()
+        self.assertEqual(n,1);self.assertEqual(ch[0],'channel-a');self.assertEqual(ch[1],2)
+
+    def test_generic_modem_enrollment_and_key_promotion(self):
+        wrapped=self.cipher(1);kid='abcdefgh1234'
+        st,x,_=self.req('POST','/api/v1/enrollments',{'nodeType':'modem','capabilities':['sms.receive','sms.send','signal.radio'],'keyId':kid,'wrappedKey':wrapped});self.assertEqual(st,201)
+        st,d,_=self.req('POST','/api/v1/enroll',{'token':x['token'],'name':'DJI Node','model':'QDC507','nodeType':'modem'},admin=False);self.assertEqual(st,201)
+        st,devices,_=self.req('GET','/api/v1/devices');row=[v for v in devices['devices'] if v['id']==d['deviceId']][0]
+        self.assertEqual(row['nodeType'],'modem');self.assertEqual(row['keyId'],kid);self.assertIn('sms.send',row['capabilities'])
+
+        legacy=self.enroll('Legacy')
+        pending='ijklmnop5678'
+        st,_,_=self.req('PATCH',f"/api/v1/devices/{legacy['deviceId']}",{'pendingKeyId':pending,'pendingWrappedKey':wrapped});self.assertEqual(st,200)
+        state={'nodeType':'android','cryptoKeyId':pending,'capabilities':['sms.receive'],'channels':[],'subscriptions':[]}
+        st,_,_=self.req('POST',f"/api/v1/devices/{legacy['deviceId']}/state",state,device_token=legacy['deviceToken'],admin=False);self.assertEqual(st,200)
+        st,devices,_=self.req('GET','/api/v1/devices');row=[v for v in devices['devices'] if v['id']==legacy['deviceId']][0]
+        self.assertEqual(row['keyId'],pending);self.assertIsNone(row['pendingKeyId'])
+
+    def test_trusted_proxy_client_ip_is_used_for_audit(self):
+        ip='203.0.113.42'
+        st,_,_=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN,'totp':''},admin=False,headers={'X-Forwarded-For':ip});self.assertEqual(st,201)
+        with sqlite3.connect(self.db) as con:
+            row=con.execute("SELECT ip FROM audit WHERE action='auth.session' ORDER BY seq DESC LIMIT 1").fetchone()
+        self.assertEqual(row[0],ip)
 
     def test_command_state_does_not_regress(self):
         d=self.enroll('Command');ts=int(time.time());cid='state-'+d['deviceId']

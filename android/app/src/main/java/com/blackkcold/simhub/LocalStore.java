@@ -151,6 +151,13 @@ public final class LocalStore extends SQLiteOpenHelper {
         try{db.delete("sms_part_status","command_id=?",new String[]{id});db.delete("pending_sms","command_id=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
 
+    public synchronized List<String> expireStalePendingSms(long ageSeconds){
+        long cutoff=System.currentTimeMillis()/1000-Math.max(3600,ageSeconds);List<String> ids=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().query("pending_sms",new String[]{"command_id"},"created_at<?",new String[]{String.valueOf(cutoff)},null,null,null)){while(c.moveToNext())ids.add(c.getString(0));}
+        for(String id:ids)removePendingSms(id);
+        return ids;
+    }
+
     public synchronized int pendingSmsCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM pending_sms",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized void recoverStaleClaims(){getWritableDatabase().execSQL("DELETE FROM processed_commands WHERE state='claimed' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{System.currentTimeMillis()/1000-120});}
 

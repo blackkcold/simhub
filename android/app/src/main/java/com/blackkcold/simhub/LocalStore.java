@@ -12,13 +12,19 @@ import java.util.List;
 public final class LocalStore extends SQLiteOpenHelper {
     private static LocalStore INSTANCE;
     public static synchronized LocalStore get(Context c){if(INSTANCE==null)INSTANCE=new LocalStore(c.getApplicationContext());return INSTANCE;}
-    private LocalStore(Context c){super(c,"simhub-agent.db",null,2);}
+    private LocalStore(Context c){super(c,"simhub-agent.db",null,3);}
 
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,occurred_at INTEGER NOT NULL,subscription_id TEXT NOT NULL,has_otp INTEGER NOT NULL,metadata_json TEXT NOT NULL,ciphertext_json TEXT NOT NULL,created_at INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE processed_commands(id TEXT PRIMARY KEY,state TEXT NOT NULL DEFAULT 'succeeded',processed_at INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE command_acks(command_id TEXT PRIMARY KEY,state TEXT NOT NULL,result_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE pending_sms(command_id TEXT PRIMARY KEY,provider_uri TEXT NOT NULL,total_parts INTEGER NOT NULL,sent_parts INTEGER NOT NULL DEFAULT 0,delivered_parts INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,event_cipher_json TEXT NOT NULL,sub_id INTEGER NOT NULL,created_at INTEGER NOT NULL)");
+        createPartTable(db);
+    }
+
+    private static void createPartTable(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE IF NOT EXISTS sms_part_status(command_id TEXT NOT NULL,part_index INTEGER NOT NULL,sent_state INTEGER NOT NULL DEFAULT 0,delivery_state INTEGER NOT NULL DEFAULT 0,sent_result_code INTEGER,delivery_result_code INTEGER,updated_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(command_id,part_index))");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sms_part_command ON sms_part_status(command_id,part_index)");
     }
 
     @Override public void onUpgrade(SQLiteDatabase db,int oldV,int newV){
@@ -26,6 +32,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             try{db.execSQL("ALTER TABLE processed_commands ADD COLUMN state TEXT NOT NULL DEFAULT 'succeeded'");}catch(Exception ignored){}
             db.execSQL("CREATE TABLE IF NOT EXISTS command_acks(command_id TEXT PRIMARY KEY,state TEXT NOT NULL,result_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)");
         }
+        if(oldV<3)createPartTable(db);
     }
 
     public synchronized boolean queueEvent(String id,String kind,long occurredAt,String subId,boolean hasOtp,JSONObject metadata,JSONObject cipher){
@@ -72,28 +79,77 @@ public final class LocalStore extends SQLiteOpenHelper {
     public synchronized void markCommandAckSent(String id,String state){getWritableDatabase().delete("command_acks","command_id=? AND state=?",new String[]{id,state});}
 
     public synchronized void createPendingSms(String commandId,String providerUri,int totalParts,JSONObject eventCipher,int subId){
-        ContentValues v=new ContentValues();v.put("command_id",commandId);v.put("provider_uri",providerUri);v.put("total_parts",totalParts);v.put("event_cipher_json",eventCipher.toString());v.put("sub_id",subId);v.put("created_at",System.currentTimeMillis()/1000);
-        getWritableDatabase().insertWithOnConflict("pending_sms",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try{
+            ContentValues v=new ContentValues();v.put("command_id",commandId);v.put("provider_uri",providerUri);v.put("total_parts",Math.max(1,totalParts));v.put("event_cipher_json",eventCipher.toString());v.put("sub_id",subId);v.put("created_at",System.currentTimeMillis()/1000);
+            db.insertWithOnConflict("pending_sms",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+            db.delete("sms_part_status","command_id=?",new String[]{commandId});
+            for(int i=0;i<Math.max(1,totalParts);i++){
+                ContentValues p=new ContentValues();p.put("command_id",commandId);p.put("part_index",i);p.put("updated_at",System.currentTimeMillis()/1000);
+                db.insertWithOnConflict("sms_part_status",null,p,SQLiteDatabase.CONFLICT_IGNORE);
+            }
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
     }
 
     public static final class PendingStatus {
-        public final boolean exists,complete,failed,delivered;
+        public final boolean exists,complete,failed,delivered,deliveryFailed;
         public final String providerUri;
         public final JSONObject eventCipher;
-        public final int subId;
-        PendingStatus(boolean e,boolean c,boolean f,boolean d,String u,JSONObject x,int s){exists=e;complete=c;failed=f;delivered=d;providerUri=u;eventCipher=x;subId=s;}
+        public final int subId,totalParts;
+        PendingStatus(boolean e,boolean c,boolean f,boolean d,boolean df,String u,JSONObject x,int s,int t){exists=e;complete=c;failed=f;delivered=d;deliveryFailed=df;providerUri=u;eventCipher=x;subId=s;totalParts=t;}
     }
-    private PendingStatus status(String id)throws Exception{
-        try(Cursor c=getReadableDatabase().query("pending_sms",null,"command_id=?",new String[]{id},null,null,null)){
-            if(!c.moveToFirst())return new PendingStatus(false,false,false,false,"",null,-1);
-            int total=c.getInt(c.getColumnIndexOrThrow("total_parts")),sent=c.getInt(c.getColumnIndexOrThrow("sent_parts")),del=c.getInt(c.getColumnIndexOrThrow("delivered_parts"));
-            boolean failed=c.getInt(c.getColumnIndexOrThrow("failed"))==1;
-            return new PendingStatus(true,sent>=total||failed,failed,del>=total&&!failed,c.getString(c.getColumnIndexOrThrow("provider_uri")),new JSONObject(c.getString(c.getColumnIndexOrThrow("event_cipher_json"))),c.getInt(c.getColumnIndexOrThrow("sub_id")));
+
+    private void ensurePartRows(SQLiteDatabase db,String id,int total){
+        for(int i=0;i<Math.max(1,total);i++){
+            ContentValues p=new ContentValues();p.put("command_id",id);p.put("part_index",i);p.put("updated_at",System.currentTimeMillis()/1000);
+            db.insertWithOnConflict("sms_part_status",null,p,SQLiteDatabase.CONFLICT_IGNORE);
         }
     }
-    public synchronized PendingStatus recordSentPart(String id,boolean ok)throws Exception{if(ok)getWritableDatabase().execSQL("UPDATE pending_sms SET sent_parts=sent_parts+1 WHERE command_id=?",new Object[]{id});else getWritableDatabase().execSQL("UPDATE pending_sms SET failed=1 WHERE command_id=?",new Object[]{id});return status(id);}
-    public synchronized PendingStatus recordDeliveredPart(String id)throws Exception{getWritableDatabase().execSQL("UPDATE pending_sms SET delivered_parts=delivered_parts+1 WHERE command_id=?",new Object[]{id});return status(id);}
-    public synchronized void removePendingSms(String id){getWritableDatabase().delete("pending_sms","command_id=?",new String[]{id});}
+
+    private PendingStatus status(String id)throws Exception{
+        SQLiteDatabase db=getReadableDatabase();
+        String providerUri;JSONObject eventCipher;int subId,total;
+        try(Cursor c=db.query("pending_sms",null,"command_id=?",new String[]{id},null,null,null)){
+            if(!c.moveToFirst())return new PendingStatus(false,false,false,false,false,"",null,-1,0);
+            providerUri=c.getString(c.getColumnIndexOrThrow("provider_uri"));
+            eventCipher=new JSONObject(c.getString(c.getColumnIndexOrThrow("event_cipher_json")));
+            subId=c.getInt(c.getColumnIndexOrThrow("sub_id"));
+            total=Math.max(1,c.getInt(c.getColumnIndexOrThrow("total_parts")));
+        }
+        ensurePartRows(getWritableDatabase(),id,total);
+        int sentOk=0,sentFail=0,deliveryOk=0,deliveryFail=0;
+        try(Cursor c=db.rawQuery("SELECT COALESCE(SUM(CASE WHEN sent_state=1 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN sent_state=2 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN delivery_state=1 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN delivery_state=2 THEN 1 ELSE 0 END),0) FROM sms_part_status WHERE command_id=?",new String[]{id})){
+            if(c.moveToFirst()){sentOk=c.getInt(0);sentFail=c.getInt(1);deliveryOk=c.getInt(2);deliveryFail=c.getInt(3);}
+        }
+        boolean sendFailed=sentFail>0;
+        boolean deliveryFailed=deliveryFail>0;
+        boolean sentComplete=(sentOk+sentFail)>=total;
+        boolean delivered=deliveryOk>=total&&!sendFailed&&!deliveryFailed;
+        return new PendingStatus(true,sentComplete||sendFailed,sendFailed||deliveryFailed,delivered,deliveryFailed,providerUri,eventCipher,subId,total);
+    }
+
+    public synchronized PendingStatus recordSentPart(String id,int partIndex,boolean ok,int resultCode)throws Exception{
+        PendingStatus current=status(id);if(!current.exists)return current;
+        if(partIndex<0||partIndex>=current.totalParts)return current;
+        ContentValues v=new ContentValues();v.put("sent_state",ok?1:2);v.put("sent_result_code",resultCode);v.put("updated_at",System.currentTimeMillis()/1000);
+        getWritableDatabase().update("sms_part_status",v,"command_id=? AND part_index=?",new String[]{id,String.valueOf(partIndex)});
+        return status(id);
+    }
+
+    public synchronized PendingStatus recordDeliveredPart(String id,int partIndex,boolean ok,int resultCode)throws Exception{
+        PendingStatus current=status(id);if(!current.exists)return current;
+        if(partIndex<0||partIndex>=current.totalParts)return current;
+        ContentValues v=new ContentValues();v.put("delivery_state",ok?1:2);v.put("delivery_result_code",resultCode);v.put("updated_at",System.currentTimeMillis()/1000);
+        getWritableDatabase().update("sms_part_status",v,"command_id=? AND part_index=?",new String[]{id,String.valueOf(partIndex)});
+        return status(id);
+    }
+
+    public synchronized void removePendingSms(String id){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{db.delete("sms_part_status","command_id=?",new String[]{id});db.delete("pending_sms","command_id=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}
+    }
 
     public synchronized void recoverStaleClaims(){getWritableDatabase().execSQL("DELETE FROM processed_commands WHERE state='claimed' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{System.currentTimeMillis()/1000-120});}
 
@@ -101,7 +157,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try{
-            db.delete("events",null,null);db.delete("processed_commands",null,null);db.delete("command_acks",null,null);db.delete("pending_sms",null,null);
+            db.delete("events",null,null);db.delete("processed_commands",null,null);db.delete("command_acks",null,null);db.delete("sms_part_status",null,null);db.delete("pending_sms",null,null);
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }

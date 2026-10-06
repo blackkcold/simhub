@@ -24,6 +24,10 @@ public final class AgentConfig {
     }
     public long historyId(){return prefs.getLong("history_cursor_id",-1L);}
     public void setHistoryCursor(long date,long id){prefs.edit().putLong("history_cursor_date",date).putLong("history_cursor_id",id).apply();}
+    public void recordQueueFailure(){prefs.edit().putLong("queue_failures",prefs.getLong("queue_failures",0)+1).putLong("last_queue_failure_at",System.currentTimeMillis()/1000).apply();}
+    public long queueFailures(){return prefs.getLong("queue_failures",0);}
+    public long lastQueueFailureAt(){return prefs.getLong("last_queue_failure_at",0);}
+    public void clearQueueFailures(){prefs.edit().remove("queue_failures").remove("last_queue_failure_at").apply();}
     public String deviceToken(){try{return secrets.getString(SECRET_DEVICE_TOKEN);}catch(Exception e){return null;}}
     public byte[] vaultKey(){try{return secrets.getBytes(SECRET_VAULT_KEY);}catch(Exception e){return null;}}
     public void setEnrollment(String server,String deviceId,String deviceName,String token,byte[] vaultKey)throws Exception{
@@ -32,7 +36,7 @@ public final class AgentConfig {
         secrets.putString(SECRET_DEVICE_TOKEN,token);secrets.putBytes(SECRET_VAULT_KEY,Arrays.copyOf(vaultKey,vaultKey.length));
     }
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").putBoolean("always_on",false).apply();
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").putBoolean("always_on",false).apply();
         secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);
     }
 }

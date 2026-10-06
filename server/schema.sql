@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS devices(
   key_id TEXT NOT NULL DEFAULT '',
   wrapped_key_json TEXT NOT NULL DEFAULT '{}',
   pending_key_id TEXT NOT NULL DEFAULT '',
-  pending_wrapped_key_json TEXT NOT NULL DEFAULT '{}'
+  pending_wrapped_key_json TEXT NOT NULL DEFAULT '{}',
+  token_issued_at INTEGER NOT NULL DEFAULT 0,
+  pending_token_hash TEXT NOT NULL DEFAULT '',
+  pending_token_expires_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS events(

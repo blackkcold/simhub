@@ -63,6 +63,7 @@ jobs:
             export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/simhub-release.jks"
             printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_FILE"
             gradle -p android :app:assembleRelease --stacktrace
+            bash scripts/verify_android_release_signer.sh android/app/build/outputs/apk/release/app-release.apk "$ANDROID_HOME/build-tools/37.0.0/apksigner"
             echo "APK_PATH=android/app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_ENV"
             echo "APK_NAME=simhub-agent-v0.1.5-release.apk" >> "$GITHUB_ENV"
             echo "SIGNING_MODE=release-signed" >> "$GITHUB_ENV"

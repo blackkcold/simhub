@@ -1,17 +1,17 @@
 # SIM Hub architecture
 
-SIM Hub is a **personal, self-hosted Android SIM/SMS management system**. Android phones are SIM Nodes; the user's own server is a relay and durable queue; the Web/PWA is the controller. The design intentionally excludes phone calls, dialer control, call logs, cellular-call audio, SIP and PSTN bridging.
+SIM Hub is a **personal, self-hosted multi-node SIM/SMS management system**. Android phones and supported Linux cellular modems are SIM Nodes; the user's own server is a relay and durable queue; the Web/PWA is the controller. The design intentionally excludes phone calls, dialer control, call logs, cellular-call audio, SIP and PSTN bridging.
 
 ## Components
 
 ```text
 ┌──────────────────────────┐
-│ Android SIM Node(s)      │
+│ Android / Modem Node(s)  │
 │                          │
 │ Default SMS handler      │
 │ SMS Provider             │
 │ OTP parser               │
-│ SIM/subscription state   │
+│ Generic Channel state    │
 │ AES-256-GCM encryption   │
 │ Durable event queue      │
 │ Android Keystore         │
@@ -50,9 +50,9 @@ SIM Hub is a **personal, self-hosted Android SIM/SMS management system**. Androi
 
 ## Trust model
 
-The relay is intentionally blind to SMS content. A random 256-bit Vault Key is created by the controller and transferred to the Android node only through the one-time enrollment deep link. The relay stores ciphertext, routing metadata and operational state, but does not receive the Vault Key through an API endpoint.
+The relay is intentionally blind to SMS content. The controller owns the 256-bit Master Vault Key. For every new node it creates a random 256-bit Node Key, wraps that Node Key with the Master Vault Key, and sends only the Node Key to the target node through the one-time enrollment package. The relay stores the wrapped Node Key envelope, ciphertext, routing metadata and operational state, but never receives either key in plaintext.
 
-Android stores the recovery/master Vault Key wrapped by Android Keystore. For v2 traffic, both Android and the controller derive a device-specific AES-256 key using HKDF-SHA256 and the device ID. The controller keeps the master Vault Key only while unlocked. SMS body, OTP value, contact name, destination number and outbound SMS body are encrypted before the relay receives them.
+Android stores only its independent Node Key using Android Keystore-backed storage; the Linux Modem Agent stores only its own Node Key in a mode-0600 local config. New nodes never receive the Master Vault Key. Legacy v0.1.5 nodes may still use a Master-derived key until the `node.rotate_key` migration command succeeds. SMS body, OTP value, contact name, destination number and outbound SMS body are encrypted before the relay receives them.
 
 ## Data flow
 
@@ -80,7 +80,7 @@ Controller
   → relay durable command queue
   → Android fetches command
   → validates expiry / ID / authenticated ciphertext
-  → selects Android subscriptionId
+  → selects stable channelId + channelRevision
   → SmsManager sends through selected SIM
   → status event returns through encrypted event path
 ```
@@ -97,9 +97,39 @@ Controller
 
 ## Android model
 
-The app targets API 37 with minSdk 29. It is designed to hold `ROLE_SMS`, which is important for reliable arbitrary SMS/OTP handling on modern Android rather than depending on a generic background SMS listener. Multi-SIM routing uses Android `subscriptionId`, not a fixed SIM1/SIM2 assumption.
+The app targets API 37 with minSdk 29. It is designed to hold `ROLE_SMS`, which is important for reliable arbitrary SMS/OTP handling on modern Android rather than depending on a generic background SMS listener. Android `subscriptionId` is treated as a local adapter identifier only; remote routing uses a stable Channel ID plus revision and rejects stale commands after SIM replacement.
 
 The app deliberately requests no dialer role and contains no call-control or call-log path.
+
+## Generic Node and Channel model
+
+The relay protocol does not expose Android-specific routing as the primary business identity.
+
+```text
+Node
+├── nodeType: android | modem | gateway
+├── capabilities[]
+└── Channel[]
+    ├── id
+    ├── localId
+    ├── kind
+    ├── revision
+    ├── carrier/state
+    └── signal metrics
+```
+
+For Android, `localId` maps to the current `subscriptionId`. For Linux/DJI modems it maps to the adapter's local SIM/modem identifier. Remote SMS commands bind both `channelId` and `channelRevision`; if the underlying SIM fingerprint changes, the revision increments and stale commands fail closed.
+
+## Key hierarchy
+
+```text
+Master Vault Key (controller only)
+├── wraps Node Key A -> Android A
+├── wraps Node Key B -> Android B
+└── wraps Node Key C -> Linux/DJI modem
+```
+
+The relay stores only wrapped Node Key envelopes. A compromised node therefore exposes that node's content key, not the Master Vault Key or sibling Node Keys. Legacy derived-key nodes can rotate online after pending SMS work drains.
 
 ## Realtime and wake-up model
 
@@ -130,6 +160,7 @@ TLS is expected to terminate at Caddy, Nginx or Traefik in front of the relay.
 
 ```text
 android/                 Android SIM Node
+modem_agent/             Linux/DJI/USB modem SIM Node
 server/                  Personal relay API + SQLite schema
 web/                     Browser/PWA controller
 docs/                    Architecture, setup, protocol, security
@@ -140,4 +171,4 @@ Caddyfile.example        HTTPS reverse-proxy example
 
 ## Explicit non-goals
 
-SIM Hub v0.1.5 does not implement phone calls, dialer replacement, call history, call audio capture, SIP/WebRTC, PSTN media bridging, carrier provisioning, RCS replacement, or a full carrier-specific MMS transport stack.
+SIM Hub 0.2.x does not implement phone calls, dialer replacement, call history, call audio capture, SIP/WebRTC, PSTN media bridging, carrier provisioning, RCS replacement, or a full carrier-specific MMS transport stack.

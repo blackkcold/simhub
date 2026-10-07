@@ -3,7 +3,7 @@ import tempfile, unittest
 from pathlib import Path
 
 from simhub_modem_agent import (
-    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2, decode_message_body, decrypt_bootstrap_node_key
+    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2, decode_message_body, decrypt_bootstrap_node_key, parse_concat_udh
 )
 
 class ModemAgentTest(unittest.TestCase):
@@ -18,6 +18,27 @@ class ModemAgentTest(unittest.TestCase):
         # encrypt_payload uses a random IV, so verify the shared vector by decrypting its fixed envelope.
         fixed={'v':2,'alg':'A256GCM','kid':vector['kid'],'iv':vector['ivBase64Url'],'ct':vector['ciphertextBase64Url']}
         self.assertEqual(json.dumps(decrypt_payload(key,vector['kid'],fixed,aad),separators=(',',':')),vector['plaintext'])
+
+    def test_shared_bootstrap_vector(self):
+        import json
+        vector=json.loads((Path(__file__).resolve().parents[1]/'test_vectors'/'bootstrap-v1.json').read_text('utf-8'))
+        bootstrap=__import__('base64').urlsafe_b64decode(vector['bootstrapBase64Url']+'==')
+        envelope={'v':1,'alg':'A256GCM','iv':vector['ivBase64Url'],'ct':vector['ciphertextBase64Url']}
+        raw=decrypt_bootstrap_node_key(bootstrap,envelope,vector['kid'])
+        self.assertEqual(__import__('base64').urlsafe_b64encode(raw).decode().rstrip('='),vector['nodeKeyBase64Url'])
+
+    def test_concat_udh_parser_and_store(self):
+        raw=bytes([0x00,0x40,0x02,0x91,0x21,0x00,0x08,0,0,0,0,0,0,0,0x08,0x05,0x00,0x03,0x07,0x02,0x01,0x4F,0x60])
+        self.assertEqual(parse_concat_udh(raw.hex()),('8:7',2,1))
+        with tempfile.TemporaryDirectory() as td:
+            store=Store(Path(td)/'agent.db')
+            cipher={'v':1,'alg':'A256GCM','iv':'a','ct':'b'}
+            self.assertTrue(store.queue_multipart_part('g',1,2,cipher))
+            self.assertTrue(store.queue_multipart_part('g',2,2,cipher))
+            rows=store.multipart_group('g')
+            self.assertEqual([r['part_no'] for r in rows],[1,2])
+            store.delete_multipart_group('g')
+            self.assertEqual(store.multipart_group('g'),[])
 
     def test_bootstrap_node_key_roundtrip(self):
         import os

@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(tr -d '[:space:]' < .github/release/v0.2.1.trigger)"
+            VERSION="$(head -n1 .github/release/v0.2.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -233,7 +233,7 @@ jobs:
           ## Highlights
           - mandatory release-signed Android APK with pinned certificate verification;
           - stronger fail-closed SIM/channel identity handling;
-          - one-time bootstrap enrollment instead of transmitting the long-term Node Key;
+          - one-time bootstrap enrollment with proof validation before token consumption;
           - PWA absolute inactivity auto-lock;
           - correct Android SMS history direction classification;
           - durable encrypted multipart modem receive reassembly;

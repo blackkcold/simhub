@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "bootstrapBase64Url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "nodeKeyBase64Url": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "kid": "ctu3M2x2eAAj-D2k",
+  "ivBase64Url": "AAECAwQFBgcICQoL",
+  "ciphertextBase64Url": "ZyP0OOHA5DylaL2gncRWQrPntQfETmlLAF7fviFUPo0MKRF4hxylstWkdoiMOKmW",
+  "aad": "simhub-bootstrap-node-key-v1|ctu3M2x2eAAj-D2k"
+}

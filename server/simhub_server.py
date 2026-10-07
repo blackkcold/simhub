@@ -769,10 +769,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
             key_id,wrapped=normalize_wrapped_key(body.get("keyId",""),body.get("wrappedKey",{}))
         except ValueError as exc:
             self.send_error_json(400,"invalid_key",str(exc)); return
+        bootstrap=body.get("bootstrapEnvelope",{})
+        if key_id and not validate_cipher(bootstrap):
+            self.send_error_json(400,"invalid_bootstrap","A valid one-time bootstrap envelope is required for independent Node Key enrollment"); return
+        if not key_id:
+            bootstrap={}
         with open_db() as con:
             con.execute(
-                "INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at,node_type,capabilities_json,key_id,wrapped_key_json) VALUES(?,?,?,?,?,?,?,?)",
-                (eid,sha256_text(token),ts,ts+ttl,node_type,json.dumps(capabilities,separators=(",",":")),key_id,json.dumps(wrapped,separators=(",",":"))),
+                "INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at,node_type,capabilities_json,key_id,wrapped_key_json,bootstrap_envelope_json) VALUES(?,?,?,?,?,?,?,?,?)",
+                (eid,sha256_text(token),ts,ts+ttl,node_type,json.dumps(capabilities,separators=(",",":")),key_id,json.dumps(wrapped,separators=(",",":")),json.dumps(bootstrap,separators=(",",":"))),
             )
         audit("enrollment.create",eid,"ok",self.ip)
         self.send_json(201,{"id":eid,"token":token,"expiresAt":ts+ttl,"server":PUBLIC_BASE_URL or None,"nodeType":node_type,"keyId":key_id or None})
@@ -797,9 +802,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}"),ts),
             )
-            con.execute("UPDATE enrollment_tokens SET used_at=? WHERE id=?",(ts,row["id"]))
+            bootstrap=safe_json_loads(row["bootstrap_envelope_json"],{})
+            con.execute("UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}' WHERE id=?",(ts,row["id"]))
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
-        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None})
+        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None,"bootstrapEnvelope":bootstrap or None})
 
     def get_devices(self) -> None:
         ts=now()

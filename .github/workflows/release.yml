@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main --no-tags
+          git fetch origin main:refs/remotes/origin/main --no-tags
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::Release tag must point to main history"; exit 1; }
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           ANDROID_VERSION=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' android/app/build.gradle.kts | head -1)
@@ -183,4 +183,17 @@ jobs:
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF
-          gh release create "$GITHUB_REF_NAME"             --target "$GITHUB_SHA"             --title "SIM Hub v${VERSION}"             --notes-file release/RELEASE_NOTES.md             release/simhub-agent-v${VERSION}-release.apk             release/simhub-agent-v${VERSION}-release.apk.sha256             release/simhub-v${VERSION}-source.zip             release/simhub-v${VERSION}-docs.zip             release/signing-report.txt             release/SHA256SUMS.txt
+          ASSETS=(
+            "release/simhub-agent-v${VERSION}-release.apk"
+            "release/simhub-agent-v${VERSION}-release.apk.sha256"
+            "release/simhub-v${VERSION}-source.zip"
+            "release/simhub-v${VERSION}-docs.zip"
+            "release/signing-report.txt"
+            "release/SHA256SUMS.txt"
+          )
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "SIM Hub v${VERSION}" --notes-file release/RELEASE_NOTES.md
+            gh release upload "$GITHUB_REF_NAME" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "SIM Hub v${VERSION}" --notes-file release/RELEASE_NOTES.md "${ASSETS[@]}"
+          fi

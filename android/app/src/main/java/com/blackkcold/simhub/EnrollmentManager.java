@@ -17,13 +17,16 @@ public final class EnrollmentManager {
         URI su=URI.create(server);if(!"https".equalsIgnoreCase(su.getScheme())||su.getHost()==null)throw new SecurityException("Relay must use HTTPS");
         if(name==null||name.isBlank())name="Android SIM Node";
         int version=0;try{version=Integer.parseInt(versionText==null?"0":versionText);}catch(Exception ignored){}
-        JSONObject r=ApiClient.enroll(server.replaceAll("/+$",""),token,name);
         byte[] key=null,bootstrap=null;
+        if(version>=4){
+            String bootstrapText=u.getQueryParameter("bootstrap");
+            if(bootstrapText==null)throw new SecurityException("Enrollment bootstrap secret missing");
+            bootstrap=CryptoBox.ub64(bootstrapText);
+            if(bootstrap.length!=32){Arrays.fill(bootstrap,(byte)0);throw new SecurityException("Enrollment bootstrap secret length invalid");}
+        }
+        JSONObject r=ApiClient.enroll(server.replaceAll("/+$",""),token,name);
         try{
             if(version>=4){
-                String bootstrapText=u.getQueryParameter("bootstrap");
-                if(bootstrapText==null)throw new SecurityException("Enrollment bootstrap secret missing");
-                bootstrap=CryptoBox.ub64(bootstrapText);
                 String kid=r.optString("keyId","");
                 JSONObject envelope=r.optJSONObject("bootstrapEnvelope");
                 if(kid.isBlank()||envelope==null)throw new SecurityException("Relay bootstrap envelope missing");

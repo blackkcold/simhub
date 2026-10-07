@@ -65,6 +65,7 @@ ALLOWED_COMMANDS = {
 }
 PHONE_COMMAND_PREFIXES = ("call.", "dialer.", "phone.")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.~]{20,512}$")
+BOOTSTRAP_PROOF_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 SESSION_COOKIE = "simhub_session"
 log = logging.getLogger("simhub")
 logging.basicConfig(level=os.getenv("SIMHUB_LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -246,6 +247,10 @@ def _migrate_v5(con: sqlite3.Connection) -> None:
     _add_column(con,"enrollment_tokens","bootstrap_envelope_json","TEXT NOT NULL DEFAULT '{}'")
 
 
+def _migrate_v6(con: sqlite3.Connection) -> None:
+    _add_column(con,"enrollment_tokens","bootstrap_hash","TEXT NOT NULL DEFAULT ''")
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
@@ -254,8 +259,9 @@ def init_db() -> None:
         _migrate_v3(con)
         _migrate_v4(con)
         _migrate_v5(con)
+        _migrate_v6(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=5")
+        con.execute("PRAGMA user_version=6")
     run_maintenance()
 
 
@@ -659,7 +665,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<5:
+                if version<6:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -799,14 +805,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.send_error_json(400,"invalid_key",str(exc)); return
         bootstrap=body.get("bootstrapEnvelope",{})
+        bootstrap_hash=str(body.get("bootstrapHash",""))
         if key_id and not validate_cipher(bootstrap):
             self.send_error_json(400,"invalid_bootstrap","A valid one-time bootstrap envelope is required for independent Node Key enrollment"); return
+        if key_id and not BOOTSTRAP_PROOF_RE.fullmatch(bootstrap_hash):
+            self.send_error_json(400,"invalid_bootstrap","A valid SHA-256 bootstrap proof is required"); return
         if not key_id:
-            bootstrap={}
+            bootstrap={}; bootstrap_hash=""
         with open_db() as con:
             con.execute(
-                "INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at,node_type,capabilities_json,key_id,wrapped_key_json,bootstrap_envelope_json) VALUES(?,?,?,?,?,?,?,?,?)",
-                (eid,sha256_text(token),ts,ts+ttl,node_type,json.dumps(capabilities,separators=(",",":")),key_id,json.dumps(wrapped,separators=(",",":")),json.dumps(bootstrap,separators=(",",":"))),
+                "INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at,node_type,capabilities_json,key_id,wrapped_key_json,bootstrap_envelope_json,bootstrap_hash) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (eid,sha256_text(token),ts,ts+ttl,node_type,json.dumps(capabilities,separators=(",",":")),key_id,json.dumps(wrapped,separators=(",",":")),json.dumps(bootstrap,separators=(",",":")),bootstrap_hash),
             )
         audit("enrollment.create",eid,"ok",self.ip)
         self.send_json(201,{"id":eid,"token":token,"expiresAt":ts+ttl,"server":PUBLIC_BASE_URL or None,"nodeType":node_type,"keyId":key_id or None})
@@ -821,6 +830,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not row or row["used_at"] is not None or row["expires_at"]<ts:
                 audit("enrollment.consume","","denied",self.ip)
                 self.send_error_json(401,"invalid_enrollment","Enrollment token invalid, expired, or already used"); return
+            if row["key_id"]:
+                proof=str(body.get("bootstrapProof",""))
+                expected=str(row["bootstrap_hash"] or "")
+                if not expected or not BOOTSTRAP_PROOF_RE.fullmatch(proof) or not hmac.compare_digest(expected,proof):
+                    audit("enrollment.bootstrap",row["id"],"denied",self.ip)
+                    self.send_error_json(401,"invalid_bootstrap_proof","Bootstrap secret proof is invalid"); return
             device_id=str(uuid.uuid4()); device_token=new_token(48)
             node_type=normalize_node_type(row["node_type"] or body.get("nodeType","android"))
             capabilities=normalize_capabilities(safe_json_loads(row["capabilities_json"],[]) or body.get("capabilities",[]))
@@ -832,7 +847,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}"),ts),
             )
             bootstrap=safe_json_loads(row["bootstrap_envelope_json"],{})
-            con.execute("UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}' WHERE id=?",(ts,row["id"]))
+            con.execute("UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}',bootstrap_hash='' WHERE id=?",(ts,row["id"]))
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
         self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None,"bootstrapEnvelope":bootstrap or None})
 

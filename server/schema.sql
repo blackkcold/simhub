@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS enrollment_tokens(
   capabilities_json TEXT NOT NULL DEFAULT '[]',
   key_id TEXT NOT NULL DEFAULT '',
   wrapped_key_json TEXT NOT NULL DEFAULT '{}',
-  bootstrap_envelope_json TEXT NOT NULL DEFAULT '{}'
+  bootstrap_envelope_json TEXT NOT NULL DEFAULT '{}',
+  bootstrap_hash TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS admin_sessions(

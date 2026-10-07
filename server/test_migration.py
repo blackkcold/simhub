@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sqlite3, tempfile, unittest
+import sqlite3, tempfile, time, unittest
 from pathlib import Path
 import simhub_server as srv
 
@@ -40,7 +40,8 @@ class MigrationTest(unittest.TestCase):
                 con.executescript(LEGACY_SCHEMA)
                 for d in ("dev-a","dev-b"):
                     con.execute("INSERT INTO devices(id,token_hash,name,created_at) VALUES(?,?,?,?)",(d,"hash-"+d,d,1))
-                con.execute("INSERT INTO events(id,device_id,kind,occurred_at,received_at,ciphertext_json) VALUES(?,?,?,?,?,?)",("sms-provider-42","dev-a","sms.received",1,1,'{"v":1,"alg":"A256GCM","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
+                ts=int(time.time())
+                con.execute("INSERT INTO events(id,device_id,kind,occurred_at,received_at,ciphertext_json) VALUES(?,?,?,?,?,?)",("sms-provider-42","dev-a","sms.received",ts,ts,'{"v":1,"alg":"A256GCM","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
                 con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json) VALUES(?,?,?,?,?,?,?)",("cmd-a","dev-a","sms.send",1,9999999999,"same-idem",'{"v":1,"alg":"A256GCM","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
             old=srv.DB_PATH
             try:

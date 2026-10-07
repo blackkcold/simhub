@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -538,7 +538,7 @@ def push_tickle_async(device_id: str, reason: str) -> None:
 
 
 class SimHubHandler(BaseHTTPRequestHandler):
-    server_version = "SimHubRelay/0.2.0"
+    server_version = "SimHubRelay/0.2.1"
     sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:

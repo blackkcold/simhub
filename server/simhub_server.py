@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from http.cookies import SimpleCookie
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -36,11 +37,11 @@ TOTP_SECRET = os.getenv("SIMHUB_TOTP_SECRET", "").strip().replace(" ", "")
 ENROLL_TTL = int(os.getenv("SIMHUB_ENROLL_TTL", "600"))
 COMMAND_TTL = int(os.getenv("SIMHUB_COMMAND_TTL", "120"))
 OFFLINE_AFTER = int(os.getenv("SIMHUB_OFFLINE_AFTER", "180"))
-EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "0")))
+EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "30")))
 AUDIT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_AUDIT_RETENTION_DAYS", "180")))
 COMMAND_RETENTION_DAYS = max(1, int(os.getenv("SIMHUB_COMMAND_RETENTION_DAYS", "30")))
 MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL", "3600")), 86400))
-REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "false").lower() in {"1","true","yes","on"}
+REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","yes","on"}
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
@@ -71,6 +72,23 @@ _stream_condition = threading.Condition()
 _stream_epoch = 0
 _auth_lock = threading.Lock()
 _auth_failures: dict[str, list[int]] = {}
+
+class BoundedExecutor:
+    def __init__(self,max_workers:int,max_pending:int,name:str) -> None:
+        self._pool=ThreadPoolExecutor(max_workers=max_workers,thread_name_prefix=name)
+        self._slots=threading.BoundedSemaphore(max_pending)
+    def submit(self,fn) -> bool:
+        if not self._slots.acquire(blocking=False):
+            return False
+        try:
+            future=self._pool.submit(fn)
+        except Exception:
+            self._slots.release()
+            raise
+        future.add_done_callback(lambda _:self._slots.release())
+        return True
+
+_outbound_executor=BoundedExecutor(4,64,"simhub-outbound")
 
 
 def now() -> int:
@@ -521,7 +539,8 @@ def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occ
             urllib.request.urlopen(req,timeout=5).read(1024)
         except Exception as exc:
             log.warning("notification_webhook_failed %s",type(exc).__name__)
-    threading.Thread(target=send,daemon=True).start()
+    if not _outbound_executor.submit(send):
+        log.warning("notification_webhook_dropped queue_full")
 
 
 def push_tickle_async(device_id: str, reason: str) -> None:
@@ -539,7 +558,8 @@ def push_tickle_async(device_id: str, reason: str) -> None:
             urllib.request.urlopen(req,timeout=5).read(1024)
         except Exception as exc:
             log.warning("push_tickle_failed %s",type(exc).__name__)
-    threading.Thread(target=send,daemon=True).start()
+    if not _outbound_executor.submit(send):
+        log.warning("push_tickle_dropped queue_full")
 
 
 class SimHubHandler(BaseHTTPRequestHandler):

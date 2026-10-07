@@ -206,6 +206,15 @@ class Store:
               local_id TEXT PRIMARY KEY,
               seen_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS multipart_parts(
+              group_id TEXT NOT NULL,
+              part_no INTEGER NOT NULL,
+              total_parts INTEGER NOT NULL,
+              cipher_json TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY(group_id,part_no)
+            );
+            CREATE INDEX IF NOT EXISTS idx_multipart_created ON multipart_parts(created_at);
             CREATE TABLE IF NOT EXISTS processed_commands(
               id TEXT PRIMARY KEY,
               state TEXT NOT NULL,
@@ -254,6 +263,28 @@ class Store:
 
     def mark_seen(self, local_id: str) -> None:
         self.db.execute("INSERT OR IGNORE INTO seen_sms(local_id,seen_at) VALUES(?,?)", (local_id, now()))
+        self.db.commit()
+
+    def queue_multipart_part(self, group_id: str, part_no: int, total_parts: int, cipher: dict[str, Any]) -> bool:
+        cur=self.db.execute(
+            "INSERT OR IGNORE INTO multipart_parts(group_id,part_no,total_parts,cipher_json,created_at) VALUES(?,?,?,?,?)",
+            (group_id,part_no,total_parts,json.dumps(cipher,separators=(",",":")),now()),
+        )
+        self.db.commit()
+        return cur.rowcount>0 or self.db.execute("SELECT 1 FROM multipart_parts WHERE group_id=? AND part_no=?",(group_id,part_no)).fetchone() is not None
+
+    def multipart_group(self, group_id: str) -> list[sqlite3.Row]:
+        return self.db.execute("SELECT * FROM multipart_parts WHERE group_id=? ORDER BY part_no ASC",(group_id,)).fetchall()
+
+    def stale_multipart_groups(self, age_seconds: int = 86400) -> list[str]:
+        rows=self.db.execute(
+            "SELECT DISTINCT group_id FROM multipart_parts WHERE created_at<? ORDER BY created_at ASC",
+            (now()-max(3600,age_seconds),),
+        ).fetchall()
+        return [str(r["group_id"]) for r in rows]
+
+    def delete_multipart_group(self, group_id: str) -> None:
+        self.db.execute("DELETE FROM multipart_parts WHERE group_id=?",(group_id,))
         self.db.commit()
 
     def claim_command(self, command_id: str) -> bool:

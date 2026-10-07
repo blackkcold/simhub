@@ -117,12 +117,15 @@ cd simhub
 
 cp .env.example .env
 python3 scripts/gen_admin_token.py
+python3 scripts/gen_totp_secret.py
 ```
 
 Put the generated token into:
 
 ```env
 SIMHUB_ADMIN_TOKEN=<your-random-token>
+SIMHUB_REQUIRE_TOTP=true
+SIMHUB_TOTP_SECRET=<your-base32-secret>
 SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
 ```
 

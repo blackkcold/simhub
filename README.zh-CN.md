@@ -116,6 +116,7 @@ cd simhub
 
 cp .env.example .env
 python3 scripts/gen_admin_token.py
+python3 scripts/gen_totp_secret.py
 ```
 
 将生成的 Token 填入：

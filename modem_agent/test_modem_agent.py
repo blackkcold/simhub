@@ -3,7 +3,7 @@ import tempfile, unittest
 from pathlib import Path
 
 from simhub_modem_agent import (
-    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2, decode_message_body
+    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2, decode_message_body, decrypt_bootstrap_node_key
 )
 
 class ModemAgentTest(unittest.TestCase):
@@ -18,6 +18,16 @@ class ModemAgentTest(unittest.TestCase):
         # encrypt_payload uses a random IV, so verify the shared vector by decrypting its fixed envelope.
         fixed={'v':2,'alg':'A256GCM','kid':vector['kid'],'iv':vector['ivBase64Url'],'ct':vector['ciphertextBase64Url']}
         self.assertEqual(json.dumps(decrypt_payload(key,vector['kid'],fixed,aad),separators=(',',':')),vector['plaintext'])
+
+    def test_bootstrap_node_key_roundtrip(self):
+        import os
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        bootstrap=os.urandom(32);node=os.urandom(32);kid=key_id(node);iv=os.urandom(12)
+        aad=('simhub-bootstrap-node-key-v1|'+kid).encode()
+        envelope={'v':1,'alg':'A256GCM','iv':__import__('base64').urlsafe_b64encode(iv).decode().rstrip('='),'ct':__import__('base64').urlsafe_b64encode(AESGCM(bootstrap).encrypt(iv,node,aad)).decode().rstrip('=')}
+        self.assertEqual(decrypt_bootstrap_node_key(bootstrap,envelope,kid),node)
+        with self.assertRaises(Exception):
+            decrypt_bootstrap_node_key(os.urandom(32),envelope,kid)
 
     def test_v2_crypto_roundtrip_and_metadata_binding(self):
         key=bytes(range(32));kid=key_id(key)

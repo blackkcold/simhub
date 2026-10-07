@@ -63,7 +63,7 @@ Mount a JSON file to `SIMHUB_OTA_FILE`, for example:
 {
   "versionCode": 2,
   "versionName": "0.2.0",
-  "url": "https://github.com/blackkcold/simhub/releases/download/v0.2.0/simhub-agent.apk",
+  "url": "https://github.com/blackkcold/simhub/releases/download/v0.2.1/simhub-agent-v0.2.1-release.apk",
   "sha256": "...",
   "notes": "Bug fixes"
 }

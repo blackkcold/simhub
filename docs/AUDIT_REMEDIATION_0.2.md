@@ -1,3 +1,5 @@
+> **Superseded by v0.2.1:** signing, bootstrap enrollment, multipart modem receive and secure-default follow-ups are completed in the v0.2.1 hardening release.
+
 # 0.2 Hardening Audit Remediation
 
 This file records the repository audit findings closed by the 0.2 hardening branch.
@@ -26,7 +28,7 @@ This file records the repository audit findings closed by the 0.2 hardening bran
 | CI equates APK build with correctness | Server v4 migration/maintenance tests, modem crypto/store tests, Android JVM tests |
 | Historical temporary Android threads | Receiver/service work moved to shared executors; owned service executors shut down |
 | Modem SMS store can fill | Received SMS is durably queued/seen before best-effort removal from modem storage |
-| Signing | Explicitly excluded from this hardening request |
+| Signing | Completed in v0.2.1: mandatory release signing with pinned certificate; no debug fallback |
 
 ## Remaining hardware validation
 

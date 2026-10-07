@@ -36,7 +36,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import serial
 from serial.tools import list_ports
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/config.json"))
 DEFAULT_DB = Path(os.getenv("SIMHUB_MODEM_DB", "/var/lib/simhub-modem/agent.db"))
 POLL_SECONDS = max(3, int(os.getenv("SIMHUB_MODEM_POLL_SECONDS", "10")))
@@ -105,6 +105,18 @@ def decrypt_payload(key: bytes, expected_kid: str, envelope: dict[str, Any], aad
     if not isinstance(value, dict):
         raise ValueError("command payload must be an object")
     return value
+
+
+def decrypt_bootstrap_node_key(bootstrap: bytes, envelope: dict[str, Any], kid: str) -> bytes:
+    if len(bootstrap) != 32:
+        raise ValueError("bootstrap key length invalid")
+    if not isinstance(envelope, dict) or envelope.get("alg") != "A256GCM":
+        raise ValueError("bootstrap envelope invalid")
+    aad=("simhub-bootstrap-node-key-v1|"+kid).encode()
+    raw=AESGCM(bootstrap).decrypt(ub64u(str(envelope["iv"])),ub64u(str(envelope["ct"])),aad)
+    if len(raw)!=32 or key_id(raw)!=kid:
+        raise ValueError("bootstrap Node Key mismatch")
+    return raw
 
 
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
@@ -194,6 +206,15 @@ class Store:
               local_id TEXT PRIMARY KEY,
               seen_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS multipart_parts(
+              group_id TEXT NOT NULL,
+              part_no INTEGER NOT NULL,
+              total_parts INTEGER NOT NULL,
+              cipher_json TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY(group_id,part_no)
+            );
+            CREATE INDEX IF NOT EXISTS idx_multipart_created ON multipart_parts(created_at);
             CREATE TABLE IF NOT EXISTS processed_commands(
               id TEXT PRIMARY KEY,
               state TEXT NOT NULL,
@@ -244,6 +265,28 @@ class Store:
         self.db.execute("INSERT OR IGNORE INTO seen_sms(local_id,seen_at) VALUES(?,?)", (local_id, now()))
         self.db.commit()
 
+    def queue_multipart_part(self, group_id: str, part_no: int, total_parts: int, cipher: dict[str, Any]) -> bool:
+        cur=self.db.execute(
+            "INSERT OR IGNORE INTO multipart_parts(group_id,part_no,total_parts,cipher_json,created_at) VALUES(?,?,?,?,?)",
+            (group_id,part_no,total_parts,json.dumps(cipher,separators=(",",":")),now()),
+        )
+        self.db.commit()
+        return cur.rowcount>0 or self.db.execute("SELECT 1 FROM multipart_parts WHERE group_id=? AND part_no=?",(group_id,part_no)).fetchone() is not None
+
+    def multipart_group(self, group_id: str) -> list[sqlite3.Row]:
+        return self.db.execute("SELECT * FROM multipart_parts WHERE group_id=? ORDER BY part_no ASC",(group_id,)).fetchall()
+
+    def stale_multipart_groups(self, age_seconds: int = 86400) -> list[str]:
+        rows=self.db.execute(
+            "SELECT DISTINCT group_id FROM multipart_parts WHERE created_at<? ORDER BY created_at ASC",
+            (now()-max(3600,age_seconds),),
+        ).fetchall()
+        return [str(r["group_id"]) for r in rows]
+
+    def delete_multipart_group(self, group_id: str) -> None:
+        self.db.execute("DELETE FROM multipart_parts WHERE group_id=?",(group_id,))
+        self.db.commit()
+
     def claim_command(self, command_id: str) -> bool:
         cur = self.db.execute(
             "INSERT OR IGNORE INTO processed_commands(id,state,processed_at) VALUES(?,?,?)",
@@ -291,6 +334,9 @@ class SmsRecord:
     body: str
     occurred_at: int
     ref: str = ""
+    concat_ref: str = ""
+    concat_total: int = 1
+    concat_seq: int = 1
 
 
 class ModemAdapter:
@@ -373,6 +419,52 @@ def decode_message_body(body: str, dcs: int | None) -> str:
     if dcs is None:
         return decode_ucs2(body)
     return body
+
+
+def parse_concat_udh(pdu_hex: str) -> tuple[str,int,int] | None:
+    compact=re.sub(r"\s+","",pdu_hex)
+    if not compact or len(compact)%2 or not re.fullmatch(r"[0-9A-Fa-f]+",compact):
+        return None
+    raw=bytes.fromhex(compact)
+    if len(raw)<12:
+        return None
+    pos=0
+    smsc_len=raw[pos];pos+=1
+    if pos+smsc_len>=len(raw):
+        return None
+    pos+=smsc_len
+    first=raw[pos];pos+=1
+    if (first & 0x03)!=0 or not (first & 0x40):
+        return None
+    if pos+2>len(raw):
+        return None
+    oa_digits=raw[pos];pos+=1
+    pos+=1
+    pos+=(oa_digits+1)//2
+    if pos+10>len(raw):
+        return None
+    pos+=1  # PID
+    pos+=1  # DCS
+    pos+=7  # SCTS
+    pos+=1  # UDL
+    if pos>=len(raw):
+        return None
+    udhl=raw[pos];pos+=1
+    end=min(len(raw),pos+udhl)
+    while pos+2<=end:
+        iei=raw[pos];iedl=raw[pos+1];pos+=2
+        if pos+iedl>end:
+            break
+        data=raw[pos:pos+iedl];pos+=iedl
+        if iei==0x00 and iedl==3:
+            ref,total,seq=data[0],data[1],data[2]
+            if 1<=seq<=total:
+                return f"8:{ref}",total,seq
+        if iei==0x08 and iedl==4:
+            ref=(data[0]<<8)|data[1];total,seq=data[2],data[3]
+            if 1<=seq<=total:
+                return f"16:{ref}",total,seq
+    return None
 
 
 class DjiAtAdapter(ModemAdapter):
@@ -561,6 +653,19 @@ class DjiAtAdapter(ModemAdapter):
             out["signalSinr"] = sinr
         return out
 
+    def _concat_for_index(self, index: str) -> tuple[str,int,int] | None:
+        try:
+            with self._open() as ser:
+                self._command(ser,"ATE0",timeout=4)
+                self._command(ser,"AT+CMGF=0",timeout=4)
+                raw=self._command(ser,"AT+CMGR="+str(index),timeout=10)
+            candidates=[x.strip() for x in raw.splitlines() if re.fullmatch(r"[0-9A-Fa-f]{20,}",x.strip())]
+            if not candidates:
+                return None
+            return parse_concat_udh(max(candidates,key=len))
+        except Exception:
+            return None
+
     def list_sms(self) -> list[SmsRecord]:
         with self._open() as ser:
             self._initialize(ser)
@@ -583,6 +688,10 @@ class DjiAtAdapter(ModemAdapter):
                 sender = decode_ucs2(fields[2] if len(fields) > 2 else "")
                 stamp = fields[4] if len(fields) > 4 else ""
                 try:
+                    first_octet = int(str(fields[6]).strip(),0) if len(fields)>6 and str(fields[6]).strip() else 0
+                except ValueError:
+                    first_octet = 0
+                try:
                     dcs = int(str(fields[8]).strip(), 0) if len(fields) > 8 and str(fields[8]).strip() else None
                 except ValueError:
                     dcs = None
@@ -601,7 +710,12 @@ class DjiAtAdapter(ModemAdapter):
             body = decode_message_body("\n".join(body_lines), dcs)
             occurred = self._timestamp(stamp)
             digest = hashlib.sha256((index + "\0" + sender + "\0" + body + "\0" + stamp).encode()).hexdigest()[:20]
-            records.append(SmsRecord(local_id=f"dji-at-{digest}", sender=sender, body=body, occurred_at=occurred, ref=index))
+            concat_ref="";concat_total=1;concat_seq=1
+            if first_octet & 0x40:
+                info=self._concat_for_index(index)
+                if info:
+                    concat_ref,concat_total,concat_seq=info
+            records.append(SmsRecord(local_id=f"dji-at-{digest}", sender=sender, body=body, occurred_at=occurred, ref=index, concat_ref=concat_ref, concat_total=concat_total, concat_seq=concat_seq))
         return records[:MAX_SMS_PER_CYCLE]
 
     @staticmethod
@@ -851,6 +965,84 @@ class Agent:
     def encrypt_event(self, event_id: str, kind: str, occurred_at: int, has_otp: bool, payload: dict[str, Any]) -> dict[str, Any]:
         return encrypt_payload(self.node_key, self.kid, payload, event_aad(str(self.config["deviceId"]), event_id, kind, occurred_at, self.channel_id, has_otp))
 
+    def _multipart_group_id(self,sms: SmsRecord) -> str:
+        base=[
+            self.channel_id,
+            str(self.channel_revision),
+            sms.sender,
+            sms.concat_ref,
+            str(sms.concat_total),
+        ]
+        bucket=max(0,sms.occurred_at)//21600
+        def candidate(value:int) -> str:
+            return hashlib.sha256("|".join(base+[str(value)]).encode()).hexdigest()[:32]
+        for value in (bucket,bucket-1,bucket+1):
+            if value>=0:
+                group_id=candidate(value)
+                if self.store.multipart_group(group_id):
+                    return group_id
+        return candidate(bucket)
+
+    @staticmethod
+    def _multipart_aad(group_id: str, part_no: int, total_parts: int) -> bytes:
+        return f"simhub-modem-multipart-v1|{group_id}|{part_no}|{total_parts}".encode()
+
+    def _encrypt_multipart_part(self,group_id: str,sms: SmsRecord) -> dict[str,Any]:
+        iv=os.urandom(12)
+        payload=json.dumps({
+            "sender":sms.sender,
+            "body":sms.body,
+            "occurredAt":sms.occurred_at,
+            "localId":sms.local_id,
+        },ensure_ascii=False,separators=(",",":")).encode()
+        aad=self._multipart_aad(group_id,sms.concat_seq,sms.concat_total)
+        ct=AESGCM(self.node_key).encrypt(iv,payload,aad)
+        return {"v":1,"alg":"A256GCM","iv":b64u(iv),"ct":b64u(ct)}
+
+    def _decrypt_multipart_part(self,group_id: str,row: sqlite3.Row) -> dict[str,Any]:
+        env=json.loads(row["cipher_json"])
+        aad=self._multipart_aad(group_id,int(row["part_no"]),int(row["total_parts"]))
+        raw=AESGCM(self.node_key).decrypt(ub64u(str(env["iv"])),ub64u(str(env["ct"])),aad)
+        value=json.loads(raw)
+        if not isinstance(value,dict):
+            raise ValueError("multipart part payload invalid")
+        return value
+
+    def _emit_multipart_group(self,group_id: str,force: bool=False) -> bool:
+        rows=self.store.multipart_group(group_id)
+        if not rows:
+            return False
+        total=max(int(r["total_parts"]) for r in rows)
+        numbers={int(r["part_no"]) for r in rows}
+        complete=len(numbers)==total and numbers==set(range(1,total+1))
+        if not complete and not force:
+            return False
+        by_part=[]
+        for r in rows:
+            by_part.append((int(r["part_no"]),self._decrypt_multipart_part(group_id,r)))
+        by_part.sort(key=lambda x:x[0])
+        body="".join(str(x[1].get("body","")) for x in by_part)
+        sender=str(by_part[0][1].get("sender","")) if by_part else ""
+        occurred=min(int(x[1].get("occurredAt",now())) for x in by_part) if by_part else now()
+        event_id="modem-multipart-"+group_id
+        payload={
+            "direction":"in",
+            "sender":sender,
+            "body":body,
+            "occurredAt":occurred,
+            "channelId":self.channel_id,
+            "channelRevision":self.channel_revision,
+            "providerId":group_id,
+            "partsReceived":len(numbers),
+            "partsExpected":total,
+            "multipartIncomplete":not complete,
+        }
+        cipher=self.encrypt_event(event_id,"sms.received",occurred,False,payload)
+        if self.store.queue_event(event_id,"sms.received",occurred,self.channel_id,False,{"source":self.adapter.name,"parts":total},cipher):
+            self.store.delete_multipart_group(group_id)
+            return True
+        return False
+
     def rotate_device_token(self) -> None:
         ts=now()
         pending=str(self.config.get("pendingDeviceToken") or "")
@@ -900,8 +1092,20 @@ class Agent:
         atomic_write_json(self.config_path,self.config)
 
     def receive(self) -> None:
+        touched:set[str]=set()
         for sms in self.adapter.list_sms():
             if self.store.seen(sms.local_id):
+                continue
+            if sms.concat_ref and sms.concat_total>1 and 1<=sms.concat_seq<=sms.concat_total:
+                group_id=self._multipart_group_id(sms)
+                cipher=self._encrypt_multipart_part(group_id,sms)
+                if self.store.queue_multipart_part(group_id,sms.concat_seq,sms.concat_total,cipher):
+                    touched.add(group_id)
+                    self.store.mark_seen(sms.local_id)
+                    try:
+                        self.adapter.delete_sms(sms)
+                    except Exception:
+                        pass
                 continue
             event_id = "modem-" + sms.local_id
             payload = {
@@ -920,6 +1124,10 @@ class Agent:
                     self.adapter.delete_sms(sms)
                 except Exception:
                     pass
+        for group_id in touched:
+            self._emit_multipart_group(group_id)
+        for group_id in self.store.stale_multipart_groups(86400):
+            self._emit_multipart_group(group_id,force=True)
 
     def flush_events(self) -> None:
         for event in self.store.pending_events():
@@ -1058,31 +1266,48 @@ def enroll(args: argparse.Namespace) -> None:
     payload = load_json(Path(args.file))
     server = str(payload.get("server", ""))
     token = str(payload.get("token", ""))
-    node_key = ub64u(str(payload.get("key", "")))
-    kid = str(payload.get("keyId", ""))
     name = str(payload.get("name") or "DJI / Modem SIM Node")
-    if len(node_key) != 32 or key_id(node_key) != kid:
-        raise SystemExit("Enrollment file contains an invalid node key")
+    version = int(payload.get("version", 0) or 0)
+    bootstrap = b""
+    if version >= 4:
+        bootstrap = ub64u(str(payload.get("bootstrap", "")))
+        if len(bootstrap) != 32:
+            raise SystemExit("Enrollment file contains an invalid bootstrap secret")
     relay = Relay(server)
     response = relay.enroll(token, name)
-    config = {
-        "version": 1,
-        "server": server.rstrip("/"),
-        "deviceId": response["deviceId"],
-        "deviceToken": response["deviceToken"],
-        "tokenIssuedAt": int(response.get("tokenIssuedAt", now())),
-        "tokenRotationPending": False,
-        "nodeKey": b64u(node_key),
-        "keyId": kid,
-        "name": name,
-        "adapter": args.adapter,
-        "channelId": str(uuid.uuid4()),
-        "channelRevision": 1,
-        "channelFingerprint": "",
-    }
-    path = Path(args.config)
-    atomic_write_json(path, config)
-    print(f"Enrolled modem node {response['deviceId']} -> {path}")
+    if version >= 4:
+        kid = str(response.get("keyId") or "")
+        envelope = response.get("bootstrapEnvelope")
+        if not kid or not isinstance(envelope, dict):
+            raise SystemExit("Relay did not return a valid bootstrap envelope")
+        node_key = decrypt_bootstrap_node_key(bootstrap, envelope, kid)
+    else:
+        node_key = ub64u(str(payload.get("key", "")))
+        kid = str(payload.get("keyId", ""))
+        if len(node_key) != 32 or key_id(node_key) != kid:
+            raise SystemExit("Enrollment file contains an invalid node key")
+    try:
+        config = {
+            "version": 2,
+            "server": server.rstrip("/"),
+            "deviceId": response["deviceId"],
+            "deviceToken": response["deviceToken"],
+            "tokenIssuedAt": int(response.get("tokenIssuedAt", now())),
+            "tokenRotationPending": False,
+            "nodeKey": b64u(node_key),
+            "keyId": kid,
+            "name": name,
+            "adapter": args.adapter,
+            "channelId": str(uuid.uuid4()),
+            "channelRevision": 1,
+            "channelFingerprint": "",
+        }
+        path = Path(args.config)
+        atomic_write_json(path, config)
+        print(f"Enrolled modem node {response['deviceId']} -> {path}")
+    finally:
+        if isinstance(node_key, bytes):
+            node_key = b""
 
 
 def main() -> None:

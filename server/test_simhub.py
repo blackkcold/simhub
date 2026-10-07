@@ -13,7 +13,7 @@ class ApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory();cls.port=free_port();cls.base=f'http://127.0.0.1:{cls.port}';cls.db=Path(cls.tmp.name)/'test.db'
-        env=os.environ.copy();env.update({'SIMHUB_ADMIN_TOKEN':TOKEN,'SIMHUB_BIND':'127.0.0.1','SIMHUB_PORT':str(cls.port),'SIMHUB_DB':str(cls.db),'SIMHUB_WEB_ROOT':str(ROOT/'web'),'SIMHUB_SESSION_TTL':'900'})
+        env=os.environ.copy();env.update({'SIMHUB_ADMIN_TOKEN':TOKEN,'SIMHUB_BIND':'127.0.0.1','SIMHUB_PORT':str(cls.port),'SIMHUB_DB':str(cls.db),'SIMHUB_WEB_ROOT':str(ROOT/'web'),'SIMHUB_SESSION_TTL':'900','SIMHUB_REQUIRE_TOTP':'false'})
         cls.proc=subprocess.Popen([sys.executable,str(SERVER)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         for _ in range(80):
             try: urllib.request.urlopen(cls.base+'/readyz',timeout=.2).read();break
@@ -90,7 +90,8 @@ class ApiTest(unittest.TestCase):
 
     def test_generic_modem_enrollment_and_key_promotion(self):
         wrapped=self.cipher(1);kid='abcdefgh1234'
-        st,x,_=self.req('POST','/api/v1/enrollments',{'nodeType':'modem','capabilities':['sms.receive','sms.send','signal.radio'],'keyId':kid,'wrappedKey':wrapped});self.assertEqual(st,201)
+        bootstrap=self.cipher(1)
+        st,x,_=self.req('POST','/api/v1/enrollments',{'nodeType':'modem','capabilities':['sms.receive','sms.send','signal.radio'],'keyId':kid,'wrappedKey':wrapped,'bootstrapEnvelope':bootstrap});self.assertEqual(st,201)
         st,d,_=self.req('POST','/api/v1/enroll',{'token':x['token'],'name':'DJI Node','model':'QDC507','nodeType':'modem'},admin=False);self.assertEqual(st,201)
         st,devices,_=self.req('GET','/api/v1/devices');row=[v for v in devices['devices'] if v['id']==d['deviceId']][0]
         self.assertEqual(row['nodeType'],'modem');self.assertEqual(row['keyId'],kid);self.assertIn('sms.send',row['capabilities'])
@@ -141,6 +142,20 @@ class ApiTest(unittest.TestCase):
         d=self.enroll()
         st,r,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands",{'type':'call.place','ciphertext':self.cipher()})
         self.assertEqual(st,400);self.assertEqual(r['error'],'command_not_allowed')
+
+    def test_bootstrap_enrollment_is_single_use_and_erased(self):
+        kid='abcdefgh1234';wrapped=self.cipher(1);bootstrap=self.cipher(1)
+        st,x,_=self.req('POST','/api/v1/enrollments',{'nodeType':'android','capabilities':['sms.receive'],'keyId':kid,'wrappedKey':wrapped,'bootstrapEnvelope':bootstrap});self.assertEqual(st,201)
+        st,d,_=self.req('POST','/api/v1/enroll',{'token':x['token'],'name':'Bootstrap'},admin=False);self.assertEqual(st,201)
+        self.assertEqual(d['keyId'],kid);self.assertEqual(d['bootstrapEnvelope'],bootstrap)
+        with sqlite3.connect(self.db) as con:
+            row=con.execute('SELECT used_at,bootstrap_envelope_json FROM enrollment_tokens WHERE id=?',(x['id'],)).fetchone()
+        self.assertIsNotNone(row[0]);self.assertEqual(row[1],'{}')
+        st,_,_=self.req('POST','/api/v1/enroll',{'token':x['token'],'name':'Replay'},admin=False);self.assertEqual(st,401)
+
+    def test_independent_key_enrollment_requires_bootstrap(self):
+        st,r,_=self.req('POST','/api/v1/enrollments',{'keyId':'abcdefgh1234','wrappedKey':self.cipher(1)})
+        self.assertEqual(st,400);self.assertEqual(r['error'],'invalid_bootstrap')
 
     def test_enrollment_single_use(self):
         st,x,_=self.req('POST','/api/v1/enrollments',{});self.assertEqual(st,201)

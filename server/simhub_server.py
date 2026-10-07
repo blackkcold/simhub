@@ -20,11 +20,13 @@ import urllib.parse
 import urllib.request
 import uuid
 from http.cookies import SimpleCookie
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -36,11 +38,11 @@ TOTP_SECRET = os.getenv("SIMHUB_TOTP_SECRET", "").strip().replace(" ", "")
 ENROLL_TTL = int(os.getenv("SIMHUB_ENROLL_TTL", "600"))
 COMMAND_TTL = int(os.getenv("SIMHUB_COMMAND_TTL", "120"))
 OFFLINE_AFTER = int(os.getenv("SIMHUB_OFFLINE_AFTER", "180"))
-EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "0")))
+EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "30")))
 AUDIT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_AUDIT_RETENTION_DAYS", "180")))
 COMMAND_RETENTION_DAYS = max(1, int(os.getenv("SIMHUB_COMMAND_RETENTION_DAYS", "30")))
 MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL", "3600")), 86400))
-REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "false").lower() in {"1","true","yes","on"}
+REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","yes","on"}
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
@@ -71,6 +73,23 @@ _stream_condition = threading.Condition()
 _stream_epoch = 0
 _auth_lock = threading.Lock()
 _auth_failures: dict[str, list[int]] = {}
+
+class BoundedExecutor:
+    def __init__(self,max_workers:int,max_pending:int,name:str) -> None:
+        self._pool=ThreadPoolExecutor(max_workers=max_workers,thread_name_prefix=name)
+        self._slots=threading.BoundedSemaphore(max_pending)
+    def submit(self,fn) -> bool:
+        if not self._slots.acquire(blocking=False):
+            return False
+        try:
+            future=self._pool.submit(fn)
+        except Exception:
+            self._slots.release()
+            raise
+        future.add_done_callback(lambda _:self._slots.release())
+        return True
+
+_outbound_executor=BoundedExecutor(4,64,"simhub-outbound")
 
 
 def now() -> int:
@@ -113,12 +132,20 @@ def safe_json_loads(value: str | None, default: Any) -> Any:
         return default
 
 
-def open_db() -> sqlite3.Connection:
+@contextmanager
+def open_db():
     con = sqlite3.connect(DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
     con.execute("PRAGMA busy_timeout=5000")
-    return con
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def _table_sql(con: sqlite3.Connection, name: str) -> str:
@@ -215,6 +242,10 @@ def _migrate_v4(con: sqlite3.Connection) -> None:
     con.execute("UPDATE devices SET token_issued_at=created_at WHERE token_issued_at<=0")
 
 
+def _migrate_v5(con: sqlite3.Connection) -> None:
+    _add_column(con,"enrollment_tokens","bootstrap_envelope_json","TEXT NOT NULL DEFAULT '{}'")
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
@@ -222,8 +253,9 @@ def init_db() -> None:
         _migrate_v2(con)
         _migrate_v3(con)
         _migrate_v4(con)
+        _migrate_v5(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=4")
+        con.execute("PRAGMA user_version=5")
     run_maintenance()
 
 
@@ -516,7 +548,8 @@ def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occ
             urllib.request.urlopen(req,timeout=5).read(1024)
         except Exception as exc:
             log.warning("notification_webhook_failed %s",type(exc).__name__)
-    threading.Thread(target=send,daemon=True).start()
+    if not _outbound_executor.submit(send):
+        log.warning("notification_webhook_dropped queue_full")
 
 
 def push_tickle_async(device_id: str, reason: str) -> None:
@@ -534,11 +567,12 @@ def push_tickle_async(device_id: str, reason: str) -> None:
             urllib.request.urlopen(req,timeout=5).read(1024)
         except Exception as exc:
             log.warning("push_tickle_failed %s",type(exc).__name__)
-    threading.Thread(target=send,daemon=True).start()
+    if not _outbound_executor.submit(send):
+        log.warning("push_tickle_dropped queue_full")
 
 
 class SimHubHandler(BaseHTTPRequestHandler):
-    server_version = "SimHubRelay/0.2.0"
+    server_version = "SimHubRelay/0.2.1"
     sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:
@@ -625,7 +659,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<4:
+                if version<5:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -764,10 +798,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
             key_id,wrapped=normalize_wrapped_key(body.get("keyId",""),body.get("wrappedKey",{}))
         except ValueError as exc:
             self.send_error_json(400,"invalid_key",str(exc)); return
+        bootstrap=body.get("bootstrapEnvelope",{})
+        if key_id and not validate_cipher(bootstrap):
+            self.send_error_json(400,"invalid_bootstrap","A valid one-time bootstrap envelope is required for independent Node Key enrollment"); return
+        if not key_id:
+            bootstrap={}
         with open_db() as con:
             con.execute(
-                "INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at,node_type,capabilities_json,key_id,wrapped_key_json) VALUES(?,?,?,?,?,?,?,?)",
-                (eid,sha256_text(token),ts,ts+ttl,node_type,json.dumps(capabilities,separators=(",",":")),key_id,json.dumps(wrapped,separators=(",",":"))),
+                "INSERT INTO enrollment_tokens(id,token_hash,created_at,expires_at,node_type,capabilities_json,key_id,wrapped_key_json,bootstrap_envelope_json) VALUES(?,?,?,?,?,?,?,?,?)",
+                (eid,sha256_text(token),ts,ts+ttl,node_type,json.dumps(capabilities,separators=(",",":")),key_id,json.dumps(wrapped,separators=(",",":")),json.dumps(bootstrap,separators=(",",":"))),
             )
         audit("enrollment.create",eid,"ok",self.ip)
         self.send_json(201,{"id":eid,"token":token,"expiresAt":ts+ttl,"server":PUBLIC_BASE_URL or None,"nodeType":node_type,"keyId":key_id or None})
@@ -792,9 +831,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}"),ts),
             )
-            con.execute("UPDATE enrollment_tokens SET used_at=? WHERE id=?",(ts,row["id"]))
+            bootstrap=safe_json_loads(row["bootstrap_envelope_json"],{})
+            con.execute("UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}' WHERE id=?",(ts,row["id"]))
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
-        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None})
+        self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None,"bootstrapEnvelope":bootstrap or None})
 
     def get_devices(self) -> None:
         ts=now()

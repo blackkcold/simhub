@@ -66,3 +66,15 @@ The agent locally fingerprints the SIM/modem identity. When it changes, the chan
 ## DJI Dongle 2
 
 Dongle 2 is not assumed to expose the same AT/SMS interface as DJI Gen1. Use `auto`/ModemManager detection first. SIM Hub intentionally treats hardware support as an adapter capability rather than hard-coding DJI branding into the relay protocol.
+
+
+## Multipart receive
+
+For DJI/Quectel direct-AT nodes, concatenated SMS UDH is detected from the PDU representation. Each fragment is encrypted with the node key and durably staged in the Agent SQLite database before the modem copy is deleted.
+
+- complete groups are reassembled into one `sms.received` event;
+- process restarts do not lose staged fragments;
+- duplicate fragments are idempotent by group/part number;
+- groups still incomplete after 24 hours are emitted once with `multipartIncomplete=true`, `partsReceived` and `partsExpected` inside the encrypted payload.
+
+This prevents orphan fragments from filling modem/SIM message storage indefinitely.

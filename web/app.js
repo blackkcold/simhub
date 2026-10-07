@@ -30,6 +30,12 @@ async function keyIdForRaw(raw){const digest=new Uint8Array(await crypto.subtle.
 async function deriveLegacyDevice(deviceId){if(!vaultRaw)throw new Error('Vault locked');const ikm=await crypto.subtle.importKey('raw',vaultRaw,'HKDF',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'HKDF',hash:'SHA-256',salt:enc.encode('simhub-device-v1'),info:enc.encode(deviceId)},ikm,256);const raw=new Uint8Array(bits),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);return {raw:raw,key:key,kid:await keyIdForRaw(raw),mode:'legacy'};}
 async function wrapNodeKey(raw,kid){const iv=crypto.getRandomValues(new Uint8Array(12)),aad=enc.encode('simhub-node-key-wrap-v1|'+kid),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:aad},vaultKey,raw));return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};}
 async function unwrapNodeKey(envelope,kid){const raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(envelope.iv),additionalData:enc.encode('simhub-node-key-wrap-v1|'+kid)},vaultKey,unb64u(envelope.ct)));if(await keyIdForRaw(raw)!==kid)throw new Error('Wrapped node key does not match key id');return raw;}
+async function encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid){
+  const key=await crypto.subtle.importKey('raw',bootstrapRaw,{name:'AES-GCM'},false,['encrypt']);
+  const iv=crypto.getRandomValues(new Uint8Array(12)),aad=enc.encode('simhub-bootstrap-node-key-v1|'+kid);
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:aad},key,nodeRaw));
+  return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
+}
 async function deviceCrypto(deviceId){if(deviceKeyCache.has(deviceId))return deviceKeyCache.get(deviceId);const info=devices.find(x=>x.id===deviceId);let out;if(info&&info.keyId&&info.wrappedKey){const raw=await unwrapNodeKey(info.wrappedKey,info.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);out={raw:raw,key:key,kid:info.keyId,mode:'node'};}else out=await deriveLegacyDevice(deviceId);deviceKeyCache.set(deviceId,out);return out;}
 async function decryptEvent(e){const cipher=e.ciphertext;if(cipher&&cipher.v===1){const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode('simhub-event-v1')},vaultKey,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}if(!cipher||cipher.v!==2)throw new Error('Unsupported ciphertext version');let d=await deviceCrypto(e.deviceId);if(cipher.kid!==d.kid){const info=devices.find(x=>x.id===e.deviceId);if(info&&info.pendingKeyId===cipher.kid&&info.pendingWrappedKey){const raw=await unwrapNodeKey(info.pendingWrappedKey,info.pendingKeyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw:raw,key:key,kid:info.pendingKeyId,mode:'pending-node'};}else{const legacy=await deriveLegacyDevice(e.deviceId);if(cipher.kid!==legacy.kid)throw new Error('Node key mismatch');d=legacy;}}const aad=eventAad(e.deviceId,e.eventId,e.kind,e.occurredAt,e.subscriptionId,e.hasOtp),pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode(aad)},d.key,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}
 function versionAtLeast(v,target){const a=String(v||'0').split('.').map(Number),b=String(target).split('.').map(Number);for(let i=0;i<Math.max(a.length,b.length);i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x>y;}return true;}
@@ -42,8 +48,14 @@ async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=on?'Relay connected':'Not connected';}
 function showUnlocked(){$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent='Vault unlocked in memory. Relay stores ciphertext and does not receive the Vault Key.';setConnected(true);}
 function lockVault(){vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];lastSeq=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
-function resetAutoLock(){lastActivity=Date.now();clearTimeout(autoLockTimer);if(vaultKey)autoLockTimer=setTimeout(()=>lockVault(),AUTO_LOCK_MS);}
-['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,()=>{if(vaultKey&&Date.now()-lastActivity>2000)resetAutoLock();},{passive:true}));
+function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,AUTO_LOCK_MS-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
+function resetAutoLock(){lastActivity=Date.now();armAutoLock();}
+function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=AUTO_LOCK_MS){lockVault();return true;}armAutoLock();return false;}
+function noteActivity(){if(!vaultKey)return;if(enforceAutoLock())return;if(Date.now()-lastActivity>2000)resetAutoLock();}
+['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,noteActivity,{passive:true}));
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')enforceAutoLock();});
+window.addEventListener('focus',enforceAutoLock);
+window.addEventListener('pageshow',enforceAutoLock);
 
 async function connectAndUnlock(){await establishSession();await unlockVault($('passphrase').value);showUnlocked();await fullRefresh();startRealtime();}
 async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent='New vault created locally. Sign in and enroll an Android node.';toast('Vault created');}
@@ -76,19 +88,24 @@ async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubs
 async function createEnrollment(){
   if(!vaultRaw)throw new Error('Vault must be unlocked.');
   const type=$('enrollType').value==='modem'?'modem':'android',name=$('enrollName').value.trim()||(type==='modem'?'DJI / Modem SIM Node':'Android SIM Node');
-  const nodeRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw),wrapped=await wrapNodeKey(nodeRaw,kid);
-  const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
-  const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped}}),server=location.origin;
-  let value;
-  if(type==='modem'){
-    value=JSON.stringify({version:3,server:server,token:r.token,key:b64u(nodeRaw),keyId:kid,name:name,nodeType:'modem'},null,2);
-    $('openEnroll').hidden=true;
-  }else{
-    value='simhub://enroll?v=3&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&key='+encodeURIComponent(b64u(nodeRaw))+'&keyId='+encodeURIComponent(kid)+'&name='+encodeURIComponent(name);
-    $('openEnroll').href=value;$('openEnroll').hidden=false;
+  const nodeRaw=crypto.getRandomValues(new Uint8Array(32)),bootstrapRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw);
+  let value='';
+  try{
+    const wrapped=await wrapNodeKey(nodeRaw,kid),bootstrapEnvelope=await encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid),bootstrap=b64u(bootstrapRaw);
+    const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
+    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope}}),server=location.origin;
+    if(type==='modem'){
+      value=JSON.stringify({version:4,server:server,token:r.token,bootstrap:bootstrap,name:name,nodeType:'modem'},null,2);
+      $('openEnroll').hidden=true;
+    }else{
+      value='simhub://enroll?v=4&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&bootstrap='+encodeURIComponent(bootstrap)+'&name='+encodeURIComponent(name);
+      $('openEnroll').href=value;$('openEnroll').hidden=false;
+    }
+    $('enrollLink').value=value;$('enrollResult').hidden=false;
+    toast(type==='modem'?'One-time modem enrollment package created for 10 minutes':'One-time Android enrollment link created for 10 minutes');
+  }finally{
+    nodeRaw.fill(0);bootstrapRaw.fill(0);
   }
-  nodeRaw.fill(0);$('enrollLink').value=value;$('enrollResult').hidden=false;
-  toast(type==='modem'?'Modem enrollment JSON created for 10 minutes':'Android enrollment link created for 10 minutes');
 }
 async function rotateDeviceKey(deviceId){const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
 async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||'Copied');}

@@ -2,6 +2,7 @@ package com.blackkcold.simhub;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import java.nio.charset.StandardCharsets;
@@ -57,14 +58,41 @@ public final class ChannelIdentity {
     private static String fingerprint(SubscriptionInfo s){
         String iccid="";
         try{iccid=s.getIccId();}catch(Exception ignored){}
-        if(iccid!=null&&!iccid.isBlank())return hash("iccid:"+iccid);
-        return hash(rawFingerprint(s));
+        return hash(identityMaterial(s,iccid));
+    }
+
+    static String identityMaterial(SubscriptionInfo s,String iccid){
+        String mcc="",mnc="",number="",carrierName="",displayName="";
+        int cardId=-1,portIndex=-1,carrierId=-1,subId=-1,slot=-1;
+        boolean embedded=false,opportunistic=false;
+        try{subId=s.getSubscriptionId();}catch(Exception ignored){}
+        try{slot=s.getSimSlotIndex();}catch(Exception ignored){}
+        try{cardId=s.getCardId();}catch(Exception ignored){}
+        if(Build.VERSION.SDK_INT>=33)try{portIndex=s.getPortIndex();}catch(Exception ignored){}
+        try{carrierId=s.getCarrierId();}catch(Exception ignored){}
+        try{mcc=String.valueOf(s.getMccString());mnc=String.valueOf(s.getMncString());}catch(Exception ignored){}
+        try{number=String.valueOf(s.getNumber());}catch(Exception ignored){}
+        try{carrierName=String.valueOf(s.getCarrierName());}catch(Exception ignored){}
+        try{displayName=String.valueOf(s.getDisplayName());}catch(Exception ignored){}
+        try{embedded=s.isEmbedded();}catch(Exception ignored){}
+        try{opportunistic=s.isOpportunistic();}catch(Exception ignored){}
+        return "slot="+slot
+                +"|card="+cardId
+                +"|port="+portIndex
+                +"|sub="+subId
+                +"|carrierId="+carrierId
+                +"|iccid="+(iccid==null?"":iccid)
+                +"|mcc="+mcc
+                +"|mnc="+mnc
+                +"|number="+number
+                +"|carrier="+carrierName
+                +"|display="+displayName
+                +"|embedded="+embedded
+                +"|opportunistic="+opportunistic;
     }
 
     private static String rawFingerprint(SubscriptionInfo s){
-        String mcc="",mnc="";
-        try{mcc=String.valueOf(s.getMccString());mnc=String.valueOf(s.getMncString());}catch(Exception ignored){}
-        String number="";try{number=String.valueOf(s.getNumber());}catch(Exception ignored){}return s.getSimSlotIndex()+"|"+mcc+"|"+mnc+"|"+String.valueOf(s.getCarrierName())+"|"+String.valueOf(s.getDisplayName())+"|"+number+"|"+s.isEmbedded();
+        return identityMaterial(s,"");
     }
 
     private static String hash(String value){

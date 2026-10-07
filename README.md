@@ -117,12 +117,15 @@ cd simhub
 
 cp .env.example .env
 python3 scripts/gen_admin_token.py
+python3 scripts/gen_totp_secret.py
 ```
 
 Put the generated token into:
 
 ```env
 SIMHUB_ADMIN_TOKEN=<your-random-token>
+SIMHUB_REQUIRE_TOTP=true
+SIMHUB_TOTP_SECRET=<your-base32-secret>
 SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
 ```
 
@@ -154,7 +157,7 @@ Download the latest APK from:
 
 **[GitHub Releases →](https://github.com/blackkcold/simhub/releases/latest)**
 
-For v0.1.5, the release workflow uses a stable release signing key when repository signing secrets are configured; otherwise the APK is explicitly published as **debug-signed**.
+Starting with v0.2.1, GitHub Releases publish only the **release-signed APK**. Missing signing secrets or a certificate fingerprint mismatch fails the release instead of falling back to a debug build.
 
 On the Android SIM Node:
 
@@ -183,7 +186,7 @@ Full procedure: [Installation Guide](docs/INSTALLATION.md).
         ↓
 4. Create/unlock local Vault
         ↓
-5. Generate one-time enrollment link
+5. Generate a one-time bootstrap enrollment link
         ↓
 6. Install Android Agent
         ↓
@@ -306,7 +309,7 @@ This allows the system to recover from temporary mobile-network loss, Wi-Fi chan
 
 ---
 
-### 0.2.0 hardening branch
+### v0.2.1 production hardening
 
 - Independent per-node content keys; the Master Vault Key no longer leaves the controller for new nodes.
 - Generic Node + Channel model for Android and Linux/DJI modem nodes.
@@ -314,7 +317,7 @@ This allows the system to recover from temporary mobile-network loss, Wi-Fi chan
 - Shared Android executors, cancellable JobService work and stale callback cleanup.
 - Per-part SMS sent/delivery tracking with failure result codes.
 - Stable channel identity/revision checks before remote SMS send.
-- Linux Modem Agent with ModemManager and DJI/Quectel adapter paths.
+- Linux Modem Agent with ModemManager and direct DJI/Quectel AT adapter paths, including durable multipart receive reassembly.
 - Continuous retention/maintenance, trusted reverse-proxy client IP handling, readiness checks and Docker context hardening.
 - Crash-safe two-phase device bearer-token rotation.
 - Expanded server migration/maintenance/modem tests plus Android JVM tests.
@@ -369,7 +372,7 @@ SMS and OTP are the supported production path.
 
 ### Release signing
 
-Public release APKs may be debug-signed unless explicitly marked otherwise. For long-term personal deployment, build and sign the Android Agent with your own release key.
+v0.2.1 and later release workflows require the pinned long-term signing identity. The release fails if signing secrets are absent or the certificate SHA-256 fingerprint does not match the documented identity.
 
 ---
 
@@ -421,7 +424,7 @@ CI also performs a complete API 37 debug APK build.
 
 Current release:
 
-**[v0.1.5 — Reliability & Security](https://github.com/blackkcold/simhub/releases/tag/v0.1.5)**
+**[v0.2.1](https://github.com/blackkcold/simhub/releases/tag/v0.2.1)**
 
 Release assets include the Android APK, tagged source snapshot, documentation bundle and SHA-256 checksums.
 

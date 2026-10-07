@@ -1,3 +1,5 @@
+> **Update (v0.2.1):** This historical checkpoint is superseded by the v0.2.1 hardening release. New enrollment packages no longer contain plaintext Node Keys; Android release signing is now mandatory for releases; modem multipart receive is durably reassembled.
+
 # SIM Hub audit remediation — 2026-10-06
 
 Branch: `hardening/node-channel-modem`  
@@ -54,7 +56,7 @@ Optional capability: carrier/radio/signal telemetry.
 | TOTP was silently optional in sample deployment | Hardened | new example requires TOTP; relay refuses startup when requirement=true and secret missing |
 | CI only proved Android compilation | Improved | server behavior/migration/maintenance tests, Modem crypto/queue tests, Android JVM OTP tests + API 37 build |
 | Phone-call functionality | Intentionally absent | no dialer/call/SIP/PSTN scope added |
-| Android release signing | Explicitly excluded | unchanged per request |
+| Android release signing | Fixed in v0.2.1 | mandatory release signing with pinned certificate; no debug fallback |
 
 ## Security model after remediation
 
@@ -69,7 +71,7 @@ For each node:
 1. Controller generates a random 32-byte Node Key.
 2. Controller encrypts/wraps that Node Key with the Master Vault Key.
 3. Relay stores only the wrapped envelope and public key ID.
-4. The enrollment package contains only that node's plaintext Node Key.
+4. v0.2.1 enrollment packages contain only a one-time Bootstrap Secret; the Node Key is returned only as bootstrap-encrypted ciphertext and decrypted locally.
 5. Node traffic uses AES-256-GCM v2 with metadata-bound AAD.
 
 Compromise of one new node therefore does not permit derivation of sibling Node Keys.

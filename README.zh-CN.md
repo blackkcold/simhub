@@ -116,6 +116,7 @@ cd simhub
 
 cp .env.example .env
 python3 scripts/gen_admin_token.py
+python3 scripts/gen_totp_secret.py
 ```
 
 将生成的 Token 填入：
@@ -153,7 +154,7 @@ curl http://127.0.0.1:8787/healthz
 
 **[GitHub Releases →](https://github.com/blackkcold/simhub/releases/latest)**
 
-v0.1.5 的发布流程会在仓库已配置稳定签名 Secrets 时生成正式签名 APK；若未配置，则会明确以 **debug-signed** 文件名发布。
+从 v0.2.1 起，GitHub Release **只允许正式 release-signed APK**；缺少签名 Secret 或证书指纹不匹配会直接导致发布失败，不再回退 Debug APK。
 
 在作为 SIM Node 的 Android 手机上：
 
@@ -182,7 +183,7 @@ v0.1.5 的发布流程会在仓库已配置稳定签名 Secrets 时生成正式�
         ↓
 4. 创建 / 解锁本地 Vault
         ↓
-5. 生成一次性 Enrollment Link
+5. 生成一次性 Bootstrap Enrollment Link
         ↓
 6. Android 手机安装 Agent
         ↓
@@ -307,7 +308,7 @@ SIM Hub 不假设 Android 后台进程或 WebSocket 永远在线。
 
 ---
 
-## 0.2.0 加固分支
+## v0.2.1 生产加固
 
 - 新节点使用真正独立的 Node Key；Master Vault Key 不再离开 Controller。
 - 引入 Generic Node + Channel 模型，统一 Android 与 Linux/DJI Modem。
@@ -315,7 +316,7 @@ SIM Hub 不假设 Android 后台进程或 WebSocket 永远在线。
 - Android 后台执行器共享化、Job 可取消、陈旧短信 callback 自动超时收敛。
 - Multipart 短信按 part 幂等跟踪 sent/delivered/resultCode。
 - 远程短信发送前校验稳定 channel identity/revision，防换卡后发错 SIM。
-- Linux Modem Agent 支持 ModemManager 与 DJI/Quectel adapter。
+- Linux Modem Agent 支持 ModemManager 与 DJI/Quectel 直接 AT adapter，并加入 durable multipart 收件重组。
 - 持续 retention/maintenance、可信反代 IP、readyz 与 Docker context 加固。
 - Device Bearer Token 两阶段自动轮换，网络中断可恢复。
 - CI 增加 v1→v4 migration、maintenance、Modem 加密/队列测试与 Android JVM 单测。
@@ -370,7 +371,7 @@ SIM Hub 不假设 Android 后台进程或 WebSocket 永远在线。
 
 ### APK 签名
 
-公开 Release 中的 APK 可能是 Debug 签名，除非 Release 特别标明。长期个人使用建议从源码使用自己的 Release Signing Key 构建并签名。
+v0.2.1 起 Release workflow 强制使用固定长期签名身份；缺少 Secret 或证书 SHA-256 指纹不匹配都会直接阻止发版。
 
 ---
 
@@ -422,7 +423,7 @@ GitHub Actions CI 同样会执行完整的 Android API 37 Debug APK 构建验证
 
 当前版本：
 
-**[v0.1.5 — Reliability & Security](https://github.com/blackkcold/simhub/releases/tag/v0.1.5)**
+**[v0.2.1](https://github.com/blackkcold/simhub/releases/tag/v0.2.1)**
 
 Release 中包含 Android APK、对应 Tag 的源码快照、文档包以及 SHA-256 校验文件。
 

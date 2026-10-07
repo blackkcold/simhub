@@ -112,12 +112,16 @@ public final class CryptoBox {
     }
 
     public static byte[] decryptBootstrapNodeKey(JSONObject envelope,byte[] bootstrap,String expectedKid)throws Exception{
-        if(bootstrap==null||bootstrap.length!=32)throw new SecurityException("Bootstrap key length invalid");
         if(envelope==null||!"A256GCM".equals(envelope.optString("alg")))throw new SecurityException("Bootstrap envelope invalid");
+        return decryptBootstrapNodeKey(envelope.getString("iv"),envelope.getString("ct"),bootstrap,expectedKid);
+    }
+
+    public static byte[] decryptBootstrapNodeKey(String ivText,String ctText,byte[] bootstrap,String expectedKid)throws Exception{
+        if(bootstrap==null||bootstrap.length!=32)throw new SecurityException("Bootstrap key length invalid");
         Cipher c=Cipher.getInstance("AES/GCM/NoPadding");
-        c.init(Cipher.DECRYPT_MODE,new SecretKeySpec(bootstrap,"AES"),new GCMParameterSpec(128,ub64(envelope.getString("iv"))));
+        c.init(Cipher.DECRYPT_MODE,new SecretKeySpec(bootstrap,"AES"),new GCMParameterSpec(128,ub64(ivText)));
         c.updateAAD(("simhub-bootstrap-node-key-v1|"+expectedKid).getBytes(StandardCharsets.UTF_8));
-        byte[] raw=c.doFinal(ub64(envelope.getString("ct")));
+        byte[] raw=c.doFinal(ub64(ctText));
         if(raw.length!=32||!keyId(raw).equals(expectedKid)){Arrays.fill(raw,(byte)0);throw new SecurityException("Bootstrap Node Key mismatch");}
         return raw;
     }

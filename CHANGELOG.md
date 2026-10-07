@@ -1,3 +1,17 @@
+## v0.2.1 — Production hardening
+
+- Require release-signed Android artifacts with pinned certificate verification; remove debug-release fallback workflows.
+- Pin GitHub Actions dependencies to immutable commit SHAs and separate signing from release publication permissions.
+- Strengthen Android SIM replacement detection with card, port, subscription, carrier and ICCID/number signals; stale commands continue to fail closed by Channel revision.
+- Replace new-node plaintext Node-Key enrollment with a one-time Bootstrap Secret and encrypted Node-Key envelope.
+- Enforce PWA Vault timeout using absolute inactivity time across browser suspension/backgrounding.
+- Correct Android SMS history direction handling for FAILED/QUEUED/OUTBOX/SENT and skip drafts.
+- Add encrypted durable multipart receive staging and reassembly for DJI/Quectel modem SMS.
+- Make relay TOTP and 30-day event retention secure defaults.
+- Replace per-event webhook/push threads with a bounded outbound worker pool.
+- Add shared bootstrap crypto vectors across WebCrypto, Android/JVM and Python Modem tests.
+- Schema version 5 adds one-time enrollment bootstrap ciphertext storage.
+
 # Changelog
 
 ## v0.1.5 — Reliability & Security

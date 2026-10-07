@@ -36,7 +36,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import serial
 from serial.tools import list_ports
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/config.json"))
 DEFAULT_DB = Path(os.getenv("SIMHUB_MODEM_DB", "/var/lib/simhub-modem/agent.db"))
 POLL_SECONDS = max(3, int(os.getenv("SIMHUB_MODEM_POLL_SECONDS", "10")))
@@ -303,6 +303,9 @@ class SmsRecord:
     body: str
     occurred_at: int
     ref: str = ""
+    concat_ref: str = ""
+    concat_total: int = 1
+    concat_seq: int = 1
 
 
 class ModemAdapter:
@@ -385,6 +388,52 @@ def decode_message_body(body: str, dcs: int | None) -> str:
     if dcs is None:
         return decode_ucs2(body)
     return body
+
+
+def parse_concat_udh(pdu_hex: str) -> tuple[str,int,int] | None:
+    compact=re.sub(r"\s+","",pdu_hex)
+    if not compact or len(compact)%2 or not re.fullmatch(r"[0-9A-Fa-f]+",compact):
+        return None
+    raw=bytes.fromhex(compact)
+    if len(raw)<12:
+        return None
+    pos=0
+    smsc_len=raw[pos];pos+=1
+    if pos+smsc_len>=len(raw):
+        return None
+    pos+=smsc_len
+    first=raw[pos];pos+=1
+    if (first & 0x03)!=0 or not (first & 0x40):
+        return None
+    if pos+2>len(raw):
+        return None
+    oa_digits=raw[pos];pos+=1
+    pos+=1
+    pos+=(oa_digits+1)//2
+    if pos+10>len(raw):
+        return None
+    pos+=1  # PID
+    pos+=1  # DCS
+    pos+=7  # SCTS
+    pos+=1  # UDL
+    if pos>=len(raw):
+        return None
+    udhl=raw[pos];pos+=1
+    end=min(len(raw),pos+udhl)
+    while pos+2<=end:
+        iei=raw[pos];iedl=raw[pos+1];pos+=2
+        if pos+iedl>end:
+            break
+        data=raw[pos:pos+iedl];pos+=iedl
+        if iei==0x00 and iedl==3:
+            ref,total,seq=data[0],data[1],data[2]
+            if 1<=seq<=total:
+                return f"8:{ref}",total,seq
+        if iei==0x08 and iedl==4:
+            ref=(data[0]<<8)|data[1];total,seq=data[2],data[3]
+            if 1<=seq<=total:
+                return f"16:{ref}",total,seq
+    return None
 
 
 class DjiAtAdapter(ModemAdapter):

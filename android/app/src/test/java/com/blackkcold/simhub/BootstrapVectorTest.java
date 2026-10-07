@@ -6,6 +6,7 @@ import static org.junit.Assert.*;
 public class BootstrapVectorTest {
     @Test public void decryptsSharedBootstrapVector() throws Exception {
         byte[] bootstrap=CryptoBox.ub64("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8");
+        assertEquals("Yw3NKWbEM2aRElRIzTXXQ6xA8w80KAmg38FCJQjDKnQ",CryptoBox.bootstrapProof(bootstrap));
         byte[] raw=CryptoBox.decryptBootstrapNodeKey(
                 "AAECAwQFBgcICQoL",
                 "ZyP0OOHA5DylaL2gncRWQrPntQfETmlLAF7fviFUPo0MKRF4hxylstWkdoiMOKmW",

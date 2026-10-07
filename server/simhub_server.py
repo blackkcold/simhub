@@ -215,6 +215,10 @@ def _migrate_v4(con: sqlite3.Connection) -> None:
     con.execute("UPDATE devices SET token_issued_at=created_at WHERE token_issued_at<=0")
 
 
+def _migrate_v5(con: sqlite3.Connection) -> None:
+    _add_column(con,"enrollment_tokens","bootstrap_envelope_json","TEXT NOT NULL DEFAULT '{}'")
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
@@ -222,8 +226,9 @@ def init_db() -> None:
         _migrate_v2(con)
         _migrate_v3(con)
         _migrate_v4(con)
+        _migrate_v5(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=4")
+        con.execute("PRAGMA user_version=5")
     run_maintenance()
 
 
@@ -625,7 +630,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<4:
+                if version<5:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:

@@ -101,7 +101,7 @@ See `ANDROID_SETUP.md` for Android build requirements.
 6. Optionally grant Contacts access if you want local contact-name mapping.
 7. Enable **always-on relay** for the lowest-latency personal remote operation.
 
-The enrollment deep link contains a one-time token and only that Android node's independent Node Key. It is still sensitive: do not log/store/publish it after enrollment.
+The v0.2.1 enrollment deep link contains a one-time token and one-time Bootstrap Secret, not the long-term Node Key. Treat it as sensitive until consumed; after successful enrollment the relay erases the bootstrap envelope and the token cannot be reused.
 
 ## 7. Enroll a Linux / DJI Modem Node
 
@@ -112,7 +112,9 @@ The enrollment deep link contains a one-time token and only that Android node's 
 5. Delete the temporary enrollment JSON.
 6. Enable `simhub-modem.service`.
 
-The Agent automatically tries the external `dji4g` adapter first when available, then ModemManager/`mmcli`.
+Incoming concatenated SMS fragments are encrypted and staged durably in the Agent SQLite database, reassembled when complete, and emitted as one SMS event. Incomplete groups older than 24 hours are surfaced with an explicit incomplete marker instead of remaining indefinitely in modem storage.
+
+The Agent first tries the direct Quectel AT path for DJI Gen1/QDC507, then falls back to ModemManager/`mmcli`. The external `dji4g` utility is optional for network-interface setup and is not required for SMS reliability.
 
 ## 8. OEM background settings
 

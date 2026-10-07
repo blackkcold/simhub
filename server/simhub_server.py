@@ -21,6 +21,7 @@ import urllib.request
 import uuid
 from http.cookies import SimpleCookie
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -131,12 +132,20 @@ def safe_json_loads(value: str | None, default: Any) -> Any:
         return default
 
 
-def open_db() -> sqlite3.Connection:
+@contextmanager
+def open_db():
     con = sqlite3.connect(DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
     con.execute("PRAGMA busy_timeout=5000")
-    return con
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def _table_sql(con: sqlite3.Connection, name: str) -> str:

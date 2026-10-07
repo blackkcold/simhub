@@ -737,6 +737,8 @@ class DjiAtAdapter(ModemAdapter):
 
     @staticmethod
     def _destination(to: str) -> tuple[int, str, str]:
+        if "*" in to or "#" in to:
+            raise ValueError("USSD/service dialing symbols are not valid SMS destinations")
         digits = re.sub(r"[^0-9]", "", to)
         if not digits:
             raise ValueError("SMS destination has no digits")

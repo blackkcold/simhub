@@ -653,6 +653,19 @@ class DjiAtAdapter(ModemAdapter):
             out["signalSinr"] = sinr
         return out
 
+    def _concat_for_index(self, index: str) -> tuple[str,int,int] | None:
+        try:
+            with self._open() as ser:
+                self._command(ser,"ATE0",timeout=4)
+                self._command(ser,"AT+CMGF=0",timeout=4)
+                raw=self._command(ser,"AT+CMGR="+str(index),timeout=10)
+            candidates=[x.strip() for x in raw.splitlines() if re.fullmatch(r"[0-9A-Fa-f]{20,}",x.strip())]
+            if not candidates:
+                return None
+            return parse_concat_udh(max(candidates,key=len))
+        except Exception:
+            return None
+
     def list_sms(self) -> list[SmsRecord]:
         with self._open() as ser:
             self._initialize(ser)
@@ -675,6 +688,10 @@ class DjiAtAdapter(ModemAdapter):
                 sender = decode_ucs2(fields[2] if len(fields) > 2 else "")
                 stamp = fields[4] if len(fields) > 4 else ""
                 try:
+                    first_octet = int(str(fields[6]).strip(),0) if len(fields)>6 and str(fields[6]).strip() else 0
+                except ValueError:
+                    first_octet = 0
+                try:
                     dcs = int(str(fields[8]).strip(), 0) if len(fields) > 8 and str(fields[8]).strip() else None
                 except ValueError:
                     dcs = None
@@ -693,7 +710,12 @@ class DjiAtAdapter(ModemAdapter):
             body = decode_message_body("\n".join(body_lines), dcs)
             occurred = self._timestamp(stamp)
             digest = hashlib.sha256((index + "\0" + sender + "\0" + body + "\0" + stamp).encode()).hexdigest()[:20]
-            records.append(SmsRecord(local_id=f"dji-at-{digest}", sender=sender, body=body, occurred_at=occurred, ref=index))
+            concat_ref="";concat_total=1;concat_seq=1
+            if first_octet & 0x40:
+                info=self._concat_for_index(index)
+                if info:
+                    concat_ref,concat_total,concat_seq=info
+            records.append(SmsRecord(local_id=f"dji-at-{digest}", sender=sender, body=body, occurred_at=occurred, ref=index, concat_ref=concat_ref, concat_total=concat_total, concat_seq=concat_seq))
         return records[:MAX_SMS_PER_CYCLE]
 
     @staticmethod

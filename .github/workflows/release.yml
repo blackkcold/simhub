@@ -47,6 +47,7 @@ jobs:
       - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
       - run: node --check web/app.js && node --check web/sw.js
       - run: node web/test_crypto_vector.mjs
+      - run: node web/test_bootstrap_vector.mjs
       - run: python3 -m py_compile server/simhub_server.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
       - run: bash -n modem_agent/install.sh
 

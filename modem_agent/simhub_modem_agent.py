@@ -966,15 +966,22 @@ class Agent:
         return encrypt_payload(self.node_key, self.kid, payload, event_aad(str(self.config["deviceId"]), event_id, kind, occurred_at, self.channel_id, has_otp))
 
     def _multipart_group_id(self,sms: SmsRecord) -> str:
-        material="|".join([
+        base=[
             self.channel_id,
             str(self.channel_revision),
             sms.sender,
             sms.concat_ref,
             str(sms.concat_total),
-            str(max(0,sms.occurred_at)//21600),
-        ])
-        return hashlib.sha256(material.encode()).hexdigest()[:32]
+        ]
+        bucket=max(0,sms.occurred_at)//21600
+        def candidate(value:int) -> str:
+            return hashlib.sha256("|".join(base+[str(value)]).encode()).hexdigest()[:32]
+        for value in (bucket,bucket-1,bucket+1):
+            if value>=0:
+                group_id=candidate(value)
+                if self.store.multipart_group(group_id):
+                    return group_id
+        return candidate(bucket)
 
     @staticmethod
     def _multipart_aad(group_id: str, part_no: int, total_parts: int) -> bytes:

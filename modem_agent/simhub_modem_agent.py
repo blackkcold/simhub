@@ -107,6 +107,18 @@ def decrypt_payload(key: bytes, expected_kid: str, envelope: dict[str, Any], aad
     return value
 
 
+def decrypt_bootstrap_node_key(bootstrap: bytes, envelope: dict[str, Any], kid: str) -> bytes:
+    if len(bootstrap) != 32:
+        raise ValueError("bootstrap key length invalid")
+    if not isinstance(envelope, dict) or envelope.get("alg") != "A256GCM":
+        raise ValueError("bootstrap envelope invalid")
+    aad=("simhub-bootstrap-node-key-v1|"+kid).encode()
+    raw=AESGCM(bootstrap).decrypt(ub64u(str(envelope["iv"])),ub64u(str(envelope["ct"])),aad)
+    if len(raw)!=32 or key_id(raw)!=kid:
+        raise ValueError("bootstrap Node Key mismatch")
+    return raw
+
+
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -1058,31 +1070,44 @@ def enroll(args: argparse.Namespace) -> None:
     payload = load_json(Path(args.file))
     server = str(payload.get("server", ""))
     token = str(payload.get("token", ""))
-    node_key = ub64u(str(payload.get("key", "")))
-    kid = str(payload.get("keyId", ""))
     name = str(payload.get("name") or "DJI / Modem SIM Node")
-    if len(node_key) != 32 or key_id(node_key) != kid:
-        raise SystemExit("Enrollment file contains an invalid node key")
+    version = int(payload.get("version", 0) or 0)
     relay = Relay(server)
     response = relay.enroll(token, name)
-    config = {
-        "version": 1,
-        "server": server.rstrip("/"),
-        "deviceId": response["deviceId"],
-        "deviceToken": response["deviceToken"],
-        "tokenIssuedAt": int(response.get("tokenIssuedAt", now())),
-        "tokenRotationPending": False,
-        "nodeKey": b64u(node_key),
-        "keyId": kid,
-        "name": name,
-        "adapter": args.adapter,
-        "channelId": str(uuid.uuid4()),
-        "channelRevision": 1,
-        "channelFingerprint": "",
-    }
-    path = Path(args.config)
-    atomic_write_json(path, config)
-    print(f"Enrolled modem node {response['deviceId']} -> {path}")
+    if version >= 4:
+        bootstrap = ub64u(str(payload.get("bootstrap", "")))
+        kid = str(response.get("keyId") or "")
+        envelope = response.get("bootstrapEnvelope")
+        if not kid or not isinstance(envelope, dict):
+            raise SystemExit("Relay did not return a valid bootstrap envelope")
+        node_key = decrypt_bootstrap_node_key(bootstrap, envelope, kid)
+    else:
+        node_key = ub64u(str(payload.get("key", "")))
+        kid = str(payload.get("keyId", ""))
+        if len(node_key) != 32 or key_id(node_key) != kid:
+            raise SystemExit("Enrollment file contains an invalid node key")
+    try:
+        config = {
+            "version": 2,
+            "server": server.rstrip("/"),
+            "deviceId": response["deviceId"],
+            "deviceToken": response["deviceToken"],
+            "tokenIssuedAt": int(response.get("tokenIssuedAt", now())),
+            "tokenRotationPending": False,
+            "nodeKey": b64u(node_key),
+            "keyId": kid,
+            "name": name,
+            "adapter": args.adapter,
+            "channelId": str(uuid.uuid4()),
+            "channelRevision": 1,
+            "channelFingerprint": "",
+        }
+        path = Path(args.config)
+        atomic_write_json(path, config)
+        print(f"Enrolled modem node {response['deviceId']} -> {path}")
+    finally:
+        if isinstance(node_key, bytes):
+            node_key = b""
 
 
 def main() -> None:

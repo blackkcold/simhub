@@ -8,13 +8,30 @@
 
 ## Enrollment
 
-1. Controller asks relay for a short-lived one-time token.
-2. Controller builds a local-only deep link containing relay URL + one-time token + 256-bit Vault Key.
-3. Android posts the enrollment token to the relay.
-4. Relay returns a device ID and high-entropy device token.
-5. Android stores the device token and Vault Key using Android Keystore-backed local encryption.
+### v4 bootstrap enrollment
 
-The enrollment link must be treated as a temporary secret.
+New v0.2.1 nodes use a one-time bootstrap exchange so the enrollment link/package never contains the long-term Node Key.
+
+1. Controller generates a random 32-byte Node Key.
+2. Controller generates a separate random 32-byte Bootstrap Secret.
+3. Controller wraps the Node Key twice:
+   - once with the Master Vault Key for long-term controller recovery;
+   - once with the Bootstrap Secret using AES-256-GCM and AAD `simhub-bootstrap-node-key-v1|<kid>`.
+4. Controller creates the enrollment token on the relay, storing only ciphertext envelopes and the public key ID.
+5. The Android deep link / Modem JSON contains only:
+   - relay URL;
+   - one-time enrollment token;
+   - one-time Bootstrap Secret;
+   - node label/type.
+6. Node consumes the enrollment token.
+7. Relay returns the encrypted bootstrap envelope and immediately clears that envelope from the enrollment row.
+8. Node decrypts the Node Key locally, verifies its `kid`, then stores it using Android Keystore-protected storage or the mode-0600 Linux Agent config.
+
+The Relay never receives the Bootstrap Secret or plaintext Node Key. After enrollment is consumed, the old enrollment link/package is insufficient to recover the Node Key.
+
+Enrollment tokens remain short-lived and single-use.
+
+Legacy v3 enrollment links that directly contain a Node Key remain readable only for rolling-upgrade compatibility; new enrollment creation requires the v4 bootstrap envelope.
 
 ## Event encryption
 

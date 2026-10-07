@@ -42,8 +42,14 @@ async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=on?'Relay connected':'Not connected';}
 function showUnlocked(){$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent='Vault unlocked in memory. Relay stores ciphertext and does not receive the Vault Key.';setConnected(true);}
 function lockVault(){vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];lastSeq=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
-function resetAutoLock(){lastActivity=Date.now();clearTimeout(autoLockTimer);if(vaultKey)autoLockTimer=setTimeout(()=>lockVault(),AUTO_LOCK_MS);}
-['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,()=>{if(vaultKey&&Date.now()-lastActivity>2000)resetAutoLock();},{passive:true}));
+function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,AUTO_LOCK_MS-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
+function resetAutoLock(){lastActivity=Date.now();armAutoLock();}
+function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=AUTO_LOCK_MS){lockVault();return true;}armAutoLock();return false;}
+function noteActivity(){if(!vaultKey)return;if(enforceAutoLock())return;if(Date.now()-lastActivity>2000)resetAutoLock();}
+['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,noteActivity,{passive:true}));
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')enforceAutoLock();});
+window.addEventListener('focus',enforceAutoLock);
+window.addEventListener('pageshow',enforceAutoLock);
 
 async function connectAndUnlock(){await establishSession();await unlockVault($('passphrase').value);showUnlocked();await fullRefresh();startRealtime();}
 async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent='New vault created locally. Sign in and enroll an Android node.';toast('Vault created');}

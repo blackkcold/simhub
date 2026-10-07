@@ -965,6 +965,79 @@ class Agent:
     def encrypt_event(self, event_id: str, kind: str, occurred_at: int, has_otp: bool, payload: dict[str, Any]) -> dict[str, Any]:
         return encrypt_payload(self.node_key, self.kid, payload, event_aad(str(self.config["deviceId"]), event_id, kind, occurred_at, self.channel_id, has_otp))
 
+    def _multipart_group_id(self,sms: SmsRecord) -> str:
+        material="|".join([
+            self.channel_id,
+            str(self.channel_revision),
+            sms.sender,
+            sms.concat_ref,
+            str(sms.concat_total),
+            str(max(0,sms.occurred_at)//21600),
+        ])
+        return hashlib.sha256(material.encode()).hexdigest()[:32]
+
+    @staticmethod
+    def _multipart_aad(group_id: str, part_no: int, total_parts: int) -> bytes:
+        return f"simhub-modem-multipart-v1|{group_id}|{part_no}|{total_parts}".encode()
+
+    def _encrypt_multipart_part(self,group_id: str,sms: SmsRecord) -> dict[str,Any]:
+        iv=os.urandom(12)
+        payload=json.dumps({
+            "sender":sms.sender,
+            "body":sms.body,
+            "occurredAt":sms.occurred_at,
+            "localId":sms.local_id,
+        },ensure_ascii=False,separators=(",",":")).encode()
+        aad=self._multipart_aad(group_id,sms.concat_seq,sms.concat_total)
+        ct=AESGCM(self.node_key).encrypt(iv,payload,aad)
+        return {"v":1,"alg":"A256GCM","iv":b64u(iv),"ct":b64u(ct)}
+
+    def _decrypt_multipart_part(self,group_id: str,row: sqlite3.Row) -> dict[str,Any]:
+        env=json.loads(row["cipher_json"])
+        aad=self._multipart_aad(group_id,int(row["part_no"]),int(row["total_parts"]))
+        raw=AESGCM(self.node_key).decrypt(ub64u(str(env["iv"])),ub64u(str(env["ct"])),aad)
+        value=json.loads(raw)
+        if not isinstance(value,dict):
+            raise ValueError("multipart part payload invalid")
+        return value
+
+    def _emit_multipart_group(self,group_id: str,force: bool=False) -> bool:
+        rows=self.store.multipart_group(group_id)
+        if not rows:
+            return False
+        total=max(int(r["total_parts"]) for r in rows)
+        numbers={int(r["part_no"]) for r in rows}
+        complete=len(numbers)==total and numbers==set(range(1,total+1))
+        if not complete and not force:
+            return False
+        parts=[self._decrypt_multipart_part(group_id,r) for r in rows]
+        parts.sort(key=lambda x:next((int(r["part_no"]) for r in rows if json.loads(r["cipher_json"]) is not None and str(x.get("localId","")) in str(x.get("localId",""))),0))
+        by_part=[]
+        for r in rows:
+            by_part.append((int(r["part_no"]),self._decrypt_multipart_part(group_id,r)))
+        by_part.sort(key=lambda x:x[0])
+        body="".join(str(x[1].get("body","")) for x in by_part)
+        sender=str(by_part[0][1].get("sender","")) if by_part else ""
+        occurred=min(int(x[1].get("occurredAt",now())) for x in by_part) if by_part else now()
+        event_id="modem-multipart-"+group_id
+        payload={
+            "direction":"in",
+            "sender":sender,
+            "body":body,
+            "occurredAt":occurred,
+            "channelId":self.channel_id,
+            "channelRevision":self.channel_revision,
+            "providerId":group_id,
+            "partsReceived":len(numbers),
+            "partsExpected":total,
+            "multipartIncomplete":not complete,
+        }
+        cipher=self.encrypt_event(event_id,"sms.received",occurred,False,payload)
+        if self.store.queue_event(event_id,"sms.received",occurred,self.channel_id,False,{"source":self.adapter.name,"parts":total},cipher):
+            self.store.delete_multipart_group(group_id)
+            return True
+        return False
+
     def rotate_device_token(self) -> None:
         ts=now()
         pending=str(self.config.get("pendingDeviceToken") or "")
@@ -1014,8 +1087,20 @@ class Agent:
         atomic_write_json(self.config_path,self.config)
 
     def receive(self) -> None:
+        touched:set[str]=set()
         for sms in self.adapter.list_sms():
             if self.store.seen(sms.local_id):
+                continue
+            if sms.concat_ref and sms.concat_total>1 and 1<=sms.concat_seq<=sms.concat_total:
+                group_id=self._multipart_group_id(sms)
+                cipher=self._encrypt_multipart_part(group_id,sms)
+                if self.store.queue_multipart_part(group_id,sms.concat_seq,sms.concat_total,cipher):
+                    touched.add(group_id)
+                    self.store.mark_seen(sms.local_id)
+                    try:
+                        self.adapter.delete_sms(sms)
+                    except Exception:
+                        pass
                 continue
             event_id = "modem-" + sms.local_id
             payload = {
@@ -1034,6 +1119,10 @@ class Agent:
                     self.adapter.delete_sms(sms)
                 except Exception:
                     pass
+        for group_id in touched:
+            self._emit_multipart_group(group_id)
+        for group_id in self.store.stale_multipart_groups(86400):
+            self._emit_multipart_group(group_id,force=True)
 
     def flush_events(self) -> None:
         for event in self.store.pending_events():

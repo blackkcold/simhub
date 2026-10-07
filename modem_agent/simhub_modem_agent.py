@@ -1261,10 +1261,14 @@ def enroll(args: argparse.Namespace) -> None:
     token = str(payload.get("token", ""))
     name = str(payload.get("name") or "DJI / Modem SIM Node")
     version = int(payload.get("version", 0) or 0)
+    bootstrap = b""
+    if version >= 4:
+        bootstrap = ub64u(str(payload.get("bootstrap", "")))
+        if len(bootstrap) != 32:
+            raise SystemExit("Enrollment file contains an invalid bootstrap secret")
     relay = Relay(server)
     response = relay.enroll(token, name)
     if version >= 4:
-        bootstrap = ub64u(str(payload.get("bootstrap", "")))
         kid = str(response.get("keyId") or "")
         envelope = response.get("bootstrapEnvelope")
         if not kid or not isinstance(envelope, dict):

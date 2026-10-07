@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(tr -d '[:space:]' < .github/release/v0.2.1.trigger)"
+            VERSION="$(head -n1 .github/release/v0.2.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -179,19 +179,26 @@ jobs:
           name: signed-apk
           path: release
 
-      - name: Create release tag after successful signing
+      - name: Reconcile release tag after successful signing
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
-          EXISTING=$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')
-          if [[ -n "$EXISTING" ]]; then
-            if [[ "$EXISTING" != "$GITHUB_SHA" ]]; then
-              echo "::error::$TAG already exists at $EXISTING instead of $GITHUB_SHA"
-              exit 1
+          git fetch origin "refs/tags/$TAG:refs/tags/$TAG" --force 2>/dev/null || true
+          EXISTING=$(git rev-parse -q --verify "$TAG^{commit}" 2>/dev/null || true)
+          if [[ -n "$EXISTING" && "$EXISTING" != "$GITHUB_SHA" ]]; then
+            echo "Replacing $TAG from $EXISTING with final release commit $GITHUB_SHA"
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release delete "$TAG" --yes --cleanup-tag
+            else
+              git push origin ":refs/tags/$TAG" || true
             fi
-          else
+            git tag -d "$TAG" >/dev/null 2>&1 || true
+            EXISTING=""
+          fi
+          if [[ -z "$EXISTING" ]]; then
             git tag "$TAG" "$GITHUB_SHA"
             git push origin "refs/tags/$TAG"
           fi
@@ -226,7 +233,7 @@ jobs:
           ## Highlights
           - mandatory release-signed Android APK with pinned certificate verification;
           - stronger fail-closed SIM/channel identity handling;
-          - one-time bootstrap enrollment instead of transmitting the long-term Node Key;
+          - one-time bootstrap enrollment with proof validation before token consumption;
           - PWA absolute inactivity auto-lock;
           - correct Android SMS history direction classification;
           - durable encrypted multipart modem receive reassembly;

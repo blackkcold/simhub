@@ -24,7 +24,8 @@ public final class EnrollmentManager {
             bootstrap=CryptoBox.ub64(bootstrapText);
             if(bootstrap.length!=32){Arrays.fill(bootstrap,(byte)0);throw new SecurityException("Enrollment bootstrap secret length invalid");}
         }
-        JSONObject r=ApiClient.enroll(server.replaceAll("/+$",""),token,name);
+        String bootstrapProof=version>=4?CryptoBox.bootstrapProof(bootstrap):null;
+        JSONObject r=ApiClient.enroll(server.replaceAll("/+$",""),token,name,bootstrapProof);
         try{
             if(version>=4){
                 String kid=r.optString("keyId","");

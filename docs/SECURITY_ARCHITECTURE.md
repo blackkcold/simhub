@@ -67,7 +67,7 @@ v0.2.1 uses one-time bootstrap enrollment. Android custom-scheme links and Linux
 - random one-time Bootstrap Secret;
 - node label/type.
 
-The long-term Node Key is **not** present in the enrollment link/package. The Controller stores a Master-wrapped Node Key envelope on the relay and separately stores a Bootstrap-Secret-encrypted copy for one-time delivery. After the enrollment token is consumed, the relay returns that ciphertext once and clears the bootstrap envelope. The node decrypts and verifies the Node Key locally.
+The long-term Node Key is **not** present in the enrollment link/package. The Controller stores a Master-wrapped Node Key envelope on the relay and separately stores a Bootstrap-Secret-encrypted copy for one-time delivery. It also stores only `SHA-256(Bootstrap Secret)` as a non-secret proof digest. The node proves possession by sending that digest; the relay verifies it **before** creating the device or consuming the one-time token. After successful enrollment, the relay returns the ciphertext once and clears both the bootstrap envelope and proof digest. The node decrypts and verifies the Node Key locally.
 
 The Master Vault Key never leaves the Controller. Enrollment packages remain sensitive until consumed because possession before enrollment allows an attacker to race the legitimate node.
 

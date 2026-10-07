@@ -17,14 +17,14 @@ New v0.2.1 nodes use a one-time bootstrap exchange so the enrollment link/packag
 3. Controller wraps the Node Key twice:
    - once with the Master Vault Key for long-term controller recovery;
    - once with the Bootstrap Secret using AES-256-GCM and AAD `simhub-bootstrap-node-key-v1|<kid>`.
-4. Controller creates the enrollment token on the relay, storing only ciphertext envelopes and the public key ID.
+4. Controller creates the enrollment token on the relay, storing only ciphertext envelopes, the public key ID, and `SHA-256(Bootstrap Secret)` as a non-secret proof digest.
 5. The Android deep link / Modem JSON contains only:
    - relay URL;
    - one-time enrollment token;
    - one-time Bootstrap Secret;
    - node label/type.
-6. Node consumes the enrollment token.
-7. Relay returns the encrypted bootstrap envelope and immediately clears that envelope from the enrollment row.
+6. Before consuming the token, the node sends `SHA-256(Bootstrap Secret)` as `bootstrapProof`; the relay compares it in constant time with the stored digest. A wrong proof fails without consuming the token.
+7. On a valid proof, Relay atomically creates the device, marks the token used, returns the encrypted bootstrap envelope, and clears both bootstrap ciphertext and proof digest from the enrollment row.
 8. Node decrypts the Node Key locally, verifies its `kid`, then stores it using Android Keystore-protected storage or the mode-0600 Linux Agent config.
 
 The Relay never receives the Bootstrap Secret or plaintext Node Key. After enrollment is consumed, the old enrollment link/package is insufficient to recover the Node Key.

@@ -61,6 +61,12 @@ def key_id(raw: bytes) -> str:
     return b64u(hashlib.sha256(raw).digest()[:12])
 
 
+def bootstrap_proof(raw: bytes) -> str:
+    if len(raw) != 32:
+        raise ValueError("bootstrap key length invalid")
+    return b64u(hashlib.sha256(raw).digest())
+
+
 def field(value: Any) -> str:
     return b64u(str("" if value is None else value).encode())
 
@@ -166,21 +172,19 @@ class Relay:
                 detail = raw
             raise RuntimeError(f"relay HTTP {exc.code}: {detail}") from exc
 
-    def enroll(self, token: str, name: str) -> dict[str, Any]:
-        return self.request(
-            "POST",
-            "/api/v1/enroll",
-            {
-                "token": token,
-                "name": name,
-                "model": "Linux cellular modem",
-                "osVersion": sys.platform,
-                "appVersion": VERSION,
-                "nodeType": "modem",
-                "capabilities": ["sms.receive", "sms.send", "sms.history", "signal.basic", "signal.radio"],
-            },
-            auth=False,
-        )
+    def enroll(self, token: str, name: str, bootstrapProof: str = "") -> dict[str, Any]:
+        body = {
+            "token": token,
+            "name": name,
+            "model": "Linux cellular modem",
+            "osVersion": sys.platform,
+            "appVersion": VERSION,
+            "nodeType": "modem",
+            "capabilities": ["sms.receive", "sms.send", "sms.history", "signal.basic", "signal.radio"],
+        }
+        if bootstrapProof:
+            body["bootstrapProof"] = bootstrapProof
+        return self.request("POST", "/api/v1/enroll", body, auth=False)
 
 
 class Store:
@@ -737,6 +741,8 @@ class DjiAtAdapter(ModemAdapter):
 
     @staticmethod
     def _destination(to: str) -> tuple[int, str, str]:
+        if "*" in to or "#" in to:
+            raise ValueError("USSD/service dialing symbols are not valid SMS destinations")
         digits = re.sub(r"[^0-9]", "", to)
         if not digits:
             raise ValueError("SMS destination has no digits")
@@ -1274,7 +1280,8 @@ def enroll(args: argparse.Namespace) -> None:
         if len(bootstrap) != 32:
             raise SystemExit("Enrollment file contains an invalid bootstrap secret")
     relay = Relay(server)
-    response = relay.enroll(token, name)
+    proof = bootstrap_proof(bootstrap) if version >= 4 else ""
+    response = relay.enroll(token, name, proof)
     if version >= 4:
         kid = str(response.get("keyId") or "")
         envelope = response.get("bootstrapEnvelope")

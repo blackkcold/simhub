@@ -111,6 +111,11 @@ public final class CryptoBox {
         return b64(Arrays.copyOf(MessageDigest.getInstance("SHA-256").digest(key),12));
     }
 
+    public static String bootstrapProof(byte[] bootstrap)throws Exception{
+        if(bootstrap==null||bootstrap.length!=32)throw new SecurityException("Bootstrap key length invalid");
+        return b64(MessageDigest.getInstance("SHA-256").digest(bootstrap));
+    }
+
     public static byte[] decryptBootstrapNodeKey(JSONObject envelope,byte[] bootstrap,String expectedKid)throws Exception{
         if(envelope==null||!"A256GCM".equals(envelope.optString("alg")))throw new SecurityException("Bootstrap envelope invalid");
         return decryptBootstrapNodeKey(envelope.getString("iv"),envelope.getString("ct"),bootstrap,expectedKid);

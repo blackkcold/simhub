@@ -3,7 +3,7 @@ import tempfile, unittest
 from pathlib import Path
 
 from simhub_modem_agent import (
-    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, decode_ucs2, decode_message_body, decrypt_bootstrap_node_key, parse_concat_udh
+    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, bootstrap_proof, decode_ucs2, decode_message_body, decrypt_bootstrap_node_key, parse_concat_udh
 )
 
 class ModemAgentTest(unittest.TestCase):
@@ -18,6 +18,9 @@ class ModemAgentTest(unittest.TestCase):
         # encrypt_payload uses a random IV, so verify the shared vector by decrypting its fixed envelope.
         fixed={'v':2,'alg':'A256GCM','kid':vector['kid'],'iv':vector['ivBase64Url'],'ct':vector['ciphertextBase64Url']}
         self.assertEqual(json.dumps(decrypt_payload(key,vector['kid'],fixed,aad),separators=(',',':')),vector['plaintext'])
+
+    def test_bootstrap_proof_vector(self):
+        self.assertEqual(bootstrap_proof(bytes(range(32))),'Yw3NKWbEM2aRElRIu7JbT_QSpJxzLbLIq8G4WBvXEN0')
 
     def test_shared_bootstrap_vector(self):
         import json
@@ -80,6 +83,10 @@ class ModemAgentTest(unittest.TestCase):
         self.assertEqual(decode_ucs2('12345678'),'12345678')
         self.assertEqual(decode_message_body('12345678',0),'12345678')
         self.assertEqual(decode_message_body('9A8C8BC17801',8),'验证码')
+
+    def test_rejects_service_dialing_symbols(self):
+        with self.assertRaises(ValueError):
+            DjiAtAdapter._submit_pdus('*123#','hello')
 
     def test_dji_pdu_supports_unicode_and_multipart(self):
         single=DjiAtAdapter._submit_pdus('+8613800138000','你好123')

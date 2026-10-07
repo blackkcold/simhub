@@ -1010,8 +1010,6 @@ class Agent:
         complete=len(numbers)==total and numbers==set(range(1,total+1))
         if not complete and not force:
             return False
-        parts=[self._decrypt_multipart_part(group_id,r) for r in rows]
-        parts.sort(key=lambda x:next((int(r["part_no"]) for r in rows if json.loads(r["cipher_json"]) is not None and str(x.get("localId","")) in str(x.get("localId",""))),0))
         by_part=[]
         for r in rows:
             by_part.append((int(r["part_no"]),self._decrypt_multipart_part(group_id,r)))

@@ -13,7 +13,7 @@ class ApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory();cls.port=free_port();cls.base=f'http://127.0.0.1:{cls.port}';cls.db=Path(cls.tmp.name)/'test.db'
-        env=os.environ.copy();env.update({'SIMHUB_ADMIN_TOKEN':TOKEN,'SIMHUB_BIND':'127.0.0.1','SIMHUB_PORT':str(cls.port),'SIMHUB_DB':str(cls.db),'SIMHUB_WEB_ROOT':str(ROOT/'web'),'SIMHUB_SESSION_TTL':'900'})
+        env=os.environ.copy();env.update({'SIMHUB_ADMIN_TOKEN':TOKEN,'SIMHUB_BIND':'127.0.0.1','SIMHUB_PORT':str(cls.port),'SIMHUB_DB':str(cls.db),'SIMHUB_WEB_ROOT':str(ROOT/'web'),'SIMHUB_SESSION_TTL':'900','SIMHUB_REQUIRE_TOTP':'false'})
         cls.proc=subprocess.Popen([sys.executable,str(SERVER)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         for _ in range(80):
             try: urllib.request.urlopen(cls.base+'/readyz',timeout=.2).read();break

@@ -60,12 +60,14 @@ Node API tokens are not permanent. Android and the Linux Modem Agent rotate them
 
 ## Enrollment package handling
 
-Android custom-scheme links and Linux modem enrollment JSON contain only:
+v0.2.1 uses one-time bootstrap enrollment. Android custom-scheme links and Linux modem enrollment JSON contain only:
 
 - relay URL;
 - short-lived single-use enrollment token;
-- the target node's independent Node Key;
-- Node Key ID;
-- display label.
+- random one-time Bootstrap Secret;
+- node label/type.
 
-They never contain the Master Vault Key. Enrollment packages are still sensitive until consumed and should not be logged, synced or retained.
+The long-term Node Key is **not** present in the enrollment link/package. The Controller stores a Master-wrapped Node Key envelope on the relay and separately stores a Bootstrap-Secret-encrypted copy for one-time delivery. After the enrollment token is consumed, the relay returns that ciphertext once and clears the bootstrap envelope. The node decrypts and verifies the Node Key locally.
+
+The Master Vault Key never leaves the Controller. Enrollment packages remain sensitive until consumed because possession before enrollment allows an attacker to race the legitimate node.
+

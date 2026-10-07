@@ -89,19 +89,23 @@ async function createEnrollment(){
   if(!vaultRaw)throw new Error('Vault must be unlocked.');
   const type=$('enrollType').value==='modem'?'modem':'android',name=$('enrollName').value.trim()||(type==='modem'?'DJI / Modem SIM Node':'Android SIM Node');
   const nodeRaw=crypto.getRandomValues(new Uint8Array(32)),bootstrapRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw);
-  const wrapped=await wrapNodeKey(nodeRaw,kid),bootstrapEnvelope=await encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid),bootstrap=b64u(bootstrapRaw);
-  const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
-  const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope}}),server=location.origin;
-  let value;
-  if(type==='modem'){
-    value=JSON.stringify({version:4,server:server,token:r.token,bootstrap:bootstrap,name:name,nodeType:'modem'},null,2);
-    $('openEnroll').hidden=true;
-  }else{
-    value='simhub://enroll?v=4&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&bootstrap='+encodeURIComponent(bootstrap)+'&name='+encodeURIComponent(name);
-    $('openEnroll').href=value;$('openEnroll').hidden=false;
+  let value='';
+  try{
+    const wrapped=await wrapNodeKey(nodeRaw,kid),bootstrapEnvelope=await encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid),bootstrap=b64u(bootstrapRaw);
+    const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
+    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope}}),server=location.origin;
+    if(type==='modem'){
+      value=JSON.stringify({version:4,server:server,token:r.token,bootstrap:bootstrap,name:name,nodeType:'modem'},null,2);
+      $('openEnroll').hidden=true;
+    }else{
+      value='simhub://enroll?v=4&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&bootstrap='+encodeURIComponent(bootstrap)+'&name='+encodeURIComponent(name);
+      $('openEnroll').href=value;$('openEnroll').hidden=false;
+    }
+    $('enrollLink').value=value;$('enrollResult').hidden=false;
+    toast(type==='modem'?'One-time modem enrollment package created for 10 minutes':'One-time Android enrollment link created for 10 minutes');
+  }finally{
+    nodeRaw.fill(0);bootstrapRaw.fill(0);
   }
-  nodeRaw.fill(0);bootstrapRaw.fill(0);$('enrollLink').value=value;$('enrollResult').hidden=false;
-  toast(type==='modem'?'One-time modem enrollment package created for 10 minutes':'One-time Android enrollment link created for 10 minutes');
 }
 async function rotateDeviceKey(deviceId){const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
 async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||'Copied');}

@@ -91,8 +91,16 @@ try {
   await p.locator("#passphrase").fill("session-resume-test-passphrase");
   await p.locator("#createVaultBtn").click();
   await p.waitForFunction(()=>!!sessionStorage.getItem("simhub_session_vault_v1"),null,{timeout:12000});
+  const loginErrors=[];
+  p.on("response",response=>{if(response.url().includes("/api/")&&response.status()>=400)loginErrors.push({url:response.url(),status:response.status()});});
+  p.on("pageerror",error=>loginErrors.push({pageError:error.message}));
   await p.locator("#unlockBtn").click();
-  await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
+  try{await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});}
+  catch(error){
+    const state=await p.evaluate(()=>({toast:document.getElementById("toast").textContent,username:document.getElementById("username").value,tokenSize:document.getElementById("adminToken").value.length,vault:!!localStorage.getItem("simhub_vault_v1"),snapshot:!!sessionStorage.getItem("simhub_session_vault_v1"),locked:document.getElementById("lockedPanel").hidden}));
+    console.error("SESSION-LOGIN-DEBUG",JSON.stringify({state,loginErrors}));
+    throw error;
+  }
   await p.reload({waitUntil:"networkidle"});
   await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
   assert.equal(await p.locator("#lockedPanel").isVisible(),false,"Refresh must restore Vault in a valid active tab");

@@ -45,6 +45,13 @@ MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL",
 REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","yes","on"}
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
+SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "900")), SESSION_TTL))
+STEPUP_TTL = max(30, min(int(os.getenv("SIMHUB_STEPUP_TTL", "120")), 600))
+MANAGEMENT_ORIGIN = os.getenv("SIMHUB_MANAGEMENT_ORIGIN", PUBLIC_BASE_URL).rstrip("/")
+SEPARATE_SURFACES = os.getenv("SIMHUB_SEPARATE_SURFACES", "false").lower() in {"1","true","yes","on"}
+MAX_HTTP_CONNECTIONS = max(8, min(int(os.getenv("SIMHUB_MAX_HTTP_CONNECTIONS", "64")), 512))
+HTTP_READ_TIMEOUT = max(5, min(int(os.getenv("SIMHUB_HTTP_TIMEOUT", "15")), 120))
+MAX_SSE_PER_SESSION = max(1, min(int(os.getenv("SIMHUB_MAX_SSE_PER_SESSION", "3")), 10))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
 NOTIFY_BARK_URL = os.getenv("SIMHUB_NOTIFY_BARK_URL", "").strip()
 NOTIFY_NTFY_URL = os.getenv("SIMHUB_NOTIFY_NTFY_URL", "").strip()
@@ -77,6 +84,57 @@ _stream_condition = threading.Condition()
 _stream_epoch = 0
 _auth_lock = threading.Lock()
 _auth_failures: dict[str, list[int]] = {}
+_rate_entries: dict[tuple[str,str], list[int]] = {}
+_rate_gc_at = 0
+_sse_lock = threading.Lock()
+_sse_clients: dict[str,int] = {}
+
+def rate_allowed(bucket: str, key: str, max_requests: int, window: int = 60) -> bool:
+    """Bounded memory limiter; deny new keys when saturated."""
+    global _rate_gc_at
+    ts = now()
+    with _auth_lock:
+        if ts - _rate_gc_at >= 30:
+            for k, values in list(_rate_entries.items()):
+                fresh = [v for v in values if ts - v < window]
+                if fresh: _rate_entries[k] = fresh
+                else: _rate_entries.pop(k, None)
+            _rate_gc_at = ts
+        k = (bucket, key[:160])
+        if k not in _rate_entries and len(_rate_entries) >= 4096:
+            return False
+        values = [v for v in _rate_entries.get(k, []) if ts - v < window]
+        if len(values) >= max_requests:
+            _rate_entries[k] = values
+            return False
+        values.append(ts)
+        _rate_entries[k] = values
+        return True
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    def __init__(self, address, handler):
+        self._slots = threading.BoundedSemaphore(MAX_HTTP_CONNECTIONS)
+        super().__init__(address, handler)
+    def get_request(self):
+        sock, addr = super().get_request()
+        sock.settimeout(HTTP_READ_TIMEOUT)
+        return sock, addr
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
 
 class BoundedExecutor:
     def __init__(self,max_workers:int,max_pending:int,name:str) -> None:
@@ -1157,6 +1215,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def stream_events(self) -> None:
         global _stream_epoch
+        session_key=sha256_text(_cookie_session(self.headers) or self.ip)
+        with _sse_lock:
+            if _sse_clients.get(session_key,0) >= MAX_SSE_PER_SESSION:
+                self.send_error_json(429,"sse_limit","Too many live streams"); return
+            _sse_clients[session_key]=_sse_clients.get(session_key,0)+1
         self.send_response(200)
         self.send_header("Content-Type","text/event-stream; charset=utf-8")
         self.send_header("Cache-Control","no-cache")
@@ -1180,8 +1243,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 else:
                     self.wfile.write(b": ping\n\n")
                 self.wfile.flush()
-        except (BrokenPipeError,ConnectionResetError,TimeoutError):
+        except (BrokenPipeError,ConnectionResetError,TimeoutError,OSError):
             return
+        finally:
+            with _sse_lock:
+                remaining = _sse_clients.get(session_key,1)-1
+                if remaining: _sse_clients[session_key]=remaining
+                else: _sse_clients.pop(session_key,None)
 
     def get_ota(self) -> None:
         if not OTA_FILE.exists():
@@ -1225,7 +1293,9 @@ def main() -> None:
             raise SystemExit("SIMHUB_TOTP_SECRET must be valid Base32") from exc
     init_db()
     threading.Thread(target=maintenance_loop,name="simhub-maintenance",daemon=True).start()
-    server=ThreadingHTTPServer((BIND,PORT),SimHubHandler); server.daemon_threads=True
+    if SEPARATE_SURFACES and (not MANAGEMENT_ORIGIN.startswith("https://") or not PUBLIC_BASE_URL.startswith("https://") or MANAGEMENT_ORIGIN == PUBLIC_BASE_URL):
+        raise SystemExit("Separated origins require distinct HTTPS management and node URLs")
+    server=BoundedHTTPServer((BIND,PORT),SimHubHandler)
     log.info("SIM Hub relay %s listening on %s:%s, db=%s",APP_VERSION,BIND,PORT,DB_PATH)
     try: server.serve_forever()
     except KeyboardInterrupt: pass

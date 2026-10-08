@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.2.1.trigger'
+      - '.github/release/v0.2.2.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.2.1.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.2.2.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -228,15 +228,15 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Production hardening release for multi-Android and Linux/DJI modem SMS nodes.
+          SMS reliability release for self-hosted Android and Linux/DJI modem SIM nodes.
 
           ## Highlights
           - mandatory release-signed Android APK with pinned certificate verification;
-          - stronger fail-closed SIM/channel identity handling;
+          - SIM ICCID/IMSI required for modem sending, with just-in-time card checks;
           - one-time bootstrap enrollment with proof validation before token consumption;
           - PWA absolute inactivity auto-lock;
-          - correct Android SMS history direction classification;
-          - durable encrypted multipart modem receive reassembly;
+          - high-priority live OTP delivery and newest-first controller pagination;
+          - hardened multipart collision handling and modem OTP recognition;
           - secure relay defaults, bounded notification workers and deterministic SQLite connection closure.
 
           Full details are in CHANGELOG.md and the documentation bundle.

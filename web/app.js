@@ -264,6 +264,7 @@ function wire(){
   $('sendBody').oninput=updateCharCount;
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
+  $('addDeviceBtn').onclick=()=>{switchView('settings');$('enrollCard').scrollIntoView({behavior:'smooth',block:'start'});$('enrollName').focus({preventScroll:true});};
   $('enrollBtn').onclick=async()=>{
     if(enrolling)return;
     enrolling=true;const btn=$('enrollBtn');btn.disabled=true;btn.setAttribute('aria-busy','true');

@@ -138,3 +138,7 @@ main{padding:16px 14px calc(102px + env(safe-area-inset-bottom))}
  #stepupDialog{width:min(430px,calc(100vw - 28px));padding:20px}
  #stepupDialog .stepup-actions button{flex:1}
 }
+
+/* Avoid inline style attributes that violate the strict style-src CSP. */
+.pager-actions{justify-content:center;padding:14px}
+.device-heading-actions{justify-content:flex-end;margin-bottom:14px}

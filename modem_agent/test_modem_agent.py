@@ -65,6 +65,19 @@ class ModemAgentTest(unittest.TestCase):
     def test_event_aad_is_channel_bound(self):
         self.assertNotEqual(event_aad('d','e','sms.received',1,'channel-a',False),event_aad('d','e','sms.received',1,'channel-b',False))
 
+    def test_durable_sms_budget(self):
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'agent.db'
+            store=Store(path)
+            for i in range(10):
+                self.assertTrue(store.claim_sms_budget('sms-'+str(i)))
+            self.assertTrue(store.claim_sms_budget('sms-9'))  # same command is idempotent
+            self.assertFalse(store.claim_sms_budget('sms-blocked'))
+            store.db.close()
+            restarted=Store(path)
+            self.assertFalse(restarted.claim_sms_budget('sms-after-restart'))
+            restarted.db.close()
+
     def test_store_is_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
             store=Store(Path(td)/'agent.db')

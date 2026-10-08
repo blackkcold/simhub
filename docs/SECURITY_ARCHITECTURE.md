@@ -23,7 +23,7 @@ passphrase
   -> encrypted 32-byte Master Vault Key
 ```
 
-After unlock, the raw Master Vault Key lives only in page memory and auto-locks after 15 minutes of inactivity. It unwraps Node Keys locally when decrypting events or creating commands.
+After unlock, the raw Master Vault Key is held in page memory. The Vault inactivity deadline follows the server administrator idle deadline (8 hours by default, never beyond session expiry); actual user actions, not background polls, renew idle activity. A browser tab may persist a short-lived encrypted Vault snapshot in `sessionStorage`, wrapped by a non-extractable origin-bound WebCrypto key stored in IndexedDB. A successful server session check is required before any page-reload recovery. Lock, logout, expiration, and credential-forget clear the tab snapshot. **This is a usability feature, not hardware-backed isolation:** malicious same-origin JavaScript or a compromised unlocked browser can use the IndexedDB CryptoKey and access plaintext. Do not place the unwrapped Master Vault Key or Admin Token in localStorage. The wrapped passphrase Vault remains the recovery path.
 
 ## Android local secrets
 

@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: {node-version: '22'}
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_v040
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py

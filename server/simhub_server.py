@@ -29,7 +29,7 @@ from pathlib import Path
 import passkeys
 from typing import Any
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -64,8 +64,8 @@ def docker_gateway_ip() -> str:
         pass
     return ""
 DOCKER_GATEWAY_IP = docker_gateway_ip()
-SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
-SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "900")), SESSION_TTL))
+SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "86400")), 604800))
+SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "28800")), SESSION_TTL))
 STEPUP_TTL = max(30, min(int(os.getenv("SIMHUB_STEPUP_TTL", "120")), 600))
 MANAGEMENT_ORIGIN = os.getenv("SIMHUB_MANAGEMENT_ORIGIN", PUBLIC_BASE_URL).rstrip("/")
 SEPARATE_SURFACES = os.getenv("SIMHUB_SEPARATE_SURFACES", "false").lower() in {"1","true","yes","on"}
@@ -87,6 +87,9 @@ MAX_JSON_BODY = 1_048_576
 ALLOWED_COMMANDS = {
     "sms.send",
     "sms.sync_history",
+    "sms.sync_recent",
+    "sms.sync_older",
+    "device.network_policy",
     "device.refresh_state",
     "subscription.refresh",
     "diagnostics.request",
@@ -557,7 +560,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsReceivePermission","smsSendPermission","smsOperational","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsReceivePermission","smsSendPermission","smsOperational","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -594,6 +597,9 @@ def sanitize_state(body: Any) -> dict[str,Any]:
         if isinstance(x.get("id"),str) and x["id"]:
             channels.append(x)
     out["channels"]=channels[:64]
+    item=body.get("encryptedSimNumbers")
+    if isinstance(item,dict) and isinstance(item.get("eventId"),str) and isinstance(item.get("occurredAt"),int) and validate_cipher(item.get("ciphertext")):
+        out["encryptedSimNumbers"]={"eventId":item["eventId"][:128],"occurredAt":item["occurredAt"],"ciphertext":item["ciphertext"]}
     return out
 
 def normalize_node_type(value: Any) -> str:
@@ -858,10 +864,18 @@ class SimHubHandler(BaseHTTPRequestHandler):
             except Exception:
                 self.send_error_json(503,"database_not_ready","Database is not ready"); return
         if path=="/api/v1/auth/check":
-            if not self.require_admin(): return
+            # Passive browser session probes are not password guesses. Never
+            # increase the authentication-failure bucket for an absent or expired
+            # cookie; retain the independent per-IP preflight budget.
+            if not admin_auth(self.headers):
+                if self.headers.get("Authorization"):
+                    if not auth_rate_allowed(self.ip):
+                        self.send_error_json(429,"rate_limited","Too many authentication failures"); return
+                    auth_rate_fail(self.ip)
+                self.send_error_json(401,"unauthorized","No active administrator session"); return
             with open_db() as con:
                 num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]
-            self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
+            self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
         if path=="/api/v1/auth/passkeys":
             if not self.require_admin(): return
             with open_db() as con:
@@ -979,7 +993,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
-            if str(body.get("type","")) in {"sms.send","node.rotate_key"} and not self.require_stepup():return
+            if str(body.get("type","")) in {"sms.send","node.rotate_key","device.network_policy"} and not self.require_stepup():return
             self.create_command(p[3],body); return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return
@@ -1029,7 +1043,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         session,exp=create_session(self.ip)
         audit("auth.session","","ok",self.ip)
         cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
-        self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+        self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
 
     def passkey_action(self,path:str,body:dict[str,Any]) -> None:
         """Keep registration and step-up session-bound; login never receives Vault keys."""
@@ -1093,7 +1107,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
                 audit("auth.passkey.login","","ok",self.ip)
                 self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,
-                    "totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+                    "totpRequired":bool(TOTP_SECRET),"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
             else:
                 self.send_json(200,data)
         except (ValueError,TypeError,KeyError) as exc:

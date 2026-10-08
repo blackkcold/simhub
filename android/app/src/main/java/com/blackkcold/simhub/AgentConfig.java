@@ -22,6 +22,14 @@ public final class AgentConfig {
     public String deviceName(){return prefs.getString("device_name","Android SIM Node");}
     public boolean alwaysOn(){return prefs.getBoolean("always_on",false);}
     public void setAlwaysOn(boolean v){prefs.edit().putBoolean("always_on",v).apply();}
+    public boolean dataFallbackEnabled(){return prefs.getBoolean("data_fallback_enabled",false);}
+    public String dataFallbackChannel(){return prefs.getString("data_fallback_channel","");}
+    public long dataFallbackRevision(){return prefs.getLong("data_fallback_revision",0);}
+    public void setDataFallback(boolean enabled,String channel,long revision){
+        prefs.edit().putBoolean("data_fallback_enabled",enabled)
+                .putString("data_fallback_channel",enabled?channel:"")
+                .putLong("data_fallback_revision",enabled?revision:0).apply();
+    }
     public long nextSyncAllowedAt(){return prefs.getLong("next_sync_allowed_at",0L);}
     public void setNextSyncAllowedAt(long at){prefs.edit().putLong("next_sync_allowed_at",at).apply();}
     public long historyDate(){

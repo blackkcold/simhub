@@ -143,6 +143,15 @@ class ApiTest(unittest.TestCase):
         st,bad,_=self.req('GET','/api/v1/events?before=2&latest=1')
         self.assertEqual(st,400)
 
+    def test_passive_session_probe_does_not_trigger_login_lockout(self):
+        # More than the five-attempt password ceiling must remain harmless.
+        for _ in range(12):
+            st,_,_=self.req('GET','/api/v1/auth/check',admin=False)
+            self.assertEqual(st,401)
+        st,data,_=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN,'totp':''},admin=False)
+        self.assertEqual(st,201)
+        self.assertTrue(data['ok'])
+
     def test_admin_session_cookie(self):
         st,data,h=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN,'totp':''},admin=False);self.assertEqual(st,201);self.assertTrue(data['ok'])
         cookie=h.get('Set-Cookie','').split(';',1)[0];self.assertIn('simhub_session=',cookie)

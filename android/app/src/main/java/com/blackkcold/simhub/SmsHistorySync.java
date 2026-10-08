@@ -72,11 +72,29 @@ public final class SmsHistorySync {
         return count;
     }
 
+    /** Explicitly rescan the newest N SMS; stable provider event IDs prevent duplicates. */
+    public static synchronized int syncRecent(Context c,int requested){
+        AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
+        int limit=Math.max(1,Math.min(PAGE,requested)),count=0;
+        try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,
+                null,null,Telephony.Sms.DATE+" DESC, "+BaseColumns._ID+" DESC")){
+            if(cur==null){cfg.recordSyncError("SMS provider query returned null");return -1;}
+            while(count<limit&&cur.moveToNext()){
+                SmsRow row=new SmsRow(cur);
+                if(row.type==Telephony.Sms.MESSAGE_TYPE_DRAFT)continue;
+                if(!enqueue(c,row)){cfg.recordSyncError("History queue full");return -1;}
+                count++;
+            }
+            if(count>0)AppLogger.i(c,"SmsSync","Recent history rescan queued="+count);
+        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Recent history failed",error);return -1;}
+        return count;
+    }
+
     /** Explicit older history, descending in batches; marker only advances after durable queueing. */
     public static synchronized int syncOlder(Context c,int requested) {
         AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
         if(!cfg.historyInitialized())sync(c,PAGE);
-        if(!cfg.historyInitialized())return 0;
+        if(!cfg.historyInitialized())return -1;
         long date=cfg.historyBackfillDate(),id=cfg.historyBackfillId();
         if(date==0)return 0;
         int limit=Math.max(1,Math.min(requested,PAGE)),count=0;
@@ -84,15 +102,15 @@ public final class SmsHistorySync {
         String[] args={String.valueOf(date),String.valueOf(date),String.valueOf(id)};
         try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,selection,args,
                 Telephony.Sms.DATE+" DESC, "+BaseColumns._ID+" DESC")) {
-            if(cur==null)return 0;
+            if(cur==null){cfg.recordSyncError("SMS provider query returned null");return -1;}
             while(count<limit&&cur.moveToNext()){
                 SmsRow row=new SmsRow(cur);
-                if(!enqueue(c,row))break;
+                if(!enqueue(c,row)){cfg.recordSyncError("History queue full");return -1;}
                 cfg.setHistoryBackfillCursor(row.date,row.id);
                 if(row.type!=Telephony.Sms.MESSAGE_TYPE_DRAFT)count++;
             }
             if(count>0)AppLogger.i(c,"SmsSync","Older history queued="+count);
-        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Older history failed",error);}
+        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Older history failed",error);return -1;}
         return count;
     }
 

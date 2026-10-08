@@ -836,6 +836,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if not expected or not BOOTSTRAP_PROOF_RE.fullmatch(proof) or not hmac.compare_digest(expected,proof):
                     audit("enrollment.bootstrap",row["id"],"denied",self.ip)
                     self.send_error_json(401,"invalid_bootstrap_proof","Bootstrap secret proof is invalid"); return
+            # Atomic single-use claim: another request may have read the same row before us.
+            # UPDATE obtains SQLite's writer lock; only one claimant can match used_at IS NULL.
+            claimed=con.execute(
+                "UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}',bootstrap_hash='' "
+                "WHERE id=? AND used_at IS NULL AND expires_at>=?",
+                (ts,row["id"],ts),
+            )
+            if claimed.rowcount!=1:
+                self.send_error_json(401,"invalid_enrollment","Enrollment token already consumed"); return
             device_id=str(uuid.uuid4()); device_token=new_token(48)
             node_type=normalize_node_type(row["node_type"] or body.get("nodeType","android"))
             capabilities=normalize_capabilities(safe_json_loads(row["capabilities_json"],[]) or body.get("capabilities",[]))
@@ -847,7 +856,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}"),ts),
             )
             bootstrap=safe_json_loads(row["bootstrap_envelope_json"],{})
-            con.execute("UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}',bootstrap_hash='' WHERE id=?",(ts,row["id"]))
+
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
         self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None,"bootstrapEnvelope":bootstrap or None})
 

@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS admin_sessions(
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   last_seen_at INTEGER NOT NULL,
-  ip TEXT NOT NULL DEFAULT ''
+  ip TEXT NOT NULL DEFAULT '',
+  admin_fingerprint TEXT NOT NULL DEFAULT '',
+  elevated_until INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expiry ON admin_sessions(expires_at);
 

@@ -7,7 +7,9 @@ const PBKDF2_ITER = 310000;
 const AUTO_LOCK_MS = 15 * 60 * 1000;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
-let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true;
+let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false;
+let olderCursor=null,historyHasMore=true,visibleOffset=0;
+const eventIds=new Set();
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
 
@@ -49,16 +51,32 @@ async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST
 async function ensureStepUp(){
   if(Date.now()<stepUpUntil-5000)return;
   const label=secondFactorIsTotp?'请输入当前 6 位 TOTP 验证码以确认敏感操作：':'开发模式：请再次输入管理员 Token：';
-  const value=window.prompt(label);
-  if(!value)throw new Error('已取消二次验证');
-  const body=secondFactorIsTotp?{totp:value.trim()}:{adminToken:value.trim()};
-  const result=await api('/api/v1/auth/elevate',{method:'POST',body});
-  stepUpUntil=result.elevatedUntil*1000;
+  if(activeStepUp)return activeStepUp;
+  activeStepUp=(async()=>{
+    const value=await askStepUp(label);
+    const body=secondFactorIsTotp?{totp:value.trim()}:{adminToken:value.trim()};
+    const result=await api('/api/v1/auth/elevate',{method:'POST',body});
+    stepUpUntil=result.elevatedUntil*1000;
+  })();
+  try{await activeStepUp;}finally{activeStepUp=null;}
 }
 
+function askStepUp(label){
+  return new Promise((resolve,reject)=>{
+    const dialog=$('stepupDialog'),form=$('stepupForm'),input=$('stepupValue'),cancel=$('stepupCancel');
+    $('stepupPrompt').textContent=label;
+    input.value='';input.type=secondFactorIsTotp?'text':'password';
+    input.autocomplete=secondFactorIsTotp?'one-time-code':'off';
+    const finish=(value)=>{form.removeEventListener('submit',submit);cancel.removeEventListener('click',dismiss);dialog.removeEventListener('cancel',dismiss);dialog.close();if(value)resolve(value);else reject(new Error('已取消二次验证'));};
+    const submit=e=>{e.preventDefault();finish(input.value.trim());};
+    const dismiss=e=>{e.preventDefault();finish('');};
+    form.addEventListener('submit',submit);cancel.addEventListener('click',dismiss);dialog.addEventListener('cancel',dismiss);
+    dialog.showModal();input.focus();
+  });
+}
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
 function showUnlocked(){$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
-function lockVault(){stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];lastSeq=0;oldestSeq=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
+function lockVault(){stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,AUTO_LOCK_MS-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();armAutoLock();}
 function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=AUTO_LOCK_MS){lockVault();return true;}armAutoLock();return false;}
@@ -71,11 +89,66 @@ window.addEventListener('pageshow',enforceAutoLock);
 async function connectAndUnlock(){await establishSession();await unlockVault($('passphrase').value);showUnlocked();await fullRefresh();startRealtime();}
 async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent=tr('vault_created_hint');toast(tr('vault_created'));}
 
-async function loadDevices(){const d=await api('/api/v1/devices');deviceKeyCache.clear();devices=d.devices||[];renderDevices();renderDeviceSelectors();}
-async function ingestEvents(batch,notify=true){for(const e of batch){lastSeq=Math.max(lastSeq,e.seq||0);oldestSeq=oldestSeq?Math.min(oldestSeq,e.seq||oldestSeq):e.seq;if(events.some(x=>x.eventId===e.eventId&&x.deviceId===e.deviceId))continue;events.push(e);try{const payload=await decryptEvent(e);const row=Object.assign({},e,{payload});decryptedEvents.push(row);if(notify)maybeNotify(row);}catch(err){decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}}}
-async function loadEvents(){if(!vaultKey)return;if(!oldestSeq){const first=await api('/api/v1/events?latest=1&limit=500');await ingestEvents(first.events||[],false);}let loops=0;while(loops++<10){const r=await api('/api/v1/events?since='+lastSeq+'&limit=500'),batch=r.events||[];if(!batch.length)break;await ingestEvents(batch);if(batch.length<500)break;}renderInbox();}
-async function loadOlder(){if(!vaultKey||!oldestSeq)return;const r=await api('/api/v1/events?before='+oldestSeq+'&limit=500');await ingestEvents(r.events||[],false);if((r.events||[]).length<500){$('loadOlderBtn').hidden=true;}renderInbox();}
-async function fullRefresh(){try{await loadDevices();await loadEvents();setConnected(true);}catch(e){setConnected(false);throw e;}}
+async function loadDevices(){
+  const d=await api('/api/v1/devices'),next=d.devices||[];
+  const oldKeys=new Map(devices.map(x=>[x.id,[x.keyId,x.wrappedKey,x.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|')]));
+  for(const node of next)if(oldKeys.get(node.id)!==[node.keyId,node.wrappedKey,node.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|'))deviceKeyCache.delete(node.id);
+  devices=next;renderDevices();renderDeviceSelectors();
+}
+async function ingestEvents(batch,notify=true){
+  let changed=false;
+  for(const e of batch){
+    lastSeq=Math.max(lastSeq,e.seq||0);
+    const id=e.deviceId+':'+e.eventId;
+    if(eventIds.has(id))continue;
+    const boundary=decryptedEvents.length>=30?Math.min(...decryptedEvents.map(x=>x.occurredAt||0)):0;
+    if(notify&&boundary&&e.occurredAt<boundary)continue; // older sync data stays accessible via historical pagination
+    events.push(e);eventIds.add(id);changed=true;
+    try{
+      const payload=await decryptEvent(e),row=Object.assign({},e,{payload});
+      decryptedEvents.push(row);if(notify)maybeNotify(row);
+    }catch(err){decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}
+  }
+  return changed;
+}
+async function loadEvents(){
+  if(!vaultKey)return;
+  if(!initialEventsLoaded){
+    const head=await api('/api/v1/events?latest=1&limit=1');
+    lastSeq=head.events?.[0]?.seq||0;
+    const first=await api('/api/v1/events?order=occurred&limit=30');
+    olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
+    historyHasMore=!!first.hasMore;
+    await ingestEvents(first.events||[],false);
+    initialEventsLoaded=true;renderInbox();return;
+  }
+  let changed=false,loops=0;
+  while(loops++<3){
+    const r=await api('/api/v1/events?since='+lastSeq+'&limit=100'),batch=r.events||[];
+    if(!batch.length)break;
+    changed=await ingestEvents(batch)||changed;
+    if(batch.length<100)break;
+  }
+  if(changed)renderInbox();
+}
+async function loadOlder(){
+  if(!vaultKey)return;
+  const count=collapseMessageEvents(decryptedEvents).length;
+  if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
+  if(!historyHasMore||!olderCursor)return;
+  const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
+  olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
+  historyHasMore=!!r.hasMore;
+  await ingestEvents(r.events||[],false);
+  if(collapseMessageEvents(decryptedEvents).length>visibleOffset+30)visibleOffset+=30;
+  renderInbox();
+}
+let refreshing=null;
+async function fullRefresh(){
+  if(refreshing)return refreshing;
+  refreshing=(async()=>{try{await loadDevices();await loadEvents();setConnected(true);}catch(e){setConnected(false);throw e;}finally{refreshing=null;}})();
+  return refreshing;
+}
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
 function startRealtime(){if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>setConnected(true);eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
 
@@ -115,7 +188,9 @@ function renderInbox(){
   const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
   const list=collapseMessageEvents(decryptedEvents).filter(e=>(!dev||e.deviceId===dev)&&(!kind||e.kind===kind)).filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));}).sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
   $('emptyInbox').hidden=!!list.length;let otpCount=0;
-  $('inboxList').innerHTML=list.map(e=>{
+  $('loadOlderBtn').hidden=!historyHasMore&&list.length<=visibleOffset+30;
+  $('loadNewerBtn').hidden=visibleOffset===0;
+  $('inboxList').innerHTML=list.slice(visibleOffset,visibleOffset+30).map(e=>{
     const p=e.payload||{},inbound=e.kind==='sms.received'||p.direction==='in',who=p.contactName||p.sender||p.recipient||tr('unknown');
     const body=e.decryptError?'['+tr('decrypt_failed')+': '+escapeHtml(e.decryptReason||'vault mismatch')+']':escapeHtml(p.body||'');
     if(p.otp&&p.otp.value&&inbound)otpCount++;
@@ -153,7 +228,7 @@ async function rotateDeviceKey(deviceId){await ensureStepUp();const d=devices.fi
 async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||tr('copied'));}
 function updateCharCount(){const value=$('sendBody').value,n=value.length,per=n>0&&/^[\x00-\x7F]*$/.test(value)?160:70;$('smsCount').textContent=tr('chars_parts',{chars:n,parts:Math.max(1,Math.ceil(n/per))});}
 function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
-async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:5000},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
+async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:100},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
 function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();}
 
 function relocalizeDynamic(){
@@ -179,14 +254,21 @@ function wire(){
   $('lockBtn').onclick=lockVault;
   $('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast(tr('vault_locked'));
   document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
-  $('search').oninput=renderInbox;
-  $('deviceFilter').onchange=renderInbox;
-  $('kindFilter').onchange=renderInbox;
+  $('search').oninput=()=>{visibleOffset=0;renderInbox();};
+  $('deviceFilter').onchange=()=>{visibleOffset=0;renderInbox();};
+  $('kindFilter').onchange=()=>{visibleOffset=0;renderInbox();};
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
+  $('loadNewerBtn').onclick=()=>{visibleOffset=Math.max(0,visibleOffset-30);renderInbox();};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
-  $('enrollBtn').onclick=()=>createEnrollment().catch(e=>toast(e.message));
+  $('addDeviceBtn').onclick=()=>{switchView('settings');$('enrollCard').scrollIntoView({behavior:'smooth',block:'start'});$('enrollName').focus({preventScroll:true});};
+  $('enrollBtn').onclick=async()=>{
+    if(enrolling)return;
+    enrolling=true;const btn=$('enrollBtn');btn.disabled=true;btn.setAttribute('aria-busy','true');
+    try{$('enrollResult').hidden=true;await createEnrollment();}catch(e){toast(e.message);}
+    finally{enrolling=false;btn.disabled=false;btn.removeAttribute('aria-busy');}
+  };
   $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
   $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};

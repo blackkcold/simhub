@@ -257,4 +257,35 @@ class ApiTest(unittest.TestCase):
         st,_,_=self.req('POST','/api/v1/enroll',{'token':x['token']},admin=False);self.assertEqual(st,201)
         st,_,_=self.req('POST','/api/v1/enroll',{'token':x['token']},admin=False);self.assertEqual(st,401)
 
+    def test_event_batch_atomic_idempotent_and_time_ordered(self):
+        d=self.enroll("History Sync");device_id=d["deviceId"];token=d["deviceToken"]
+        base=f"/api/v1/devices/{device_id}/events/batch"
+        moment=int(time.time())-60
+        items=[{"eventId":f"history-{i}","kind":"sms.history","occurredAt":moment-(i//2),
+                "subscriptionId":"0","hasOtp":False,"metadata":{"history":True},"ciphertext":self.cipher()} for i in range(5)]
+        status,data,_=self.req("POST",base,{"events":items},device_token=token,admin=False)
+        self.assertEqual(status,200,data);self.assertEqual(len(data["results"]),5)
+        self.assertTrue(all(x["accepted"] and not x["duplicate"] for x in data["results"]))
+        status,replayed,_=self.req("POST",base,{"events":items},device_token=token,admin=False)
+        self.assertEqual(status,200);self.assertTrue(all(x["duplicate"] for x in replayed["results"]))
+        with sqlite3.connect(self.db) as con:
+            self.assertEqual(con.execute("SELECT count(*) FROM events WHERE device_id=?",(device_id,)).fetchone()[0],5)
+        broken=items[:2]+[{"eventId":"broken","kind":"sms.history","ciphertext":{}}]
+        status,error,_=self.req("POST",base,{"events":broken},device_token=token,admin=False)
+        self.assertEqual(status,400);self.assertEqual(error["error"],"invalid_event")
+        status,error,_=self.req("POST",base,{"events":items*5},device_token=token,admin=False)
+        self.assertEqual(status,400);self.assertEqual(error["error"],"invalid_batch")
+        seen=[]
+        cursor=""
+        for _ in range(3):
+            status,page,_=self.req("GET",f"/api/v1/events?order=occurred&device={device_id}&limit=2"+cursor)
+            self.assertEqual(status,200,page)
+            seen.extend((x["eventId"],x["occurredAt"]) for x in page["events"])
+            if not page["hasMore"]:break
+            cursor=f"&beforeTime={page['nextBeforeTime']}&beforeSeq={page['nextBeforeSeq']}"
+        self.assertEqual(len(seen),5);self.assertEqual(len(set(x[0] for x in seen)),5)
+        self.assertEqual([x[1] for x in seen],sorted((x[1] for x in seen),reverse=True))
+        status,wrong,_=self.req("GET","/api/v1/events?order=occurred&beforeTime=10")
+        self.assertEqual(status,400);self.assertEqual(wrong["error"],"invalid_query")
+
 if __name__=='__main__':unittest.main(verbosity=2)

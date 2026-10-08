@@ -1,3 +1,16 @@
+## v0.3.2 — SMS history performance and device enrollment reliability
+
+- New Android enroll safeguard: prevent duplicate submissions and move telephony/SIM status collection off the main thread.
+- Replace browser-native enrollment step-up prompt with an accessible in-app modal; expose the Add Device action within the Devices view.
+- Bootstrap from the newest 100 SMS and keep independent durable cursors for new-message polling and user-requested older-history backfill.
+- Add explicit 'Load 100 older SMS' in Android and cap remote backfill commands to 100.
+- Upload 20 E2EE events per request using an atomic, idempotent Relay batch API with per-event confirmations. Preserve older single-event API.
+- Classify HTTP failures and honor rate-limit Retry-After using delayed JobScheduler retries.
+- Avoid per-history-event wakeups; prioritize real-time SMS in the local queue.
+- Introduce time-based paged message queries and 30-item initial Web rendering; reduce redundant cryptographic key invalidations and realtime refresh overlaps.
+- Add batch atomicity, replay, pagination and malformed-input regression tests.
+- Maintain existing Device Token, Node Key, encryption envelopes and administrator MFA protections.
+
 ## v0.3.1 — Management UI security update
 
 - Introduce independent management and node API origins.

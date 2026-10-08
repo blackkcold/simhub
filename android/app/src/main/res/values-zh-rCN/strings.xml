@@ -21,7 +21,8 @@
     <string name="relay_section">中继与同步</string>
     <string name="start_relay">启动常驻中继</string>
     <string name="stop_relay">停止常驻中继</string>
-    <string name="sync_now">立即同步短信历史</string>
+    <string name="sync_now">同步最近短信（最多 100 条）</string>
+    <string name="sync_older">加载更早的 100 条短信</string>
     <string name="refresh_state">刷新 SIM / 设备状态</string>
     <string name="settings_section">设置</string>
     <string name="language_label">语言</string>

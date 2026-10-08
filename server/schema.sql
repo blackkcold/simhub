@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS events(
 );
 CREATE INDEX IF NOT EXISTS idx_events_device_seq ON events(device_id,seq);
 CREATE INDEX IF NOT EXISTS idx_events_kind_seq ON events(kind,seq);
+CREATE INDEX IF NOT EXISTS idx_events_occurred_seq ON events(occurred_at DESC,seq DESC);
 
 CREATE TABLE IF NOT EXISTS commands(
   seq INTEGER PRIMARY KEY AUTOINCREMENT,

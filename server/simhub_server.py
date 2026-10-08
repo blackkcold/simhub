@@ -419,7 +419,7 @@ def session_valid(headers) -> bool:
             if row:
                 con.execute("DELETE FROM admin_sessions WHERE token_hash=?", (digest,))
             return False
-        if ts - row["last_seen_at"] >= 60:
+        if headers.get("X-SimHub-Activity") == "1" and ts - row["last_seen_at"] >= 60:
             con.execute("UPDATE admin_sessions SET last_seen_at=? WHERE token_hash=?", (ts,digest))
     return True
 
@@ -766,6 +766,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         return False
 
     def preflight(self, method: str, path: str) -> bool:
+        if method == "GET" and path in {"/healthz", "/readyz"} and ipaddress.ip_address(self.client_address[0]).is_loopback:
+            return True
         if not rate_allowed("ip", self.ip, 180):
             self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False
         origin = self.headers.get("Origin", "").rstrip("/")

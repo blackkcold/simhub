@@ -145,3 +145,13 @@ main{padding:16px 14px calc(102px + env(safe-area-inset-bottom))}
 
 /* Hidden semantics must win over authored button/grid display styles. */
 [hidden]{display:none!important}
+
+/* v0.5 diagnostic inspector and SIM identification actions */
+#diagnosticsDialog{width:min(720px,calc(100vw - 28px));max-height:88dvh;overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--text);padding:20px;box-shadow:0 25px 90px rgba(0,0,0,.28)}
+#diagnosticsDialog::backdrop{background:rgba(6,12,28,.66)}
+#diagnosticsDialog h2{margin:0 0 10px}
+#diagnosticsDialog .diagnostics-output{font-family:monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:55dvh;overflow-y:auto;padding:14px;margin:16px 0;background:var(--panel2);border-radius:12px;font-size:12px}
+#diagnosticsDialog .stepup-actions{justify-content:flex-end;gap:12px}
+.sim{min-width:0;overflow-wrap:anywhere}
+.sim button{margin-top:8px;min-height:36px}
+.device .row.wrap{gap:8px}

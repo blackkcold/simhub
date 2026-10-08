@@ -13,7 +13,9 @@ import android.telephony.SubscriptionManager;
  */
 public final class NetworkFailoverPolicy {
     private static volatile ConnectivityManager.NetworkCallback callback;
+    private static volatile String lastStatus="";
     private NetworkFailoverPolicy(){}
+    private static void reportChange(Context c){if(!enabled(c))return;String current=status(c);if(!current.equals(lastStatus)){lastStatus=current;SyncJobService.scheduleNow(c);}}
     public static boolean enabled(Context c){return new AgentConfig(c).dataFallbackEnabled();}
     public static String preferredChannel(Context c){return new AgentConfig(c).dataFallbackChannel();}
     public static String status(Context c){
@@ -37,9 +39,9 @@ public final class NetworkFailoverPolicy {
             ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
             if(cm==null||callback!=null)return;
             callback=new ConnectivityManager.NetworkCallback(){
-                @Override public void onAvailable(Network network){if(enabled(c))SyncJobService.scheduleNow(c);}
-                @Override public void onLost(Network network){if(enabled(c))SyncJobService.scheduleNow(c);}
-                @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities caps){if(enabled(c))SyncJobService.scheduleNow(c);}
+                @Override public void onAvailable(Network network){reportChange(c);}
+                @Override public void onLost(Network network){reportChange(c);}
+                @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities caps){reportChange(c);}
             };
             cm.registerDefaultNetworkCallback(callback);
         }catch(RuntimeException e){AppLogger.w(c,"NetworkFallback","Network callback unavailable");}

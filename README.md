@@ -100,6 +100,13 @@ The relay is intentionally **blind to SMS plaintext**. New nodes receive a rando
 
 ---
 
+## v0.5.0 notes
+
+- Session and Vault share an eight-hour idle deadline; active tab refresh restores encrypted Vault session state after verifying the administrator cookie.
+- Node-Key-encrypted SIM phone numbers appear in controller devices and message lists; browser-local encrypted overrides handle unknown numbers.
+- Distinct latest-100 rescan and older-100 backfill controls with encrypted diagnostics.
+- Android OS handles mobile data fallback using the system-default SIM; changing the default SIM requires Android system setup.
+
 ## Features
 
 | Area | Capability |

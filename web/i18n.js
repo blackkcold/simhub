@@ -1,6 +1,8 @@
 const STORE='simhub_locale';
 const dict={
 'zh-CN':{
+username:'用户名',login_passkey:'使用通行密钥登录',passkeys:'通行密钥（Passkeys）',passkeys_help:'使用 Touch ID、Windows Hello 或手机通行密钥登录。Passkey 不会解锁本地 Vault。',passkey_label:'通行密钥名称',register_passkey:'添加通行密钥',new_sms:'+ 新建短信',new_sms_hint:'输入收件人并选择 SIM 以发送加密短信。',back_messages:'返回',choose_conversation:'选择会话',choose_conversation_hint:'选择左侧短信，或点击新建短信。',
+
 nav_inbox:'短信',nav_send:'发送短信',nav_devices:'设备',nav_settings:'设置',private_relay:'私有中继',relay_connected:'中继服务器已连接',relay_disconnected:'未连接中继服务器',lock_vault:'锁定 Vault',refresh:'刷新',
 title_inbox:'短信',subtitle_inbox:'端到端加密短信',title_send:'发送短信',subtitle_send:'加密远程发送',title_devices:'设备',subtitle_devices:'SIM 节点与实时状态',title_settings:'设置',subtitle_settings:'节点注册、Vault 与通知',
 connect_title:'连接你的私有中继',connect_help:'Admin Token 用于验证浏览器访问权限；Vault Key 始终只保留在本机，不会发送到 Relay。',admin_token:'Admin Token',totp:'TOTP',vault_passphrase:'Vault 密码',connect_unlock:'连接并解锁',create_vault:'创建新 Vault',session_hint:'Admin Token + TOTP 仅用于创建短期 HttpOnly 浏览器会话；根 Token 不会写入 localStorage。',
@@ -18,6 +20,8 @@ err_passphrase_min:'Vault 密码至少需要 10 个字符。',err_recovery_forma
 enroll_modem_done:'一次性 Modem 注册包已创建，有效期 10 分钟',enroll_android_done:'一次性 Android 注册链接已创建，有效期 10 分钟'
 },
 en:{
+username:'Username',login_passkey:'Sign in with a passkey',passkeys:'Passkeys',passkeys_help:'Sign in with Touch ID, Windows Hello or a phone passkey. Passkeys do not unlock the local Vault.',passkey_label:'Passkey name',register_passkey:'Add passkey',new_sms:'+ New message',new_sms_hint:'Enter a recipient and select a SIM to send an encrypted SMS.',back_messages:'Back',choose_conversation:'Select conversation',choose_conversation_hint:'Choose a message from the list or start a new one.',
+
 nav_inbox:'Inbox',nav_send:'Send SMS',nav_devices:'Devices',nav_settings:'Settings',private_relay:'private relay',relay_connected:'Relay connected',relay_disconnected:'Not connected',lock_vault:'Lock vault',refresh:'Refresh',
 title_inbox:'Inbox',subtitle_inbox:'End-to-end encrypted SMS',title_send:'Send SMS',subtitle_send:'Encrypted remote sending',title_devices:'Devices',subtitle_devices:'SIM nodes and live state',title_settings:'Settings',subtitle_settings:'Enrollment, vault and notifications',
 connect_title:'Connect your private relay',connect_help:'The Admin Token authenticates this browser to your server. The Vault Key never goes to the relay.',admin_token:'Admin Token',totp:'TOTP',vault_passphrase:'Vault passphrase',connect_unlock:'Connect & unlock',create_vault:'Create new vault',session_hint:'Admin Token + TOTP are used only to create a short-lived HttpOnly browser session; the root token is not stored in localStorage.',

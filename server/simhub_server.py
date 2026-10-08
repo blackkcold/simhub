@@ -87,6 +87,8 @@ MAX_JSON_BODY = 1_048_576
 ALLOWED_COMMANDS = {
     "sms.send",
     "sms.sync_history",
+    "sms.sync_recent",
+    "sms.sync_older",
     "device.refresh_state",
     "subscription.refresh",
     "diagnostics.request",

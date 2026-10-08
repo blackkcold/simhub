@@ -82,6 +82,76 @@ try {
       await context.close();
     }
   }
+  // Regression: arbitrary-length phone numbers / message previews must never
+  // enlarge a thread beyond its column, and the floating dock must not scroll.
+  for(const width of [320,360,375,390,430,600,760,768,900,1024,1180,1366,1920]){
+    const context=await browser.newContext({viewport:{width,height:812},colorScheme:"light"});
+    const page=await context.newPage(),jsErrors=[];
+    page.on("pageerror",e=>jsErrors.push(e.message));
+    await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
+    await page.evaluate(()=>{
+      document.getElementById("lockedPanel").hidden=true;
+      document.getElementById("appContent").hidden=false;
+      document.getElementById("newSmsBtn").hidden=false;
+      const text="【模拟通知】 "+("这是一条包含超长号码和短信正文的测试消息 1234567890 ".repeat(16));
+      document.getElementById("inboxList").innerHTML=Array.from({length:26},(_,i)=>
+        '<button type="button" class="message"><span class="avatar">9</span>'+
+        '<span class="message-body"><span class="message-title"><strong>'+
+        '10682635927538612345678901234567890'+i+'</strong><small class="meta">2026-10-08 17:55</small></span>'+
+        '<span class="message-preview">'+text+'</span><small class="meta">'+text+'</small></span></button>').join("");
+      document.getElementById("replyComposer").hidden=false;
+      document.getElementById("conversationTitle").textContent="超长 SIM 号码 "+("12345678901234567890".repeat(8));
+      document.getElementById("conversationMessages").innerHTML='<div class="bubble"><p>'+text+'</p></div>';
+      document.getElementById("replyTo").value="+861380000000012345678901234";
+      document.getElementById("replyBody").value=text;
+      document.getElementById("replyDevice").innerHTML='<option>Android phone '+("X".repeat(100))+'</option>';
+      document.getElementById("replySubscription").innerHTML='<option>SIM '+("0".repeat(100))+'</option>';
+    });
+    const layout=await page.evaluate(()=>{
+      const rect=id=>{const r=document.querySelector(id).getBoundingClientRect();return {x:r.left,y:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};};
+      const doc=document.documentElement;
+      return {docWidth:doc.scrollWidth,viewport:window.innerWidth,
+        list:rect(".sms-sidebar"),message:rect("#inboxList .message"),
+        panel:rect("#conversationPanel"),previewStyle:getComputedStyle(document.querySelector(".message-preview")).display};
+    });
+    assert.ok(layout.docWidth<=width+1,`Horizontal page overflow at ${width}: ${JSON.stringify(layout)}`);
+    assert.ok(layout.message.right<=layout.list.right+1,`Message overlaps another column at ${width}`);
+    assert.equal(layout.previewStyle,"block",`SMS preview must ellipsize as a block at ${width}`);
+    if(width>1180){
+      assert.ok(layout.list.right+5<=layout.panel.x,`Desktop SMS columns overlap at ${width}`);
+    }else if(width>760){
+      assert.ok(layout.panel.y>=layout.list.bottom-1,`Tablet columns must stack at ${width}`);
+    }else{
+      const before=await page.locator(".sidebar").boundingBox();
+      assert.ok(before&&before.y>=width*0,`Mobile floating dock not rendered at ${width}`);
+      assert.ok(before.y>600&&before.y+before.height<=812,`Dock must sit at bottom at ${width}: ${JSON.stringify(before)}`);
+      assert.ok(before.x>=8&&before.x+before.width<=width-8,`Dock must float with margins at ${width}`);
+      await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+      const after=await page.locator(".sidebar").boundingBox();
+      assert.ok(Math.abs(after.y-before.y)<=2,`Bottom dock scrolls with SMS content at ${width}`);
+      assert.ok(after.y+after.height<=812,`Dock outside viewport after scrolling at ${width}`);
+      const dockHit=await page.evaluate(()=>{
+        const box=document.querySelector(".sidebar").getBoundingClientRect();
+        return document.elementFromPoint(box.left+box.width/2,box.top+box.height/2)?.closest(".sidebar")!==null;
+      });
+      assert.ok(dockHit,`Bottom dock is blocked by content at ${width}`);
+      await page.evaluate(()=>{window.scrollTo(0,0);document.getElementById("smsLayout").classList.add("conversation-open");});
+      const conversation=await page.locator("#conversationPanel").boundingBox();
+      const dock=await page.locator(".sidebar").boundingBox();
+      assert.ok(conversation&&conversation.y>=0&&conversation.y+conversation.height<=dock.y-5,
+        `Mobile conversation dialog overlaps bottom dock at ${width}`);
+      assert.ok(conversation.x>=0&&conversation.x+conversation.width<=width+1,
+        `Mobile conversation dialog exceeds viewport at ${width}`);
+      await page.locator("#backConversation").click();
+      assert.equal(await page.locator("#conversationPanel").isVisible(),false,
+        `Back should dismiss mobile conversation at ${width}`);
+      const nav=page.locator('.nav[data-view="devices"]');
+      await nav.click();
+      assert.ok(await page.locator("#view-devices").isVisible(),`Mobile navigation must work at ${width}`);
+    }
+    assert.deepEqual(jsErrors,[],`Responsive JS errors at ${width}`);
+    await context.close();
+  }
   // Reopening an active browser tab must not demand the Vault passphrase again.
   const c=await browser.newContext({viewport:{width:1120,height:800}});
   const p=await c.newPage();

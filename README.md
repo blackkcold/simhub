@@ -1,479 +1,78 @@
 <div align="center">
 
-<img src="docs/assets/brand-banner.svg" alt="SIM Hub — private, self-hosted SIM and SMS controller" width="100%" />
+<img src="docs/assets/brand-banner.svg" width="100%" alt="SIM Hub — private SMS / SIM management" />
 
 # SIM Hub
 
-**Turn Android phones and supported cellular modems into a private, self-hosted SIM / SMS hub.**
+**Turn Android phones and supported cellular modems into a private, self-hosted SMS and SIM hub.**
 
-Use your own server as an encrypted relay to remotely receive SMS, extract OTPs, manage multiple SIMs, and send SMS from a Web/PWA controller.
+Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 
 [简体中文](README.zh-CN.md) · **English**
 
 [![CI](https://github.com/blackkcold/simhub/actions/workflows/ci.yml/badge.svg)](https://github.com/blackkcold/simhub/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/blackkcold/simhub?display_name=tag)](https://github.com/blackkcold/simhub/releases/latest)
+[![Release](https://img.shields.io/github/v/release/blackkcold/simhub)](https://github.com/blackkcold/simhub/releases/latest)
 [![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
-[![Android](https://img.shields.io/badge/Android-10--17%20%7C%20API%2029--37-3DDC84?logo=android&logoColor=white)](docs/ANDROID_SETUP.md)
-[![Docker](https://img.shields.io/badge/Self--hosted-Docker-2496ED?logo=docker&logoColor=white)](docs/DEPLOYMENT.md)
 
-[Download latest release](https://github.com/blackkcold/simhub/releases/latest) · [Installation](docs/INSTALLATION.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY_ARCHITECTURE.md)
+**[Download Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[Quick deployment](docs/QUICKSTART.zh-CN.md)** · [Installation guide](docs/INSTALLATION.md)
 
 </div>
 
----
+## Interface previews
 
-## Interface preview
+**Web / PWA · Conversations and direct replies**
 
-The Web controller adapts to desktop and mobile screens; the Android SIM Node uses a native interface. Both share the SIM Hub identity, with light and dark appearance support.
+![Desktop SMS conversations and reply composer preview](docs/assets/ui-desktop.svg)
 
-> **Preview note:** These are **illustrative representations** based on the current UI layout, using synthetic, redacted demo content. They are not screenshots from a logged-in server or evidence of hardware testing. New v0.4/v0.5 conversation, diagnostics and SIM/failover controls are described below rather than shown in these static illustrations. Actual screens vary by device, locale and data.
+**Web / PWA · Devices, SIM identities and diagnostics**
 
-**Web / PWA · Desktop**
-
-<p align="center"><img src="docs/assets/ui-desktop.svg" alt="SIM Hub desktop Web controller illustrative preview" width="100%" /></p>
+![Device and SIM overview, SMS sync and diagnostics preview](docs/assets/ui-devices.svg)
 
 <table>
-<tr><th>Web / PWA · Mobile</th><th>Android SIM Node · Native UI</th></tr>
-<tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="Mobile SIM Hub PWA illustrative preview" width="100%" /></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="SIM Hub Android node illustrative preview" width="100%" /></td></tr>
+<tr><th>Mobile Web / PWA</th><th>Native Android SIM Node</th></tr>
+<tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="Mobile messaging interface preview" width="100%"></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="Android node interface preview" width="100%"></td></tr>
 </table>
 
-**Get started:** [Download the APK](https://github.com/blackkcold/simhub/releases/latest) → [Deploy your relay](docs/DEPLOYMENT.md) → [Open the HTTPS controller and enroll a SIM Node](docs/INSTALLATION.md). Branding sources and design tokens: [Design System](docs/DESIGN_SYSTEM.md).
-
----
-
-## What is SIM Hub?
-
-SIM Hub is a **personal, self-hosted remote SIM/SMS management system**.
-
-Android phones and supported Linux cellular modems act as **SIM Nodes**. Your own server provides only the relay, durable queue and device-control plane. A Web/PWA controller decrypts and displays messages locally.
-
-It is designed for use cases such as:
-
-- keeping one or more physical SIM/eSIM cards online at home or in another location;
-- remotely receiving SMS and OTP messages;
-- copying verification codes from another device;
-- sending SMS remotely through a selected SIM;
-- monitoring SIM, carrier, signal, battery and device state;
-- managing several Android and Linux/DJI modem SIM Nodes from one private control panel.
-
-> **Scope:** SIM Hub is an SMS/SIM product. It intentionally does **not** implement phone calls, dialer replacement, call logs, cellular-call audio, SIP/WebRTC or PSTN bridging.
-
----
-
-## Architecture
-
-```mermaid
-flowchart LR
-    SIM["SIM / eSIM"] --> A["Android SIM Node"]
-    MODEM["DJI / USB cellular modem"] --> M["Linux Modem Agent"]
-    A -->|"HTTPS · encrypted events"| R["Personal Relay Server"]
-    R -->|"encrypted events / commands"| W["Web / PWA Controller"]
-    W -->|"encrypted SMS command"| R
-    R -->|"durable command queue"| A
-
-    A --- K["Android Keystore"]
-    R --- DB[("SQLite WAL")]
-    W --- V["Local Vault Key"]
-```
-
-### Trust boundary
-
-```text
-Android SIM Node
-  ├─ SMS / OTP / SIM state
-  ├─ local durable queue
-  └─ AES-256-GCM encryption
-             │
-             ▼
-Personal Relay Server
-  ├─ ciphertext
-  ├─ routing metadata
-  ├─ device / command state
-  └─ NO Vault Key
-             │
-             ▼
-Web / PWA Controller
-  └─ local decrypt / search / copy / send
-```
-
-The relay is intentionally **blind to SMS plaintext**. New nodes receive a random independent Node Key; the Master Vault Key stays in the controller. The relay stores only a Master-wrapped Node Key envelope plus ciphertext/routing metadata. Legacy v0.1.5 nodes can rotate online to independent Node Keys.
-
----
-
-
-## What's new in v0.4.0 and v0.5.0
-
-| Release | User-facing change | Where to find it |
-|---|---|---|
-| **v0.4.0** | Two-domain deployment wizard, managed Caddy HTTPS, admin username and Passkeys, conversational SMS inbox and direct replies, responsive layout fixes | Setup wizard; **Settings → Passkeys**; **Inbox → conversation / + New message** |
-| **v0.5.0** | Refresh-safe active Vault, encrypted SIM phone numbers, charging and Wi-Fi status, explicit 100-message sync operations, readable encrypted diagnostics, native mobile-data fallback guidance | **Devices** → SIM number / recent or older sync / Diagnostics / cellular failover |
-
-**Authentication and Vault:** Administrator sessions default to **8 hours of inactivity** and a **24-hour absolute maximum**. The Vault follows the same *real-user activity* idle window. In the **same browser tab**, a refresh validates the HttpOnly session and resumes a locally encrypted Vault snapshot; manual lock, logout or expiry disables that recovery. A closed tab, another browser/device or cleared site data may still require the Vault passphrase. Passkeys authenticate the administrator; **they are not Vault-decryption keys**.
-
-**SIM numbers:** When the Android OS exposes the number, the Node Key encrypts it for the controller. If unavailable, use **Devices → Set number**. That override is encrypted **in the current browser only** and does not automatically appear on your other controllers. After a SIM replacement, verify the number again.
-
-**Three different "100 messages" operations:** **Sync latest 100** re-reads recent Android SMS; **Sync 100 older** advances a separate historical cursor; **Load older messages** in the inbox only fetches already-uploaded relay ciphertext (initial view batches 30). A command being queued does **not** mean every SMS is uploaded. Update the Android Agent to v0.5.0 before using the latest-100 rescan.
-
-**Cellular failover:** Ordinary Android apps cannot force-select another default-data SIM. When Wi-Fi drops, Android uses the **system-configured default-data SIM** if mobile data is enabled. SIM Hub lets you register/check the intended fallback SIM and open Android's network settings. See [Compatibility](docs/COMPATIBILITY.md).
+<sub>Illustrative UI mockups using synthetic data; not screenshots from a live account or real messages.</sub>
 
 ## Features
 
-| Area | Capability |
+| Capability | What it does |
 |---|---|
-| **SMS** | Receive SMS, history sync, remote send, multipart handling |
-| **OTP** | Local OTP detection; OTP value remains inside the encrypted payload |
-| **Multi-SIM / modem** | Stable `channelId + revision` routing across Android subscriptions and Linux/DJI modem channels |
-| **Remote control** | Select device + SIM and send SMS from the PWA |
-| **Devices** | Multiple Android and Linux/modem nodes, aliases, groups and online state |
-| **Telemetry** | Carrier, service state, signal, battery, charging, network and agent status |
-| **Offline reliability** | Durable Android event queue + durable server command queue |
-| **Security** | AES-256-GCM E2EE, independent Node Keys, Android Keystore/local protected modem config, metadata-bound AAD, two-phase rotating bearer tokens |
-| **Controller** | Installable PWA with inbox, OTP copy, search, send, devices, recovery import, SSE realtime updates and diagnostics |
-| **Localized UI** | Android + Web/PWA support Simplified Chinese and English; Android also follows the system language and has responsive foldable/tablet layouts |
-| **Developer diagnostics** | Opt-in Android diagnostic logging with automatic secret/SMS/OTP redaction, rotating local logs and ZIP export |
-| **Authentication** | Username + Admin Token/TOTP or FIDO2 Passkey; HttpOnly 8-hour idle / 24-hour absolute session; active-tab Vault refresh recovery |
-| **Notifications** | Optional metadata-only webhook for Bark/ntfy/custom bridges |
-| **Operations** | Docker deployment, health endpoint, audit log, backups, OTA metadata |
+| **SMS and OTP** | Multi-SIM receive/send, conversation replies, new messages, code detection and copy |
+| **Devices and SIMs** | Android and Linux modem nodes; phone numbers, signal, charging, Wi-Fi and connectivity |
+| **History and diagnostics** | Latest 100 rescan, older 100 backfill, relay message pagination, encrypted health checks |
+| **Privacy and authentication** | Node-Key end-to-end encryption, username / TOTP / Passkeys, active Vault session recovery |
+| **Offline resilience** | Durable queues, retries, foreground relay and scheduled background recovery |
 
-### Android compatibility
+## How it works
 
-- **minSdk:** Android 10 / API 29
-- **targetSdk / compileSdk:** Android 17 / API 37
-- Designed to operate as the **default SMS app** for reliable arbitrary SMS/OTP handling on modern Android.
-- Remote SMS routing uses stable Channel IDs and revisions. Android `subscriptionId` is only a local adapter identifier and stale commands are rejected after SIM replacement.
+```mermaid
+flowchart LR
+  A["SIM / eSIM\nAndroid or modem"] -->|"Encrypted events"| B["Self-hosted relay\nCiphertext only"]
+  B -->|"HTTPS"| C["Web / PWA\nLocal decrypt + reply"]
+  C -->|"Encrypted SMS commands"| B
+  B --> A
+```
 
-See [Compatibility](docs/COMPATIBILITY.md) for OEM/background considerations.
+## Quick deployment
 
----
-
-
-## Quick start: guided deployment (recommended since v0.4.0)
-
-**Requirements:** Linux server/VM, Docker Engine + Compose plugin, Python 3, a reachable public IPv4 address, and **two different hostnames** (`admin.example.com` and `node.example.com`). Create DNS **A** records for both. If publishing AAAA records, ensure IPv6 connectivity. Allow TCP **80/443** inbound; **never expose 8787 publicly**.
-
-### 1. First installation: managed Caddy HTTPS
+Requires **Linux + Docker Compose + Python 3**, two DNS names pointing to your server (for example `admin.example.com` and `node.example.com`), and inbound TCP **80/443**. Do **not** expose port **8787** publicly.
 
 ```bash
 git clone https://github.com/blackkcold/simhub.git
 cd simhub
-python3 scripts/setup.py \
-  --admin-domain admin.example.com \
-  --node-domain node.example.com
+python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-The Linux wizard checks Docker/Compose, DNS and ports; creates a high-entropy admin token, a TOTP secret and an owner-only `.env` (**0600**); generates a Caddyfile and starts Relay + Caddy through Compose. It **does not modify your DNS provider's records**. Store `.env` securely and never commit it.
+The installer checks DNS / Docker / ports, creates the Admin Token, TOTP and owner-only `.env`, then starts Relay and Caddy HTTPS. **You must create DNS records at your provider.** For an existing Nginx / Caddy / Traefik proxy, add `--mode external` and configure dual-host TLS routing yourself.
 
-**Already have Nginx/Caddy/Traefik?**
+Open the management URL, log in, create/import your local Vault, then install the signed Android APK and configure enrollment, SMS permissions and **default SMS app** access.
 
-```bash
-python3 scripts/setup.py --mode external \
-  --admin-domain admin.example.com \
-  --node-domain node.example.com
-```
+## Boundaries
 
-External mode does **not** configure your existing reverse proxy. You must terminate HTTPS for both domains, route to `127.0.0.1:8787`, replace forwarded-client-IP headers safely, and block public health endpoints. For DNS pre-provisioning use `--skip-dns-check --no-start` then run `--upgrade` once DNS is ready. Details: [Guided setup (Chinese)](docs/QUICKSTART.zh-CN.md) · [Deployment security](docs/DEPLOYMENT.md).
-
-### 2. Open the Web/PWA controller
-
-Open **`https://admin.example.com`**, not the node endpoint. Enter the configured **username** (default `admin`), Admin Token and TOTP to start a session; then create/import/unlock the browser-local Vault and **save its Recovery Key offline**. Register a Passkey under **Settings → Passkeys** if desired. Passkey login does not automatically unlock a new browser's Vault.
-
-The responsive UI combines **SMS threads + direct replies + “+ New message”**. **Devices** shows phone identifiers, battery/charging, network, recent/older synchronization, diagnostics and fallback settings. Simplified Chinese and English are available.
-
-### 3. Install the Android Agent
-
-[Get the v0.5.0 signed APK](https://github.com/blackkcold/simhub/releases/tag/v0.5.0), install it on the Android phone, and create a one-time enrollment link from **Add Device** in the controller. Enroll, grant SMS/SIM permissions, make SIM Hub the **default SMS app** and start the always-on relay. For Wi-Fi-loss cellular operation, first **enable mobile data and choose the default data SIM in Android Settings**. Verify message reception and diagnostic reporting.
-
-Only officially release-signed APKs are distributed; certificate fingerprint and SHA-256 verification are documented in [Release signing](docs/RELEASE_SIGNING.md). See [Installation](docs/INSTALLATION.md) and [Android setup](docs/ANDROID_SETUP.md).
-
-### 4. Existing deployment: non-destructive upgrade
-
-```bash
-./scripts/backup.sh
-git pull --ff-only
-python3 scripts/setup.py --upgrade \
-  --admin-domain admin.example.com \
-  --node-domain node.example.com
-```
-
-Retain `--mode external` if an external proxy manages TLS. Upgrade preserves existing `.env`, Caddyfile and databases. Do not casually change the management hostname: Passkeys are bound to its RP ID. **Upgrade Relay/PWA before installing new Android APKs**, and keep existing Node Keys/tokens/enrollment. See [v0.4–v0.5 migration and usage](docs/UPGRADE_0.4_TO_0.5.md).
-
-## Installation and usage flow
-
-### First-time setup
-
-```text
-1. Deploy Relay Server
-        ↓
-2. Configure two HTTPS hosts: admin and node
-        ↓
-3. Open Web/PWA Controller; sign in as admin
-        ↓
-4. Create/unlock local Vault; register optional Passkey
-        ↓
-5. Generate a one-time bootstrap enrollment link
-        ↓
-6. Install Android Agent
-        ↓
-7. Enroll Android SIM Node
-        ↓
-8. Set SIM Hub as default SMS app
-        ↓
-9. Grant SMS/SIM permissions
-        ↓
-10. Enable always-on relay if required
-```
-
-After enrollment, the Android phone becomes a SIM Node and normally does not need to be operated directly. Keep it powered, connected to the network and able to receive cellular SMS.
-
-### Receiving SMS / OTP
-
-```text
-Carrier sends SMS
-    ↓
-Android SIM Node receives and stores it
-    ↓
-OTP is detected locally when applicable
-    ↓
-Message payload is encrypted on Android
-    ↓
-Encrypted event is relayed through your server
-    ↓
-PWA fetches and decrypts it locally
-    ↓
-Read SMS / copy OTP
-```
-
-In daily use, open the PWA on your computer, tablet or another phone. New messages appear in the inbox after the Android node uploads them. OTP values can be copied directly from the controller.
-
-### Sending SMS remotely
-
-```text
-PWA: open a conversation to reply or + New message
-    ↓
-choose device + identified SIM / subscription
-    ↓
-enter recipient + message
-    ↓
-encrypt command locally
-    ↓
-Relay Server queues encrypted command
-    ↓
-Android / Modem Node fetches command
-    ↓
-selected Channel sends the SMS
-    ↓
-result/status is reported back
-```
-
-The relay server does not need the plaintext SMS body to perform delivery.
-
-### When the Android node is offline
-
-Events and commands are persisted in queues rather than relying on a permanently alive WebSocket. When connectivity returns, the node retries synchronization. For the lowest latency, keep the Android Agent's always-on relay enabled and exempt it from aggressive OEM battery restrictions where necessary.
-
-### Adding another SIM Node
-
-Repeat enrollment for each Android or Linux modem node. Each node receives its own identity, bearer token and independent Node Key. The PWA selects a generic SMS Channel, so Android subscriptions and DJI/USB modem SIMs share the same inbox/send workflow.
-
----
-
-## Linux / DJI modem node
-
-A Linux Modem Agent is included under `modem_agent/`. It supports direct Quectel AT serial control for first-generation DJI/QDC507-style hardware and a generic ModemManager/`mmcli` path. The agent provides durable local queues, SMS receive/send, radio metrics, SIM-change channel revisions and the same E2EE protocol used by Android.
-
-Create a **Linux / DJI Modem Node** enrollment package in the PWA, then follow `modem_agent/README.md`. DJI Cellular Dongle 2 is capability-gated rather than assumed compatible; use ModemManager detection first.
-
----
-
-## Security model
-
-SIM Hub handles SMS and OTP data as authentication-grade secrets.
-
-Core security properties:
-
-- SMS body, OTP, contact names and outbound SMS content are encrypted before reaching the relay.
-- The relay does not store the Vault Key.
-- Device bearer tokens are stored as hashes.
-- Enrollment tokens are short-lived and single-use.
-- Commands include expiry and idempotency protection.
-- Sensitive SMS/OTP values are excluded from normal server logs and notification webhooks.
-- Android keeps local cryptographic material protected by Android Keystore.
-- TLS is required for public relay access.
-
-For the full design and threat model:
-
-- [Security Architecture](docs/SECURITY_ARCHITECTURE.md)
-- [Threat Model](THREAT_MODEL.md)
-- [Security Policy](SECURITY.md)
-
----
-
-## Reliability model
-
-SIM Hub does not assume that an Android background process or WebSocket will remain alive forever.
-
-Instead:
-
-```text
-Incoming SMS
-  → persist locally
-  → encrypt
-  → durable queue
-  → upload when network is available
-
-Remote command
-  → persist on relay
-  → Android fetches
-  → validate expiry / idempotency
-  → execute
-  → report result
-```
-
-This allows the system to recover from temporary mobile-network loss, Wi-Fi changes, process restarts and relay outages without treating a single HTTP failure as lost business state.
-
----
-
-### v0.2.1 production hardening
-
-- Independent per-node content keys; the Master Vault Key no longer leaves the controller for new nodes.
-- Generic Node + Channel model for Android and Linux/DJI modem nodes.
-- Automatic SMS Provider reconciliation after live-receiver queue failures.
-- Shared Android executors, cancellable JobService work and stale callback cleanup.
-- Per-part SMS sent/delivery tracking with failure result codes.
-- Stable channel identity/revision checks before remote SMS send.
-- Linux Modem Agent with ModemManager and direct DJI/Quectel AT adapter paths, including durable multipart receive reassembly.
-- Continuous retention/maintenance, trusted reverse-proxy client IP handling, readiness checks and Docker context hardening.
-- Crash-safe two-phase device bearer-token rotation.
-- Expanded server migration/maintenance/modem tests plus Android JVM tests.
-
-### v0.1.5 reliability changes
-
-- Event identity is scoped by device, so multiple Android nodes can safely have the same local SMS Provider ID.
-- Remote commands are atomically claimed on Android and all sync entry points share one process-level coordinator.
-- SMS history uses a `(date, providerId)` watermark and advances only after durable local queueing.
-- SMS lifecycle states are tracked as `submitted → sent → delivered` or `failed`.
-- New ciphertext uses per-device HKDF-derived AES-256-GCM keys with a `kid` and metadata-bound AAD; legacy v1 ciphertext remains readable.
-- Admin Token + TOTP now create a short-lived HttpOnly browser session instead of reusing an old TOTP on every poll.
-- PWA supports recovery-key import and SSE-driven realtime refresh with polling only as fallback.
-- Fresh-message notification rules prevent history synchronization from flooding Bark/ntfy.
-- Relay schema migrations, subscription projection, retention controls, metrics, online backup helper and rolling-upgrade compatibility are included.
-
----
-
-## Release gates for unattended deployment
-
-Software CI now validates relay migrations/maintenance, generic node/channel protocol, Modem Agent crypto/queue behavior, Web syntax, Android JVM OTP tests and an API 37 APK build. The following still require real hardware and are intentionally **not** represented as passed by CI:
-
-- Android 17 default-SMS receive/OTP on a physical phone;
-- Doze + OEM battery manager recovery after 24–72 hours;
-- dual-SIM receive/send and physical SIM replacement revision handling;
-- reboot/unlock/autostart behavior on target vivo/OPPO/Xiaomi/Huawei/HONOR ROMs;
-- DJI Gen1/QDC507 physical SMS receive/send and modem storage cleanup;
-- DJI Cellular Dongle 2 capability detection before enabling that hardware path.
-
-See [Compatibility](docs/COMPATIBILITY.md).
-
----
-
-## Current limitations
-
-### No phone-call functionality
-
-SIM Hub intentionally does not include:
-
-- phone-call answering/rejection;
-- remote dialing;
-- call logs;
-- cellular-call audio capture;
-- SIP/RTP/WebRTC;
-- PSTN media bridging.
-
-### MMS
-
-The project preserves encrypted MMS WAP PUSH evidence locally and warns the user, but does not implement full carrier-specific MMS media download/send. Do **not** use this as your primary messaging app if MMS is required.
-
-SMS and OTP are the supported production path.
-
-### Release signing
-
-v0.2.1 and later release workflows require the pinned long-term signing identity. The release fails if signing secrets are absent or the certificate SHA-256 fingerprint does not match the documented identity.
-
----
+The relay cannot read SMS or Vault plaintext; Passkeys authenticate users but do not replace Vault recovery keys. Default inactivity is **8 hours** with a **24-hour absolute session limit**; active same-tab refresh can restore the unlocked Vault. Android cellular fallback uses the **OS-configured default data SIM**—ordinary apps cannot force-switch it. **No phone calling; MMS media support remains limited.**
 
 ## Documentation
 
-| Document | Purpose |
-|---|---|
-| [v0.4–v0.5 upgrade and UI guide](docs/UPGRADE_0.4_TO_0.5.md) | Release differences, two-host migration, admin/Vault sessions, SMS paging, diagnostics |
-| [Guided setup (Chinese)](docs/QUICKSTART.zh-CN.md) | Linux DNS, managed Caddy / external-proxy setup and upgrades |
-| [Installation](docs/INSTALLATION.md) | End-to-end server + PWA + Android setup |
-| [Architecture](docs/ARCHITECTURE.md) | Components, trust boundary and data flow |
-| [Android Setup](docs/ANDROID_SETUP.md) | Android build and device requirements |
-| [Relay Server](docs/SERVER.md) | Server runtime, configuration and responsibilities |
-| [Deployment](docs/DEPLOYMENT.md) | Docker, HTTPS, backup and OTA deployment |
-| [Protocol](docs/PROTOCOL.md) | Enrollment, event and command protocol |
-| [Security Architecture](docs/SECURITY_ARCHITECTURE.md) | Encryption and trust model |
-| [Compatibility](docs/COMPATIBILITY.md) | Android/OEM behavior and test notes |
-| [Design System](docs/DESIGN_SYSTEM.md) | Brand assets, responsive UI and preview provenance |
-
----
-
-## Build from source
-
-### Server
-
-The relay is intentionally lightweight and uses Python + SQLite and a WebAuthn verification dependency.
-
-```bash
-export SIMHUB_ADMIN_TOKEN="$(python3 scripts/gen_admin_token.py --raw)"
-export SIMHUB_DB=/tmp/simhub.db
-python3 server/simhub_server.py
-```
-
-### Android
-
-Requirements:
-
-- JDK 17
-- Android SDK Platform 37
-- Gradle 9.6+
-
-```bash
-cd android
-gradle :app:assembleDebug
-```
-
-CI also performs a complete API 37 debug APK build.
-
----
-
-## Release
-
-Latest release:
-
-**[Latest GitHub Release](https://github.com/blackkcold/simhub/releases/latest)**
-
-Release assets include the Android APK, tagged source snapshot, documentation bundle and SHA-256 checksums.
-
----
-
-## License
-
-SIM Hub is released under the [MIT License](LICENSE).
-
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for platform/tooling notices.
-
-## Public controller security (v0.3.1)
-
-For an Internet-facing installation, use distinct TLS hostnames for the management PWA and node API. Enable an identity-aware gateway on the management hostname, plus SIM Hub TOTP. The relay enforces CSRF, short-lived step-up verification, idle session expiry, bounded request resources and durable SMS send quotas. Follow [the hardening and migration guide](docs/PUBLIC_SECURITY_HARDENING.md) **before enabling strict origin separation** so existing nodes are not disconnected.
-
-
-## Efficient SMS synchronization (v0.3.2)
-
-- **First registration**: Android queues at most the **100 most recent SMS** (rather than processing thousands of older messages first).
-- **New messages**: a separate date-and-Provider-ID cursor syncs subsequent SMS incrementally.
-- **Older messages**: choose **Load 100 older SMS** in Android, or **Sync history** on an enrolled Web device. Each action queues at most 100 older SMS; repeat as needed.
-- **Network**: batches of 20 encrypted events use atomic, idempotent confirmations. Failed and rate-limited uploads stay in local SQLite until acknowledged; 429 responses honor Retry-After.
-- **Web controller**: opens with the most recent 30 server events, retrieves older records on demand, and keeps the inbox responsive during historical backfill.
-
-**Upgrade order:** deploy the v0.3.2 Relay first, then upgrade Android Agents to v0.3.2. Older Android agents continue using the single-event endpoint. Existing Node Keys and SMS ciphertext require no reset. The Relay's configured event retention still applies, so historical server events may expire as designed.
+[Quick deployment](docs/QUICKSTART.zh-CN.md) · [Installation](docs/INSTALLATION.md) · [Android setup](docs/ANDROID_SETUP.md) · [Security](docs/SECURITY_ARCHITECTURE.md) · [Architecture](docs/ARCHITECTURE.md) · [License](LICENSE)

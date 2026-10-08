@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.5.0.trigger'
+      - '.github/release/v0.5.1.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.5.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.5.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -232,7 +232,7 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Unified administrator/Vault idle expiry, SIM identifiers and device network telemetry, explicit 100-message SMS pagination, remote diagnostics.
+          Responsive SMS inbox layout, floating mobile navigation and safer long-text handling.
 
           ## Highlights
           - 24-hour session absolute expiry, 8-hour idle expiry, and encrypted per-tab Vault refresh recovery;

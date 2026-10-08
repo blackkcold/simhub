@@ -88,7 +88,10 @@ try {
     const context=await browser.newContext({viewport:{width,height:812},colorScheme:"light"});
     const page=await context.newPage(),jsErrors=[];
     page.on("pageerror",e=>jsErrors.push(e.message));
-    await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
+    const response=await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
+    if(!response?.ok()||!await page.locator("#lockedPanel").count()){
+      throw Error("Responsive test page not ready at "+width+": HTTP "+response?.status()+" "+(await page.locator("body").innerText()).slice(0,350));
+    }
     await page.evaluate(()=>{
       document.getElementById("lockedPanel").hidden=true;
       document.getElementById("appContent").hidden=false;

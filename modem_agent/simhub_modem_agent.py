@@ -612,7 +612,7 @@ class DjiAtAdapter(ModemAdapter):
             for command in ("AT+QCCID", "AT+CCID", "AT+CIMI"):
                 try:
                     response = self._command(ser, command, timeout=4)
-                    values.extend(re.findall(r"(?<!\\d)\\d{14,22}(?!\\d)", response))
+                    values.extend(re.findall(r"(?<!\d)\d{14,22}(?!\d)", response))
                 except Exception:
                     continue
         if not values:
@@ -870,13 +870,13 @@ class MmcliAdapter(ModemAdapter):
     def fingerprint(self) -> str:
         modem = maybe_json(run_command(["mmcli", "-m", self.modem, "-J"], timeout=20))
         # ICCID/IMSI belong to the SIM object, not the hardware modem's IMEI.
-        match = re.search(r"/org/freedesktop/ModemManager1/SIM/\\d+", json.dumps(modem))
+        match = re.search(r"/org/freedesktop/ModemManager1/SIM/\d+", json.dumps(modem))
         if not match:
             raise RuntimeError("ModemManager SIM object unavailable: remote sending disabled")
         sim = maybe_json(run_command(["mmcli", "-i", match.group(0), "-J"], timeout=20))
         iccid = str(deep_pick(sim, "simidentifier", "iccid") or "")
         imsi = str(deep_pick(sim, "imsi") or "")
-        values = [x for x in (iccid, imsi) if re.fullmatch(r"\\d{14,22}", x)]
+        values = [x for x in (iccid, imsi) if re.fullmatch(r"\d{14,22}", x)]
         if not values:
             raise RuntimeError("SIM ICCID/IMSI unavailable: remote sending disabled")
         return hashlib.sha256("|".join(values).encode()).hexdigest()

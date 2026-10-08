@@ -16,7 +16,7 @@ public final class EventQueue {
             String sub=String.valueOf(subId);
             JSONObject cipher=new CryptoBox(c).encryptEvent(payload,id,kind,occurredAt,sub,hasOtp);
             boolean ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
-            if(ok)wake(c);
+            if(ok){if("sms.received".equals(kind))cfg.recordSmsReceived(occurredAt);wake(c);}
             return ok;
         }catch(Exception ignored){new AgentConfig(c).recordQueueFailure();SyncJobService.scheduleNow(c);return false;}
     }

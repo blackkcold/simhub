@@ -5,6 +5,13 @@ services:
       dockerfile: server/Dockerfile
     restart: unless-stopped
     env_file: .env
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=16m
     volumes:
       - simhub-data:/data
     ports:

@@ -98,18 +98,16 @@ The Agent first tries the direct Quectel AT path for DJI Gen1/QDC507, then falls
 
 On vivo/OPPO/Xiaomi/HONOR/Huawei and other aggressive battery-management ROMs, allow autostart and remove battery restrictions for SIM Hub if those controls exist. Keep the persistent foreground-service notification enabled when using always-on relay mode.
 
-## 9. Test the installation
+## 9. Validate the installation
 
-Run these checks in order:
-
-1. PWA shows each Android / Modem node online.
-2. Generic Channel/SIM information is visible.
-3. Send a normal SMS to the SIM and confirm it appears in the PWA after local decryption.
-4. Send an OTP-style SMS and confirm OTP detection/copy works.
-5. Send a test SMS remotely from the PWA through a selected subscription.
-6. Turn off the Android phone's network, receive/send test data, restore network and verify queued synchronization recovers.
-7. Reboot the phone and verify the Agent recovers after boot/unlock according to the configured background mode.
-8. If troubleshooting is required, enable Android Developer Mode, reproduce once, then export a redacted diagnostic ZIP as described in `DEVELOPER_DIAGNOSTICS.md`.
+1. Verify **both** HTTPS hostnames work for their intended surfaces. The node host must not expose the management UI or public health endpoints.
+2. Sign in, unlock the Vault and refresh the **same active browser tab**. Confirm it resumes while the session remains valid; manually lock and refresh to ensure decrypted content stays hidden.
+3. Verify devices, charging/network state and each SIM's phone number. If Android does not provide a number, set a **browser-local encrypted override** in Devices.
+4. Receive an SMS from each SIM, test OTP copy, direct conversation reply and **+ New message** with the intended SIM/channel.
+5. On Android v0.5.0, independently test **Sync latest 100**, **Sync 100 older**, and **Inbox → Load older**. The last one only pages already-uploaded relay messages. Request queued or scanned is not proof that upload completed.
+6. Click **Devices → Diagnostics**, then refresh diagnostic history. Detailed Android logs remain local behind Developer Mode.
+7. Test cellular fallback only after setting the **default mobile-data SIM** and enabling cellular data in Android system settings. The Agent cannot forcibly switch default SIM as an ordinary application.
+8. Reboot and test background recovery, Wi-Fi loss, queue draining, Doze/OEM battery policies and SIM replacement; see [hardware validation](HARDWARE_VALIDATION.md).
 
 ## 10. Backups
 

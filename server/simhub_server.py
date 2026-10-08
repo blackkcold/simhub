@@ -12,6 +12,7 @@ import mimetypes
 import os
 import re
 import secrets
+import socket
 import sqlite3
 import struct
 import threading
@@ -44,6 +45,22 @@ COMMAND_RETENTION_DAYS = max(1, int(os.getenv("SIMHUB_COMMAND_RETENTION_DAYS", "
 MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL", "3600")), 86400))
 REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","yes","on"}
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
+# The loopback-published Docker port is SNATed by docker-proxy to the exact
+# bridge gateway address. Trust that one peer only when explicitly enabled.
+TRUST_DOCKER_GATEWAY = os.getenv("SIMHUB_TRUST_DOCKER_GATEWAY", "false").lower() in {"1", "true", "yes", "on"}
+def docker_gateway_ip() -> str:
+    if not TRUST_DOCKER_GATEWAY:
+        return ""
+    try:
+        with open("/proc/net/route", encoding="ascii") as routes:
+            for line in list(routes)[1:]:
+                fields = line.split()
+                if len(fields) > 3 and fields[1] == "00000000" and int(fields[3], 16) & 2:
+                    return socket.inet_ntoa(bytes.fromhex(fields[2])[::-1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return ""
+DOCKER_GATEWAY_IP = docker_gateway_ip()
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "900")), SESSION_TTL))
 STEPUP_TTL = max(30, min(int(os.getenv("SIMHUB_STEPUP_TTL", "120")), 600))
@@ -170,7 +187,7 @@ def new_token(nbytes: int = 36) -> str:
 def trusted_proxy(peer: str) -> bool:
     try:
         addr=ipaddress.ip_address(peer)
-        return any(addr in ipaddress.ip_network(cidr,strict=False) for cidr in TRUSTED_PROXY_CIDRS)
+        return (bool(DOCKER_GATEWAY_IP and peer == DOCKER_GATEWAY_IP) or any(addr in ipaddress.ip_network(cidr,strict=False) for cidr in TRUSTED_PROXY_CIDRS))
     except ValueError:
         return False
 
@@ -777,7 +794,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def preflight(self, method: str, path: str) -> bool:
         if method == "GET" and path in {"/healthz", "/readyz"}:
-            if ipaddress.ip_address(self.client_address[0]).is_loopback: return True
+            if ipaddress.ip_address(self.client_address[0]).is_loopback or (DOCKER_GATEWAY_IP and self.client_address[0] == DOCKER_GATEWAY_IP): return True
             self.send_error_json(404,"not_found","Endpoint not available publicly"); return False
         if not rate_allowed("ip", self.ip, 180):
             self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False

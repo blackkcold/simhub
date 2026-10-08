@@ -28,7 +28,10 @@ try {
   for(const width of [375,768,1440]){
     for(const theme of ["light","dark"]){
       const context=await browser.newContext({viewport:{width,height:900},colorScheme:theme});
-      const page=await context.newPage(),errors=[];
+      const page=await context.newPage(),errors=[],consoleErrors=[],httpErrors=[];
+      page.on("console",m=>{if(m.type()==="error")consoleErrors.push(m.text());});
+      page.on("response",r=>{if(r.status()>=400)httpErrors.push(r.status()+" "+r.url());});
+      page.on("requestfailed",r=>httpErrors.push(r.failure()?.errorText+" "+r.url()));
       page.on("pageerror",e=>errors.push(e.message));
       await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"networkidle"});
       assert.equal(await page.locator("#username").count(),1);
@@ -49,6 +52,12 @@ try {
         document.querySelector("#appContent").hidden=false;
         document.querySelector("#newSmsBtn").hidden=false;
       });
+      if(!await page.locator("#newSmsBtn").evaluate(el=>!!el.onclick)){
+        console.error("UI-MODULE-LOADING",JSON.stringify(await page.evaluate(async()=>{
+          const r=await fetch("/app.js",{cache:"no-store"});
+          return {status:r.status,mime:r.headers.get("content-type"),script:document.querySelector("script[src]")?.outerHTML};
+        })),consoleErrors,httpErrors,errors);
+      }
       await page.locator("#newSmsBtn").click();
       const visible=await page.locator("#replyComposer").isVisible();
       if(!visible){

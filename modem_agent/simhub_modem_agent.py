@@ -61,6 +61,34 @@ def key_id(raw: bytes) -> str:
     return b64u(hashlib.sha256(raw).digest()[:12])
 
 
+OTP_CANDIDATE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4,8})(?![A-Za-z0-9])")
+OTP_KEYWORDS = ("验证码","驗證碼","校验码","動態碼","动态码","认证码","認證碼","verification code","verify code","security code","one-time code","one time code","otp","pin","code is","passcode")
+
+
+def parse_otp(body: str) -> dict[str, Any] | None:
+    if not body:
+        return None
+    lower=body.lower()
+    best=None
+    score=0.0
+    for match in OTP_CANDIDATE.finditer(body):
+        candidate=match.group(1)
+        if not any(char.isdigit() for char in candidate):
+            continue
+        if len(candidate)==4 and candidate.startswith(("19","20")):
+            continue
+        confidence=0.22 + (0.18 if len(candidate)==6 else 0.12 if len(candidate)==4 else 0.08 if len(candidate)==8 else 0)
+        near=lower[max(0,match.start()-48):min(len(lower),match.end()+48)]
+        if any(keyword in near for keyword in OTP_KEYWORDS):
+            confidence+=0.55
+        if len(set(candidate))==1:
+            confidence-=0.25
+        if confidence>score:
+            best=candidate
+            score=confidence
+    return {"value":best,"confidence":round(min(0.99,score),3)} if best and score>=0.62 else None
+
+
 def bootstrap_proof(raw: bytes) -> str:
     if len(raw) != 32:
         raise ValueError("bootstrap key length invalid")
@@ -1053,8 +1081,11 @@ class Agent:
             "partsExpected":total,
             "multipartIncomplete":not complete,
         }
-        cipher=self.encrypt_event(event_id,"sms.received",occurred,False,payload)
-        if self.store.queue_event(event_id,"sms.received",occurred,self.channel_id,False,{"source":self.adapter.name,"parts":total},cipher):
+        otp=parse_otp(body)
+        if otp:
+            payload["otp"]=otp
+        cipher=self.encrypt_event(event_id,"sms.received",occurred,bool(otp),payload)
+        if self.store.queue_event(event_id,"sms.received",occurred,self.channel_id,bool(otp),{"source":self.adapter.name,"parts":total},cipher):
             self.store.delete_multipart_group(group_id)
             return True
         return False
@@ -1141,8 +1172,11 @@ class Agent:
                 "channelRevision": self.channel_revision,
                 "providerId": sms.local_id,
             }
-            cipher = self.encrypt_event(event_id, "sms.received", sms.occurred_at, False, payload)
-            if self.store.queue_event(event_id, "sms.received", sms.occurred_at, self.channel_id, False, {"source": self.adapter.name, "parts": 1}, cipher):
+            otp=parse_otp(sms.body)
+            if otp:
+                payload["otp"]=otp
+            cipher = self.encrypt_event(event_id, "sms.received", sms.occurred_at, bool(otp), payload)
+            if self.store.queue_event(event_id, "sms.received", sms.occurred_at, self.channel_id, bool(otp), {"source": self.adapter.name, "parts": 1}, cipher):
                 self.store.mark_seen(sms.local_id)
                 try:
                     self.adapter.delete_sms(sms)

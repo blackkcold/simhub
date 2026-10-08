@@ -17,6 +17,8 @@
     <string name="setup_section">系统配置</string>
     <string name="make_default_sms">设为默认短信应用</string>
     <string name="grant_core_permissions">授予短信 / SIM 权限</string>
+    <string name="open_mobile_data_settings">打开移动数据 / 默认数据卡设置</string>
+    <string name="mobile_data_help">Wi-Fi 断开后，Android 会在移动数据已开启时自动使用系统默认数据 SIM。普通应用不能强制切换默认数据卡；请在此设置。</string>
     <string name="enable_contacts">启用联系人名称匹配（可选）</string>
     <string name="relay_section">中继与同步</string>
     <string name="start_relay">启动常驻中继</string>

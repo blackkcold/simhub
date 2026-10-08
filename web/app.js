@@ -188,7 +188,7 @@ function wire(){
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
   $('enrollBtn').onclick=()=>createEnrollment().catch(e=>toast(e.message));
   $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
-  $('exportKeyBtn').onclick=()=>vaultRaw?copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied')).catch(e=>toast(e.message)):toast(tr('vault_locked'));
+  $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};
   $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast(tr('credentials_forgotten'));}};

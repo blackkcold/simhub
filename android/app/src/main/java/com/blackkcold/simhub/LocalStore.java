@@ -177,7 +177,9 @@ public final class LocalStore extends SQLiteOpenHelper {
             // The process may have died after dispatching a radio side effect.
             // Never retry this SMS automatically; report the outcome as unknown.
             finishCommand(id,"submitted");
-            queueCommandAck(id,"submitted",new JSONObject().put("reason","interrupted_send_unknown"));
+            JSONObject reason=new JSONObject();
+            try{reason.put("reason","interrupted_send_unknown");}catch(Exception ignored){}
+            queueCommandAck(id,"submitted",reason);
         }
         db.execSQL("DELETE FROM processed_commands WHERE state='claimed' AND command_type!='sms.send' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{cutoff});
     }

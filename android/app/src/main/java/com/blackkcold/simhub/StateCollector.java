@@ -56,7 +56,7 @@ public final class StateCollector {
             boolean sendPermission=c.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED;
             o.put("smsRoleHeld",smsRole).put("smsReceivePermission",recvPermission)
                     .put("smsSendPermission",sendPermission);
-            JSONArray subscriptions=new JSONArray(),channels=new JSONArray();
+            JSONArray subscriptions=new JSONArray(),channels=new JSONArray(),phoneNumbers=new JSONArray();
             if(c.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)==PackageManager.PERMISSION_GRANTED){
                 SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);
                 List<SubscriptionInfo> list=sm.getActiveSubscriptionInfoList();
@@ -82,6 +82,13 @@ public final class StateCollector {
                         ServiceState ss=tm.getServiceState();
                         x.put("serviceState",service(ss)).put("roaming",tm.isNetworkRoaming()).put("networkType",networkType(tm.getDataNetworkType()));
                     }catch(Exception ignored){}
+                    // Keep telephone numbers out of Relay-visible state. Encrypt below with the Node Key.
+                    String number="";
+                    if(c.checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS)==PackageManager.PERMISSION_GRANTED){
+                        try{number=Build.VERSION.SDK_INT>=33?sm.getPhoneNumber(sub):si.getNumber();}catch(Exception ignored){}
+                    }
+                    phoneNumbers.put(new JSONObject().put("channelId",ch.channelId).put("subscriptionId",sub)
+                            .put("number",number==null?"":number.trim()));
                     subscriptions.put(x);
                     channels.put(new JSONObject(x.toString()).put("id",ch.channelId).put("localId",String.valueOf(sub)).put("kind","android-sim").put("revision",ch.revision));
                 }
@@ -91,7 +98,15 @@ public final class StateCollector {
                     .put("channels",channels)
                     .put("nodeType","android")
                     .put("capabilities",new JSONArray().put("sms.receive").put("sms.send").put("sms.history").put("signal.basic").put("signal.radio").put("dual-sim"));
-            if(cfg.isEnrolled())o.put("cryptoKeyId",new CryptoBox(c).keyId()).put("cryptoKeyMode",cfg.hasIndependentNodeKey()?"node":"legacy-derived");
+            if(cfg.isEnrolled()){
+                CryptoBox crypt=new CryptoBox(c);
+                o.put("cryptoKeyId",crypt.keyId()).put("cryptoKeyMode",cfg.hasIndependentNodeKey()?"node":"legacy-derived");
+                long stamp=System.currentTimeMillis()/1000;
+                String eventId="inventory-"+java.util.UUID.randomUUID();
+                JSONObject secret=new JSONObject().put("numbers",phoneNumbers);
+                o.put("encryptedSimNumbers",new JSONObject().put("eventId",eventId).put("occurredAt",stamp)
+                        .put("ciphertext",crypt.encryptEvent(secret,eventId,"device.sim_inventory",stamp,"-1",false)));
+            }
         }catch(Exception ignored){}
         return o;
     }

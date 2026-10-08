@@ -59,7 +59,7 @@ async function restoreTabVault(){
     const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(saved.iv),additionalData:enc.encode('simhub-session-tab-v1')},key,unb64u(saved.ct));
     if(raw.byteLength!==32)throw new Error('Invalid vault key length');
     await importVault(raw);
-    lastActivity=saved.lastActivity;armAutoLock();
+    lastActivity=saved.lastActivity;try{const restored=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE));restored.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(restored));}catch{}armAutoLock();
     showUnlocked();await fullRefresh();startRealtime();
     return true;
   }catch(e){clearTabVault();if(vaultKey)lockVault();return false;}

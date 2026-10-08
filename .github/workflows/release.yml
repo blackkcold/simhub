@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.3.1.trigger'
+      - '.github/release/v0.3.2.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.3.1.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.3.2.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -229,15 +229,15 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Public controller security hardening release for self-hosted Android and Linux/DJI modem SIM nodes.
+          Device enrollment and staged SMS history reliability release for Android and Linux/DJI modem nodes.
 
           ## Highlights
-          - isolated management and node API hostnames for safer public exposure;
-          - CSRF, trusted Origin, idle-session expiration and privileged TOTP confirmation;
-          - bounded connection and API resources plus persistent device-side SMS quotas;
-          - hardened browser telemetry rendering and Docker permissions;
-          - new security integration tests, dual-host deployment guide and CodeQL checks;
-          - existing E2EE ciphertext and node protocol compatibility retained.
+          - newest-100 Android SMS bootstrap, on-demand older-100 backfill and durable cursors;
+          - encrypted 20-event batch uploads with per-message ACK and server idempotency;
+          - HTTP 429 Retry-After-aware backoff and preserved legacy single-event API;
+          - time-keyed 30-item inbox paging and bounded Web rendering;
+          - responsive device enrollment with a native confirmation modal;
+          - E2EE Node Keys, independent hosts and existing security controls retained.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF

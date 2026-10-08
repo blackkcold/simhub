@@ -36,6 +36,12 @@ public final class MainActivity extends Activity {
         findViewById(R.id.stopRelayButton).setOnClickListener(v->{AppLogger.i(this,"Relay","User requested always-on relay stop");RelayForegroundService.stop(this);refreshLocal();});
         findViewById(R.id.resetEnrollmentButton).setOnClickListener(v->new AlertDialog.Builder(this).setTitle(R.string.reset_title).setMessage(R.string.reset_message).setNegativeButton(R.string.cancel,null).setPositiveButton(R.string.reset,(d,w)->{AppLogger.w(this,"Enrollment","User reset node enrollment");EnrollmentManager.reset(this);refreshLocal();toast(R.string.enrollment_reset_done);}).show());
         findViewById(R.id.syncButton).setOnClickListener(v->exec.execute(()->{int n=SmsHistorySync.sync(this,100);SyncJobService.scheduleNow(this);AppLogger.i(this,"SmsSync","Manual history sync queued count="+n);runOnUiThread(()->toast(getString(R.string.sync_queued,n)));}));
+        findViewById(R.id.olderSyncButton).setOnClickListener(v->exec.execute(()->{
+            int n=SmsHistorySync.syncOlder(this,100);
+            SyncJobService.scheduleNow(this);
+            AppLogger.i(this,"SmsSync","User-requested older history queued count="+n);
+            runOnUiThread(()->toast(getString(R.string.sync_queued,n)));
+        }));
         findViewById(R.id.refreshButton).setOnClickListener(v->exec.execute(()->{try{JSONObject s=StateCollector.collect(this);String stateText=s.toString(2);if(new AgentConfig(this).isEnrolled())new ApiClient(this).putState();runOnUiThread(()->{if(DeveloperSettings.isEnabled(this))detail.setText(stateText);refreshLocal();});AppLogger.i(this,"State","Manual device state refresh succeeded");}catch(Exception e){AppLogger.e(this,"State","Manual device state refresh failed",e);runOnUiThread(()->toast(UiErrors.message(this,e)));}}));
         findViewById(R.id.otaButton).setOnClickListener(v->exec.execute(()->{try{JSONObject o=new ApiClient(this).ota();runOnUiThread(()->showOta(o));}catch(Exception e){AppLogger.e(this,"OTA","OTA check failed",e);runOnUiThread(()->toast(UiErrors.message(this,e)));}}));
     }

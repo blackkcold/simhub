@@ -466,7 +466,7 @@ function openConversation(key){
   const canReply=/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
   $('replySend').disabled=!canReply;
   if(!canReply)toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');
-  $('smsLayout').classList.add('conversation-open');
+  syncResponsiveConversation();
   renderInbox();
 }
 function openNewMessage(){
@@ -475,7 +475,7 @@ function openNewMessage(){
   $('replyDevice').value='';
   updateReplyChannels();
   $('replyTo').value='';$('replyBody').value='';$('replySend').disabled=false;
-  $('smsLayout').classList.add('conversation-open');
+  syncResponsiveConversation();
   renderInbox();$('replyTo').focus();
 }
 function countSmsSegments(value){
@@ -575,7 +575,20 @@ async function configureNetworkFallback(id){
   toast(enabled?'备用数据策略已提交；请确认 Android 系统默认数据 SIM 一致':'关闭备用数据监控已提交');
 }
 async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队');}else if(action==='diagnostics'){await openDiagnostics(id);await queueCommand(id,'diagnostics.request',{});toast('健康检查已入队，稍后刷新结果');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
-function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();$('newSmsBtn').hidden=!vaultKey||name!=='inbox';}
+function syncResponsiveConversation(){
+  const layout=$('smsLayout');
+  if(!layout)return;
+  const mobile=window.matchMedia('(max-width: 760px)').matches;
+  const inbox=document.getElementById('view-inbox')?.classList.contains('active');
+  layout.classList.toggle('conversation-open',mobile&&inbox&&!!activeConversationKey);
+}
+function switchView(name){
+  if(name!=='inbox'){
+    // Preserve the selected thread for desktop, but never leave a mobile overlay
+    // floating above another section or behind the persistent bottom dock.
+    $('smsLayout').classList.remove('conversation-open');
+  }
+  document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();$('newSmsBtn').hidden=!vaultKey||name!=='inbox';syncResponsiveConversation();}
 
 function relocalizeDynamic(){
   applyI18n();
@@ -609,7 +622,9 @@ function wire(){
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
   $('newSmsBtn').onclick=openNewMessage;
-  $('backConversation').onclick=()=>{$('smsLayout').classList.remove('conversation-open');activeConversationKey=null;renderInbox();};
+  $('backConversation').onclick=()=>{activeConversationKey=null;syncResponsiveConversation();renderInbox();$('search').focus({preventScroll:true});};
+  window.addEventListener('resize',syncResponsiveConversation,{passive:true});
+  window.addEventListener('orientationchange',syncResponsiveConversation,{passive:true});
   $('replyDevice').onchange=()=>{updateReplyChannels();$('replySend').disabled=false;};
   $('replySubscription').onchange=()=>{$('replySend').disabled=false;};
   $('replyBody').oninput=updateReplyCount;

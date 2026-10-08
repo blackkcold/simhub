@@ -113,17 +113,18 @@ On vivo/OPPO/Xiaomi/HONOR/Huawei and other aggressive battery-management ROMs, a
 
 Run `./scripts/backup.sh` for a consistent SQLite online backup, or back up the Docker `simhub-data` volume for relay metadata/ciphertext. Separately protect the controller's Vault recovery material. The relay database by itself is intentionally insufficient to decrypt SMS content.
 
-## 11. Updating
+## 11. Updating to v0.5.0
 
-Server:
+First run `./scripts/backup.sh` for a consistent SQLite backup and independently secure Vault recovery material and authentication secrets. On deployments **already configured with two hosts**:
 
 ```bash
-git pull
-docker compose up -d --build
+git pull --ff-only
+python3 scripts/setup.py --upgrade --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-Android updates should be installed from a trusted GitHub Release or your own signed build. The OTA endpoint only advertises an update; it does not silently install APKs.
+If you use your own reverse proxy, retain `--mode external`. Guided upgrade preserves existing `.env`, Caddyfile and data; Node Keys/tokens remain valid. **An older single-host deployment must plan its DNS/proxy split first**: it cannot simply run a dual-host upgrade without reviewing its existing config.
 
+Upgrade **Relay/PWA first**, then install the same-certificate [v0.5.0 release-signed Android APK](https://github.com/blackkcold/simhub/releases/tag/v0.5.0) without clearing app data or re-enrolling. The OTA endpoint advertises the APK but does not install it automatically. Full two-release changes: [v0.4–v0.5 upgrade and usage guide](UPGRADE_0.4_TO_0.5.md).
 
 ## Rolling upgrade from v0.1.x
 

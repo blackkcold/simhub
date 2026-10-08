@@ -59,7 +59,7 @@ try {
           return {composer:x('replyComposer'),app:x('appContent'),
             inbox:x('view-inbox'),layout:x('smsLayout'),
             newButton:x('newSmsBtn'),handler:typeof document.getElementById('newSmsBtn').onclick};
-        })),errors));
+        })),errors);
       }
       assert.ok(visible,"New SMS composer hidden");
       await page.locator("#replyTo").fill("+8613800138000");

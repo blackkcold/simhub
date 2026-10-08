@@ -1045,6 +1045,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
             username=ADMIN_USERNAME
         session=_cookie_session(self.headers) if not login_path else ""
         fingerprint=sha256_text(session) if session else ""
+        audit_action = ""
+        audit_target = ""
         try:
             with open_db() as con:
                 if path=="/api/v1/auth/passkeys/login/options":
@@ -1063,7 +1065,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     data=passkeys.register(con,MANAGEMENT_ORIGIN,username,fingerprint,
                         str(body.get("challengeId","")),body.get("credential",{}),
                         str(body.get("label","My passkey")).strip())
-                    audit("auth.passkey.register",data["id"][:28],"ok",self.ip)
+                    audit_action, audit_target = "auth.passkey.register", data["id"][:28]
                 elif path=="/api/v1/auth/passkeys/elevate/options":
                     if not fingerprint:raise ValueError("Browser session required")
                     data=passkeys.authentication_options(con,MANAGEMENT_ORIGIN,username,fingerprint,"elevate")
@@ -1074,15 +1076,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     expiry=now()+STEPUP_TTL
                     con.execute("UPDATE admin_sessions SET elevated_until=? WHERE token_hash=?",(expiry,fingerprint))
                     data={"ok":True,"elevatedUntil":expiry}
-                    audit("auth.passkey.elevate","","ok",self.ip)
+                    audit_action = "auth.passkey.elevate"
                 elif path=="/api/v1/auth/passkeys/remove":
                     cid=str(body.get("id",""))
                     n=con.execute("DELETE FROM admin_passkeys WHERE credential_id=?",(cid,)).rowcount
                     if not n:raise ValueError("Passkey not found")
                     data={"ok":True}
-                    audit("auth.passkey.remove",cid[:28],"ok",self.ip)
+                    audit_action, audit_target = "auth.passkey.remove", cid[:28]
                 else:
                     self.send_error_json(404,"not_found","Passkey route not found");return
+            if audit_action:
+                audit(audit_action,audit_target,"ok",self.ip)
             if path=="/api/v1/auth/passkeys/login/verify":
                 auth_rate_success(self.ip)
                 session,exp=create_session(self.ip)

@@ -1038,7 +1038,9 @@ class Agent:
         body="".join(str(x[1].get("body","")) for x in by_part)
         sender=str(by_part[0][1].get("sender","")) if by_part else ""
         occurred=min(int(x[1].get("occurredAt",now())) for x in by_part) if by_part else now()
-        event_id="modem-multipart-"+group_id
+        # Content-distinct multipart messages must never reuse an event ID.
+        # The stable full-message digest prevents relay dedup from dropping a new body.
+        event_id="modem-multipart-"+group_id+"-"+hashlib.sha256((sender+"\\0"+body+"\\0"+str(occurred)).encode()).hexdigest()[:20]
         payload={
             "direction":"in",
             "sender":sender,
@@ -1112,6 +1114,14 @@ class Agent:
                 continue
             if sms.concat_ref and sms.concat_total>1 and 1<=sms.concat_seq<=sms.concat_total:
                 group_id=self._multipart_group_id(sms)
+                existing=next((r for r in self.store.multipart_group(group_id) if int(r["part_no"])==sms.concat_seq),None)
+                if existing is not None:
+                    prior=self._decrypt_multipart_part(group_id,existing)
+                    if prior.get("localId")!=sms.local_id or prior.get("body")!=sms.body:
+                        # Another message reused this concatenation reference. Do not
+                        # discard its modem record or silently overwrite the existing part.
+                        print("simhub-modem: multipart reference collision; keeping SMS in modem storage for retry",file=sys.stderr,flush=True)
+                        continue
                 cipher=self._encrypt_multipart_part(group_id,sms)
                 if self.store.queue_multipart_part(group_id,sms.concat_seq,sms.concat_total,cipher):
                     touched.add(group_id)

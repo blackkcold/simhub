@@ -32,6 +32,12 @@ public final class AgentConfig {
     public void recordQueueFailure(){prefs.edit().putLong("queue_failures",prefs.getLong("queue_failures",0)+1).putLong("last_queue_failure_at",System.currentTimeMillis()/1000).apply();}
     public long queueFailures(){return prefs.getLong("queue_failures",0);}
     public long lastQueueFailureAt(){return prefs.getLong("last_queue_failure_at",0);}
+    public void recordSmsReceived(long at){prefs.edit().putLong("last_sms_received_at",at).apply();}
+    public void recordSyncSuccess(){prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
+    public void recordSyncError(String reason){prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
+    public long lastSmsReceivedAt(){return prefs.getLong("last_sms_received_at",0);}
+    public long lastSyncSuccessAt(){return prefs.getLong("last_sync_success_at",0);}
+    public String lastSyncError(){return prefs.getString("last_sync_error","");}
     public void clearQueueFailures(){prefs.edit().remove("queue_failures").remove("last_queue_failure_at").apply();}
     public String deviceToken(){try{return secrets.getString(SECRET_DEVICE_TOKEN);}catch(Exception e){return null;}}
     public long tokenIssuedAt(){return prefs.getLong("token_issued_at",0);}

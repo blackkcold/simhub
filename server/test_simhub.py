@@ -73,6 +73,25 @@ class ApiTest(unittest.TestCase):
         st,_,_=self.req('POST',f"/api/v1/devices/{d['deviceId']}/events",ev,device_token=d['deviceToken'],admin=False);self.assertEqual(st,201)
         st,e,_=self.req('GET','/api/v1/events?since=0&limit=1000');row=[x for x in e['events'] if x['eventId']==ev['eventId']][0];self.assertEqual(row['occurredAt'],old)
 
+    def test_latest_events_and_backwards_pagination(self):
+        node=self.enroll('NewestFirst')
+        ids=[]
+        for i in range(5):
+            event_id='page-'+str(i)+'-'+node['deviceId']
+            ev={'eventId':event_id,'kind':'sms.received','occurredAt':int(time.time()),'subscriptionId':'ch','hasOtp':False,'ciphertext':self.cipher(2)}
+            status,_,_=self.req('POST',f"/api/v1/devices/{node['deviceId']}/events",ev,device_token=node['deviceToken'],admin=False)
+            self.assertEqual(status,201)
+            ids.append(event_id)
+        st,r,_=self.req('GET','/api/v1/events?latest=1&limit=2')
+        self.assertEqual(st,200)
+        self.assertEqual([e['eventId'] for e in r['events']],ids[-2:])
+        oldest=r['events'][0]['seq']
+        st,prior,_=self.req('GET','/api/v1/events?before='+str(oldest)+'&limit=3')
+        self.assertEqual(st,200)
+        self.assertEqual([e['eventId'] for e in prior['events']],ids[:3])
+        st,bad,_=self.req('GET','/api/v1/events?before=2&latest=1')
+        self.assertEqual(st,400)
+
     def test_admin_session_cookie(self):
         st,data,h=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN,'totp':''},admin=False);self.assertEqual(st,201);self.assertTrue(data['ok'])
         cookie=h.get('Set-Cookie','').split(';',1)[0];self.assertIn('simhub_session=',cookie)
@@ -162,6 +181,17 @@ class ApiTest(unittest.TestCase):
             used=con.execute('SELECT used_at FROM enrollment_tokens WHERE id=?',(x['id'],)).fetchone()[0]
         self.assertIsNone(used)
         st,d,_=self.req('POST','/api/v1/enroll',{'token':x['token'],'bootstrapProof':proof},admin=False);self.assertEqual(st,201);self.assertTrue(d['deviceId'])
+
+    def test_concurrent_enrollment_claim(self):
+        from concurrent.futures import ThreadPoolExecutor
+        status, enrollment, _ = self.req('POST','/api/v1/enrollments',{})
+        self.assertEqual(status,201)
+        def attempt(index):
+            return self.req('POST','/api/v1/enroll',{'token':enrollment['token'],'name':'AtomicEnrollment'},admin=False)[0]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            statuses = list(pool.map(attempt,range(12)))
+        self.assertEqual(statuses.count(201),1,statuses)
+        self.assertTrue(all(code in (201,401) for code in statuses),statuses)
 
     def test_independent_key_enrollment_requires_bootstrap(self):
         st,r,_=self.req('POST','/api/v1/enrollments',{'keyId':'abcdefgh1234','wrappedKey':self.cipher(1)})

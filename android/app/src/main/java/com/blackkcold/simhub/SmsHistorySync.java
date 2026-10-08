@@ -18,7 +18,7 @@ public final class SmsHistorySync {
             if(cur==null)return 0;
             while(cur.moveToNext()&&count<maxMessages){
                 long id=cur.getLong(0);String address=cur.getString(1),body=cur.getString(2);long date=cur.getLong(3);int type=cur.getInt(4),sub=cur.getInt(5);
-                if(type==Telephony.Sms.MESSAGE_TYPE_DRAFT)continue;
+                if(type==Telephony.Sms.MESSAGE_TYPE_DRAFT){cfg.setHistoryCursor(date,id);continue;}
                 String direction=type==Telephony.Sms.MESSAGE_TYPE_INBOX?"in":"out";
                 OtpParser.Result otp=direction.equals("in")?OtpParser.parse(body):new OtpParser.Result(false,null,0f);String contact=ContactResolver.lookup(c,address);
                 JSONObject payload=new JSONObject().put("direction",direction).put(direction.equals("in")?"sender":"recipient",address==null?"":address).put("body",body==null?"":body).put("occurredAt",date/1000).put("subscriptionId",sub).put("providerType",type).put("providerId",id);

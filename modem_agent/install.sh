@@ -22,6 +22,8 @@ python3 -m venv "$PREFIX/venv"
 "$PREFIX/venv/bin/pip" install -r modem_agent/requirements.txt
 
 install -m 0644 modem_agent/simhub-modem.service /etc/systemd/system/simhub-modem.service
+install -m 0644 modem_agent/simhub-modem@.service /etc/systemd/system/simhub-modem@.service
+install -d -o root -g simhub-modem -m 0750 /etc/simhub-modem
 systemctl daemon-reload
 
 cat <<EOF
@@ -39,6 +41,6 @@ Installed SIM Hub Modem Agent.
      systemctl enable --now simhub-modem
 
 Adapter selection:
-- dji4g: preferred when the dji4g CLI is installed for DJI Gen1/QDC507.
+- dji-at: direct AT modem adapter, independent of the dji4g CLI.
 - modemmanager: generic mmcli/ModemManager path.
 EOF

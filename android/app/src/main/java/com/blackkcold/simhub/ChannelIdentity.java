@@ -31,7 +31,7 @@ public final class ChannelIdentity {
         if(id==null||id.isBlank()){id=UUID.randomUUID().toString();rev=1;}
         else if(!previous.isEmpty()&&!previous.equals(current))rev=Math.max(1,rev+1);
         else if(rev<=0)rev=1;
-        p.edit().putString(prefix+"id",id).putLong(prefix+"revision",rev).putString(prefix+"fingerprint",current).apply();
+        if(!p.edit().putString(prefix+"id",id).putLong(prefix+"revision",rev).putString(prefix+"fingerprint",current).commit())throw new IllegalStateException("SIM identity revision not durable");
         return new Channel(id,rev,s.getSubscriptionId(),s.getSimSlotIndex());
     }
 

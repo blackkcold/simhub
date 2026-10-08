@@ -36,7 +36,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import serial
 from serial.tools import list_ports
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/config.json"))
 DEFAULT_DB = Path(os.getenv("SIMHUB_MODEM_DB", "/var/lib/simhub-modem/agent.db"))
 POLL_SECONDS = max(3, int(os.getenv("SIMHUB_MODEM_POLL_SECONDS", "10")))
@@ -59,6 +59,34 @@ def ub64u(value: str) -> bytes:
 
 def key_id(raw: bytes) -> str:
     return b64u(hashlib.sha256(raw).digest()[:12])
+
+
+OTP_CANDIDATE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9]{4,8})(?![A-Za-z0-9])")
+OTP_KEYWORDS = ("验证码","驗證碼","校验码","動態碼","动态码","认证码","認證碼","verification code","verify code","security code","one-time code","one time code","otp","pin","code is","passcode")
+
+
+def parse_otp(body: str) -> dict[str, Any] | None:
+    if not body:
+        return None
+    lower=body.lower()
+    best=None
+    score=0.0
+    for match in OTP_CANDIDATE.finditer(body):
+        candidate=match.group(1)
+        if not any(char.isdigit() for char in candidate):
+            continue
+        if len(candidate)==4 and candidate.startswith(("19","20")):
+            continue
+        confidence=0.22 + (0.18 if len(candidate)==6 else 0.12 if len(candidate)==4 else 0.08 if len(candidate)==8 else 0)
+        near=lower[max(0,match.start()-48):min(len(lower),match.end()+48)]
+        if any(keyword in near for keyword in OTP_KEYWORDS):
+            confidence+=0.55
+        if len(set(candidate))==1:
+            confidence-=0.25
+        if confidence>score:
+            best=candidate
+            score=confidence
+    return {"value":best,"confidence":round(min(0.99,score),3)} if best and score>=0.62 else None
 
 
 def bootstrap_proof(raw: bytes) -> str:
@@ -577,20 +605,19 @@ class DjiAtAdapter(ModemAdapter):
             return now()
 
     def fingerprint(self) -> str:
+        # Do not substitute hardware model or serial port for SIM identity.
         values: list[str] = []
         with self._open() as ser:
             self._initialize(ser)
-            for command in ("AT+QCCID", "AT+CCID", "AT+CIMI", "AT+CGMM"):
+            for command in ("AT+QCCID", "AT+CCID", "AT+CIMI"):
                 try:
                     response = self._command(ser, command, timeout=4)
-                    found = re.findall(r"[0-9A-Za-z._-]{8,}", response)
-                    if found:
-                        values.extend(found)
+                    values.extend(re.findall(r"(?<!\d)\d{14,22}(?!\d)", response))
                 except Exception:
                     continue
         if not values:
-            values = [self.port]
-        return hashlib.sha256("|".join(values).encode()).hexdigest()
+            raise RuntimeError("SIM identity unavailable: remote sending disabled")
+        return hashlib.sha256("|".join(sorted(set(values))).encode()).hexdigest()
 
     def state(self) -> dict[str, Any]:
         carrier = ""
@@ -841,9 +868,18 @@ class MmcliAdapter(ModemAdapter):
         return re.findall(r"(/org/freedesktop/ModemManager1/SMS/\d+)", out)
 
     def fingerprint(self) -> str:
-        out = maybe_json(run_command(["mmcli", "-m", self.modem, "-J"], timeout=20))
-        value = deep_pick(out, "simidentifier", "iccid", "equipmentidentifier", "imei") or str(out)
-        return hashlib.sha256(str(value).encode()).hexdigest()
+        modem = maybe_json(run_command(["mmcli", "-m", self.modem, "-J"], timeout=20))
+        # ICCID/IMSI belong to the SIM object, not the hardware modem's IMEI.
+        match = re.search(r"/org/freedesktop/ModemManager1/SIM/\d+", json.dumps(modem))
+        if not match:
+            raise RuntimeError("ModemManager SIM object unavailable: remote sending disabled")
+        sim = maybe_json(run_command(["mmcli", "-i", match.group(0), "-J"], timeout=20))
+        iccid = str(deep_pick(sim, "simidentifier", "iccid") or "")
+        imsi = str(deep_pick(sim, "imsi") or "")
+        values = [x for x in (iccid, imsi) if re.fullmatch(r"\d{14,22}", x)]
+        if not values:
+            raise RuntimeError("SIM ICCID/IMSI unavailable: remote sending disabled")
+        return hashlib.sha256("|".join(values).encode()).hexdigest()
 
     def state(self) -> dict[str, Any]:
         status = maybe_json(run_command(["mmcli", "-m", self.modem, "--simple-status", "-J"], timeout=20))
@@ -1030,7 +1066,9 @@ class Agent:
         body="".join(str(x[1].get("body","")) for x in by_part)
         sender=str(by_part[0][1].get("sender","")) if by_part else ""
         occurred=min(int(x[1].get("occurredAt",now())) for x in by_part) if by_part else now()
-        event_id="modem-multipart-"+group_id
+        # Content-distinct multipart messages must never reuse an event ID.
+        # The stable full-message digest prevents relay dedup from dropping a new body.
+        event_id="modem-multipart-"+group_id+"-"+hashlib.sha256((sender+"\\0"+body+"\\0"+str(occurred)).encode()).hexdigest()[:20]
         payload={
             "direction":"in",
             "sender":sender,
@@ -1043,8 +1081,11 @@ class Agent:
             "partsExpected":total,
             "multipartIncomplete":not complete,
         }
-        cipher=self.encrypt_event(event_id,"sms.received",occurred,False,payload)
-        if self.store.queue_event(event_id,"sms.received",occurred,self.channel_id,False,{"source":self.adapter.name,"parts":total},cipher):
+        otp=parse_otp(body)
+        if otp:
+            payload["otp"]=otp
+        cipher=self.encrypt_event(event_id,"sms.received",occurred,bool(otp),payload)
+        if self.store.queue_event(event_id,"sms.received",occurred,self.channel_id,bool(otp),{"source":self.adapter.name,"parts":total},cipher):
             self.store.delete_multipart_group(group_id)
             return True
         return False
@@ -1104,6 +1145,14 @@ class Agent:
                 continue
             if sms.concat_ref and sms.concat_total>1 and 1<=sms.concat_seq<=sms.concat_total:
                 group_id=self._multipart_group_id(sms)
+                existing=next((r for r in self.store.multipart_group(group_id) if int(r["part_no"])==sms.concat_seq),None)
+                if existing is not None:
+                    prior=self._decrypt_multipart_part(group_id,existing)
+                    if prior.get("localId")!=sms.local_id or prior.get("body")!=sms.body:
+                        # Another message reused this concatenation reference. Do not
+                        # discard its modem record or silently overwrite the existing part.
+                        print("simhub-modem: multipart reference collision; keeping SMS in modem storage for retry",file=sys.stderr,flush=True)
+                        continue
                 cipher=self._encrypt_multipart_part(group_id,sms)
                 if self.store.queue_multipart_part(group_id,sms.concat_seq,sms.concat_total,cipher):
                     touched.add(group_id)
@@ -1123,8 +1172,11 @@ class Agent:
                 "channelRevision": self.channel_revision,
                 "providerId": sms.local_id,
             }
-            cipher = self.encrypt_event(event_id, "sms.received", sms.occurred_at, False, payload)
-            if self.store.queue_event(event_id, "sms.received", sms.occurred_at, self.channel_id, False, {"source": self.adapter.name, "parts": 1}, cipher):
+            otp=parse_otp(sms.body)
+            if otp:
+                payload["otp"]=otp
+            cipher = self.encrypt_event(event_id, "sms.received", sms.occurred_at, bool(otp), payload)
+            if self.store.queue_event(event_id, "sms.received", sms.occurred_at, self.channel_id, bool(otp), {"source": self.adapter.name, "parts": 1}, cipher):
                 self.store.mark_seen(sms.local_id)
                 try:
                     self.adapter.delete_sms(sms)
@@ -1164,6 +1216,7 @@ class Agent:
                 self.store.finish_command(command_id, "expired")
                 self.store.queue_ack(command_id, "expired", {})
                 continue
+            send_invoked=False
             try:
                 payload = decrypt_payload(
                     self.node_key,
@@ -1174,12 +1227,19 @@ class Agent:
                 if payload.get("action") != ctype or payload.get("commandId") != command_id:
                     raise ValueError("command binding mismatch")
                 if ctype == "sms.send":
+                    # Re-probe immediately before any radio side effect.
+                    self._sync_channel_identity()
                     if str(payload.get("channelId", "")) != self.channel_id or int(payload.get("channelRevision", 0)) != self.channel_revision:
                         raise RuntimeError("channel_changed")
                     to = str(payload.get("to", ""))
                     body = str(payload.get("body", ""))
-                    if not re.fullmatch(r"\+?[0-9*# ()-]{3,40}", to) or not body or len(body) > 4000:
+                    if not re.fullmatch(r"\+?[0-9 ()-]{3,40}", to) or not body or len(body) > 4000:
                         raise ValueError("invalid_sms")
+                    # Persist uncertainty before invoking the non-transactional modem.
+                    # On crash/restart, do not automatically resend a possibly sent SMS.
+                    self.store.finish_command(command_id,"submitted")
+                    self.store.queue_ack(command_id,"submitted",{"reason":"delivery_unconfirmed"})
+                    send_invoked=True
                     result = self.adapter.send_sms(to, body)
                     ts = now()
                     event_payload = {
@@ -1207,9 +1267,15 @@ class Agent:
                     self.store.finish_command(command_id, "rejected")
                     self.store.queue_ack(command_id, "rejected", {"reason": "unsupported_on_modem"})
             except Exception as exc:
-                reason = "channel_changed" if "channel_changed" in str(exc) else exc.__class__.__name__
-                self.store.finish_command(command_id, "failed")
-                self.store.queue_ack(command_id, "failed", {"reason": reason})
+                if send_invoked:
+                    # A modem timeout is NOT proof that the carrier did not send it.
+                    # Preserve nonterminal submitted status until an operator verifies.
+                    self.store.finish_command(command_id,"submitted")
+                    self.store.queue_ack(command_id,"submitted",{"reason":"send_result_unknown"})
+                else:
+                    reason = "channel_changed" if "channel_changed" in str(exc) else exc.__class__.__name__
+                    self.store.finish_command(command_id, "failed")
+                    self.store.queue_ack(command_id, "failed", {"reason": reason})
 
     def put_state(self) -> None:
         state = self.adapter.state()

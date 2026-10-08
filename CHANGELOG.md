@@ -1,3 +1,17 @@
+## v0.2.2 — SMS reliability and operational health
+
+- Make enrollment token consumption atomic under SQLite write locking; include concurrency regression test.
+- Prioritize live inbound SMS over historical backfill, cap automatic history imports, and load the newest events in PWA first with older-event pagination.
+- Reject remote Android SMS when default SMS role is unavailable; report role, permission, SIM and last-success/error metrics.
+- Require actual SIM ICCID/IMSI in direct AT and ModemManager adapters; reject unknown identity and recheck immediately before remote modem sending.
+- Prevent silent multipart part overwrite and use content-distinct multipart event IDs.
+- Treat interrupted/uncertain Android and Linux modem SMS submissions as submitted/unknown, not safe for automatic resend.
+- Recognize OTP locally on Linux/DJI modem nodes without leaking codes outside E2EE.
+- Synchronize critical Android Keystore-wrapped credential writes and SIM identity revisions.
+- Preserve MMS WAP PUSH PDU encrypted in private device storage and alert users; full carrier MMSC media download remains unsupported.
+- Add native generic metadata-only Bark and ntfy push adapters, plus a multi-modem systemd template for independently enrolled nodes.
+- Retain v0.2.1 release-signing identity and mandatory pinned-certificate verification.
+
 ## v0.2.1 — Production hardening
 
 - Require release-signed Android artifacts with pinned certificate verification; remove debug-release fallback workflows.

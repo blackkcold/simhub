@@ -31,7 +31,7 @@ public final class SecretStore {
     public void putBytes(String name, byte[] value) throws Exception {
         Cipher c = Cipher.getInstance("AES/GCM/NoPadding"); c.init(Cipher.ENCRYPT_MODE, key());
         byte[] ct = c.doFinal(value); String packed = b64(c.getIV()) + "." + b64(ct);
-        prefs.edit().putString(name, packed).apply();
+        if(!prefs.edit().putString(name,packed).commit())throw new IllegalStateException("Keystore-wrapped secret was not durably stored");
     }
     public byte[] getBytes(String name) throws Exception {
         String packed = prefs.getString(name, null); if (packed == null) return null;
@@ -41,7 +41,7 @@ public final class SecretStore {
     }
     public void putString(String name, String value) throws Exception { putBytes(name, value.getBytes(StandardCharsets.UTF_8)); }
     public String getString(String name) throws Exception { byte[] b = getBytes(name); return b == null ? null : new String(b, StandardCharsets.UTF_8); }
-    public void remove(String name) { prefs.edit().remove(name).apply(); }
+    public void remove(String name) { if(!prefs.edit().remove(name).commit())throw new IllegalStateException("Unable to durably erase stored secret"); }
     private static String b64(byte[] b) { return Base64.encodeToString(b, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING); }
     private static byte[] ub64(String s) { return Base64.decode(s, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING); }
 }

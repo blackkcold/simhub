@@ -78,3 +78,27 @@ For DJI/Quectel direct-AT nodes, concatenated SMS UDH is detected from the PDU r
 - groups still incomplete after 24 hours are emitted once with `multipartIncomplete=true`, `partsReceived` and `partsExpected` inside the encrypted payload.
 
 This prevents orphan fragments from filling modem/SIM message storage indefinitely.
+
+
+## Multiple USB / DJI SIM nodes (v0.2.2)
+
+Each physical modem uses its **own enrollment**, credentials, SQLite queue, and service instance. The instance template is `simhub-modem@.service`.
+
+For example, for a device alias `dongle-a`:
+
+```bash
+sudo install -d -o simhub-modem -g simhub-modem -m 0700 /var/lib/simhub-modem/dongle-a
+sudo install -m 0600 -o simhub-modem -g simhub-modem enrollment-a.json /var/lib/simhub-modem/dongle-a/enrollment.json
+
+# Bind to a stable /dev/serial/by-id path, NOT /dev/ttyUSB2 which may change after a reboot.
+printf '%s\\n' 'SIMHUB_AT_PORT=/dev/serial/by-id/usb-EXACT_MODEM_PORT' | sudo tee /etc/simhub-modem/dongle-a.env
+sudo chmod 0640 /etc/simhub-modem/dongle-a.env
+
+sudo -u simhub-modem /opt/simhub-modem/venv/bin/python /opt/simhub-modem/simhub_modem_agent.py \\
+  --config /var/lib/simhub-modem/dongle-a/config.json enroll \\
+  --file /var/lib/simhub-modem/dongle-a/enrollment.json --adapter dji-at
+sudo rm -f /var/lib/simhub-modem/dongle-a/enrollment.json
+sudo systemctl enable --now simhub-modem@dongle-a
+```
+
+Use a distinct alias and serial port for each modem. For ModemManager, use an instance-specific `SIMHUB_MODEM_ID` (a stable mmcli modem identifier when available), and enroll with `--adapter modemmanager`. Never let two service instances manage the same physical modem storage or AT port. A multi-device autodiscovery wizard is not yet implemented; explicit device bindings are intentional to avoid wrong-SIM sends.

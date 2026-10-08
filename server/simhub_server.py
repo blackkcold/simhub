@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -46,6 +46,9 @@ REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
+NOTIFY_BARK_URL = os.getenv("SIMHUB_NOTIFY_BARK_URL", "").strip()
+NOTIFY_NTFY_URL = os.getenv("SIMHUB_NOTIFY_NTFY_URL", "").strip()
+NOTIFY_NTFY_TOKEN = os.getenv("SIMHUB_NOTIFY_NTFY_TOKEN", "").strip()
 NOTIFY_BEARER = os.getenv("SIMHUB_NOTIFY_WEBHOOK_BEARER", "").strip()
 NOTIFY_OTP_ONLY = os.getenv("SIMHUB_NOTIFY_OTP_ONLY", "false").lower() in {"1","true","yes","on"}
 NOTIFY_MAX_AGE = max(30, min(int(os.getenv("SIMHUB_NOTIFY_MAX_AGE", "300")), 3600))
@@ -456,7 +459,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsReceivePermission","smsSendPermission","smsOperational","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -527,7 +530,7 @@ def signal_stream() -> None:
 
 
 def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occurred_at: int) -> None:
-    if not NOTIFY_WEBHOOK or kind != "sms.received":
+    if not (NOTIFY_WEBHOOK or NOTIFY_BARK_URL or NOTIFY_NTFY_URL) or kind != "sms.received":
         return
     if abs(now()-occurred_at) > NOTIFY_MAX_AGE:
         return
@@ -544,18 +547,36 @@ def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occ
         "occurredAt":occurred_at,
     }
     def send() -> None:
-        try:
-            req=urllib.request.Request(
-                NOTIFY_WEBHOOK,
-                data=json.dumps(payload).encode(),
-                headers={"Content-Type":"application/json", **({"Authorization":f"Bearer {NOTIFY_BEARER}"} if NOTIFY_BEARER else {})},
-                method="POST",
-            )
-            urllib.request.urlopen(req,timeout=5).read(1024)
-        except Exception as exc:
-            log.warning("notification_webhook_failed %s",type(exc).__name__)
+        # Notification providers receive only generic metadata, never sender/body/OTP.
+        if NOTIFY_WEBHOOK:
+            try:
+                req=urllib.request.Request(
+                    NOTIFY_WEBHOOK,data=json.dumps(payload).encode(),
+                    headers={"Content-Type":"application/json", **({"Authorization":f"Bearer {NOTIFY_BEARER}"} if NOTIFY_BEARER else {})},method="POST",
+                )
+                urllib.request.urlopen(req,timeout=5).read(1024)
+            except Exception as exc:
+                log.warning("notification_webhook_failed %s",type(exc).__name__)
+        if NOTIFY_BARK_URL:
+            try:
+                body={"title":"SIM Hub","body":payload["message"],"group":"SIM Hub"}
+                req=urllib.request.Request(NOTIFY_BARK_URL,data=json.dumps(body).encode(),
+                    headers={"Content-Type":"application/json"},method="POST")
+                urllib.request.urlopen(req,timeout=5).read(1024)
+            except Exception as exc:
+                log.warning("notification_bark_failed %s",type(exc).__name__)
+        if NOTIFY_NTFY_URL:
+            try:
+                headers={"Title":"SIM Hub","Priority":"4" if has_otp else "3","Content-Type":"text/plain; charset=utf-8"}
+                if NOTIFY_NTFY_TOKEN:
+                    headers["Authorization"]="Bearer "+NOTIFY_NTFY_TOKEN
+                req=urllib.request.Request(NOTIFY_NTFY_URL,data=payload["message"].encode("utf-8"),
+                    headers=headers,method="POST")
+                urllib.request.urlopen(req,timeout=5).read(1024)
+            except Exception as exc:
+                log.warning("notification_ntfy_failed %s",type(exc).__name__)
     if not _outbound_executor.submit(send):
-        log.warning("notification_webhook_dropped queue_full")
+        log.warning("notification_dropped queue_full")
 
 
 def push_tickle_async(device_id: str, reason: str) -> None:
@@ -578,7 +599,7 @@ def push_tickle_async(device_id: str, reason: str) -> None:
 
 
 class SimHubHandler(BaseHTTPRequestHandler):
-    server_version = "SimHubRelay/0.2.1"
+    server_version = "SimHubRelay/0.2.2"
     sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:
@@ -826,16 +847,28 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(400,"invalid_token","Enrollment token malformed"); return
         token_hash=sha256_text(token); ts=now()
         with open_db() as con:
+            # Serialize enrollment claims at read time; avoids SQLite lock-upgrade
+            # deadlocks between two concurrent consumers of the same token.
+            con.execute("BEGIN IMMEDIATE")
             row=con.execute("SELECT * FROM enrollment_tokens WHERE token_hash=?",(token_hash,)).fetchone()
             if not row or row["used_at"] is not None or row["expires_at"]<ts:
-                audit("enrollment.consume","","denied",self.ip)
+                log.warning("Enrollment token rejected for %s",self.ip)
                 self.send_error_json(401,"invalid_enrollment","Enrollment token invalid, expired, or already used"); return
             if row["key_id"]:
                 proof=str(body.get("bootstrapProof",""))
                 expected=str(row["bootstrap_hash"] or "")
                 if not expected or not BOOTSTRAP_PROOF_RE.fullmatch(proof) or not hmac.compare_digest(expected,proof):
-                    audit("enrollment.bootstrap",row["id"],"denied",self.ip)
+                    log.warning("Enrollment bootstrap proof rejected")
                     self.send_error_json(401,"invalid_bootstrap_proof","Bootstrap secret proof is invalid"); return
+            # Atomic single-use claim: another request may have read the same row before us.
+            # UPDATE obtains SQLite's writer lock; only one claimant can match used_at IS NULL.
+            claimed=con.execute(
+                "UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}',bootstrap_hash='' "
+                "WHERE id=? AND used_at IS NULL AND expires_at>=?",
+                (ts,row["id"],ts),
+            )
+            if claimed.rowcount!=1:
+                self.send_error_json(401,"invalid_enrollment","Enrollment token already consumed"); return
             device_id=str(uuid.uuid4()); device_token=new_token(48)
             node_type=normalize_node_type(row["node_type"] or body.get("nodeType","android"))
             capabilities=normalize_capabilities(safe_json_loads(row["capabilities_json"],[]) or body.get("capabilities",[]))
@@ -847,7 +880,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 (device_id,sha256_text(device_token),name,str(body.get("group",""))[:80],str(body.get("model",""))[:120],str(body.get("osVersion",""))[:40],str(body.get("appVersion",""))[:40],ts,ts,node_type,json.dumps(capabilities,separators=(",",":")),str(row["key_id"] or "")[:80],str(row["wrapped_key_json"] or "{}"),ts),
             )
             bootstrap=safe_json_loads(row["bootstrap_envelope_json"],{})
-            con.execute("UPDATE enrollment_tokens SET used_at=?,bootstrap_envelope_json='{}',bootstrap_hash='' WHERE id=?",(ts,row["id"]))
+
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
         self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None,"bootstrapEnvelope":bootstrap or None})
 
@@ -964,12 +997,20 @@ class SimHubHandler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_error_json(400,"invalid_query","since/limit must be integers"); return
         device=q.get("device",[""])[0]; kind=q.get("kind",[""])[0]
-        where=["seq>?"]; args:list[Any]=[since]
+        latest=q.get("latest",["0"])[0]=="1"
+        try: before=max(0,int(q.get("before",["0"])[0]))
+        except ValueError:
+            self.send_error_json(400,"invalid_query","before must be a sequence number");return
+        if latest and before:
+            self.send_error_json(400,"invalid_query","latest and before cannot both be set");return
+        where=["seq<?" if before else "seq>?" ]; args:list[Any]=[before if before else since]
         if device: where.append("device_id=?"); args.append(device)
         if kind: where.append("kind=?"); args.append(kind)
         args.append(limit)
         with open_db() as con:
-            rows=con.execute(f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY seq ASC LIMIT ?",args).fetchall()
+            rows=con.execute(f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY seq {'DESC' if latest or before else 'ASC'} LIMIT ?",args).fetchall()
+        if latest or before:
+            rows=list(reversed(rows))
         events=[{"seq":r["seq"],"eventId":r["id"],"deviceId":r["device_id"],"kind":r["kind"],"occurredAt":r["occurred_at"],"receivedAt":r["received_at"],"subscriptionId":r["subscription_id"],"hasOtp":bool(r["has_otp"]),"metadata":safe_json_loads(r["metadata_json"],{}),"ciphertext":safe_json_loads(r["ciphertext_json"],{})} for r in rows]
         self.send_json(200,{"events":events,"nextSince":events[-1]["seq"] if events else since})
 

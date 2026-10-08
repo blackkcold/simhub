@@ -50,6 +50,17 @@ public final class StateCollector {
             }
 
 
+            o.put("dataFallbackEnabled",cfg.dataFallbackEnabled())
+                    .put("dataFallbackChannelId",cfg.dataFallbackChannel())
+                    .put("dataFallbackStatus",NetworkFailoverPolicy.status(c));
+            try {
+                ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
+                NetworkCapabilities caps=cm.getNetworkCapabilities(cm.getActiveNetwork());
+                o.put("internetValidated",caps!=null&&caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+                        .put("wifiConnected",caps!=null&&caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+                        .put("cellularConnected",caps!=null&&caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
+            }catch(Exception ignored){}
+
             RoleManager role=c.getSystemService(RoleManager.class);
             boolean smsRole=role!=null&&role.isRoleAvailable(RoleManager.ROLE_SMS)&&role.isRoleHeld(RoleManager.ROLE_SMS);
             boolean recvPermission=c.checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED;

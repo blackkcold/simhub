@@ -8,7 +8,7 @@ const AUTO_LOCK_MS = 15 * 60 * 1000;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false;
-let olderCursor=null,historyHasMore=true,visibleLimit=30;
+let olderCursor=null,historyHasMore=true,visibleOffset=0;
 const eventIds=new Set();
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
@@ -76,7 +76,7 @@ function askStepUp(label){
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
 function showUnlocked(){$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
-function lockVault(){stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleLimit=30;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
+function lockVault(){stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,AUTO_LOCK_MS-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();armAutoLock();}
 function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=AUTO_LOCK_MS){lockVault();return true;}armAutoLock();return false;}
@@ -109,12 +109,6 @@ async function ingestEvents(batch,notify=true){
       decryptedEvents.push(row);if(notify)maybeNotify(row);
     }catch(err){decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}
   }
-  if(decryptedEvents.length>600){
-    decryptedEvents.sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
-    decryptedEvents=decryptedEvents.slice(0,600);
-    eventIds.clear();for(const e of decryptedEvents)eventIds.add(e.deviceId+':'+e.eventId);
-    events=decryptedEvents;
-  }
   return changed;
 }
 async function loadEvents(){
@@ -140,12 +134,14 @@ async function loadEvents(){
 async function loadOlder(){
   if(!vaultKey)return;
   const count=collapseMessageEvents(decryptedEvents).length;
-  if(visibleLimit<count){visibleLimit+=30;renderInbox();return;}
+  if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
   if(!historyHasMore||!olderCursor)return;
   const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
   olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
-  historyHasMore=!!r.hasMore;visibleLimit+=30;
-  await ingestEvents(r.events||[],false);renderInbox();
+  historyHasMore=!!r.hasMore;
+  await ingestEvents(r.events||[],false);
+  if(collapseMessageEvents(decryptedEvents).length>visibleOffset+30)visibleOffset+=30;
+  renderInbox();
 }
 let refreshing=null;
 async function fullRefresh(){
@@ -192,8 +188,9 @@ function renderInbox(){
   const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
   const list=collapseMessageEvents(decryptedEvents).filter(e=>(!dev||e.deviceId===dev)&&(!kind||e.kind===kind)).filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));}).sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
   $('emptyInbox').hidden=!!list.length;let otpCount=0;
-  $('loadOlderBtn').hidden=!historyHasMore&&list.length<=visibleLimit;
-  $('inboxList').innerHTML=list.slice(0,visibleLimit).map(e=>{
+  $('loadOlderBtn').hidden=!historyHasMore&&list.length<=visibleOffset+30;
+  $('loadNewerBtn').hidden=visibleOffset===0;
+  $('inboxList').innerHTML=list.slice(visibleOffset,visibleOffset+30).map(e=>{
     const p=e.payload||{},inbound=e.kind==='sms.received'||p.direction==='in',who=p.contactName||p.sender||p.recipient||tr('unknown');
     const body=e.decryptError?'['+tr('decrypt_failed')+': '+escapeHtml(e.decryptReason||'vault mismatch')+']':escapeHtml(p.body||'');
     if(p.otp&&p.otp.value&&inbound)otpCount++;
@@ -257,12 +254,13 @@ function wire(){
   $('lockBtn').onclick=lockVault;
   $('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast(tr('vault_locked'));
   document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
-  $('search').oninput=renderInbox;
-  $('deviceFilter').onchange=renderInbox;
-  $('kindFilter').onchange=renderInbox;
+  $('search').oninput=()=>{visibleOffset=0;renderInbox();};
+  $('deviceFilter').onchange=()=>{visibleOffset=0;renderInbox();};
+  $('kindFilter').onchange=()=>{visibleOffset=0;renderInbox();};
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
+  $('loadNewerBtn').onclick=()=>{visibleOffset=Math.max(0,visibleOffset-30);renderInbox();};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
   $('addDeviceBtn').onclick=()=>{switchView('settings');$('enrollCard').scrollIntoView({behavior:'smooth',block:'start'});$('enrollName').focus({preventScroll:true});};
   $('enrollBtn').onclick=async()=>{

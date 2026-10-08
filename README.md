@@ -421,7 +421,7 @@ v0.2.1 and later release workflows require the pinned long-term signing identity
 
 ### Server
 
-The relay is intentionally lightweight and uses Python's standard library + SQLite.
+The relay is intentionally lightweight and uses Python + SQLite and a WebAuthn verification dependency.
 
 ```bash
 export SIMHUB_ADMIN_TOKEN="$(python3 scripts/gen_admin_token.py --raw)"

@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))

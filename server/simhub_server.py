@@ -868,6 +868,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
             # increase the authentication-failure bucket for an absent or expired
             # cookie; retain the independent per-IP preflight budget.
             if not admin_auth(self.headers):
+                if self.headers.get("Authorization"):
+                    if not auth_rate_allowed(self.ip):
+                        self.send_error_json(429,"rate_limited","Too many authentication failures"); return
+                    auth_rate_fail(self.ip)
                 self.send_error_json(401,"unauthorized","No active administrator session"); return
             with open_db() as con:
                 num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]

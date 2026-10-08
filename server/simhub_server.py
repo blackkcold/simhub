@@ -312,6 +312,11 @@ def _migrate_v6(con: sqlite3.Connection) -> None:
     _add_column(con,"enrollment_tokens","bootstrap_hash","TEXT NOT NULL DEFAULT ''")
 
 
+def _migrate_v7(con: sqlite3.Connection) -> None:
+    _add_column(con, "admin_sessions", "admin_fingerprint", "TEXT NOT NULL DEFAULT ''")
+    _add_column(con, "admin_sessions", "elevated_until", "INTEGER NOT NULL DEFAULT 0")
+    con.execute("DELETE FROM admin_sessions WHERE admin_fingerprint=''")
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
@@ -321,8 +326,9 @@ def init_db() -> None:
         _migrate_v4(con)
         _migrate_v5(con)
         _migrate_v6(con)
+        _migrate_v7(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=6")
+        con.execute("PRAGMA user_version=7")
     run_maintenance()
 
 
@@ -334,7 +340,7 @@ def run_maintenance() -> dict[str,int]:
         if AUDIT_RETENTION_DAYS>0:
             result["audit"]=con.execute("DELETE FROM audit WHERE occurred_at<?",(ts-AUDIT_RETENTION_DAYS*86400,)).rowcount
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
-        result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=?",(ts,)).rowcount
+        result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
     return result
@@ -395,6 +401,12 @@ def _cookie_session(headers) -> str:
         return ""
 
 
+def session_fingerprint() -> str:
+    return sha256_text("simhub-session-v1|" + ADMIN_TOKEN)
+
+def csrf_for_session(token: str) -> str:
+    return hmac.new(ADMIN_TOKEN.encode(), ("simhub-csrf-v1|" + token).encode(), hashlib.sha256).hexdigest()
+
 def session_valid(headers) -> bool:
     token = _cookie_session(headers)
     if not token or not TOKEN_RE.match(token):
@@ -402,8 +414,8 @@ def session_valid(headers) -> bool:
     ts = now()
     digest = sha256_text(token)
     with open_db() as con:
-        row = con.execute("SELECT expires_at,last_seen_at FROM admin_sessions WHERE token_hash=?", (digest,)).fetchone()
-        if not row or row["expires_at"] <= ts:
+        row = con.execute("SELECT expires_at,last_seen_at,admin_fingerprint FROM admin_sessions WHERE token_hash=?", (digest,)).fetchone()
+        if not row or row["expires_at"] <= ts or ts-row["last_seen_at"] >= SESSION_IDLE_TTL or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint()):
             if row:
                 con.execute("DELETE FROM admin_sessions WHERE token_hash=?", (digest,))
             return False
@@ -427,14 +439,17 @@ def admin_auth(headers) -> bool:
 def auth_rate_allowed(ip: str) -> bool:
     ts = now()
     with _auth_lock:
-        values = [x for x in _auth_failures.get(ip, []) if ts-x < 60]
-        _auth_failures[ip] = values
-        return len(values) < 10
+        for key in list(_auth_failures):
+            valid = [v for v in _auth_failures[key] if ts-v < 60]
+            if valid: _auth_failures[key] = valid
+            else: _auth_failures.pop(key, None)
+        return len(_auth_failures.get(ip, [])) < 5 and (ip in _auth_failures or len(_auth_failures) < 4096)
 
 
 def auth_rate_fail(ip: str) -> None:
     with _auth_lock:
-        _auth_failures.setdefault(ip, []).append(now())
+        if ip in _auth_failures or len(_auth_failures) < 4096:
+            _auth_failures.setdefault(ip, []).append(now())
 
 
 def auth_rate_success(ip: str) -> None:
@@ -449,8 +464,8 @@ def create_session(ip: str) -> tuple[str,int]:
     with open_db() as con:
         con.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
         con.execute(
-            "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip) VALUES(?,?,?,?,?)",
-            (sha256_text(token),ts,exp,ts,ip[:80]),
+            "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint) VALUES(?,?,?,?,?,?)",
+            (sha256_text(token),ts,exp,ts,ip[:80],session_fingerprint()),
         )
     return token, exp
 
@@ -744,7 +759,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<6:
+                if version<7:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:

@@ -17,6 +17,10 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/status_section" android:textColor="@color/text_secondary" android:textSize="12sp" android:textStyle="bold" />
             <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/status_not_enrolled" android:textColor="@color/text_primary" android:textSize="18sp" android:textStyle="bold" />
         </LinearLayout>
+        <TextView style="@style/SectionTitle" android:text="@string/sim_status_section" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="18dp">
+            <TextView android:id="@+id/simSummary" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/sim_status_empty" android:textColor="@color/text_primary" android:textSize="14sp" android:lineSpacingExtra="3dp" />
+        </LinearLayout>
         <TextView style="@style/SectionTitle" android:text="@string/enrollment_section" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="18dp">
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/enrollment_help" android:textColor="@color/text_secondary" android:textSize="13sp" />

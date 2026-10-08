@@ -1,3 +1,13 @@
+## v0.3.1 — Management UI security update
+
+- Introduce independent management and node API origins.
+- Add browser CSRF protection, origin verification and server-enforced idle session expiry.
+- Introduce second-factor confirmation before sensitive changes.
+- Add resource budgets for network connections and remote SMS transmissions.
+- Fix HTML escaping for live device telemetry in the browser.
+- Add deployment guidance, security integration tests and a CodeQL CI workflow.
+- Preserve existing encrypted SMS and node transport protocols.
+
 ## v0.3.0 — Localized UI and developer diagnostics
 
 - Redesign the Android Agent UI into a card-based dashboard with responsive single-column phone and two-column foldable/tablet layouts.

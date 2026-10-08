@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.3.2.trigger'
+      - '.github/release/v0.4.0.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.3.2.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.4.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -71,7 +71,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - run: python3 -m pip install -r modem_agent/requirements.txt
+      - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_v040
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py
       - run: PYTHONPATH=server python3 server/test_migration.py
@@ -80,7 +81,7 @@ jobs:
       - run: node --check web/app.js && node --check web/i18n.js && node --check web/sw.js
       - run: node web/test_crypto_vector.mjs
       - run: node web/test_bootstrap_vector.mjs
-      - run: python3 -m py_compile server/simhub_server.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
+      - run: python3 -m py_compile server/simhub_server.py server/passkeys.py scripts/setup.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
       - run: bash -n modem_agent/install.sh
 
   sign:
@@ -229,7 +230,7 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Device enrollment and staged SMS history reliability release for Android and Linux/DJI modem nodes.
+          Guided deployment, hardened proxy handling, Passkey authentication and unified SMS conversations.
 
           ## Highlights
           - newest-100 Android SMS bootstrap, on-demand older-100 backfill and durable cursors;

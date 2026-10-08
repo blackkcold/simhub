@@ -1,1 +1,7 @@
-<resources><color name="page_bg">#FF0B0C0F</color><color name="card_bg">#FF15171C</color><color name="input_bg">#FF20232A</color><color name="code_bg">#FF20232A</color><color name="text_primary">#FFF4F6F8</color><color name="text_secondary">#FFB0B5BE</color><color name="text_tertiary">#FF7D838E</color><color name="button_primary">#FFF4F6F8</color><color name="button_primary_text">#FF111318</color><color name="button_secondary">#FF20232A</color><color name="button_secondary_text">#FFF4F6F8</color><color name="danger">#FFFF8A84</color><color name="warning_bg">#FF332A11</color><color name="warning_text">#FFFFD77A</color><color name="stroke">#FF2C3038</color></resources>
+<resources>
+<color name="page_bg">#FF0C1223</color><color name="card_bg">#FF151E32</color><color name="input_bg">#FF1B2941</color><color name="code_bg">#FF1B2941</color>
+<color name="text_primary">#FFF0F4FF</color><color name="text_secondary">#FFABB8D0</color><color name="text_tertiary">#FF8494B3</color>
+<color name="brand_primary">#FFA49DFF</color><color name="button_primary">#FFA49DFF</color><color name="button_primary_text">#FF10142B</color>
+<color name="button_secondary">#FF242E4C</color><color name="button_secondary_text">#FFE2E0FF</color>
+<color name="danger">#FFFF95A5</color><color name="warning_bg">#FF3A301F</color><color name="warning_text">#FFFFDB95</color><color name="stroke">#FF2D3954</color>
+</resources>

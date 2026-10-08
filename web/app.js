@@ -323,6 +323,7 @@ function nodeChannels(d){
 }
 function channelTitle(ch){return (ch.phoneNumber?ch.phoneNumber+' · ':'')+(ch.alias||ch.displayName||ch.carrierName||ch.id);}
 function messageChannelLabel(e){
+  if(e.kind==='sms.history'&&!e.payload?.channelId)return '历史卡槽 '+(e.subscriptionId||'—')+'（号码归属未验证）';
   const d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e);
   const channel=nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id);
   return channel?channelTitle(channel):id;

@@ -1,3 +1,14 @@
+## v0.4.0 — Secure guided deployment and unified SMS conversations
+
+- Fix Issue #23: trust only the exact Docker default-route gateway for loopback-published ports, preserve forwarded client IP isolation and restore host health probes.
+- Deny public health endpoints at managed/default Caddy proxy; add configuration regression checks.
+- Add a Linux setup wizard with managed HTTPS Caddy or existing-proxy mode, DNS diagnostics, strong bootstrap secrets, strict admin/node hostname separation, and non-destructive upgrades.
+- Add configurable administrator username and WebAuthn/FIDO2 Passkeys for sign-in and sensitive-action confirmation; existing admin token + TOTP remains a recovery option.
+- Keep browser Vault keys independent of Passkey authentication and Relay session cookies; no unencrypted SMS content is transmitted to Relay.
+- Combine the SMS viewer and sender into threaded inboxes with direct reply, SIM-aware routing, new-message action and mobile-responsive composer.
+- Standardize modal and form spacing, invalidate old PWA assets, and add UI browser screenshot smoke tests.
+- Preserve existing Android/Modem encrypted command protocol and staged message history loading.
+
 ## v0.3.2 — SMS history performance and device enrollment reliability
 
 - New Android enroll safeguard: prevent duplicate submissions and move telephony/SIM status collection off the main thread.

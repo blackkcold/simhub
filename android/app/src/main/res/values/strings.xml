@@ -17,6 +17,8 @@
     <string name="setup_section">System setup</string>
     <string name="make_default_sms">Set as default SMS app</string>
     <string name="grant_core_permissions">Grant SMS / SIM permissions</string>
+    <string name="open_mobile_data_settings">Open mobile data / default SIM settings</string>
+    <string name="mobile_data_help">Android switches from Wi-Fi to the system-selected default data SIM automatically if mobile data is already enabled. Normal apps cannot force a different default SIM; configure it here.</string>
     <string name="enable_contacts">Enable contact-name mapping (optional)</string>
     <string name="relay_section">Relay &amp; synchronization</string>
     <string name="start_relay">Start always-on relay</string>

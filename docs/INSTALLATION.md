@@ -44,13 +44,13 @@ docker compose exec -T simhub python3 -c "import urllib.request; print(urllib.re
 
 If using managed Caddy, add `-f docker-compose.yml -f compose.caddy.yml` to Compose commands where needed. Public requests to either `/healthz` or `/readyz` must be denied.
 
-## 4. Prepare the controller
+## 4. Prepare the controller (v0.4.0 and v0.5.0)
 
-1. Open the PWA in a modern browser.
-2. Enter the server admin token.
-3. If TOTP is enabled, enter the current six-digit TOTP once to create the browser session.
-4. Create, import, or unlock the local Vault.
-5. Keep the Master Vault recovery material secure. The server does not possess it and cannot recover encrypted SMS for you. New nodes receive independent Node Keys, not the Master Vault Key.
+1. Open **`https://admin.example.com`** with a modern browser. Sign in using the configured **administrator username** (default `admin`), Admin Token and TOTP. After initial sign-in, you can register FIDO2 **Passkeys** under **Settings → Passkeys**. Passkeys authenticate the administrator; they do **not** decrypt the local Vault on another browser.
+2. Create, import or unlock the **local Master Vault**. Keep its recovery key offline: the server cannot recover SMS plaintext. A new enrollment link contains one-time credentials and a Bootstrap Secret, not the long-term Node Key.
+3. Starting with v0.5.0, administrator and Vault inactivity windows match (**8 hours by default**; admin session **24-hour absolute limit**). An active tab refresh first verifies the HttpOnly session and then resumes an encrypted tab-local Vault snapshot. Explicit Lock, logout or expiry invalidates that shortcut. A different browser/device still needs Vault recovery material.
+4. Use **Inbox** for SMS conversations and direct replies, **+ New message** for remote sending, **Devices** for SIM numbers, charging/Wi-Fi, bounded history synchronization and diagnostics, and **Settings** for enrollment, Passkeys and Vault recovery.
+5. Android may not reveal its phone number. In **Devices → Set number**, supply an override that is Vault-encrypted **only in that browser** (it does not automatically sync to other controllers).
 
 ## 5. Install the Android Agent
 

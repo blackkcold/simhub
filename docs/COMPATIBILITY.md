@@ -10,7 +10,10 @@
 | SMS receive | `SMS_DELIVER` default-handler path |
 | SMS send | Android: `SmsManager.createForSubscriptionId()` after Channel validation; Linux: ModemManager or DJI adapter |
 | Linux / DJI modem | Generic Node + Channel model; ModemManager and DJI Gen1/QDC507 adapter paths |
-| History | Android SMS Provider incremental sync |
+| History | Android incremental sync plus recent 100 rescan and older 100 backfill |
+| SIM phone number | Android operator APIs when available; local encrypted manual override; encrypted Node Key inventory |
+| Data fallback | Uses the system-selected default data SIM with Android native network routing; no privileged default-data-SIM switching |
+| Remote diagnostics | Node Key encrypted health events in Controller; Android full logs remain local |
 | Contacts | Optional `READ_CONTACTS`, encrypted before relay |
 | Low-latency command relay | User-started foreground service; optional external FCM/OEM push-tickle adapter can wake HTTPS command fetch |
 | Recovery sync | JobScheduler, 15-minute periodic + best-effort immediate job |

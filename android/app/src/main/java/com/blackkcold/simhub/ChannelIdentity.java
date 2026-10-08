@@ -35,6 +35,17 @@ public final class ChannelIdentity {
         return new Channel(id,rev,s.getSubscriptionId(),s.getSimSlotIndex());
     }
 
+    public static Channel forSubscription(Context c,int subscriptionId){
+        try{
+            SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);
+            List<SubscriptionInfo> list=sm.getActiveSubscriptionInfoList();
+            if(list!=null)for(SubscriptionInfo si:list){
+                if(si.getSubscriptionId()==subscriptionId)return describe(c,si);
+            }
+        }catch(Exception ignored){}
+        return null;
+    }
+
     public static Channel resolve(Context c,String channelId,long expectedRevision){
         try{
             SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);

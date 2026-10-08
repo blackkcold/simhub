@@ -40,6 +40,7 @@
             <Button android:id="@+id/startRelayButton" style="@style/PrimaryButton" android:text="@string/start_relay" />
             <Button android:id="@+id/stopRelayButton" style="@style/SecondaryButton" android:layout_marginTop="10dp" android:text="@string/stop_relay" />
             <Button android:id="@+id/syncButton" style="@style/SecondaryButton" android:layout_marginTop="10dp" android:text="@string/sync_now" />
+            <Button android:id="@+id/olderSyncButton" style="@style/SecondaryButton" android:layout_marginTop="10dp" android:text="@string/sync_older" />
             <Button android:id="@+id/refreshButton" style="@style/SecondaryButton" android:layout_marginTop="10dp" android:text="@string/refresh_state" />
         </LinearLayout>
         <TextView style="@style/SectionTitle" android:text="@string/settings_section" />

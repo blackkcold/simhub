@@ -54,6 +54,9 @@ def consume_challenge(con, challenge_id: str, kind: str, username: str, session_
     if not row:
         raise ValueError("Challenge expired or already consumed")
     con.execute("DELETE FROM passkey_challenges WHERE id=?", (challenge_id,))
+    # Burn challenges before verification, including when a malformed response
+    # causes the surrounding request transaction to roll back.
+    con.commit()
     return decode(row["challenge"])
 
 

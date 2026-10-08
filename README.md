@@ -26,7 +26,7 @@ Use your own server as an encrypted relay to remotely receive SMS, extract OTPs,
 
 The Web controller adapts to desktop and mobile screens; the Android SIM Node uses a native interface. Both share the SIM Hub identity, with light and dark appearance support.
 
-> **Preview note:** These are **illustrative representations** based on the current UI layout, using synthetic, redacted demo content. They are not screenshots from a logged-in server or evidence of hardware testing. Actual screens vary by device, locale and data.
+> **Preview note:** These are **illustrative representations** based on the current UI layout, using synthetic, redacted demo content. They are not screenshots from a logged-in server or evidence of hardware testing. New v0.4/v0.5 conversation, diagnostics and SIM/failover controls are described below rather than shown in these static illustrations. Actual screens vary by device, locale and data.
 
 **Web / PWA · Desktop**
 
@@ -131,7 +131,7 @@ The relay is intentionally **blind to SMS plaintext**. New nodes receive a rando
 | **Controller** | Installable PWA with inbox, OTP copy, search, send, devices, recovery import, SSE realtime updates and diagnostics |
 | **Localized UI** | Android + Web/PWA support Simplified Chinese and English; Android also follows the system language and has responsive foldable/tablet layouts |
 | **Developer diagnostics** | Opt-in Android diagnostic logging with automatic secret/SMS/OTP redaction, rotating local logs and ZIP export |
-| **Authentication** | High-entropy admin token + optional TOTP at login, then short-lived HttpOnly session |
+| **Authentication** | Username + Admin Token/TOTP or FIDO2 Passkey; HttpOnly 8-hour idle / 24-hour absolute session; active-tab Vault refresh recovery |
 | **Notifications** | Optional metadata-only webhook for Bark/ntfy/custom bridges |
 | **Operations** | Docker deployment, health endpoint, audit log, backups, OTA metadata |
 
@@ -204,11 +204,11 @@ Retain `--mode external` if an external proxy manages TLS. Upgrade preserves exi
 ```text
 1. Deploy Relay Server
         ↓
-2. Configure HTTPS + SIMHUB_PUBLIC_BASE_URL
+2. Configure two HTTPS hosts: admin and node
         ↓
-3. Open Web/PWA Controller
+3. Open Web/PWA Controller; sign in as admin
         ↓
-4. Create/unlock local Vault
+4. Create/unlock local Vault; register optional Passkey
         ↓
 5. Generate a one-time bootstrap enrollment link
         ↓
@@ -248,9 +248,9 @@ In daily use, open the PWA on your computer, tablet or another phone. New messag
 ### Sending SMS remotely
 
 ```text
-PWA: choose node
+PWA: open a conversation to reply or + New message
     ↓
-choose SIM / subscription
+choose device + identified SIM / subscription
     ↓
 enter recipient + message
     ↓

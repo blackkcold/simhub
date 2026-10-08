@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.4.0.trigger'
+      - '.github/release/v0.5.0.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.4.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.5.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -231,14 +231,14 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Guided deployment, hardened proxy handling, Passkey authentication and unified SMS conversations.
+          Unified administrator/Vault idle expiry, SIM identifiers and device network telemetry, explicit 100-message SMS pagination, remote diagnostics.
 
           ## Highlights
-          - Docker published-port client IP, audit and health endpoint fixes (Issue #23);
-          - managed Caddy TLS, DNS checks and safe one-command Linux setup;
-          - administrator username, FIDO2 Passkey login, registration and step-up;
-          - unified SMS conversations, direct replies, multi-SIM routing and new-message button;
-          - consistent responsive UI spacing and browser regression coverage;
+          - 24-hour session absolute expiry, 8-hour idle expiry, and encrypted per-tab Vault refresh recovery;
+          - encrypted SIM-number inventory with manual controller overrides and charging/Wi-Fi telemetry;
+          - distinct recent/older 100-SMS synchronization commands;
+          - decrypted remote health-check results with request correlation;
+          - Android system-default data SIM failover monitoring and guided network setup;
           - compatibility preserved for existing E2EE Node Keys and Android/Modem Agents.
 
           Full details are in CHANGELOG.md and the documentation bundle.

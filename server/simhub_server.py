@@ -723,12 +723,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not auth_rate_allowed(self.ip):
             self.send_error_json(429,"rate_limited","Too many authentication failures"); return False
         if admin_auth(self.headers):
+            if not self.csrf_valid():
+                audit("auth.csrf","","denied",self.ip)
+                self.send_error_json(403,"invalid_csrf","CSRF token required"); return False
+            if not rate_allowed("admin", _cookie_session(self.headers) or self.ip, 120):
+                self.send_error_json(429,"rate_limited","Admin request rate exceeded"); return False
             auth_rate_success(self.ip); return True
         auth_rate_fail(self.ip)
         audit("auth.admin","","denied",self.ip)
         self.send_error_json(401,"unauthorized","Authenticated admin session required"); return False
 
     def require_device(self,device_id:str) -> sqlite3.Row | None:
+        if not rate_allowed("device", device_id+":"+self.ip, 180):
+            self.send_error_json(429,"rate_limited","Device request rate exceeded"); return None
         auth=self.headers.get("Authorization","")
         if not auth.startswith("Device "):
             self.send_error_json(401,"unauthorized","Device token required"); return None
@@ -747,11 +754,64 @@ class SimHubHandler(BaseHTTPRequestHandler):
         parsed=urllib.parse.urlsplit(self.path)
         return parsed.path,[urllib.parse.unquote(p) for p in parsed.path.split("/") if p],urllib.parse.parse_qs(parsed.query)
 
+    def is_device_route(self, method: str, path: str) -> bool:
+        if method == "POST" and path == "/api/v1/enroll": return True
+        if method == "GET" and path == "/api/v1/ota": return True
+        if re.fullmatch(r"/api/v1/devices/[^/]+/commands/pending", path):
+            return method == "GET"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/(?:events|state|heartbeat|token/(?:prepare|commit))", path):
+            return method == "POST"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/ack", path):
+            return method == "POST"
+        return False
+
+    def preflight(self, method: str, path: str) -> bool:
+        if not rate_allowed("ip", self.ip, 180):
+            self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin:
+            allowed = {MANAGEMENT_ORIGIN, PUBLIC_BASE_URL}
+            if origin not in allowed or self.headers.get("Sec-Fetch-Site", "") == "cross-site":
+                self.send_error_json(403, "bad_origin", "Untrusted origin"); return False
+        if SEPARATE_SURFACES:
+            admin_host = urllib.parse.urlsplit(MANAGEMENT_ORIGIN).netloc.lower()
+            device_host = urllib.parse.urlsplit(PUBLIC_BASE_URL).netloc.lower()
+            request_host = self.headers.get("Host", "").lower()
+            if request_host not in {admin_host, device_host}:
+                self.send_error_json(421, "host_mismatch", "Unrecognized hostname"); return False
+            if request_host == device_host and not self.is_device_route(method, path):
+                self.send_error_json(404, "not_found", "Endpoint is not available on the device origin"); return False
+            if request_host == admin_host and self.is_device_route(method, path) and path != "/api/v1/ota":
+                self.send_error_json(404, "not_found", "Endpoint is not available on the management origin"); return False
+        if method in {"POST","PATCH","PUT"}:
+            if self.headers.get("Content-Type", "").split(";",1)[0].strip().lower() != "application/json":
+                self.send_error_json(415, "unsupported_media_type", "JSON Content-Type required"); return False
+        return True
+
+    def csrf_valid(self) -> bool:
+        if self.command in {"GET", "HEAD", "OPTIONS"}: return True
+        if direct_admin_auth(self.headers): return True
+        raw = _cookie_session(self.headers)
+        token = self.headers.get("X-SimHub-CSRF", "")
+        return bool(raw and token and hmac.compare_digest(token, csrf_for_session(raw)))
+
+    def require_stepup(self) -> bool:
+        if not self.require_admin(): return False
+        if direct_admin_auth(self.headers): return True
+        token = _cookie_session(self.headers)
+        if token:
+            with open_db() as con:
+                row = con.execute("SELECT elevated_until FROM admin_sessions WHERE token_hash=?", (sha256_text(token),)).fetchone()
+                if row and row["elevated_until"] >= now(): return True
+        self.send_error_json(403, "stepup_required", "Recent second-factor verification required")
+        return False
+
     def do_OPTIONS(self) -> None:
         self.send_response(204); self.security_headers(); self.end_headers()
 
     def do_GET(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("GET", path): return
         if path=="/healthz":
             self.send_json(200,{"ok":True,"version":APP_VERSION,"time":now()}); return
         if path=="/readyz":
@@ -766,7 +826,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(503,"database_not_ready","Database is not ready"); return
         if path=="/api/v1/auth/check":
             if not self.require_admin(): return
-            self.send_json(200,{"ok":True,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL}); return
+            self.send_json(200,{"ok":True,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
         if path=="/api/v1/devices":
             if not self.require_admin(): return
             self.get_devices(); return
@@ -799,11 +859,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("POST", path): return
         if path=="/api/v1/auth/session":
             body=self.read_json()
             if body is None:return
             self.create_admin_session(body); return
         if path=="/api/v1/auth/logout":
+            if not self.require_admin(): return
             delete_session(self.headers)
             self.send_json(200,{"ok":True},{"Set-Cookie":f"{SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"}); return
         if path=="/api/v1/enrollments":
@@ -852,6 +914,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("DELETE", path): return
         if path=="/api/v1/events":
             if not self.require_admin():return
             try: before=int(q.get("before",["0"])[0])
@@ -868,6 +931,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def do_PATCH(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("PATCH", path): return
         if len(p)==4 and p[:3]==["api","v1","devices"]:
             if not self.require_admin():return
             body=self.read_json()
@@ -887,7 +951,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         session,exp=create_session(self.ip)
         audit("auth.session","","ok",self.ip)
         cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
-        self.send_json(201,{"ok":True,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET)},{"Set-Cookie":cookie})
+        self.send_json(201,{"ok":True,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
 
     def create_enrollment(self,body:dict[str,Any]) -> None:
         eid=str(uuid.uuid4()); token=new_token(); ts=now()

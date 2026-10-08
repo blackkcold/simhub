@@ -476,3 +476,9 @@ For an Internet-facing installation, use distinct TLS hostnames for the manageme
 - **Web controller**: opens with the most recent 30 server events, retrieves older records on demand, and keeps the inbox responsive during historical backfill.
 
 **Upgrade order:** deploy the v0.3.2 Relay first, then upgrade Android Agents to v0.3.2. Older Android agents continue using the single-event endpoint. Existing Node Keys and SMS ciphertext require no reset. The Relay's configured event retention still applies, so historical server events may expire as designed.
+
+## v0.4.0: Guided deployment, Passkeys and SMS conversations
+
+For new Linux deployments run `python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com`. This configures DNS preflight and a managed Caddy HTTPS reverse proxy. Use `--mode external` for an existing proxy. See the [quick start](docs/QUICKSTART.zh-CN.md).
+
+The Web Controller now provides administrator usernames, FIDO2/WebAuthn Passkey login and step-up, a single SMS inbox with direct reply, multi-SIM channel selection and a new-message button. Passkeys authenticate the administrator but **never decrypt or upload local Vault keys**. Keep recovery materials offline. Preserve existing `.env` and domain during upgrades; encrypted SMS and existing device protocols stay compatible.

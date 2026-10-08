@@ -33,7 +33,7 @@ CREATE TABLE audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,occurred_at INTEGER NOT
 """
 
 class MigrationTest(unittest.TestCase):
-    def test_v1_to_v6_preserves_data_and_adds_generic_nodes(self):
+    def test_v1_to_v7_preserves_data_and_adds_session_hardening(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/"legacy.db"
             with sqlite3.connect(db) as con:
@@ -50,7 +50,7 @@ class MigrationTest(unittest.TestCase):
             finally:
                 srv.DB_PATH=old
             with sqlite3.connect(db) as con:
-                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],6)
+                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],7)
                 self.assertEqual(con.execute("SELECT COUNT(*) FROM events").fetchone()[0],1)
                 device_cols={r[1] for r in con.execute("PRAGMA table_info(devices)")}
                 token_cols={r[1] for r in con.execute("PRAGMA table_info(enrollment_tokens)")}

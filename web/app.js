@@ -7,6 +7,7 @@ const PBKDF2_ITER = 310000;
 const AUTO_LOCK_MS = 15 * 60 * 1000;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
+let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true;
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
 
@@ -42,13 +43,22 @@ async function decryptEvent(e){const cipher=e.ciphertext;if(cipher&&cipher.v===1
 function versionAtLeast(v,target){const a=String(v||'0').split('.').map(Number),b=String(target).split('.').map(Number);for(let i=0;i<Math.max(a.length,b.length);i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x>y;}return true;}
 async function encryptCommand(deviceId,outer,payload){const info=devices.find(x=>x.id===deviceId);if(!versionAtLeast(info&&info.appVersion,'0.1.5')){const iv=crypto.getRandomValues(new Uint8Array(12)),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-command-v1')},vaultKey,enc.encode(JSON.stringify(payload))));return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};}const d=await deviceCrypto(deviceId),iv=crypto.getRandomValues(new Uint8Array(12)),aad=commandAad(deviceId,outer.commandId,outer.type,outer.createdAt,outer.expiresAt,outer.idempotencyKey),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode(aad)},d.key,enc.encode(JSON.stringify(payload))));return {v:2,alg:'A256GCM',kid:d.kid,iv:b64u(iv),ct:b64u(ct)};}
 
-async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body=Object.prototype.hasOwnProperty.call(opts,'body')?opts.body:null,headers={};if(body!==null)headers['Content-Type']='application/json';const res=await fetch(path,{method:method,headers:headers,body:body===null?undefined:JSON.stringify(body),cache:'no-store',credentials:'same-origin'});let data={};try{data=await res.json();}catch(e){}if(!res.ok)throw new Error(data.message||data.error||('HTTP '+res.status));return data;}
+async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body=Object.prototype.hasOwnProperty.call(opts,'body')?opts.body:null,headers={};if(body!==null)headers['Content-Type']='application/json';if(vaultKey&&Date.now()-lastActivity<60000)headers['X-SimHub-Activity']='1';if(!['GET','HEAD'].includes(method)&&path!=='/api/v1/auth/session'&&csrfToken)headers['X-SimHub-CSRF']=csrfToken;const res=await fetch(path,{method:method,headers:headers,body:body===null?undefined:JSON.stringify(body),cache:'no-store',credentials:'same-origin'});let data={};try{data=await res.json();}catch(e){}if(!res.ok)throw new Error(data.message||data.error||('HTTP '+res.status));if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;return data;}
 async function establishSession(){try{return await api('/api/v1/auth/check');}catch(e){}const adminToken=$('adminToken').value.trim(),totp=$('totp').value.trim();if(adminToken.length<32)throw new Error('Admin token is required for a new session.');const data=await api('/api/v1/auth/session',{method:'POST',body:{adminToken:adminToken,totp:totp}});$('adminToken').value='';$('totp').value='';return data;}
-async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST',body:{logout:true}});}catch(e){}}
+async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST',body:{logout:true}});}catch(e){}csrfToken='';stepUpUntil=0;}
+async function ensureStepUp(){
+  if(Date.now()<stepUpUntil-5000)return;
+  const label=secondFactorIsTotp?'请输入当前 6 位 TOTP 验证码以确认敏感操作：':'开发模式：请再次输入管理员 Token：';
+  const value=window.prompt(label);
+  if(!value)throw new Error('已取消二次验证');
+  const body=secondFactorIsTotp?{totp:value.trim()}:{adminToken:value.trim()};
+  const result=await api('/api/v1/auth/elevate',{method:'POST',body});
+  stepUpUntil=result.elevatedUntil*1000;
+}
 
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
 function showUnlocked(){$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
-function lockVault(){vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];lastSeq=0;oldestSeq=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
+function lockVault(){stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];lastSeq=0;oldestSeq=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,AUTO_LOCK_MS-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();armAutoLock();}
 function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=AUTO_LOCK_MS){lockVault();return true;}armAutoLock();return false;}
@@ -85,9 +95,9 @@ function renderDevices(){
       (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?'<button class="ghost mini" data-action="rotate-key" title="'+escapeHtml(tr('tip_rotate_key'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_rotate'))+'</button>':'')+
       (d.revoked?'':'<button class="danger mini" data-action="revoke" title="'+escapeHtml(tr('tip_revoke'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_revoke'))+'</button>');
     return '<article class="card device device-card"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+'</p></div><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(tr(stateKey))+'</span></div>'+
-      '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':s.batteryPct+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':s.pendingEvents)+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+
+      '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':escapeHtml(s.batteryPct)+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':escapeHtml(s.pendingEvents))+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+
       '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
-      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':x.signalLevel)+'</small></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';
+      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';
   }).join('');
 }
 function collapseMessageEvents(source){
@@ -114,17 +124,18 @@ function renderInbox(){
   }).join('');
   $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
 }
-async function queueCommand(deviceId,type,payload,ttl){ttl=ttl||120;const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
+async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'||type==='node.rotate_key')await ensureStepUp();ttl=ttl||120;const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
 async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
 async function createEnrollment(){
   if(!vaultRaw)throw new Error('Vault must be unlocked.');
+  await ensureStepUp();
   const type=$('enrollType').value==='modem'?'modem':'android',name=$('enrollName').value.trim()||(type==='modem'?'DJI / Modem SIM Node':'Android SIM Node');
   const nodeRaw=crypto.getRandomValues(new Uint8Array(32)),bootstrapRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw);
   let value='';
   try{
     const wrapped=await wrapNodeKey(nodeRaw,kid),bootstrapEnvelope=await encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid),bootstrap=b64u(bootstrapRaw),bootstrapHash=b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',bootstrapRaw)));
     const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
-    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope,bootstrapHash:bootstrapHash}}),server=location.origin;
+    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope,bootstrapHash:bootstrapHash}}),server=r.server||location.origin;
     if(type==='modem'){
       value=JSON.stringify({version:4,server:server,token:r.token,bootstrap:bootstrap,name:name,nodeType:'modem'},null,2);
       $('openEnroll').hidden=true;
@@ -138,11 +149,11 @@ async function createEnrollment(){
     nodeRaw.fill(0);bootstrapRaw.fill(0);
   }
 }
-async function rotateDeviceKey(deviceId){const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
+async function rotateDeviceKey(deviceId){await ensureStepUp();const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
 async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||tr('copied'));}
 function updateCharCount(){const value=$('sendBody').value,n=value.length,per=n>0&&/^[\x00-\x7F]*$/.test(value)?160:70;$('smsCount').textContent=tr('chars_parts',{chars:n,parts:Math.max(1,Math.ceil(n/per))});}
 function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
-async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:5000},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
+async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:5000},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
 function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();}
 
 function relocalizeDynamic(){
@@ -177,8 +188,9 @@ function wire(){
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
   $('enrollBtn').onclick=()=>createEnrollment().catch(e=>toast(e.message));
   $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
-  $('exportKeyBtn').onclick=()=>vaultRaw?copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied')).catch(e=>toast(e.message)):toast(tr('vault_locked'));
+  $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
+  $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};
   $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast(tr('credentials_forgotten'));}};
   $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
   $('inboxList').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};

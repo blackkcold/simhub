@@ -438,3 +438,8 @@ Release 中包含 Android APK、对应 Tag 的源码快照、文档包以及 SHA
 SIM Hub 使用 [MIT License](LICENSE)。
 
 平台与工具相关声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+ 
+## 公网管理端安全加固（v0.3.1）
+
+建议将管理 PWA 和 Android/DJI 节点 API 配置为两个独立 HTTPS 域名，管理域名再启用身份网关与独立 MFA。Relay 已加入 CSRF 防护、短时二次认证、服务端会话空闲失效、资源限制及设备端短信发送配额。**开启严格域名隔离前，必须先迁移已部署节点，避免中断短信同步。**部署顺序、验收及安全边界详见 [公网加固与迁移指南](docs/PUBLIC_SECURITY_HARDENING.md)。
+

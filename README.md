@@ -439,3 +439,8 @@ Release assets include the Android APK, tagged source snapshot, documentation bu
 SIM Hub is released under the [MIT License](LICENSE).
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for platform/tooling notices.
+
+## Public controller security (v0.3.1)
+
+For an Internet-facing installation, use distinct TLS hostnames for the management PWA and node API. Enable an identity-aware gateway on the management hostname, plus SIM Hub TOTP. The relay enforces CSRF, short-lived step-up verification, idle session expiry, bounded request resources and durable SMS send quotas. Follow [the hardening and migration guide](docs/PUBLIC_SECURITY_HARDENING.md) **before enabling strict origin separation** so existing nodes are not disconnected.
+

@@ -47,6 +47,57 @@ class ApiTest(unittest.TestCase):
         if v==2:x['kid']='abcdefgh1234'
         return x
 
+    def test_browser_csrf_and_second_factor(self):
+        status,login,h=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN,'totp':''},admin=False)
+        self.assertEqual(status,201)
+        cookie=h['Set-Cookie'].split(';',1)[0]
+        csrf=login['csrfToken']
+        self.assertEqual(len(csrf),64)
+        # A session cookie by itself cannot mutate state.
+        status,_,_=self.req('POST','/api/v1/enrollments',{},admin=False,headers={'Cookie':cookie})
+        self.assertEqual(status,403)
+        # A CSRF token alone is insufficient for privileged mutations.
+        base={'Cookie':cookie,'X-SimHub-CSRF':csrf}
+        status,error,_=self.req('POST','/api/v1/enrollments',{},admin=False,headers=base)
+        self.assertEqual(status,403)
+        self.assertEqual(error['error'],'stepup_required')
+        status,_,_=self.req('POST','/api/v1/auth/elevate',{'adminToken':'wrong'},admin=False,headers=base)
+        self.assertEqual(status,401)
+        status,step,_=self.req('POST','/api/v1/auth/elevate',{'adminToken':TOKEN},admin=False,headers=base)
+        self.assertEqual(status,200)
+        self.assertGreater(step['elevatedUntil'],int(time.time()))
+        status,created,_=self.req('POST','/api/v1/enrollments',{},admin=False,headers=base)
+        self.assertEqual(status,201)
+        self.assertIn('token',created)
+        status,_,_=self.req('POST','/api/v1/auth/revoke-all',{},admin=False,headers=base)
+        self.assertEqual(status,200)
+        status,_,_=self.req('GET','/api/v1/auth/check',admin=False,headers={'Cookie':cookie})
+        self.assertEqual(status,401)
+
+    def test_session_idle_timeout_and_credential_rotation(self):
+        status,login,headers=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN},admin=False)
+        self.assertEqual(status,201)
+        cookie=headers['Set-Cookie'].split(';',1)[0]
+        # Background checks must not refresh the inactivity clock.
+        with sqlite3.connect(self.db) as con:
+            con.execute('UPDATE admin_sessions SET last_seen_at=?',(int(time.time())-1000,))
+        status,_,_=self.req('GET','/api/v1/auth/check',admin=False,headers={'Cookie':cookie})
+        self.assertEqual(status,401)
+        status,_,headers=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN},admin=False)
+        self.assertEqual(status,201)
+        cookie=headers['Set-Cookie'].split(';',1)[0]
+        with sqlite3.connect(self.db) as con:
+            con.execute("UPDATE admin_sessions SET admin_fingerprint='previous-admin-secret'")
+        status,_,_=self.req('GET','/api/v1/auth/check',admin=False,headers={'Cookie':cookie})
+        self.assertEqual(status,401)
+
+    def test_origin_and_media_type_rejection(self):
+        status,body,_=self.req('GET','/api/v1/devices',headers={'Origin':'https://untrusted.invalid'})
+        self.assertEqual(status,403)
+        self.assertEqual(body['error'],'bad_origin')
+        status,_,_=self.req('POST','/api/v1/enrollments',{},headers={'Content-Type':'text/plain'})
+        self.assertEqual(status,415)
+
     def test_end_to_end(self):
         d=self.enroll();did=d['deviceId'];dt=d['deviceToken']
         ev={'eventId':'evt-1-'+did,'kind':'sms.received','occurredAt':int(time.time()),'subscriptionId':'1','hasOtp':True,'metadata':{'sender':'must-strip','parts':1},'ciphertext':self.cipher()}

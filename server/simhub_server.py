@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -45,6 +45,13 @@ MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL",
 REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","yes","on"}
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
+SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "900")), SESSION_TTL))
+STEPUP_TTL = max(30, min(int(os.getenv("SIMHUB_STEPUP_TTL", "120")), 600))
+MANAGEMENT_ORIGIN = os.getenv("SIMHUB_MANAGEMENT_ORIGIN", PUBLIC_BASE_URL).rstrip("/")
+SEPARATE_SURFACES = os.getenv("SIMHUB_SEPARATE_SURFACES", "false").lower() in {"1","true","yes","on"}
+MAX_HTTP_CONNECTIONS = max(8, min(int(os.getenv("SIMHUB_MAX_HTTP_CONNECTIONS", "64")), 512))
+HTTP_READ_TIMEOUT = max(5, min(int(os.getenv("SIMHUB_HTTP_TIMEOUT", "15")), 120))
+MAX_SSE_PER_SESSION = max(1, min(int(os.getenv("SIMHUB_MAX_SSE_PER_SESSION", "3")), 10))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
 NOTIFY_BARK_URL = os.getenv("SIMHUB_NOTIFY_BARK_URL", "").strip()
 NOTIFY_NTFY_URL = os.getenv("SIMHUB_NOTIFY_NTFY_URL", "").strip()
@@ -77,6 +84,58 @@ _stream_condition = threading.Condition()
 _stream_epoch = 0
 _auth_lock = threading.Lock()
 _auth_failures: dict[str, list[int]] = {}
+_auth_gc_at = 0
+_rate_entries: dict[tuple[str,str], list[int]] = {}
+_rate_gc_at = 0
+_sse_lock = threading.Lock()
+_sse_clients: dict[str,int] = {}
+
+def rate_allowed(bucket: str, key: str, max_requests: int, window: int = 60) -> bool:
+    """Bounded memory limiter; deny new keys when saturated."""
+    global _rate_gc_at
+    ts = now()
+    with _auth_lock:
+        if ts - _rate_gc_at >= 30:
+            for k, values in list(_rate_entries.items()):
+                fresh = [v for v in values if ts - v < window]
+                if fresh: _rate_entries[k] = fresh
+                else: _rate_entries.pop(k, None)
+            _rate_gc_at = ts
+        k = (bucket, key[:160])
+        if k not in _rate_entries and len(_rate_entries) >= 4096:
+            return False
+        values = [v for v in _rate_entries.get(k, []) if ts - v < window]
+        if len(values) >= max_requests:
+            _rate_entries[k] = values
+            return False
+        values.append(ts)
+        _rate_entries[k] = values
+        return True
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    def __init__(self, address, handler):
+        self._slots = threading.BoundedSemaphore(MAX_HTTP_CONNECTIONS)
+        super().__init__(address, handler)
+    def get_request(self):
+        sock, addr = super().get_request()
+        sock.settimeout(HTTP_READ_TIMEOUT)
+        return sock, addr
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
 
 class BoundedExecutor:
     def __init__(self,max_workers:int,max_pending:int,name:str) -> None:
@@ -254,6 +313,11 @@ def _migrate_v6(con: sqlite3.Connection) -> None:
     _add_column(con,"enrollment_tokens","bootstrap_hash","TEXT NOT NULL DEFAULT ''")
 
 
+def _migrate_v7(con: sqlite3.Connection) -> None:
+    _add_column(con, "admin_sessions", "admin_fingerprint", "TEXT NOT NULL DEFAULT ''")
+    _add_column(con, "admin_sessions", "elevated_until", "INTEGER NOT NULL DEFAULT 0")
+    con.execute("DELETE FROM admin_sessions WHERE admin_fingerprint=''")
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
@@ -263,8 +327,9 @@ def init_db() -> None:
         _migrate_v4(con)
         _migrate_v5(con)
         _migrate_v6(con)
+        _migrate_v7(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=6")
+        con.execute("PRAGMA user_version=7")
     run_maintenance()
 
 
@@ -276,7 +341,7 @@ def run_maintenance() -> dict[str,int]:
         if AUDIT_RETENTION_DAYS>0:
             result["audit"]=con.execute("DELETE FROM audit WHERE occurred_at<?",(ts-AUDIT_RETENTION_DAYS*86400,)).rowcount
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
-        result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=?",(ts,)).rowcount
+        result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
     return result
@@ -337,6 +402,12 @@ def _cookie_session(headers) -> str:
         return ""
 
 
+def session_fingerprint() -> str:
+    return sha256_text("simhub-session-v1|" + ADMIN_TOKEN)
+
+def csrf_for_session(token: str) -> str:
+    return hmac.new(ADMIN_TOKEN.encode(), ("simhub-csrf-v1|" + token).encode(), hashlib.sha256).hexdigest()
+
 def session_valid(headers) -> bool:
     token = _cookie_session(headers)
     if not token or not TOKEN_RE.match(token):
@@ -344,12 +415,12 @@ def session_valid(headers) -> bool:
     ts = now()
     digest = sha256_text(token)
     with open_db() as con:
-        row = con.execute("SELECT expires_at,last_seen_at FROM admin_sessions WHERE token_hash=?", (digest,)).fetchone()
-        if not row or row["expires_at"] <= ts:
+        row = con.execute("SELECT expires_at,last_seen_at,admin_fingerprint FROM admin_sessions WHERE token_hash=?", (digest,)).fetchone()
+        if not row or row["expires_at"] <= ts or ts-row["last_seen_at"] >= SESSION_IDLE_TTL or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint()):
             if row:
                 con.execute("DELETE FROM admin_sessions WHERE token_hash=?", (digest,))
             return False
-        if ts - row["last_seen_at"] >= 60:
+        if headers.get("X-SimHub-Activity") == "1" and ts - row["last_seen_at"] >= 60:
             con.execute("UPDATE admin_sessions SET last_seen_at=? WHERE token_hash=?", (ts,digest))
     return True
 
@@ -367,16 +438,23 @@ def admin_auth(headers) -> bool:
 
 
 def auth_rate_allowed(ip: str) -> bool:
+    global _auth_gc_at
     ts = now()
     with _auth_lock:
-        values = [x for x in _auth_failures.get(ip, []) if ts-x < 60]
-        _auth_failures[ip] = values
-        return len(values) < 10
+        if ts - _auth_gc_at >= 30:
+            for key in list(_auth_failures):
+                valid = [v for v in _auth_failures[key] if ts-v < 60]
+                if valid: _auth_failures[key] = valid
+                else: _auth_failures.pop(key, None)
+            _auth_gc_at = ts
+        attempts = [v for v in _auth_failures.get(ip, []) if ts-v < 60]
+        return len(attempts) < 5 and (ip in _auth_failures or len(_auth_failures) < 4096)
 
 
 def auth_rate_fail(ip: str) -> None:
     with _auth_lock:
-        _auth_failures.setdefault(ip, []).append(now())
+        if ip in _auth_failures or len(_auth_failures) < 4096:
+            _auth_failures.setdefault(ip, []).append(now())
 
 
 def auth_rate_success(ip: str) -> None:
@@ -391,8 +469,8 @@ def create_session(ip: str) -> tuple[str,int]:
     with open_db() as con:
         con.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
         con.execute(
-            "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip) VALUES(?,?,?,?,?)",
-            (sha256_text(token),ts,exp,ts,ip[:80]),
+            "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint) VALUES(?,?,?,?,?,?)",
+            (sha256_text(token),ts,exp,ts,ip[:80],session_fingerprint()),
         )
     return token, exp
 
@@ -599,7 +677,7 @@ def push_tickle_async(device_id: str, reason: str) -> None:
 
 
 class SimHubHandler(BaseHTTPRequestHandler):
-    server_version = "SimHubRelay/0.2.2"
+    server_version = "SimHubRelay/0.3.1"
     sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:
@@ -615,6 +693,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy","no-referrer")
         self.send_header("Cache-Control","no-store")
         self.send_header("Permissions-Policy","camera=(), microphone=(), geolocation=()")
+        self.send_header("Cross-Origin-Opener-Policy","same-origin")
+        self.send_header("Cross-Origin-Resource-Policy","same-origin")
+        self.send_header("X-Permitted-Cross-Domain-Policies","none")
         self.send_header("Content-Security-Policy","default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'")
 
     def send_json(self,status:int,obj:Any,extra_headers:dict[str,str]|None=None) -> None:
@@ -633,12 +714,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_json(status,{"error":code,"message":message})
 
     def read_json(self) -> dict[str,Any] | None:
+        path=self.route()[0]
+        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state)$",path) else 65536
         try:
             length=int(self.headers.get("Content-Length","0"))
         except ValueError:
             self.send_error_json(411,"length_required","Invalid Content-Length"); return None
-        if length<=0 or length>MAX_JSON_BODY:
-            self.send_error_json(413 if length>MAX_JSON_BODY else 400,"invalid_body","JSON body required and must be <= 1 MiB"); return None
+        if length<=0 or length>max_body:
+            self.send_error_json(413 if length>max_body else 400,"invalid_body","JSON body size exceeds route limit"); return None
         try:
             data=json.loads(self.rfile.read(length))
             if not isinstance(data,dict): raise ValueError()
@@ -650,12 +733,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not auth_rate_allowed(self.ip):
             self.send_error_json(429,"rate_limited","Too many authentication failures"); return False
         if admin_auth(self.headers):
+            if not self.csrf_valid():
+                audit("auth.csrf","","denied",self.ip)
+                self.send_error_json(403,"invalid_csrf","CSRF token required"); return False
+            if not rate_allowed("admin", _cookie_session(self.headers) or self.ip, 120):
+                self.send_error_json(429,"rate_limited","Admin request rate exceeded"); return False
             auth_rate_success(self.ip); return True
         auth_rate_fail(self.ip)
         audit("auth.admin","","denied",self.ip)
         self.send_error_json(401,"unauthorized","Authenticated admin session required"); return False
 
     def require_device(self,device_id:str) -> sqlite3.Row | None:
+        if not rate_allowed("device", device_id+":"+self.ip, 180):
+            self.send_error_json(429,"rate_limited","Device request rate exceeded"); return None
         auth=self.headers.get("Authorization","")
         if not auth.startswith("Device "):
             self.send_error_json(401,"unauthorized","Device token required"); return None
@@ -674,11 +764,67 @@ class SimHubHandler(BaseHTTPRequestHandler):
         parsed=urllib.parse.urlsplit(self.path)
         return parsed.path,[urllib.parse.unquote(p) for p in parsed.path.split("/") if p],urllib.parse.parse_qs(parsed.query)
 
+    def is_device_route(self, method: str, path: str) -> bool:
+        if method == "POST" and path == "/api/v1/enroll": return True
+        if method == "GET" and path == "/api/v1/ota": return True
+        if re.fullmatch(r"/api/v1/devices/[^/]+/commands/pending", path):
+            return method == "GET"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/(?:events|state|heartbeat|token/(?:prepare|commit))", path):
+            return method == "POST"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/ack", path):
+            return method == "POST"
+        return False
+
+    def preflight(self, method: str, path: str) -> bool:
+        if method == "GET" and path in {"/healthz", "/readyz"}:
+            if ipaddress.ip_address(self.client_address[0]).is_loopback: return True
+            self.send_error_json(404,"not_found","Endpoint not available publicly"); return False
+        if not rate_allowed("ip", self.ip, 180):
+            self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin:
+            allowed = {MANAGEMENT_ORIGIN, PUBLIC_BASE_URL}
+            if origin not in allowed or self.headers.get("Sec-Fetch-Site", "") == "cross-site":
+                self.send_error_json(403, "bad_origin", "Untrusted origin"); return False
+        if SEPARATE_SURFACES:
+            admin_host = urllib.parse.urlsplit(MANAGEMENT_ORIGIN).netloc.lower()
+            device_host = urllib.parse.urlsplit(PUBLIC_BASE_URL).netloc.lower()
+            request_host = self.headers.get("Host", "").lower()
+            if request_host not in {admin_host, device_host}:
+                self.send_error_json(421, "host_mismatch", "Unrecognized hostname"); return False
+            if request_host == device_host and not self.is_device_route(method, path):
+                self.send_error_json(404, "not_found", "Endpoint is not available on the device origin"); return False
+            if request_host == admin_host and self.is_device_route(method, path) and path != "/api/v1/ota":
+                self.send_error_json(404, "not_found", "Endpoint is not available on the management origin"); return False
+        if method in {"POST","PATCH","PUT"}:
+            if self.headers.get("Content-Type", "").split(";",1)[0].strip().lower() != "application/json":
+                self.send_error_json(415, "unsupported_media_type", "JSON Content-Type required"); return False
+        return True
+
+    def csrf_valid(self) -> bool:
+        if self.command in {"GET", "HEAD", "OPTIONS"}: return True
+        if direct_admin_auth(self.headers): return True
+        raw = _cookie_session(self.headers)
+        token = self.headers.get("X-SimHub-CSRF", "")
+        return bool(raw and token and hmac.compare_digest(token, csrf_for_session(raw)))
+
+    def require_stepup(self) -> bool:
+        if not self.require_admin(): return False
+        if direct_admin_auth(self.headers): return True
+        token = _cookie_session(self.headers)
+        if token:
+            with open_db() as con:
+                row = con.execute("SELECT elevated_until FROM admin_sessions WHERE token_hash=?", (sha256_text(token),)).fetchone()
+                if row and row["elevated_until"] >= now(): return True
+        self.send_error_json(403, "stepup_required", "Recent second-factor verification required")
+        return False
+
     def do_OPTIONS(self) -> None:
         self.send_response(204); self.security_headers(); self.end_headers()
 
     def do_GET(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("GET", path): return
         if path=="/healthz":
             self.send_json(200,{"ok":True,"version":APP_VERSION,"time":now()}); return
         if path=="/readyz":
@@ -686,14 +832,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<6:
+                if version<7:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
                 self.send_error_json(503,"database_not_ready","Database is not ready"); return
         if path=="/api/v1/auth/check":
             if not self.require_admin(): return
-            self.send_json(200,{"ok":True,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL}); return
+            self.send_json(200,{"ok":True,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
         if path=="/api/v1/devices":
             if not self.require_admin(): return
             self.get_devices(); return
@@ -726,15 +872,43 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("POST", path): return
         if path=="/api/v1/auth/session":
             body=self.read_json()
             if body is None:return
             self.create_admin_session(body); return
         if path=="/api/v1/auth/logout":
+            if not self.require_admin(): return
             delete_session(self.headers)
             self.send_json(200,{"ok":True},{"Set-Cookie":f"{SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"}); return
+        if path=="/api/v1/auth/elevate":
+            if not self.require_admin(): return
+            body=self.read_json()
+            if body is None: return
+            if not auth_rate_allowed(self.ip):
+                self.send_error_json(429,"rate_limited","Too many authentication attempts"); return
+            correct = totp_valid(str(body.get("totp",""))) if TOTP_SECRET else hmac.compare_digest(str(body.get("adminToken","")), ADMIN_TOKEN)
+            if not correct:
+                auth_rate_fail(self.ip)
+                audit("auth.stepup","","denied",self.ip)
+                self.send_error_json(401,"invalid_second_factor","Invalid second factor"); return
+            session = _cookie_session(self.headers)
+            if not session or not session_valid(self.headers):
+                self.send_error_json(401,"unauthorized","Session required for step-up"); return
+            expiry = now()+STEPUP_TTL
+            with open_db() as con:
+                con.execute("UPDATE admin_sessions SET elevated_until=? WHERE token_hash=?", (expiry,sha256_text(session)))
+            auth_rate_success(self.ip)
+            audit("auth.stepup","","ok",self.ip)
+            self.send_json(200,{"ok":True,"elevatedUntil":expiry}); return
+        if path=="/api/v1/auth/revoke-all":
+            if not self.require_stepup(): return
+            with open_db() as con:
+                con.execute("DELETE FROM admin_sessions")
+            audit("auth.revoke_all","","ok",self.ip)
+            self.send_json(200,{"ok":True},{"Set-Cookie":f"{SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"}); return
         if path=="/api/v1/enrollments":
-            if not self.require_admin():return
+            if not self.require_stepup():return
             body=self.read_json()
             if body is None:return
             self.create_enrollment(body); return
@@ -769,6 +943,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
+            if str(body.get("type","")) in {"sms.send","node.rotate_key"} and not self.require_stepup():return
             self.create_command(p[3],body); return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return
@@ -779,8 +954,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("DELETE", path): return
         if path=="/api/v1/events":
-            if not self.require_admin():return
+            if not self.require_stepup():return
             try: before=int(q.get("before",["0"])[0])
             except ValueError:
                 self.send_error_json(400,"invalid_query","before must be a Unix timestamp");return
@@ -795,10 +971,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def do_PATCH(self) -> None:
         path,p,q=self.route()
+        if not self.preflight("PATCH", path): return
         if len(p)==4 and p[:3]==["api","v1","devices"]:
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
+            if (body.get("revoke") is True or "pendingKeyId" in body or "pendingWrappedKey" in body) and not self.require_stepup():return
             self.patch_device(p[3],body); return
         self.send_error_json(404,"not_found","API endpoint not found")
 
@@ -814,7 +992,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         session,exp=create_session(self.ip)
         audit("auth.session","","ok",self.ip)
         cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
-        self.send_json(201,{"ok":True,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET)},{"Set-Cookie":cookie})
+        self.send_json(201,{"ok":True,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
 
     def create_enrollment(self,body:dict[str,Any]) -> None:
         eid=str(uuid.uuid4()); token=new_token(); ts=now()
@@ -1157,6 +1335,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def stream_events(self) -> None:
         global _stream_epoch
+        session_key=sha256_text(_cookie_session(self.headers) or self.ip)
+        with _sse_lock:
+            if _sse_clients.get(session_key,0) >= MAX_SSE_PER_SESSION:
+                self.send_error_json(429,"sse_limit","Too many live streams"); return
+            _sse_clients[session_key]=_sse_clients.get(session_key,0)+1
         self.send_response(200)
         self.send_header("Content-Type","text/event-stream; charset=utf-8")
         self.send_header("Cache-Control","no-cache")
@@ -1180,8 +1363,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 else:
                     self.wfile.write(b": ping\n\n")
                 self.wfile.flush()
-        except (BrokenPipeError,ConnectionResetError,TimeoutError):
+        except (BrokenPipeError,ConnectionResetError,TimeoutError,OSError):
             return
+        finally:
+            with _sse_lock:
+                remaining = _sse_clients.get(session_key,1)-1
+                if remaining: _sse_clients[session_key]=remaining
+                else: _sse_clients.pop(session_key,None)
 
     def get_ota(self) -> None:
         if not OTA_FILE.exists():
@@ -1225,7 +1413,9 @@ def main() -> None:
             raise SystemExit("SIMHUB_TOTP_SECRET must be valid Base32") from exc
     init_db()
     threading.Thread(target=maintenance_loop,name="simhub-maintenance",daemon=True).start()
-    server=ThreadingHTTPServer((BIND,PORT),SimHubHandler); server.daemon_threads=True
+    if SEPARATE_SURFACES and (not MANAGEMENT_ORIGIN.startswith("https://") or not PUBLIC_BASE_URL.startswith("https://") or MANAGEMENT_ORIGIN == PUBLIC_BASE_URL):
+        raise SystemExit("Separated origins require distinct HTTPS management and node URLs")
+    server=BoundedHTTPServer((BIND,PORT),SimHubHandler)
     log.info("SIM Hub relay %s listening on %s:%s, db=%s",APP_VERSION,BIND,PORT,DB_PATH)
     try: server.serve_forever()
     except KeyboardInterrupt: pass

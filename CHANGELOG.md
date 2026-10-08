@@ -1,3 +1,12 @@
+## v0.5.1 — Responsive SMS and navigation hotfix
+
+- Constrain all SMS conversation grid/flex tracks, long senders, previews, device/SIM metadata and message bubbles to their own columns; no clipping behind the conversation panel.
+- Redesign desktop as a bounded two-column messaging inbox and tablet as stacked list + detail, with a one-at-a-time mobile conversation overlay.
+- Fix the mobile bottom navigation as a persistent floating dock with side/bottom spacing, safe-area support and reserved scroll padding.
+- Keep the message editor above the floating navigation and synchronize mobile conversation state across navigation changes, resize and orientation changes.
+- Test long synthetic SMS content at 13 viewport sizes (320–1920 px), scrolling, message back navigation, and desktop/tablet panel geometry in Playwright.
+- Refresh PWA cache to activate corrected styles; no SMS database, encryption format, or existing device enrollment changes.
+
 ## v0.5.0 — Session continuity, SIM identity and dependable diagnostics
 
 - Align Vault and administrator idle expiry (default 8 hours), with a 24-hour absolute session limit and encrypted same-tab Vault recovery across refresh. The relay still never receives Vault plaintext; local XSS/device compromise remains a threat.

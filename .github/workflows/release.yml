@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.5.0.trigger'
+      - '.github/release/v0.5.1.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.5.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.5.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -232,15 +232,14 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Unified administrator/Vault idle expiry, SIM identifiers and device network telemetry, explicit 100-message SMS pagination, remote diagnostics.
+          Responsive SMS inbox layout, floating mobile navigation and safer long-text handling.
 
           ## Highlights
-          - 24-hour session absolute expiry, 8-hour idle expiry, and encrypted per-tab Vault refresh recovery;
-          - encrypted SIM-number inventory with manual controller overrides and charging/Wi-Fi telemetry;
-          - distinct recent/older 100-SMS synchronization commands;
-          - decrypted remote health-check results with request correlation;
-          - Android system-default data SIM failover monitoring and guided network setup;
-          - compatibility preserved for existing E2EE Node Keys and Android/Modem Agents.
+          - Fix long SMS, sender numbers and SIM metadata overflowing their message cards and overlapping the conversation panel;
+          - Responsive desktop/two-column, tablet/stacked and mobile/single-conversation layouts;
+          - Persistent floating mobile navigation with safe-area spacing, scroll stability and a non-overlapping reply editor;
+          - Browser regression coverage across 13 screen sizes and PWA cache refresh;
+          - Existing encrypted messages, Node Keys, sessions and device enrollments are preserved.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF

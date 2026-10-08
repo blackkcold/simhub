@@ -336,7 +336,7 @@ function renderDevices(){
     const healthKey=d.nodeType==='android'?(s.smsOperational===true?'sms_ready':s.smsOperational===false?'sms_unavailable':'sms_unverified'):(s.smsOperational===false?'sim_unavailable':'modem_unverified');
     const stateKey=d.revoked?'revoked':d.online?'online':'offline';
     const buttons='<button class="ghost mini" data-action="refresh" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_refresh'))+'</button>'+
-      (d.nodeType==='android'?'<button class="ghost mini" data-action="sync-recent" data-id="'+escapeHtml(d.id)+'">同步最近 100 条</button><button class="ghost mini" data-action="sync-older" data-id="'+escapeHtml(d.id)+'">同步更早 100 条</button>':'')+
+      (d.nodeType==='android'?'<button class="ghost mini" data-action="sync-recent" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('sync_recent_100'))+'</button><button class="ghost mini" data-action="sync-older" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('sync_older_100'))+'</button>':'')+
       '<button class="ghost mini" data-action="diagnostics" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_diagnostics'))+'</button>'+(d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.5.0')?'<button class="ghost mini" data-action="network" data-id="'+escapeHtml(d.id)+'">备用数据 SIM</button>':'')+
       (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?'<button class="ghost mini" data-action="rotate-key" title="'+escapeHtml(tr('tip_rotate_key'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_rotate'))+'</button>':'')+
       (d.revoked?'':'<button class="danger mini" data-action="revoke" title="'+escapeHtml(tr('tip_revoke'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_revoke'))+'</button>');

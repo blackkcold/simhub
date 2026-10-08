@@ -28,6 +28,12 @@ public final class AgentConfig {
         return legacy>0?Math.max(0,legacy-1):0L;
     }
     public long historyId(){return prefs.getLong("history_cursor_id",-1L);}
+    public boolean historyInitialized(){return prefs.getBoolean("history_initialized_v2",false);}
+    public void setHistoryInitialized(boolean value){prefs.edit().putBoolean("history_initialized_v2",value).apply();}
+    public long historyBackfillDate(){return prefs.getLong("history_backfill_date",0L);}
+    public long historyBackfillId(){return prefs.getLong("history_backfill_id",-1L);}
+    public void setHistoryBackfillCursor(long date,long id){prefs.edit().putLong("history_backfill_date",date).putLong("history_backfill_id",id).apply();}
+
     public void setHistoryCursor(long date,long id){prefs.edit().putLong("history_cursor_date",date).putLong("history_cursor_id",id).apply();}
     public void recordQueueFailure(){prefs.edit().putLong("queue_failures",prefs.getLong("queue_failures",0)+1).putLong("last_queue_failure_at",System.currentTimeMillis()/1000).apply();}
     public long queueFailures(){return prefs.getLong("queue_failures",0);}
@@ -73,7 +79,7 @@ public final class AgentConfig {
     }
 
     private void setBaseEnrollment(String server,String deviceId,String deviceName,String token)throws Exception{
-        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").apply();
+        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
         localQueueKey();
     }

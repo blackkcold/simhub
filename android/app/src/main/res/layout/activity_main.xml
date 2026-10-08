@@ -11,6 +11,7 @@
         android:paddingTop="20dp"
         android:paddingEnd="20dp"
         android:paddingBottom="36dp">
+        <ImageView android:layout_width="60dp" android:layout_height="60dp" android:layout_marginBottom="14dp" android:src="@drawable/ic_simhub" android:contentDescription="@string/app_name" />
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/dashboard_title" android:textColor="@color/text_primary" android:textSize="30sp" android:textStyle="bold" />
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="@string/dashboard_subtitle" android:textColor="@color/text_secondary" android:textSize="14sp" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="18dp">

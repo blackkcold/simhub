@@ -404,6 +404,8 @@ v0.2.1 and later release workflows require the pinned long-term signing identity
 
 | Document | Purpose |
 |---|---|
+| [v0.4–v0.5 upgrade and UI guide](docs/UPGRADE_0.4_TO_0.5.md) | Release differences, two-host migration, admin/Vault sessions, SMS paging, diagnostics |
+| [Guided setup (Chinese)](docs/QUICKSTART.zh-CN.md) | Linux DNS, managed Caddy / external-proxy setup and upgrades |
 | [Installation](docs/INSTALLATION.md) | End-to-end server + PWA + Android setup |
 | [Architecture](docs/ARCHITECTURE.md) | Components, trust boundary and data flow |
 | [Android Setup](docs/ANDROID_SETUP.md) | Android build and device requirements |

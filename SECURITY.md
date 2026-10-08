@@ -29,3 +29,11 @@ For a public fork, use GitHub private vulnerability reporting if enabled. Do not
 - Keep production signing in a hardware-backed or CI-protected secret store.
 - Rotate `SIMHUB_ADMIN_TOKEN` and revoke all device tokens after suspected server compromise.
 - Re-enroll devices with a newly created vault after suspected controller compromise.
+
+## Public controller deployment (v0.3.1)
+
+Do not expose a single shared administrator and node endpoint on the public Internet. Use separate HTTPS origins with SIMHUB_SEPARATE_SURFACES enabled after migrating nodes. Put the management origin behind an identity-aware gateway, with the SIM Hub Admin Token, TOTP and encrypted Vault remaining independent controls. See docs/PUBLIC_SECURITY_HARDENING.md.
+
+The browser is a key-holding controller. A stolen relay database alone cannot decrypt encrypted message content, but an attacker who can replace served PWA JavaScript may compromise keys after the controller reloads. Protect the software deployment pipeline and the controller device.
+
+Sensitive browser operations require recent second-factor elevation. Normal background polling must not renew idle sessions. Always rotate credentials and revoke sessions after a suspected administrator compromise.

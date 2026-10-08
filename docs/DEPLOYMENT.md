@@ -83,6 +83,10 @@ The Android app only checks and opens the HTTPS download URL. It does not silent
 
 The relay does **not** trust arbitrary forwarded-IP headers. Configure `SIMHUB_TRUSTED_PROXIES` with only loopback/container CIDRs that can actually reach the relay. When the TCP peer is trusted, the first `X-Forwarded-For` address becomes the audit/rate-limit client IP; otherwise the socket peer is used.
 
+The default Compose deployment enables `SIMHUB_TRUST_DOCKER_GATEWAY=true`. The relay detects its **exact default-route Docker bridge gateway**, accounting for `docker-proxy` SNAT even when the host binds only `127.0.0.1:8787`. Do **not** trust an entire private CIDR merely to fix forwarded IP; an attacker on another container could forge the header. Other networking modes must explicitly configure a suitably narrow trusted peer.
+
+The host-side `curl http://127.0.0.1:8787/readyz` works in this default topology because the exact Docker gateway is admitted. It is still not publicly routed through Caddy.
+
 The provided Caddy example sets `X-Forwarded-For` explicitly. Never configure `0.0.0.0/0` or `::/0` as trusted proxies.
 
 ## Health and maintenance

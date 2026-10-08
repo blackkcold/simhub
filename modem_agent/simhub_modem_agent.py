@@ -577,20 +577,19 @@ class DjiAtAdapter(ModemAdapter):
             return now()
 
     def fingerprint(self) -> str:
+        # Do not substitute hardware model or serial port for SIM identity.
         values: list[str] = []
         with self._open() as ser:
             self._initialize(ser)
-            for command in ("AT+QCCID", "AT+CCID", "AT+CIMI", "AT+CGMM"):
+            for command in ("AT+QCCID", "AT+CCID", "AT+CIMI"):
                 try:
                     response = self._command(ser, command, timeout=4)
-                    found = re.findall(r"[0-9A-Za-z._-]{8,}", response)
-                    if found:
-                        values.extend(found)
+                    values.extend(re.findall(r"(?<!\\d)\\d{14,22}(?!\\d)", response))
                 except Exception:
                     continue
         if not values:
-            values = [self.port]
-        return hashlib.sha256("|".join(values).encode()).hexdigest()
+            raise RuntimeError("SIM identity unavailable: remote sending disabled")
+        return hashlib.sha256("|".join(sorted(set(values))).encode()).hexdigest()
 
     def state(self) -> dict[str, Any]:
         carrier = ""
@@ -841,9 +840,18 @@ class MmcliAdapter(ModemAdapter):
         return re.findall(r"(/org/freedesktop/ModemManager1/SMS/\d+)", out)
 
     def fingerprint(self) -> str:
-        out = maybe_json(run_command(["mmcli", "-m", self.modem, "-J"], timeout=20))
-        value = deep_pick(out, "simidentifier", "iccid", "equipmentidentifier", "imei") or str(out)
-        return hashlib.sha256(str(value).encode()).hexdigest()
+        modem = maybe_json(run_command(["mmcli", "-m", self.modem, "-J"], timeout=20))
+        # ICCID/IMSI belong to the SIM object, not the hardware modem's IMEI.
+        match = re.search(r"/org/freedesktop/ModemManager1/SIM/\\d+", json.dumps(modem))
+        if not match:
+            raise RuntimeError("ModemManager SIM object unavailable: remote sending disabled")
+        sim = maybe_json(run_command(["mmcli", "-i", match.group(0), "-J"], timeout=20))
+        iccid = str(deep_pick(sim, "simidentifier", "iccid") or "")
+        imsi = str(deep_pick(sim, "imsi") or "")
+        values = [x for x in (iccid, imsi) if re.fullmatch(r"\\d{14,22}", x)]
+        if not values:
+            raise RuntimeError("SIM ICCID/IMSI unavailable: remote sending disabled")
+        return hashlib.sha256("|".join(values).encode()).hexdigest()
 
     def state(self) -> dict[str, Any]:
         status = maybe_json(run_command(["mmcli", "-m", self.modem, "--simple-status", "-J"], timeout=20))
@@ -1174,11 +1182,13 @@ class Agent:
                 if payload.get("action") != ctype or payload.get("commandId") != command_id:
                     raise ValueError("command binding mismatch")
                 if ctype == "sms.send":
+                    # Re-probe immediately before any radio side effect.
+                    self._sync_channel_identity()
                     if str(payload.get("channelId", "")) != self.channel_id or int(payload.get("channelRevision", 0)) != self.channel_revision:
                         raise RuntimeError("channel_changed")
                     to = str(payload.get("to", ""))
                     body = str(payload.get("body", ""))
-                    if not re.fullmatch(r"\+?[0-9*# ()-]{3,40}", to) or not body or len(body) > 4000:
+                    if not re.fullmatch(r"\+?[0-9 ()-]{3,40}", to) or not body or len(body) > 4000:
                         raise ValueError("invalid_sms")
                     result = self.adapter.send_sms(to, body)
                     ts = now()

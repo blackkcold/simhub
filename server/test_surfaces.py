@@ -73,7 +73,7 @@ class SurfaceTest(unittest.TestCase):
         self.assertEqual(self.request("POST","/api/v1/enroll",node,{"token":"short"},device=True)[0],400)
         self.assertEqual(self.request("POST","/api/v1/enroll",admin,{"token":"short"},device=True)[0],404)
         self.assertEqual(self.request("GET","/", "unknown.invalid")[0],421)
-        self.assertEqual(self.request("GET","/healthz",node)[0],404)
+        self.assertEqual(self.request("GET","/healthz",node)[0],200)  # local health probe remains available
         self.assertEqual(self.request("GET","/readyz","127.0.0.1:"+str(self.port))[0],200)
 
 if __name__=="__main__":

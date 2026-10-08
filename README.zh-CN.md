@@ -405,6 +405,8 @@ v0.2.1 起 Release workflow 强制使用固定长期签名身份；缺少 Secret
 
 | 文档 | 内容 |
 |---|---|
+| [两轮升级与 UI 操作指南](docs/UPGRADE_0.4_TO_0.5.md) | v0.4/v0.5 变更、迁移、登录、SIM、历史同步与诊断 |
+| [一键部署（中文）](docs/QUICKSTART.zh-CN.md) | DNS、Caddy 托管、外部代理、无损升级 |
 | [安装说明](docs/INSTALLATION.md) | Server + PWA + Android 全流程安装 |
 | [系统架构](docs/ARCHITECTURE.md) | 组件、信任边界、数据流 |
 | [Android Setup](docs/ANDROID_SETUP.md) | Android 构建与设备要求 |

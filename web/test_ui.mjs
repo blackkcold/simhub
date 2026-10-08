@@ -101,11 +101,11 @@ try {
     console.error("SESSION-LOGIN-DEBUG",JSON.stringify({state,loginErrors}));
     throw error;
   }
-  await p.reload({waitUntil:"networkidle"});
+  await p.reload({waitUntil:"domcontentloaded"});
   await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
   assert.equal(await p.locator("#lockedPanel").isVisible(),false,"Refresh must restore Vault in a valid active tab");
   await p.locator("#lockBtn").click();
-  await p.reload({waitUntil:"networkidle"});
+  await p.reload({waitUntil:"domcontentloaded"});
   assert.equal(await p.locator("#appContent").isVisible(),false,"Manual lock must invalidate tab recovery");
   await c.close();
   console.log("PASS: UI breakpoints, light/dark, dialog spacing and SMS new-compose");

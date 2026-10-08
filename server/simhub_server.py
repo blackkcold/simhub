@@ -594,6 +594,9 @@ def sanitize_state(body: Any) -> dict[str,Any]:
         if isinstance(x.get("id"),str) and x["id"]:
             channels.append(x)
     out["channels"]=channels[:64]
+    item=body.get("encryptedSimNumbers")
+    if isinstance(item,dict) and isinstance(item.get("eventId"),str) and isinstance(item.get("occurredAt"),int) and validate_cipher(item.get("ciphertext")):
+        out["encryptedSimNumbers"]={"eventId":item["eventId"][:128],"occurredAt":item["occurredAt"],"ciphertext":item["ciphertext"]}
     return out
 
 def normalize_node_type(value: Any) -> str:

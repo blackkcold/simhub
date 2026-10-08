@@ -92,7 +92,7 @@ async function editSimPhone(deviceId,channelId){
   const input=prompt('设置 SIM 电话号码（仅当前浏览器加密保存；留空清除覆盖值）',ch.phoneNumber||'');
   if(input===null)return;
   const number=input.trim();
-  if(number&&!/^\\+?[0-9 ()-]{5,24}$/.test(number))throw Error('电话号码格式无效');
+  if(number&&!/^\+?[0-9 ()-]{5,24}$/.test(number))throw Error('电话号码格式无效');
   const key=phoneOverrideKey(d,ch);
   if(number)phoneOverrides[key]=number;else delete phoneOverrides[key];
   await savePhoneOverrides();renderDevices();renderDeviceSelectors();renderInbox();updateReplyChannels();
@@ -563,10 +563,10 @@ async function openDiagnostics(id){
 async function configureNetworkFallback(id){
   const d=devices.find(x=>x.id===id),list=nodeChannels(d);
   if(!d||!versionAtLeast(d.appVersion,'0.5.0'))throw Error('Android Agent 需升级到 v0.5.0');
-  const options=list.map((ch,i)=>(i+1)+'. '+channelTitle(ch)).join('\\n');
+  const options=list.map((ch,i)=>(i+1)+'. '+channelTitle(ch)).join('\n');
   const chosen=prompt('Wi-Fi 断开后，Android 只能自动使用系统预设的默认数据 SIM。\\n先在手机系统设置中启用移动数据并设定默认 SIM。\\n输入序号选择需要监控的 SIM；输入 0 关闭。\\n'+options,'0');
   if(chosen===null)return;
-  if(!/^\\d+$/.test(chosen.trim()))throw Error('无效选项');
+  if(!/^\d+$/.test(chosen.trim()))throw Error('无效选项');
   const choice=Number(chosen.trim());
   if(choice<0||choice>list.length)throw Error('无效选项');
   const channel=list[choice-1],enabled=choice>0;

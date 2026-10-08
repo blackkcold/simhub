@@ -3,7 +3,7 @@ import tempfile, unittest
 from pathlib import Path
 
 from simhub_modem_agent import (
-    Store, DjiAtAdapter, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, bootstrap_proof, decode_ucs2, decode_message_body, decrypt_bootstrap_node_key, parse_concat_udh
+    Store, DjiAtAdapter, MmcliAdapter, parse_otp, command_aad, decrypt_payload, encrypt_payload, event_aad, key_id, bootstrap_proof, decode_ucs2, decode_message_body, decrypt_bootstrap_node_key, parse_concat_udh
 )
 
 class ModemAgentTest(unittest.TestCase):
@@ -74,6 +74,25 @@ class ModemAgentTest(unittest.TestCase):
             self.assertEqual(len(store.pending_events()),1)
             self.assertTrue(store.claim_command('cmd'))
             self.assertFalse(store.claim_command('cmd'))
+
+    def test_modem_otp_is_content_only(self):
+        self.assertEqual(parse_otp("【服务】您的验证码为 638271，请勿告知他人")["value"],"638271")
+        self.assertEqual(parse_otp("Your verification code is 7A82B9")["value"],"7A82B9")
+        self.assertIsNone(parse_otp("Hello, this is not a code."))
+
+    def test_mmcli_fingerprint_uses_sim_not_hardware_imei(self):
+        from unittest.mock import patch
+        modem=MmcliAdapter.__new__(MmcliAdapter)
+        modem.modem="any"
+        modem_data='{"modem":{"generic":{"sim":"/org/freedesktop/ModemManager1/SIM/3","equipment-identifier":"861234567890123"}}}'
+        sim_a='{"sim":{"properties":{"iccid":"89860123456789012345","imsi":"460011234567890"}}}'
+        sim_b='{"sim":{"properties":{"iccid":"89860123456789012346","imsi":"460011234567891"}}}'
+        with patch("simhub_modem_agent.run_command",side_effect=[modem_data,sim_a,modem_data,sim_b,modem_data,'{}']):
+            fp1=modem.fingerprint()
+            fp2=modem.fingerprint()
+            self.assertNotEqual(fp1,fp2)
+            with self.assertRaisesRegex(RuntimeError,"ICCID/IMSI"):
+                modem.fingerprint()
 
     def test_ucs2_decode(self):
         self.assertEqual(decode_ucs2('4F60597D'),'你好')

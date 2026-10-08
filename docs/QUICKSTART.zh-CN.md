@@ -76,7 +76,7 @@ docker compose -f docker-compose.yml -f compose.caddy.yml logs --tail=50 caddy
 
 如果浏览器证书申请失败，首先检查 DNS A / AAAA、80/443 入站规则和其他反向代理的端口占用。外网验证请使用另一网络中的浏览器访问管理及设备 HTTPS 域名。正式部署完成后，建议验证登录、Passkey、节点注册、短信收发和数据库恢复。
 
-## 六、v0.4.0 → v0.5.0 管理端操作
+## 六、管理端功能与操作
 
 | 入口 | 正确用法 |
 |---|---|

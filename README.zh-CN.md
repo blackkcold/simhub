@@ -26,7 +26,7 @@
 
 Web 控制台提供响应式桌面/手机布局，Android Agent 则使用原生界面。两端共享统一 Logo 与品牌配色，并支持浅色、深色主题。
 
-> **预览说明：** 以下是依据当前界面结构绘制的**示意图**，使用脱敏的演示内容，并非已登录真实服务器的截图或功能验收结果。具体展示会随设备尺寸、语言及实际数据变化。
+> **预览说明：** 以下是依据当前界面结构绘制的**示意图**，使用脱敏的演示内容，并非已登录真实服务器的截图或功能验收结果。v0.4/v0.5 新增的会话交互、诊断与网络/SIM 设置以本文功能说明为准，静态示意图未完整覆盖。具体展示会随设备尺寸、语言及实际数据变化。
 
 **Web / PWA · 桌面端**
 
@@ -99,12 +99,21 @@ Relay 的设计目标就是**默认看不到短信明文**。新节点注册时�
 
 ---
 
-## v0.5.0 使用变化
 
-- **刷新无需反复输入 Vault 密码**：管理员与 Vault 统一以真实操作计时（默认空闲 8 小时；管理员会话绝对有效期 24 小时）。页面刷新会先验证 HttpOnly 会话，再从本标签页加密快照恢复；主动锁定、退出或过期会清除快照。关闭标签页后可能需要再次输入 Vault 密码。
-- **SIM 电话号码**：Android 能读取的号码会以 Node Key 加密上传，并显示在设备页、短信列表及发送时的 SIM 选择器。读不到号码时，可在设备卡片手动设置；覆盖值仅在当前浏览器中使用 Vault 加密保存。
-- **短信同步区分操作**：“同步最近 100 条”重新扫描手机最新短信；“同步更早 100 条”按历史游标分批追溯；短信列表“加载更早短信”仅查看服务器上已同步的密文记录。旧 Android 版本需要升级 Agent 才能使用最新 100 条重新扫描。
-- **诊断与联网**：设备“诊断”打开最近的加密健康结果。Wi-Fi 断开后由 Android 自动使用**系统预设的默认数据 SIM**（移动数据必须提前开启）；普通第三方 APK 无法强制切换默认数据 SIM，故控制端会提示需要在手机系统设置中完成的步骤。
+## 最新两轮升级：v0.4.0 → v0.5.0
+
+| 版本 | 用户可见变化 | 使用入口 |
+|---|---|---|
+| **v0.4.0** | 双域名部署向导、Caddy HTTPS、用户名与 Passkey、短信会话和直接回复、移动端界面间距优化 | 安装向导；**设置 → 通行密钥**；**短信 → 选择会话 / + 新建短信** |
+| **v0.5.0** | 刷新页面自动恢复活动 Vault、设备/SIM 号码与充电/Wi-Fi 状态、双向每批 100 条同步、远程诊断结果、默认数据 SIM 回退指引 | **设备** 卡片；**设置号码**；**同步最近/更早 100 条**；**诊断**；**备用数据 SIM** |
+
+**登录与隐私：** 管理员 Session 默认空闲 **8 小时**、绝对有效期 **24 小时**；Vault 使用同一活动空闲期限。**同一标签页**刷新会先验证管理员会话，再恢复本地加密 Vault 快照；主动锁定、退出或会话到期后不能免密恢复。关闭标签页、换设备或清空站点数据后仍可能需要 Vault 密码。Passkey 用于管理员登录与敏感操作确认，**不等于 Vault 解锁**。
+
+**SIM 号码：** Android 可读取的号码通过 Node Key 加密上传；无法读取时，在 Web **设备 → 设置号码**中补录。该覆盖值只保存在**当前浏览器**的 Vault 加密存储中，不会自动同步至其他控制端；SIM 更换后应重新核对号码。
+
+**短信数量的三个概念不可混淆：** “同步最近 100 条”让 Android 重扫手机最新短信；“同步更早 100 条”以独立游标追溯旧短信；收件箱“加载更早短信”只分页查看**已上传 Relay** 的记录（首屏按 30 条加载）。同步指令已入队≠短信全部上传完成。旧 Agent 需要先升级到 v0.5.0 才能执行最新 100 条重扫。
+
+**网络接管边界：** Wi-Fi 断开时由 Android 使用**系统事先选定、已启用移动数据的默认数据 SIM**。SIM Hub 无法以普通 APK 权限强制切换默认数据卡；Web 的“备用数据 SIM”用于登记与检查策略，手机端有**打开移动数据 / 默认数据卡设置**入口。详见 [Android 兼容说明](docs/COMPATIBILITY.md)。
 
 ## 核心功能
 
@@ -121,7 +130,7 @@ Relay 的设计目标就是**默认看不到短信明文**。新节点注册时�
 | **Controller** | 可安装 PWA：Inbox、OTP复制、搜索、发短信、设备、诊断 |
 | **中文与响应式 UI** | Android + Web/PWA 支持简体中文 / English；Android 可跟随系统语言，并适配手机、横屏、折叠屏展开态与平板 |
 | **开发者诊断** | Android 可选开发者模式；日志自动脱敏短信正文、OTP、Token 与密钥，支持轮转、查看、清空和 ZIP 导出 |
-| **认证** | 高强度 Admin Token + 可选 TOTP 登录，之后使用短时 HttpOnly Session |
+| **认证** | 管理员用户名 + Admin Token/TOTP、FIDO2 Passkey；HttpOnly Session（空闲 8 小时、最长 24 小时）与活动 Vault 刷新恢复 |
 | **通知** | 可选 Bark / ntfy / 自定义 Metadata-only Webhook |
 | **运维** | Docker、Health Check、Audit、Backup、OTA Metadata |
 
@@ -136,71 +145,56 @@ OEM 后台限制、保活和测试说明见 [Compatibility](docs/COMPATIBILITY.m
 
 ---
 
-## 快速部署
 
-### 1. 部署 Relay Server
+## 快速部署（v0.4.0 起推荐：引导式安装）
+
+**准备：** Linux VPS/虚拟机、Docker Engine + Compose plugin、Python 3、可用的公网 IPv4，以及 `admin.example.com` / `node.example.com` 两个不同 HTTPS 域名。预先在 DNS 控制台为两个域名添加指向服务器的 **A 记录**；如存在 AAAA，请确保 IPv6 可达。入站开放 TCP **80/443**，**不要对公网开放 8787**。
+
+### 1. 首次安装：托管 Caddy 与自动 HTTPS
 
 ```bash
 git clone https://github.com/blackkcold/simhub.git
 cd simhub
-
-cp .env.example .env
-python3 scripts/gen_admin_token.py
-python3 scripts/gen_totp_secret.py
+python3 scripts/setup.py \
+  --admin-domain admin.example.com \
+  --node-domain node.example.com
 ```
 
-将生成的 Token 填入：
+向导检查 Docker/Compose、DNS 和端口；自动生成**管理员高熵 Token、TOTP Secret**和权限为 0600 的 `.env`，生成 `Caddyfile`，并通过 Docker Compose 启动 Relay + Caddy。**不会自动修改 DNS 服务商记录**；`.env` 必须离线安全备份，不要提交 GitHub。
 
-```env
-SIMHUB_ADMIN_TOKEN=<你的随机 Token>
-SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
-```
-
-启动：
+已有 Nginx、Caddy 或 Traefik 时改用：
 
 ```bash
-docker compose up -d --build
-curl http://127.0.0.1:8787/healthz
+python3 scripts/setup.py --mode external \
+  --admin-domain admin.example.com \
+  --node-domain node.example.com
 ```
 
-对公网只应通过 **HTTPS** 暴露 Relay，可使用 Caddy、Nginx 或 Traefik。
+此模式只准备/启动 Relay，**不会帮你配置现有代理**；需自行将两个域名 HTTPS 反代至 `127.0.0.1:8787`，正确重写 `X-Forwarded-For`，限制健康检查端点。DNS 尚未生效时用 `--skip-dns-check --no-start` 仅准备配置，完成解析后再 `--upgrade` 启动。详情：[中文一键部署](docs/QUICKSTART.zh-CN.md) · [部署与代理安全](docs/DEPLOYMENT.md)。
 
-仓库已经提供 [Caddyfile.example](Caddyfile.example)。
+### 2. 初始化 Web Controller
 
-### 2. 打开 Web / PWA Controller
+浏览器打开 **`https://admin.example.com`**（不是 node 域名）：使用初始化**用户名**（默认 `admin`）、Admin Token 与 TOTP 建立管理员会话；随后创建/导入/解锁本地 Vault，并**离线备份 Recovery Key**。在 **设置 → 通行密钥**注册 Passkey 后，可用指纹/系统凭据登录，但 Vault 解锁仍由本地密钥机制控制。
 
-通过浏览器访问你的 SIM Hub HTTPS 地址。
-
-控制端首次使用会根据浏览器语言自动选择 **简体中文 / English**，也可在界面中手动切换；安全相关配置旁提供 `ⓘ` 浮标说明。
-
-然后：
-
-1. 输入 Admin Token；
-2. 如已配置，输入 TOTP 创建短时 HttpOnly 浏览器 Session；
-3. 创建、导入或解锁本地 Vault；
-4. 生成一次性 Android Enrollment Link。
+Web 已将短信查看和发送整合为**会话收件箱 + 直接回复 + 右上角“+ 新建短信”**，设备页可看到 SIM 号码、电量、充电、网络、分批同步、诊断和网络策略。简体中文/English 与手机/桌面响应式 UI 均受支持。
 
 ### 3. 安装 Android Agent
 
-从下面下载最新 APK：
+[下载当前正式签名 APK（v0.5.0）](https://github.com/blackkcold/simhub/releases/tag/v0.5.0) 并在手机安装；通过控制端**添加设备**生成一次性注册链接，完成注册、授予短信及 SIM 权限、设为**默认短信应用**，再开启常驻 Relay。需要在断 Wi-Fi 后使用蜂窝数据时，先在 Android 系统中**打开移动数据并选择默认数据 SIM**。首次使用建议验证双卡收发及设备诊断。
 
-**[GitHub Releases →](https://github.com/blackkcold/simhub/releases/latest)**
+APK 仅通过正式 Release 签名流程发布，指纹和 SHA-256 校验见 [签名说明](docs/RELEASE_SIGNING.md)。完整操作见 [安装手册](docs/INSTALLATION.md) 与 [Android 说明](docs/ANDROID_SETUP.md)。
 
-从 v0.2.1 起，GitHub Release **只允许正式 release-signed APK**；缺少签名 Secret 或证书指纹不匹配会直接导致发布失败，不再回退 Debug APK。
+### 4. 已有安装升级（保留密文、域名与密钥）
 
-在作为 SIM Node 的 Android 手机上：
+```bash
+./scripts/backup.sh
+git pull --ff-only
+python3 scripts/setup.py --upgrade \
+  --admin-domain admin.example.com \
+  --node-domain node.example.com
+```
 
-1. 安装 APK；
-2. 打开 PWA 生成的 Enrollment Link；
-3. 完成设备注册；
-4. 授予短信 / SIM 所需权限；
-5. 将 SIM Hub 设置为 **默认短信 App**；
-6. 如需要联系人名称映射，可额外授予 Contacts 权限；
-7. 如果需要尽可能低延迟的远程访问，启用 Always-on Relay。
-
-完整流程见 [安装说明](docs/INSTALLATION.md)。需要排查 Android 节点问题时，参见 [开发者诊断](docs/DEVELOPER_DIAGNOSTICS.md)。
-
----
+如使用现有代理，升级时继续指定 `--mode external`。升级**不会覆盖**已有 `.env`、Caddyfile 或数据库；管理域名与 Passkey RP ID 绑定，不应随意更换。**先更新 Relay/PWA，再逐台安装新 APK**；旧节点无需重注册。升级指南：[v0.4–v0.5 升级与操作](docs/UPGRADE_0.4_TO_0.5.md)。
 
 ## 安装与使用流程
 
@@ -209,11 +203,11 @@ curl http://127.0.0.1:8787/healthz
 ```text
 1. 部署 Relay Server
         ↓
-2. 配置 HTTPS + SIMHUB_PUBLIC_BASE_URL
+2. 配置两个 HTTPS 域名：admin 和 node
         ↓
-3. 浏览器打开 Web / PWA Controller
+3. 浏览器打开管理域名并完成管理员认证
         ↓
-4. 创建 / 解锁本地 Vault
+4. 创建 / 解锁 Vault，按需注册 Passkey
         ↓
 5. 生成一次性 Bootstrap Enrollment Link
         ↓
@@ -253,9 +247,9 @@ PWA 拉取并在本地解密
 ### 远程发送短信
 
 ```text
-PWA 选择 Android 设备
+PWA 在会话直接回复或点击“+ 新建短信”
     ↓
-选择具体 SIM / subscription
+选择设备及具体 SIM / subscription
     ↓
 填写号码和短信
     ↓
@@ -411,6 +405,8 @@ v0.2.1 起 Release workflow 强制使用固定长期签名身份；缺少 Secret
 
 | 文档 | 内容 |
 |---|---|
+| [两轮升级与 UI 操作指南](docs/UPGRADE_0.4_TO_0.5.md) | v0.4/v0.5 变更、迁移、登录、SIM、历史同步与诊断 |
+| [一键部署（中文）](docs/QUICKSTART.zh-CN.md) | DNS、Caddy 托管、外部代理、无损升级 |
 | [安装说明](docs/INSTALLATION.md) | Server + PWA + Android 全流程安装 |
 | [系统架构](docs/ARCHITECTURE.md) | 组件、信任边界、数据流 |
 | [Android Setup](docs/ANDROID_SETUP.md) | Android 构建与设备要求 |
@@ -481,12 +477,4 @@ SIM Hub 使用 [MIT License](LICENSE)。
 - **网络传输**：每批 20 条端到端加密事件，Relay 事务写入、逐条确认、幂等去重；429 按 Retry-After 延迟重试，本地未确认数据不删除。
 - **Web 收件箱**：初始只加载最近 30 条服务器事件，点击「加载更早」分步获取，避免历史批量上传拖慢页面。
 
-**升级顺序**：先升级至 v0.3.2 Relay，再更新 Android APK。旧版 Android 仍可通过原有单条事件接口运行。现有 Node Key、设备绑定及短信密文不需要重置。Relay 原有数据保留期限仍然适用，历史事件可能按策略被清理。
-
-## v0.4.0 快速部署与安全升级
-
-Linux 服务器推荐通过 `python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com` 初始化，支持自动配置 Caddy HTTPS、DNS 校验、管理员用户名与 TOTP。已有代理可指定 `--mode external`。详见 [快速部署](docs/QUICKSTART.zh-CN.md)。
-
-Web 控制台新增 **Passkey 通行密钥**、短信会话列表、直接回复、右上角新建短信与统一响应式表单样式。Passkey 负责管理员身份验证，**不会解锁本地 Vault**；仍需用户自己的 Vault 密码或恢复密钥才能解密短信。
-
-从 v0.3.2 升级时请先备份 SQLite 与 Vault 恢复材料，保留 `.env`，管理域名不要直接改名（Passkey 绑定原域名）。设备和 Node Keys 不需要重新注册；服务器更新到 v0.4.0 后旧版 Android 节点仍可按现有协议同步。
+**历史版本说明（v0.3.2）**：当时应先升级 Relay 再更新 Android APK；目前请按上文 v0.5.0 升级指引执行。旧版 Android 仍可通过原有单条事件接口运行。现有 Node Key、设备绑定及短信密文不需要重置。Relay 原有数据保留期限仍然适用，历史事件可能按策略被清理。

@@ -18,63 +18,39 @@ This guide installs the personal relay server, opens the PWA controller, and enr
 - Physical SIM/eSIM telephony capability
 - Ability to set SIM Hub as the default SMS app
 
-## 2. Install the relay
+## 2. Install the relay (recommended v0.4.0+ workflow)
+
+For Linux, configure DNS A records for **two distinct names** (for example `admin.example.com` and `node.example.com`) to point at the public server IPv4. Any AAAA records must resolve to a reachable IPv6 host. Allow inbound TCP 80 and 443. Never publicly expose port 8787.
 
 ```bash
 git clone https://github.com/blackkcold/simhub.git
 cd simhub
-cp .env.example .env
-python3 scripts/gen_admin_token.py
+python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-Copy the generated token into `SIMHUB_ADMIN_TOKEN` in `.env` and set:
+The guided installer checks Docker/Compose, DNS and port availability; generates a strong Admin Token, TOTP secret, owner-only `.env`, Caddyfile and starts HTTPS/Relay. DNS entries are **not** created automatically at your registrar or DNS provider. Preserve `.env` securely.
 
-```env
-SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
-```
+Already use your own Nginx, Caddy or Traefik? Run `python3 scripts/setup.py --mode external --admin-domain admin.example.com --node-domain node.example.com`. External mode does not configure the proxy: terminate HTTPS on both hosts, proxy safely to `127.0.0.1:8787`, overwrite untrusted forwarded-IP headers, and hide `/healthz` and `/readyz` from public access.
 
-Generate and configure TOTP before first public deployment:
+To prepare files before DNS propagates, use `--skip-dns-check --no-start`, then `--upgrade` with the same hostnames and mode after DNS becomes valid.
+
+## 3. Verify HTTPS and internal health
+
+Open **`https://admin.example.com`** for the PWA; the separate `https://node.example.com` endpoint is for Android/Modem APIs, not the management UI.
 
 ```bash
-python3 scripts/gen_totp_secret.py
+docker compose exec -T simhub python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8787/readyz').read().decode())"
 ```
 
-Put the result in `SIMHUB_TOTP_SECRET`. The example config enables `SIMHUB_REQUIRE_TOTP=true`.
+If using managed Caddy, add `-f docker-compose.yml -f compose.caddy.yml` to Compose commands where needed. Public requests to either `/healthz` or `/readyz` must be denied.
 
-Start the relay:
+## 4. Prepare the controller (v0.4.0 and v0.5.0)
 
-```bash
-docker compose up -d --build
-curl http://127.0.0.1:8787/readyz
-```
-
-The readiness endpoint must report the current database schema before you continue.
-
-## 3. Enable HTTPS
-
-Use the provided `Caddyfile.example` or your existing reverse proxy. The public endpoint must use HTTPS because SMS/OTP management is high-value authentication infrastructure and the Android application disables cleartext traffic.
-
-With Caddy, adapt the hostname and proxy it to:
-
-```text
-127.0.0.1:8787
-```
-
-Then verify:
-
-```text
-https://simhub.example.com/
-```
-
-loads the PWA.
-
-## 4. Prepare the controller
-
-1. Open the PWA in a modern browser.
-2. Enter the server admin token.
-3. If TOTP is enabled, enter the current six-digit TOTP once to create the browser session.
-4. Create, import, or unlock the local Vault.
-5. Keep the Master Vault recovery material secure. The server does not possess it and cannot recover encrypted SMS for you. New nodes receive independent Node Keys, not the Master Vault Key.
+1. Open **`https://admin.example.com`** with a modern browser. Sign in using the configured **administrator username** (default `admin`), Admin Token and TOTP. After initial sign-in, you can register FIDO2 **Passkeys** under **Settings → Passkeys**. Passkeys authenticate the administrator; they do **not** decrypt the local Vault on another browser.
+2. Create, import or unlock the **local Master Vault**. Keep its recovery key offline: the server cannot recover SMS plaintext. A new enrollment link contains one-time credentials and a Bootstrap Secret, not the long-term Node Key.
+3. Starting with v0.5.0, administrator and Vault inactivity windows match (**8 hours by default**; admin session **24-hour absolute limit**). An active tab refresh first verifies the HttpOnly session and then resumes an encrypted tab-local Vault snapshot. Explicit Lock, logout or expiry invalidates that shortcut. A different browser/device still needs Vault recovery material.
+4. Use **Inbox** for SMS conversations and direct replies, **+ New message** for remote sending, **Devices** for SIM numbers, charging/Wi-Fi, bounded history synchronization and diagnostics, and **Settings** for enrollment, Passkeys and Vault recovery.
+5. Android may not reveal its phone number. In **Devices → Set number**, supply an override that is Vault-encrypted **only in that browser** (it does not automatically sync to other controllers).
 
 ## 5. Install the Android Agent
 
@@ -122,34 +98,33 @@ The Agent first tries the direct Quectel AT path for DJI Gen1/QDC507, then falls
 
 On vivo/OPPO/Xiaomi/HONOR/Huawei and other aggressive battery-management ROMs, allow autostart and remove battery restrictions for SIM Hub if those controls exist. Keep the persistent foreground-service notification enabled when using always-on relay mode.
 
-## 9. Test the installation
+## 9. Validate the installation
 
-Run these checks in order:
-
-1. PWA shows each Android / Modem node online.
-2. Generic Channel/SIM information is visible.
-3. Send a normal SMS to the SIM and confirm it appears in the PWA after local decryption.
-4. Send an OTP-style SMS and confirm OTP detection/copy works.
-5. Send a test SMS remotely from the PWA through a selected subscription.
-6. Turn off the Android phone's network, receive/send test data, restore network and verify queued synchronization recovers.
-7. Reboot the phone and verify the Agent recovers after boot/unlock according to the configured background mode.
-8. If troubleshooting is required, enable Android Developer Mode, reproduce once, then export a redacted diagnostic ZIP as described in `DEVELOPER_DIAGNOSTICS.md`.
+1. Verify **both** HTTPS hostnames work for their intended surfaces. The node host must not expose the management UI or public health endpoints.
+2. Sign in, unlock the Vault and refresh the **same active browser tab**. Confirm it resumes while the session remains valid; manually lock and refresh to ensure decrypted content stays hidden.
+3. Verify devices, charging/network state and each SIM's phone number. If Android does not provide a number, set a **browser-local encrypted override** in Devices.
+4. Receive an SMS from each SIM, test OTP copy, direct conversation reply and **+ New message** with the intended SIM/channel.
+5. On Android v0.5.0, independently test **Sync latest 100**, **Sync 100 older**, and **Inbox → Load older**. The last one only pages already-uploaded relay messages. Request queued or scanned is not proof that upload completed.
+6. Click **Devices → Diagnostics**, then refresh diagnostic history. Detailed Android logs remain local behind Developer Mode.
+7. Test cellular fallback only after setting the **default mobile-data SIM** and enabling cellular data in Android system settings. The Agent cannot forcibly switch default SIM as an ordinary application.
+8. Reboot and test background recovery, Wi-Fi loss, queue draining, Doze/OEM battery policies and SIM replacement; see [hardware validation](HARDWARE_VALIDATION.md).
 
 ## 10. Backups
 
 Run `./scripts/backup.sh` for a consistent SQLite online backup, or back up the Docker `simhub-data` volume for relay metadata/ciphertext. Separately protect the controller's Vault recovery material. The relay database by itself is intentionally insufficient to decrypt SMS content.
 
-## 11. Updating
+## 11. Updating to v0.5.0
 
-Server:
+First run `./scripts/backup.sh` for a consistent SQLite backup and independently secure Vault recovery material and authentication secrets. On deployments **already configured with two hosts**:
 
 ```bash
-git pull
-docker compose up -d --build
+git pull --ff-only
+python3 scripts/setup.py --upgrade --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-Android updates should be installed from a trusted GitHub Release or your own signed build. The OTA endpoint only advertises an update; it does not silently install APKs.
+If you use your own reverse proxy, retain `--mode external`. Guided upgrade preserves existing `.env`, Caddyfile and data; Node Keys/tokens remain valid. **An older single-host deployment must plan its DNS/proxy split first**: it cannot simply run a dual-host upgrade without reviewing its existing config.
 
+Upgrade **Relay/PWA first**, then install the same-certificate [v0.5.0 release-signed Android APK](https://github.com/blackkcold/simhub/releases/tag/v0.5.0) without clearing app data or re-enrolling. The OTA endpoint advertises the APK but does not install it automatically. Full two-release changes: [v0.4–v0.5 upgrade and usage guide](UPGRADE_0.4_TO_0.5.md).
 
 ## Rolling upgrade from v0.1.x
 

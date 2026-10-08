@@ -135,3 +135,21 @@ Device authentication tokens use a separate two-phase rotation:
 5. relay atomically promotes it.
 
 If the process crashes between steps 3 and 4, the node retains the pending token locally and retries only the commit on the next sync cycle.
+
+## v0.4.0–v0.5.0 command and session extensions
+
+The event/command AES-GCM envelope and Node-Key trust boundary remain backward-compatible. Controller-facing improvements do **not** change the SMS plaintext visibility of the Relay:
+
+| Message | Purpose | Behavior |
+|---|---|---|
+| `sms.sync_recent` | Explicit newest-message rescan | Android Agent v0.5.0+ scans **up to 100** latest provider records; event IDs deduplicate history |
+| `sms.sync_older` | Explicit older backfill | Android Agent v0.5.0+ advances separate history cursor, **up to 100** per command |
+| `sms.sync_history` | Rolling-upgrade alias | Preserved for older Android versions; semantically means older backfill, **not all messages** |
+| `diagnostics.request` | Health snapshot | Node queues a Node-Key-encrypted `device.diagnostics` event; v0.5.0 adds request-ID correlation |
+| `device.network_policy` | Android fallback intent | Stores desired SIM channel/revision and reports whether it equals Android's **system-default data SIM**; **does not toggle cellular data or switch default subscription** |
+
+The device state may contain `encryptedSimNumbers`: an `eventId`, `occurredAt`, and Node-Key-encrypted `ciphertext` holding the array of observed SIM phone numbers. The server validates and stores the opaque envelope only; it **does not receive the plaintext telephone numbers**. The Web controller may save Vault-encrypted manual number overrides in its own browser storage, outside the Relay database.
+
+The Web Inbox's older-message pagination is a separate Controller-to-Relay read path; it never invokes Android SMS history scanning. Results from history commands indicate items **queued for upload**, not guaranteed server persistence or end-of-history truth.
+
+Administrator session authentication supports usernames, optional Passkeys and authenticated `/api/v1/auth/check` calls. The default session inactivity deadline is 8 hours and absolute lifetime 24 hours. Browser Vault recovery across refresh is entirely local and is permitted only after a valid server session check; a Passkey is not a substitute for the Vault recovery key.

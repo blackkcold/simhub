@@ -54,3 +54,13 @@ For a reproducible bug:
 5. disable Developer Mode when no longer needed.
 
 The diagnostic subsystem does not change SIM Hub encryption, message transport or remote-command semantics.
+
+## v0.5.0 remote health check (separate from developer logs)
+
+The Controller **Devices → Diagnostics** button requests a fresh health snapshot and opens a diagnostic results dialog. The Android Agent or supported Linux/Modem Agent produces a `device.diagnostics` **encrypted event** correlated with the request ID. Use **Refresh diagnostics** in the dialog to query the latest available results.
+
+The remote snapshot may contain network/charging state, app/OS versions, SMS role or service status, queue counts and diagnostic timestamps; it **does not upload the complete rotating Developer Mode logs** or SMS/OTP plaintext. A command being queued or accepted does not guarantee that the node has uploaded a result yet, especially while offline.
+
+For detailed local debugging, continue to use Android **Settings → Developer mode → View/Export diagnostic package**. Enable it only while troubleshooting, review the redacted archive before sharing it, and turn it off after the incident.
+
+For Wi-Fi/cellular recovery diagnosis, verify the device's **system-default data SIM** and whether mobile data was already enabled. An ordinary Android app cannot force the default-data subscription to change; the remote policy reports the mismatch instead.

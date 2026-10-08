@@ -28,7 +28,8 @@ The SIM Hub server is a **personal relay**, not the system of record for decrypt
 
 ```env
 SIMHUB_ADMIN_TOKEN=<high-entropy random token>
-SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
+SIMHUB_MANAGEMENT_ORIGIN=https://admin.example.com
+SIMHUB_PUBLIC_BASE_URL=https://node.example.com
 ```
 
 Recommended production options:
@@ -42,7 +43,10 @@ SIMHUB_PORT=8787
 SIMHUB_OFFLINE_AFTER=180
 SIMHUB_ENROLL_TTL=600
 SIMHUB_COMMAND_TTL=120
-SIMHUB_SESSION_TTL=28800
+SIMHUB_ADMIN_USERNAME=admin
+SIMHUB_SEPARATE_SURFACES=true
+SIMHUB_SESSION_TTL=86400
+SIMHUB_SESSION_IDLE_TTL=28800
 SIMHUB_EVENT_RETENTION_DAYS=30
 SIMHUB_AUDIT_RETENTION_DAYS=180
 SIMHUB_COMMAND_RETENTION_DAYS=30
@@ -67,11 +71,18 @@ SIMHUB_OTA_FILE=/data/ota.json
 - Notification webhooks contain only generic metadata and never SMS body, sender, recipient or OTP value.
 - Raw enrollment query data and authorization headers are not written into normal HTTP logs.
 
+## v0.4.0–v0.5.0 security and device changes
+
+- **v0.4.0:** Admin Username and WebAuthn Passkey are supported in addition to Admin Token/TOTP. Public deployments isolate management and device routes on separate hostnames. `scripts/setup.py` can provision DNS-checked managed Caddy TLS or prepare an external proxy.
+- **v0.5.0:** Active-tab Vault recovery is browser-side; the server never receives the Vault Key. Session inactivity defaults to **8 hours**, with **24-hour absolute expiry**. Passwordless refresh cannot bypass the server's session check. Passive absent-cookie checks must not consume password-attempt lockout quota.
+- **SIM privacy:** Android MSISDNs, when readable, are wrapped in a Node-Key-encrypted inventory. The Relay stores only ciphertext, not plaintext phone numbers. Charging, Wi-Fi and OS-defined cellular fallback *status* are sanitized operational fields.
+- **History and diagnostics:** `sms.sync_recent`, `sms.sync_older` and legacy `sms.sync_history` remain encrypted device commands. `diagnostics.request` returns an encrypted health event, not an unredacted Android log. `device.network_policy` reports expected default-data-SIM configuration; it does not grant privileged SIM switching.
+
 ## Deployment topology
 
 ```text
-Internet
-  → HTTPS :443
+Admin browser → HTTPS admin.example.com :443
+Android / modem → HTTPS node.example.com :443
   → Caddy / Nginx / Traefik
   → 127.0.0.1:8787
   → SIM Hub relay

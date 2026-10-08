@@ -212,7 +212,18 @@ async function loadDevices(){
   const d=await api('/api/v1/devices'),next=d.devices||[];
   const oldKeys=new Map(devices.map(x=>[x.id,[x.keyId,x.wrappedKey,x.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|')]));
   for(const node of next)if(oldKeys.get(node.id)!==[node.keyId,node.wrappedKey,node.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|'))deviceKeyCache.delete(node.id);
-  devices=next;renderDevices();renderDeviceSelectors();updateReplyDevices();
+  devices=next;
+  // Decrypt SIM numbers locally; the Relay only stores an opaque Node-Key envelope.
+  for(const d of devices){
+    const n=d.state?.encryptedSimNumbers;
+    if(!n||!vaultKey)continue;
+    try{
+      const event={deviceId:d.id,eventId:n.eventId,kind:'device.sim_inventory',occurredAt:n.occurredAt,subscriptionId:'-1',hasOtp:false,ciphertext:n.ciphertext};
+      const clear=await decryptEvent(event);
+      d.state._phoneNumbers=Array.isArray(clear.numbers)?clear.numbers:[];
+    }catch(err){console.warn('SIM number inventory unavailable',d.id,err.name);}
+  }
+  renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();
 }
 async function ingestEvents(batch,notify=true){
   let changed=false;
@@ -272,8 +283,22 @@ function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()
 function startRealtime(){if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>setConnected(true);eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
 
 function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
-function nodeChannels(d){if(!d||!d.state)return[];if(Array.isArray(d.state.channels)&&d.state.channels.length)return d.state.channels;return (d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));}
-function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(ch.alias||ch.displayName||ch.carrierName||ch.id)+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">'+escapeHtml(tr('no_active_channel'))+'</option>';}
+function nodeChannels(d){
+  if(!d||!d.state)return[];
+  const channels=Array.isArray(d.state.channels)&&d.state.channels.length?d.state.channels:(d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));
+  const phones=d.state._phoneNumbers||[];
+  return channels.map(ch=>{
+    const found=phones.find(n=>String(n.channelId)===String(ch.id));
+    return {...ch,phoneNumber:String(found?.number||'').trim()};
+  });
+}
+function channelTitle(ch){return (ch.phoneNumber?ch.phoneNumber+' · ':'')+(ch.alias||ch.displayName||ch.carrierName||ch.id);}
+function messageChannelLabel(e){
+  const d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e);
+  const channel=nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id);
+  return channel?channelTitle(channel):id;
+}
+function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(channelTitle(ch))+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">'+escapeHtml(tr('no_active_channel'))+'</option>';}
 function renderDevices(){
   const box=$('deviceList');
   if(!devices.length){box.innerHTML='<div class="empty card">'+escapeHtml(tr('no_devices'))+'</div>';return;}
@@ -288,8 +313,8 @@ function renderDevices(){
       (d.revoked?'':'<button class="danger mini" data-action="revoke" title="'+escapeHtml(tr('tip_revoke'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_revoke'))+'</button>');
     return '<article class="card device device-card"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+'</p></div><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(tr(stateKey))+'</span></div>'+
       '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':escapeHtml(s.batteryPct)+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':escapeHtml(s.pendingEvents))+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+
-      '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
-      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';
+      '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.charging===true?'充电中':s.charging===false?'未充电':'—')+'</b><span>充电状态</span></div><div class="stat"><b>'+escapeHtml(s.network==='WIFI'?'已连接 Wi-Fi':s.network==='CELLULAR'?'使用移动数据':s.network||'—')+'</b><span>联网状态</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
+      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.phoneNumber||'号码未识别')+' · '+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';
   }).join('');
 }
 function collapseMessageEvents(source){
@@ -353,7 +378,7 @@ function renderInbox(){
       '</span><span class="message-body"><span class="message-title"><strong>'+escapeHtml(who)+
       '</strong><small class="meta">'+fmtTime(e.occurredAt)+'</small></span>'+
       '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
-      escapeHtml(deviceName(e.deviceId))+' · '+escapeHtml(messageChannel(e))+'</small></span></button>';
+      escapeHtml(deviceName(e.deviceId))+' · '+escapeHtml(messageChannelLabel(e))+'</small></span></button>';
   }).join('');
   renderConversation();
 }
@@ -368,7 +393,7 @@ function updateReplyChannels(preferred){
   const d=devices.find(x=>x.id===$('replyDevice').value),channels=nodeChannels(d);
   const el=$('replySubscription'),selected=preferred||el.value;
   el.innerHTML='<option value="">'+escapeHtml(tr('sim_subscription'))+'</option>'+
-    channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'">'+escapeHtml(ch.alias||ch.displayName||ch.carrierName||ch.id)+'</option>').join('');
+    channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'">'+escapeHtml(channelTitle(ch))+'</option>').join('');
   if([...el.options].some(x=>x.value===selected))el.value=selected;
 }
 function renderConversation(){
@@ -390,7 +415,7 @@ function renderConversation(){
     return;
   }
   const last=messages[messages.length-1];
-  $('conversationTitle').textContent=(last.payload?.contactName||messageAddress(last)||tr('unknown'))+' · '+deviceName(last.deviceId);
+  $('conversationTitle').textContent=(last.payload?.contactName||messageAddress(last)||tr('unknown'))+' · '+deviceName(last.deviceId)+' · '+messageChannelLabel(last);
   $('conversationMessages').innerHTML=messages.map(e=>{
     const p=e.payload||{},inbound=eventIsInbound(e),
       status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent')),

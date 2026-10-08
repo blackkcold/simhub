@@ -366,7 +366,7 @@ SIM Hub intentionally does not include:
 
 ### MMS
 
-The project includes default-SMS eligibility and **MMS metadata/history observation**, but does not implement a complete carrier-specific MMS PDU download/send transport.
+The project preserves encrypted MMS WAP PUSH evidence locally and warns the user, but does not implement full carrier-specific MMS media download/send. Do **not** use this as your primary messaging app if MMS is required.
 
 SMS and OTP are the supported production path.
 
@@ -424,7 +424,7 @@ CI also performs a complete API 37 debug APK build.
 
 Current release:
 
-**[v0.2.1](https://github.com/blackkcold/simhub/releases/tag/v0.2.1)**
+**[v0.2.2](https://github.com/blackkcold/simhub/releases/tag/v0.2.2)**
 
 Release assets include the Android APK, tagged source snapshot, documentation bundle and SHA-256 checksums.
 

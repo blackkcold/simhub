@@ -1,0 +1,27 @@
+# Optional Linux-only managed TLS deployment. Use with docker-compose.yml.
+# Host networking keeps Caddy's trusted upstream on loopback; the SIM Hub
+# Docker gateway trust setting covers Docker's loopback port SNAT.
+services:
+  caddy:
+    image: caddy:2
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=16m
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - simhub-caddy-data:/data
+      - simhub-caddy-config:/config
+    depends_on:
+      simhub:
+        condition: service_healthy
+volumes:
+  simhub-caddy-data:
+  simhub-caddy-config:

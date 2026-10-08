@@ -103,3 +103,16 @@ Install from `modem_agent/`. The built-in adapter order is:
 The external `dji4g` utility may still be used separately for DJI network-interface setup, but SIM Hub SMS receive/send does not rely on undocumented CLI AT commands.
 
 Use the PWA to create a Linux/DJI enrollment JSON, then run the documented `enroll` command and enable `simhub-modem.service`. The temporary enrollment JSON should be deleted after successful consumption.
+
+## v0.2.2 direct mobile notifications
+
+Set one of the following, or continue using the generic notification webhook:
+
+```env
+SIMHUB_NOTIFY_BARK_URL=https://api.day.app/YOUR_DEVICE_KEY
+# or
+SIMHUB_NOTIFY_NTFY_URL=https://ntfy.example.com/YOUR_PRIVATE_TOPIC
+SIMHUB_NOTIFY_NTFY_TOKEN=YOUR_TOPIC_WRITE_TOKEN
+```
+
+The relay sends only `New OTP received` or `New SMS received`, never the actual OTP, sender, recipient or SMS body. Keep topic identifiers and provider tokens private. Configure a single provider to avoid duplicate notifications. PWA must be unlocked to decrypt the message. A push acknowledgement is not equivalent to on-device delivery.

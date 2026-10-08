@@ -92,6 +92,8 @@ The relay is intentionally **blind to SMS plaintext**. New nodes receive a rando
 | **Offline reliability** | Durable Android event queue + durable server command queue |
 | **Security** | AES-256-GCM E2EE, independent Node Keys, Android Keystore/local protected modem config, metadata-bound AAD, two-phase rotating bearer tokens |
 | **Controller** | Installable PWA with inbox, OTP copy, search, send, devices, recovery import, SSE realtime updates and diagnostics |
+| **Localized UI** | Android + Web/PWA support Simplified Chinese and English; Android also follows the system language and has responsive foldable/tablet layouts |
+| **Developer diagnostics** | Opt-in Android diagnostic logging with automatic secret/SMS/OTP redaction, rotating local logs and ZIP export |
 | **Authentication** | High-entropy admin token + optional TOTP at login, then short-lived HttpOnly session |
 | **Notifications** | Optional metadata-only webhook for Bark/ntfy/custom bridges |
 | **Operations** | Docker deployment, health endpoint, audit log, backups, OTA metadata |
@@ -144,6 +146,8 @@ A ready-to-adapt Caddy example is included in [Caddyfile.example](Caddyfile.exam
 
 Open your HTTPS SIM Hub URL in a modern browser.
 
+The controller follows the browser language on first use and can switch between **简体中文 / English** from the UI. Contextual `ⓘ` help explains security-sensitive options.
+
 Then:
 
 1. enter the admin token;
@@ -169,7 +173,7 @@ On the Android SIM Node:
 6. optionally allow Contacts access;
 7. enable the always-on relay mode if low-latency remote access is required.
 
-Full procedure: [Installation Guide](docs/INSTALLATION.md).
+Full procedure: [Installation Guide](docs/INSTALLATION.md). For troubleshooting, see [Android developer diagnostics](docs/DEVELOPER_DIAGNOSTICS.md).
 
 ---
 

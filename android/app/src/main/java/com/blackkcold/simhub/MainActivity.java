@@ -35,7 +35,7 @@ public final class MainActivity extends Activity {
         findViewById(R.id.startRelayButton).setOnClickListener(v->{if(!new AgentConfig(this).isEnrolled()){toast(R.string.enroll_first);return;}AppLogger.i(this,"Relay","User requested always-on relay start");RelayForegroundService.start(this);refreshLocal();});
         findViewById(R.id.stopRelayButton).setOnClickListener(v->{AppLogger.i(this,"Relay","User requested always-on relay stop");RelayForegroundService.stop(this);refreshLocal();});
         findViewById(R.id.resetEnrollmentButton).setOnClickListener(v->new AlertDialog.Builder(this).setTitle(R.string.reset_title).setMessage(R.string.reset_message).setNegativeButton(R.string.cancel,null).setPositiveButton(R.string.reset,(d,w)->{AppLogger.w(this,"Enrollment","User reset node enrollment");EnrollmentManager.reset(this);refreshLocal();toast(R.string.enrollment_reset_done);}).show());
-        findViewById(R.id.syncButton).setOnClickListener(v->exec.execute(()->{int n=SmsHistorySync.sync(this,100);SyncJobService.scheduleNow(this);AppLogger.i(this,"SmsSync","Manual history sync queued count="+n);runOnUiThread(()->toast(getString(R.string.sync_queued,n)));}));
+        findViewById(R.id.syncButton).setOnClickListener(v->exec.execute(()->{int n=SmsHistorySync.syncRecent(this,100);SyncJobService.scheduleNow(this);AppLogger.i(this,"SmsSync","Manual history sync queued count="+n);runOnUiThread(()->toast(getString(R.string.sync_queued,n)));}));
         findViewById(R.id.olderSyncButton).setOnClickListener(v->exec.execute(()->{
             int n=SmsHistorySync.syncOlder(this,100);
             SyncJobService.scheduleNow(this);

@@ -73,6 +73,7 @@ jobs:
           node-version: '22'
       - run: python3 -m pip install -r modem_agent/requirements.txt
       - run: python3 server/test_simhub.py
+      - run: python3 server/test_surfaces.py
       - run: PYTHONPATH=server python3 server/test_migration.py
       - run: PYTHONPATH=server python3 server/test_maintenance.py
       - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py

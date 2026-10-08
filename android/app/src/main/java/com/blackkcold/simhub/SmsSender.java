@@ -25,16 +25,9 @@ public final class SmsSender {
         JSONObject localCipher=new CryptoBox(c).encryptLocal(eventPayload);
         SmsManager base=c.getSystemService(SmsManager.class);SmsManager sms=base.createForSubscriptionId(subId);ArrayList<String> parts=sms.divideMessage(body);if(parts.isEmpty())parts.add(body);
         LocalStore.get(c).createPendingSms(commandId,provider.toString(),parts.size(),localCipher,subId);
-        ArrayList<PendingIntent> sent=new ArrayList<>(),delivered=new ArrayList<>();
-        for(int i=0;i<parts.size();i++){sent.add(pi(c,SmsStatusReceiver.ACTION_SENT,commandId,i,i));delivered.add(pi(c,SmsStatusReceiver.ACTION_DELIVERED,commandId,i,1000+i));}
-        try{
-            if(parts.size()==1)sms.sendTextMessage(to,null,body,sent.get(0),delivered.get(0));
-            else sms.sendMultipartTextMessage(to,null,parts,sent,delivered);
-        }catch(Exception e){
-            ContentValues fail=new ContentValues();fail.put(Telephony.Sms.TYPE,Telephony.Sms.MESSAGE_TYPE_FAILED);c.getContentResolver().update(provider,fail,null,null);
-            EventQueue.queue(c,"sms-provider-"+providerId+"-failed","sms.failed",System.currentTimeMillis()/1000,subId,false,eventPayload,new JSONObject().put("stage","submit"));
-            LocalStore.get(c).removePendingSms(commandId);throw e;
-        }
+        ArrayList<PendingIntent> sent=new ArrayList<>(),delivered=new ArrayList<>();for(int i=0;i<parts.size();i++){sent.add(pi(c,SmsStatusReceiver.ACTION_SENT,commandId,i,i));delivered.add(pi(c,SmsStatusReceiver.ACTION_DELIVERED,commandId,i,1000+i));}
+        try{if(parts.size()==1)sms.sendTextMessage(to,null,body,sent.get(0),delivered.get(0));else sms.sendMultipartTextMessage(to,null,parts,sent,delivered);AppLogger.i(c,"SmsSender","SMS submitted subscription="+subId+" parts="+parts.size());}
+        catch(Exception e){ContentValues fail=new ContentValues();fail.put(Telephony.Sms.TYPE,Telephony.Sms.MESSAGE_TYPE_FAILED);c.getContentResolver().update(provider,fail,null,null);EventQueue.queue(c,"sms-provider-"+providerId+"-failed","sms.failed",System.currentTimeMillis()/1000,subId,false,eventPayload,new JSONObject().put("stage","submit"));LocalStore.get(c).removePendingSms(commandId);AppLogger.e(c,"SmsSender","SMS submission failed subscription="+subId+" parts="+parts.size(),e);throw e;}
     }
     private static PendingIntent pi(Context c,String action,String commandId,int partIndex,int request){Intent i=new Intent(c,SmsStatusReceiver.class).setAction(action).putExtra("command_id",commandId).putExtra("part_index",partIndex);return PendingIntent.getBroadcast(c,(commandId.hashCode()*31)^request,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     private SmsSender(){}

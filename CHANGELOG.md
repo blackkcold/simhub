@@ -1,3 +1,17 @@
+## v0.3.0 — Localized UI and developer diagnostics
+
+- Redesign the Android Agent UI into a card-based dashboard with responsive single-column phone and two-column foldable/tablet layouts.
+- Add native light/dark themes and Simplified Chinese / English localization with per-app language selection.
+- Add opt-in Developer Mode with rotating app-private diagnostic logs, recent-log viewing, clearing and ZIP export.
+- Redact SMS bodies, OTP values, authentication tokens, encryption/recovery secrets and phone-number middle digits before diagnostic persistence.
+- Add diagnostic instrumentation for enrollment, Relay lifecycle, API sync, SMS receive/send/history, JobScheduler and remote command processing.
+- Add regression tests for diagnostic redaction.
+- Localize the Web/PWA Controller in Simplified Chinese and English with automatic browser-language selection and manual switching.
+- Add contextual `ⓘ` guidance for Admin Token, TOTP, Vault passphrase, node type, recovery key, notifications and security controls.
+- Localize dynamic device health, message state, confirmations, notifications and common error/toast messages.
+- Cache the localization module in the PWA shell for offline use.
+- Preserve the existing E2EE, Node Key, enrollment, Channel routing and Relay protocol behavior.
+
 ## v0.2.2 — SMS reliability and operational health
 
 - Make enrollment token consumption atomic under SQLite write locking; include concurrency regression test.

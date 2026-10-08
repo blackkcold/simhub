@@ -1,3 +1,4 @@
+import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -7,7 +8,7 @@ const AUTO_LOCK_MS = 15 * 60 * 1000;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 const deviceKeyCache=new Map();
-const titles={inbox:['Inbox','End-to-end encrypted SMS'],send:['Send SMS','Encrypted remote sending'],devices:['Devices','SIM nodes and live state'],settings:['Settings','Enrollment, vault and notifications']};
+const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
 
 function b64u(bytes){let s='';for(let i=0;i<bytes.length;i+=0x8000)s+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');}
 function unb64u(s){s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-(s.length%4))%4);const raw=atob(s),out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
@@ -16,9 +17,9 @@ function eventAad(deviceId,eventId,kind,occurredAt,subscriptionId,hasOtp){return
 function commandAad(deviceId,commandId,type,createdAt,expiresAt,idempotencyKey){return 'simhub-command-v2|'+field(deviceId)+'|'+field(commandId)+'|'+field(type)+'|'+createdAt+'|'+expiresAt+'|'+field(idempotencyKey);}
 function uuid(){return crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+b64u(crypto.getRandomValues(new Uint8Array(12)));}
 function escapeHtml(v){return String(v==null?'':v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('show'),2600);}
-function fmtTime(ts){if(!ts)return '—';return new Intl.DateTimeFormat(undefined,{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(ts*1000));}
-function deviceName(id){const d=devices.find(x=>x.id===id);return d?d.name:'SIM Node';}
+function toast(msg){const t=$('toast');t.textContent=localizeMessage(msg);t.classList.add('show');clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('show'),2600);}
+function fmtTime(ts){if(!ts)return '—';return new Intl.DateTimeFormat(getLocale()==='zh-CN'?'zh-CN':'en',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(ts*1000));}
+function deviceName(id){const d=devices.find(x=>x.id===id);return d?d.name:tr('sim_node');}
 
 async function deriveWrapKey(passphrase,salt){const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations:PBKDF2_ITER,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}
 async function wrapVaultRaw(raw,passphrase){if(passphrase.length<10)throw new Error('Use a vault passphrase of at least 10 characters.');const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),wrapKey=await deriveWrapKey(passphrase,salt);const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,raw));localStorage.setItem(VAULT_STORE,JSON.stringify({v:1,kdf:'PBKDF2-SHA256',iterations:PBKDF2_ITER,salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}));}
@@ -45,8 +46,8 @@ async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body
 async function establishSession(){try{return await api('/api/v1/auth/check');}catch(e){}const adminToken=$('adminToken').value.trim(),totp=$('totp').value.trim();if(adminToken.length<32)throw new Error('Admin token is required for a new session.');const data=await api('/api/v1/auth/session',{method:'POST',body:{adminToken:adminToken,totp:totp}});$('adminToken').value='';$('totp').value='';return data;}
 async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST',body:{logout:true}});}catch(e){}}
 
-function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=on?'Relay connected':'Not connected';}
-function showUnlocked(){$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent='Vault unlocked in memory. Relay stores ciphertext and does not receive the Vault Key.';setConnected(true);}
+function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
+function showUnlocked(){$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
 function lockVault(){vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];lastSeq=0;oldestSeq=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,AUTO_LOCK_MS-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();armAutoLock();}
@@ -58,7 +59,7 @@ window.addEventListener('focus',enforceAutoLock);
 window.addEventListener('pageshow',enforceAutoLock);
 
 async function connectAndUnlock(){await establishSession();await unlockVault($('passphrase').value);showUnlocked();await fullRefresh();startRealtime();}
-async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent='New vault created locally. Sign in and enroll an Android node.';toast('Vault created');}
+async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent=tr('vault_created_hint');toast(tr('vault_created'));}
 
 async function loadDevices(){const d=await api('/api/v1/devices');deviceKeyCache.clear();devices=d.devices||[];renderDevices();renderDeviceSelectors();}
 async function ingestEvents(batch,notify=true){for(const e of batch){lastSeq=Math.max(lastSeq,e.seq||0);oldestSeq=oldestSeq?Math.min(oldestSeq,e.seq||oldestSeq):e.seq;if(events.some(x=>x.eventId===e.eventId&&x.deviceId===e.deviceId))continue;events.push(e);try{const payload=await decryptEvent(e);const row=Object.assign({},e,{payload});decryptedEvents.push(row);if(notify)maybeNotify(row);}catch(err){decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}}}
@@ -68,10 +69,27 @@ async function fullRefresh(){try{await loadDevices();await loadEvents();setConne
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
 function startRealtime(){if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>setConnected(true);eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
 
-function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">All devices</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
+function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
 function nodeChannels(d){if(!d||!d.state)return[];if(Array.isArray(d.state.channels)&&d.state.channels.length)return d.state.channels;return (d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));}
-function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(ch.alias||ch.displayName||ch.carrierName||ch.id)+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">No active SMS channel reported</option>';}
-function renderDevices(){const box=$('deviceList');if(!devices.length){box.innerHTML='<div class="empty card">No enrolled devices.</div>';return;}box.innerHTML=devices.map(d=>{const s=d.state||{},subs=nodeChannels(d),health=d.nodeType==='android'?(s.smsOperational===true?'SMS ready':s.smsOperational===false?'SMS unavailable':'SMS unverified'):(s.smsOperational===false?'SIM unavailable':'Modem state unverified'),buttons='<button class="ghost mini" data-action="refresh" data-id="'+escapeHtml(d.id)+'">Refresh</button><button class="ghost mini" data-action="sync" data-id="'+escapeHtml(d.id)+'">Sync history</button><button class="ghost mini" data-action="diagnostics" data-id="'+escapeHtml(d.id)+'">Diagnostics</button>'+(!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?'<button class="ghost mini" data-action="rotate-key" data-id="'+escapeHtml(d.id)+'">Isolate key</button>':'')+(d.revoked?'':'<button class="danger mini" data-action="revoke" data-id="'+escapeHtml(d.id)+'">Revoke</button>');return '<article class="card device"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+'</p></div><span class="pill '+(d.online?'online':'')+'">'+(d.revoked?'revoked':d.online?'online':'offline')+'</span></div><div class="stats"><span>SMS <strong>'+escapeHtml(health)+'</strong></span><span>Battery <strong>'+(s.batteryPct==null?'—':s.batteryPct+'%')+'</strong></span><span>Network <strong>'+escapeHtml(s.network||'—')+'</strong></span><span>Pending <strong>'+(s.pendingEvents==null?'—':s.pendingEvents)+'</strong></span></div><div class="stats"><span>Last sync <strong>'+fmtTime(s.lastSyncSuccessAt)+'</strong></span><span>Last SMS <strong>'+fmtTime(s.lastSmsReceivedAt)+'</strong></span><span>Sync error <strong>'+escapeHtml(s.lastSyncError||'none')+'</strong></span></div><div class="subs">'+(subs.map(x=>'<div><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.serviceState||'')+' · signal '+(x.signalLevel==null?'—':x.signalLevel)+'</small></div>').join('')||'<small>No active subscriptions reported</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';}).join('');}
+function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(ch.alias||ch.displayName||ch.carrierName||ch.id)+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">'+escapeHtml(tr('no_active_channel'))+'</option>';}
+function renderDevices(){
+  const box=$('deviceList');
+  if(!devices.length){box.innerHTML='<div class="empty card">'+escapeHtml(tr('no_devices'))+'</div>';return;}
+  box.innerHTML=devices.map(d=>{
+    const s=d.state||{},subs=nodeChannels(d);
+    const healthKey=d.nodeType==='android'?(s.smsOperational===true?'sms_ready':s.smsOperational===false?'sms_unavailable':'sms_unverified'):(s.smsOperational===false?'sim_unavailable':'modem_unverified');
+    const stateKey=d.revoked?'revoked':d.online?'online':'offline';
+    const buttons='<button class="ghost mini" data-action="refresh" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_refresh'))+'</button>'+
+      '<button class="ghost mini" data-action="sync" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_sync'))+'</button>'+
+      '<button class="ghost mini" data-action="diagnostics" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_diagnostics'))+'</button>'+
+      (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?'<button class="ghost mini" data-action="rotate-key" title="'+escapeHtml(tr('tip_rotate_key'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_rotate'))+'</button>':'')+
+      (d.revoked?'':'<button class="danger mini" data-action="revoke" title="'+escapeHtml(tr('tip_revoke'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_revoke'))+'</button>');
+    return '<article class="card device device-card"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+'</p></div><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(tr(stateKey))+'</span></div>'+
+      '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':s.batteryPct+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':s.pendingEvents)+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+
+      '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
+      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':x.signalLevel)+'</small></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';
+  }).join('');
+}
 function collapseMessageEvents(source){
   const rank={'sms.history':0,'sms.sent':2,'sms.delivered':3,'sms.failed':4},byProvider=new Map(),rest=[];
   for(const e of source){
@@ -83,10 +101,21 @@ function collapseMessageEvents(source){
   }
   return rest.concat(Array.from(byProvider.values()));
 }
-function renderInbox(){const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value,list=collapseMessageEvents(decryptedEvents).filter(e=>(!dev||e.deviceId===dev)&&(!kind||e.kind===kind)).filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));}).sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));$('emptyInbox').hidden=!!list.length;let otpCount=0;$('inboxList').innerHTML=list.map(e=>{const p=e.payload||{},inbound=e.kind==='sms.received'||p.direction==='in',who=p.contactName||p.sender||p.recipient||'Unknown',body=e.decryptError?'[Unable to decrypt: '+(e.decryptReason||'vault mismatch')+']':(p.body||'');if(p.otp&&p.otp.value&&inbound)otpCount++;return '<article class="message"><div class="avatar">'+escapeHtml((who||'?').trim().slice(0,1).toUpperCase())+'</div><div><div class="msg-head"><strong>'+escapeHtml(who)+'</strong><span class="meta">'+(inbound?'received':escapeHtml(e.kind.replace('sms.','')))+' · '+escapeHtml(deviceName(e.deviceId))+'</span></div><div class="msg-body">'+escapeHtml(body)+'</div>'+(p.otp&&p.otp.value?'<div class="otp"><span>OTP</span><code>'+escapeHtml(p.otp.value)+'</code><button class="ghost mini copy-otp" data-otp="'+escapeHtml(p.otp.value)+'">Copy</button></div>':'')+'</div><div class="meta">'+fmtTime(e.occurredAt)+'<br>'+escapeHtml(p.subscriptionAlias||e.subscriptionId||'')+'</div></article>';}).join('');$('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';}
-
+function renderInbox(){
+  const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
+  const list=collapseMessageEvents(decryptedEvents).filter(e=>(!dev||e.deviceId===dev)&&(!kind||e.kind===kind)).filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));}).sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
+  $('emptyInbox').hidden=!!list.length;let otpCount=0;
+  $('inboxList').innerHTML=list.map(e=>{
+    const p=e.payload||{},inbound=e.kind==='sms.received'||p.direction==='in',who=p.contactName||p.sender||p.recipient||tr('unknown');
+    const body=e.decryptError?'['+tr('decrypt_failed')+': '+escapeHtml(e.decryptReason||'vault mismatch')+']':escapeHtml(p.body||'');
+    if(p.otp&&p.otp.value&&inbound)otpCount++;
+    const state=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):tr('sent'));
+    return '<article class="message"><div class="avatar">'+escapeHtml((who||'?').trim().slice(0,1).toUpperCase())+'</div><div><div class="msg-head"><strong>'+escapeHtml(who)+'</strong><span class="meta">'+escapeHtml(state)+' · '+escapeHtml(deviceName(e.deviceId))+'</span></div><div class="msg-body">'+body+'</div>'+(p.otp&&p.otp.value?'<div class="otp"><span>'+escapeHtml(tr('otp'))+'</span><code>'+escapeHtml(p.otp.value)+'</code><button class="ghost mini copy-otp" data-otp="'+escapeHtml(p.otp.value)+'">'+escapeHtml(tr('copy'))+'</button></div>':'')+'</div><div class="meta">'+fmtTime(e.occurredAt)+'<br>'+escapeHtml(p.subscriptionAlias||e.subscriptionId||'')+'</div></article>';
+  }).join('');
+  $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
+}
 async function queueCommand(deviceId,type,payload,ttl){ttl=ttl||120;const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
-async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(!confirm('Send SMS via '+deviceName(deviceId)+' to '+to+'? The carrier may charge for each SMS part.'))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
+async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
 async function createEnrollment(){
   if(!vaultRaw)throw new Error('Vault must be unlocked.');
   const type=$('enrollType').value==='modem'?'modem':'android',name=$('enrollName').value.trim()||(type==='modem'?'DJI / Modem SIM Node':'Android SIM Node');
@@ -104,26 +133,56 @@ async function createEnrollment(){
       $('openEnroll').href=value;$('openEnroll').hidden=false;
     }
     $('enrollLink').value=value;$('enrollResult').hidden=false;
-    toast(type==='modem'?'One-time modem enrollment package created for 10 minutes':'One-time Android enrollment link created for 10 minutes');
+    toast(tr(type==='modem'?'enroll_modem_done':'enroll_android_done'));
   }finally{
     nodeRaw.fill(0);bootstrapRaw.fill(0);
   }
 }
 async function rotateDeviceKey(deviceId){const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
-async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||'Copied');}
-function updateCharCount(){const value=$('sendBody').value,n=value.length,per=n>0&&/^[\x00-\x7F]*$/.test(value)?160:70;$('smsCount').textContent=n+' characters · approx. '+Math.max(1,Math.ceil(n/per))+' SMS part(s)';}
-function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:p.otp&&p.otp.value?'New OTP received':'New SMS received',icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
-async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:5000},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm('Revoke this SIM Node? Re-enrollment will be required.')){await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
-function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=titles[name][0];$('viewSubtitle').textContent=titles[name][1];if(name==='send')updateSubscriptionSelector();}
+async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||tr('copied'));}
+function updateCharCount(){const value=$('sendBody').value,n=value.length,per=n>0&&/^[\x00-\x7F]*$/.test(value)?160:70;$('smsCount').textContent=tr('chars_parts',{chars:n,parts:Math.max(1,Math.ceil(n/per))});}
+function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
+async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:5000},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
+function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();}
+
+function relocalizeDynamic(){
+  applyI18n();
+  const active=document.querySelector('.nav.active')?.dataset.view||'inbox';
+  switchView(active);
+  setConnected($('relayDot').classList.contains('ok'));
+  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?tr('local_vault_found'):tr('no_local_vault');
+  if(vaultKey)$('vaultStatus').textContent=tr('vault_unlocked');
+  renderDeviceSelectors();
+  renderDevices();
+  renderInbox();
+  updateCharCount();
+}
 
 function wire(){
-  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?'Local vault found. Enter its passphrase.':'No local vault found. Create or import one before enrollment.';
-  $('unlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));$('createVaultBtn').onclick=()=>createVaultFlow().catch(e=>toast(e.message));$('importKeyBtn').onclick=()=>importRecoveryFlow().catch(e=>toast(e.message));$('lockBtn').onclick=lockVault;$('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast('Vault is locked');
-  document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));$('search').oninput=renderInbox;$('deviceFilter').onchange=renderInbox;$('kindFilter').onchange=renderInbox;$('sendDevice').onchange=updateSubscriptionSelector;$('sendBody').oninput=updateCharCount;
-  $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));$('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));$('enrollBtn').onclick=()=>createEnrollment().catch(e=>toast(e.message));$('copyEnroll').onclick=()=>copy($('enrollLink').value,'Enrollment link copied').catch(e=>toast(e.message));$('exportKeyBtn').onclick=()=>vaultRaw?copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),'Recovery key copied').catch(e=>toast(e.message)):toast('Vault locked');
-  $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(p==='granted'?'Browser notifications enabled':'Notification permission not granted');};
-  $('forgetBtn').onclick=async()=>{if(confirm('Forget the local wrapped vault and sign this browser out?')){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast('Browser credentials forgotten');}};
-  $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};$('inboxList').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,'OTP copied').catch(err=>toast(err.message));};
+  applyI18n();
+  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?tr('local_vault_found'):tr('no_local_vault');
+  $('languageSelect').onchange=()=>{setLocale($('languageSelect').value);relocalizeDynamic();};
+  $('unlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));
+  $('createVaultBtn').onclick=()=>createVaultFlow().catch(e=>toast(e.message));
+  $('importKeyBtn').onclick=()=>importRecoveryFlow().catch(e=>toast(e.message));
+  $('lockBtn').onclick=lockVault;
+  $('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast(tr('vault_locked'));
+  document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
+  $('search').oninput=renderInbox;
+  $('deviceFilter').onchange=renderInbox;
+  $('kindFilter').onchange=renderInbox;
+  $('sendDevice').onchange=updateSubscriptionSelector;
+  $('sendBody').oninput=updateCharCount;
+  $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
+  $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
+  $('enrollBtn').onclick=()=>createEnrollment().catch(e=>toast(e.message));
+  $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
+  $('exportKeyBtn').onclick=()=>vaultRaw?copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied')).catch(e=>toast(e.message)):toast(tr('vault_locked'));
+  $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
+  $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast(tr('credentials_forgotten'));}};
+  $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
+  $('inboxList').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  relocalizeDynamic();
 }
 wire();

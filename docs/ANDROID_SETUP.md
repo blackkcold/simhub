@@ -23,8 +23,8 @@ Install the resulting APK with Android Studio or `adb install`.
 1. Open the PWA on your HTTPS relay and unlock/create the local Master Vault.
 2. In Settings, create an Android enrollment link. It contains only this node's independent Node Key, never the Master Vault Key.
 3. Open the `simhub://enroll?...` link on the Android SIM Node, or paste it into the Agent.
-4. Tap **Enroll this SIM Node**.
-5. Tap **Make default SMS app** and approve Android's system role dialog.
+4. Tap **Enroll this SIM Node / 注册此 SIM 节点**.
+5. Tap **Set as default SMS app / 设为默认短信应用** and approve Android's system role dialog.
 6. Grant SMS/SIM permissions.
 7. Optionally grant Contacts permission for contact-name mapping.
 8. Start **always-on relay** for the built-in lowest-latency mode. The server also exposes an optional metadata-only push/tickle adapter hook for FCM/OEM integrations; JobScheduler and SMS Provider reconciliation remain recovery paths.
@@ -58,3 +58,12 @@ The controller addresses a stable `channelId` plus `channelRevision`. Android ma
 - Device bearer tokens rotate automatically every 60 days using a crash-safe prepare/commit flow.
 - New installations hold only an independent Node Key.
 - Upgraded legacy 0.1.5 nodes can receive `node.rotate_key` after pending outbound SMS completes; the legacy Master Vault Key is then deleted from the node.
+
+
+## v0.3.0 UI, language and diagnostics
+
+- The Android dashboard uses a single-column phone layout and a two-column `sw600dp` layout for unfolded foldables and tablets.
+- Light/dark appearance follows the Android system theme.
+- The app supports **Follow system**, **简体中文**, and **English** from the Settings section.
+- **Developer Mode** is off by default. When enabled it records redacted diagnostic events and exposes View/Clear/Export controls.
+- See [Developer diagnostics](DEVELOPER_DIAGNOSTICS.md) for the logging/redaction contract and support workflow.

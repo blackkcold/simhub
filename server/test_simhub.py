@@ -163,6 +163,17 @@ class ApiTest(unittest.TestCase):
         self.assertIsNone(used)
         st,d,_=self.req('POST','/api/v1/enroll',{'token':x['token'],'bootstrapProof':proof},admin=False);self.assertEqual(st,201);self.assertTrue(d['deviceId'])
 
+    def test_concurrent_enrollment_claim(self):
+        from concurrent.futures import ThreadPoolExecutor
+        status, enrollment, _ = self.req('POST','/api/v1/enrollments',{})
+        self.assertEqual(status,201)
+        def attempt(index):
+            return self.req('POST','/api/v1/enroll',{'token':enrollment['token'],'name':'AtomicEnrollment'},admin=False)[0]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            statuses = list(pool.map(attempt,range(12)))
+        self.assertEqual(statuses.count(201),1,statuses)
+        self.assertTrue(all(code in (201,401) for code in statuses),statuses)
+
     def test_independent_key_enrollment_requires_bootstrap(self):
         st,r,_=self.req('POST','/api/v1/enrollments',{'keyId':'abcdefgh1234','wrappedKey':self.cipher(1)})
         self.assertEqual(st,400);self.assertEqual(r['error'],'invalid_bootstrap')

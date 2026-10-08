@@ -37,7 +37,10 @@ public final class StateCollector {
                     .put("network",network(c))
                     .put("pendingEvents",LocalStore.get(c).pendingEventCount())
                     .put("queueFailures",cfg.queueFailures())
-                    .put("lastQueueFailureAt",cfg.lastQueueFailureAt());
+                    .put("lastQueueFailureAt",cfg.lastQueueFailureAt())
+                    .put("lastSmsReceivedAt",cfg.lastSmsReceivedAt())
+                    .put("lastSyncSuccessAt",cfg.lastSyncSuccessAt())
+                    .put("lastSyncError",cfg.lastSyncError());
 
             Intent bat=c.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             if(bat!=null){

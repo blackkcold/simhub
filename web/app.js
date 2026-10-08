@@ -10,7 +10,7 @@ let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
-let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null;
+let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null,diagnosticsDeviceId=null;
 const eventIds=new Set();
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
@@ -307,7 +307,7 @@ function renderDevices(){
     const healthKey=d.nodeType==='android'?(s.smsOperational===true?'sms_ready':s.smsOperational===false?'sms_unavailable':'sms_unverified'):(s.smsOperational===false?'sim_unavailable':'modem_unverified');
     const stateKey=d.revoked?'revoked':d.online?'online':'offline';
     const buttons='<button class="ghost mini" data-action="refresh" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_refresh'))+'</button>'+
-      '<button class="ghost mini" data-action="sync" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_sync'))+'</button>'+
+      '<button class="ghost mini" data-action="sync-recent" data-id="'+escapeHtml(d.id)+'">同步最近 100 条</button>'+'<button class="ghost mini" data-action="sync-older" data-id="'+escapeHtml(d.id)+'">同步更早 100 条</button>'+
       '<button class="ghost mini" data-action="diagnostics" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_diagnostics'))+'</button>'+
       (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?'<button class="ghost mini" data-action="rotate-key" title="'+escapeHtml(tr('tip_rotate_key'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_rotate'))+'</button>':'')+
       (d.revoked?'':'<button class="danger mini" data-action="revoke" title="'+escapeHtml(tr('tip_revoke'))+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(tr('action_revoke'))+'</button>');
@@ -348,7 +348,7 @@ function threadKey(e){
 }
 function filteredEvents(){
   const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
-  return collapseMessageEvents(decryptedEvents).filter(e=>(!dev||e.deviceId===dev)&&(!kind||e.kind===kind))
+  return collapseMessageEvents(decryptedEvents).filter(e=>e.kind.startsWith('sms.')&&(!dev||e.deviceId===dev)&&(!kind||e.kind===kind))
     .filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));});
 }
 function buildThreads(source){
@@ -506,7 +506,32 @@ async function rotateDeviceKey(deviceId){await ensureStepUp();const d=devices.fi
 async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||tr('copied'));}
 function updateCharCount(){const value=$('sendBody').value;$('smsCount').textContent=tr('chars_parts',{chars:value.length,parts:countSmsSegments(value)});}
 function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
-async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:100},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
+async function refreshDiagnostics(){
+  if(!diagnosticsDeviceId)return;
+  const pane=$('diagnosticsOutput');pane.textContent='正在获取最近诊断结果…';
+  try{
+    const path='/api/v1/events?order=occurred&kind=device.diagnostics&limit=20&device='+encodeURIComponent(diagnosticsDeviceId);
+    const result=await api(path),records=[];
+    for(const e of result.events||[]){
+      try{
+        const payload=await decryptEvent(e);
+        // Never render the encrypted SIM inventory or any secret envelopes in support UI.
+        const sanitized={...payload};
+        delete sanitized.encryptedSimNumbers;
+        records.push({time:new Date(e.occurredAt*1000).toLocaleString(),requestId:payload.requestId||null,diagnostics:sanitized});
+      }catch(err){records.push({time:e.occurredAt,error:'无法解密诊断结果'});}
+    }
+    pane.textContent=records.length?JSON.stringify(records,null,2):'暂无诊断记录。点击设备上的“健康检查”后，再刷新结果。';
+  }catch(e){pane.textContent='诊断读取失败：'+e.message;}
+}
+async function openDiagnostics(id){
+  diagnosticsDeviceId=id;
+  $('diagnosticsTitle').textContent='设备健康检查 · '+deviceName(id);
+  $('diagnosticsDialog').showModal();
+  await refreshDiagnostics();
+}
+
+async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队');}else if(action==='diagnostics'){await openDiagnostics(id);await queueCommand(id,'diagnostics.request',{});toast('健康检查已入队，稍后刷新结果');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
 function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();$('newSmsBtn').hidden=!vaultKey||name!=='inbox';}
 
 function relocalizeDynamic(){
@@ -563,6 +588,8 @@ function wire(){
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};
   $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast(tr('credentials_forgotten'));}};
+  $('diagnosticsClose').onclick=()=>$('diagnosticsDialog').close();
+  $('diagnosticsRefresh').onclick=()=>refreshDiagnostics().catch(e=>toast(e.message));
   $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
   $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});

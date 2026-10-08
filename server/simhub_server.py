@@ -826,15 +826,18 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(400,"invalid_token","Enrollment token malformed"); return
         token_hash=sha256_text(token); ts=now()
         with open_db() as con:
+            # Serialize enrollment claims at read time; avoids SQLite lock-upgrade
+            # deadlocks between two concurrent consumers of the same token.
+            con.execute("BEGIN IMMEDIATE")
             row=con.execute("SELECT * FROM enrollment_tokens WHERE token_hash=?",(token_hash,)).fetchone()
             if not row or row["used_at"] is not None or row["expires_at"]<ts:
-                audit("enrollment.consume","","denied",self.ip)
+                log.warning("Enrollment token rejected for %s",self.ip)
                 self.send_error_json(401,"invalid_enrollment","Enrollment token invalid, expired, or already used"); return
             if row["key_id"]:
                 proof=str(body.get("bootstrapProof",""))
                 expected=str(row["bootstrap_hash"] or "")
                 if not expected or not BOOTSTRAP_PROOF_RE.fullmatch(proof) or not hmac.compare_digest(expected,proof):
-                    audit("enrollment.bootstrap",row["id"],"denied",self.ip)
+                    log.warning("Enrollment bootstrap proof rejected")
                     self.send_error_json(401,"invalid_bootstrap_proof","Bootstrap secret proof is invalid"); return
             # Atomic single-use claim: another request may have read the same row before us.
             # UPDATE obtains SQLite's writer lock; only one claimant can match used_at IS NULL.

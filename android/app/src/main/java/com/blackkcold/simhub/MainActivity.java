@@ -35,7 +35,7 @@ public final class MainActivity extends Activity {
         findViewById(R.id.startRelayButton).setOnClickListener(v->{if(!new AgentConfig(this).isEnrolled()){toast(R.string.enroll_first);return;}AppLogger.i(this,"Relay","User requested always-on relay start");RelayForegroundService.start(this);refreshLocal();});
         findViewById(R.id.stopRelayButton).setOnClickListener(v->{AppLogger.i(this,"Relay","User requested always-on relay stop");RelayForegroundService.stop(this);refreshLocal();});
         findViewById(R.id.resetEnrollmentButton).setOnClickListener(v->new AlertDialog.Builder(this).setTitle(R.string.reset_title).setMessage(R.string.reset_message).setNegativeButton(R.string.cancel,null).setPositiveButton(R.string.reset,(d,w)->{AppLogger.w(this,"Enrollment","User reset node enrollment");EnrollmentManager.reset(this);refreshLocal();toast(R.string.enrollment_reset_done);}).show());
-        findViewById(R.id.syncButton).setOnClickListener(v->exec.execute(()->{int n=SmsHistorySync.sync(this,5000);SyncJobService.scheduleNow(this);AppLogger.i(this,"SmsSync","Manual history sync queued count="+n);runOnUiThread(()->toast(getString(R.string.sync_queued,n)));}));
+        findViewById(R.id.syncButton).setOnClickListener(v->exec.execute(()->{int n=SmsHistorySync.sync(this,100);SyncJobService.scheduleNow(this);AppLogger.i(this,"SmsSync","Manual history sync queued count="+n);runOnUiThread(()->toast(getString(R.string.sync_queued,n)));}));
         findViewById(R.id.refreshButton).setOnClickListener(v->exec.execute(()->{try{JSONObject s=StateCollector.collect(this);String stateText=s.toString(2);if(new AgentConfig(this).isEnrolled())new ApiClient(this).putState();runOnUiThread(()->{if(DeveloperSettings.isEnabled(this))detail.setText(stateText);refreshLocal();});AppLogger.i(this,"State","Manual device state refresh succeeded");}catch(Exception e){AppLogger.e(this,"State","Manual device state refresh failed",e);runOnUiThread(()->toast(UiErrors.message(this,e)));}}));
         findViewById(R.id.otaButton).setOnClickListener(v->exec.execute(()->{try{JSONObject o=new ApiClient(this).ota();runOnUiThread(()->showOta(o));}catch(Exception e){AppLogger.e(this,"OTA","OTA check failed",e);runOnUiThread(()->toast(UiErrors.message(this,e)));}}));
     }
@@ -45,13 +45,30 @@ public final class MainActivity extends Activity {
     private void showRecentLogs(){String logs=AppLogger.recent(this,24000);detail.setText(logs.isEmpty()?getString(R.string.logs_empty):logs);}
     private void exportDiagnostics(){exec.execute(()->{try{pendingDiagnosticFile=DiagnosticExporter.create(this);Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/zip").putExtra(Intent.EXTRA_TITLE,getString(R.string.diagnostic_export_name,new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",java.util.Locale.US).format(new java.util.Date())));runOnUiThread(()->{toast(R.string.diagnostic_export_ready);startActivityForResult(i,REQ_EXPORT_DIAGNOSTICS);});}catch(Exception e){AppLogger.e(this,"Diagnostics","Failed to prepare diagnostic package",e);runOnUiThread(()->toast(R.string.diagnostic_export_failed));}});}
     private void handleIntent(Intent i){if(i!=null&&Intent.ACTION_VIEW.equals(i.getAction())&&i.getData()!=null&&"simhub".equals(i.getData().getScheme())){enrollLink.setText(i.getData().toString());AppLogger.i(this,"Enrollment","Enrollment link opened");}}
-    private void doEnroll(){String link=enrollLink.getText().toString().trim();if(link.isEmpty()){toast(R.string.enrollment_link_first);return;}AppLogger.i(this,"Enrollment","Enrollment started");exec.execute(()->{try{EnrollmentManager.enroll(this,link);runOnUiThread(()->{enrollLink.setText("");toast(R.string.enrollment_complete);refreshLocal();});AppLogger.i(this,"Enrollment","Enrollment completed");}catch(Exception e){AppLogger.e(this,"Enrollment","Enrollment failed",e);runOnUiThread(()->toast(UiErrors.message(this,e)));}});}
+    private final java.util.concurrent.atomic.AtomicBoolean enrolling=new java.util.concurrent.atomic.AtomicBoolean(false);
+    private void doEnroll(){
+        if(!enrolling.compareAndSet(false,true))return;
+        String link=enrollLink.getText().toString().trim();
+        if(link.isEmpty()){enrolling.set(false);toast(R.string.enrollment_link_first);return;}
+        final View button=findViewById(R.id.enrollButton);button.setEnabled(false);
+        AppLogger.i(this,"Enrollment","Enrollment started");
+        exec.execute(()->{
+            try{
+                EnrollmentManager.enroll(this,link);
+                runOnUiThread(()->{enrollLink.setText("");toast(R.string.enrollment_complete);refreshLocal();});
+                AppLogger.i(this,"Enrollment","Enrollment completed");
+            }catch(Exception e){
+                AppLogger.e(this,"Enrollment","Enrollment failed",e);
+                runOnUiThread(()->toast(UiErrors.message(this,e)));
+            }finally{enrolling.set(false);runOnUiThread(()->button.setEnabled(true));}
+        });
+    }
     private void requestSmsRole(){RoleManager rm=getSystemService(RoleManager.class);if(rm.isRoleAvailable(RoleManager.ROLE_SMS)&&!rm.isRoleHeld(RoleManager.ROLE_SMS))startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_SMS),REQ_SMS_ROLE);else toast(R.string.sms_role_already);}
     private void requestCorePermissions(){ArrayList<String> p=new ArrayList<>();for(String x:new String[]{Manifest.permission.RECEIVE_SMS,Manifest.permission.SEND_SMS,Manifest.permission.READ_SMS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS})if(checkSelfPermission(x)!=PackageManager.PERMISSION_GRANTED)p.add(x);if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)p.add(Manifest.permission.POST_NOTIFICATIONS);if(p.isEmpty())toast(R.string.permissions_granted);else requestPermissions(p.toArray(new String[0]),REQ_CORE);}
     private void refreshLocal(){
         AgentConfig cfg=new AgentConfig(this);RoleManager rm=getSystemService(RoleManager.class);boolean role=rm.isRoleAvailable(RoleManager.ROLE_SMS)&&rm.isRoleHeld(RoleManager.ROLE_SMS);
         if(cfg.isEnrolled())status.setText(getString(R.string.status_enrolled,cfg.deviceName(),cfg.server(),getString(role?R.string.status_yes:R.string.status_no),getString(cfg.alwaysOn()?R.string.status_enabled:R.string.status_disabled),LocalStore.get(this).pendingEventCount()));else status.setText(R.string.status_not_enrolled);
-        renderSimSummary(StateCollector.collect(this));
+        exec.execute(()->{JSONObject collected=StateCollector.collect(getApplicationContext());runOnUiThread(()->{if(!isFinishing()&&!isDestroyed())renderSimSummary(collected);});});
         if(DeveloperSettings.isEnabled(this)&&detail.getText().length()==0)showRecentLogs();
     }
     private void renderSimSummary(JSONObject state){

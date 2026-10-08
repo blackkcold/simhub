@@ -69,4 +69,12 @@
     <string name="send">Send</string>
     <string name="no_active_sim">No active SIM</string>
     <string name="sms_submitted">SMS submitted</string>
+    <string name="sim_status_section">SIM status</string>
+    <string name="sim_status_empty">No active SIM is reported. Grant phone/SIM permissions and confirm the SIM is enabled.</string>
+    <string name="sim_status_line">%1$s\n%2$s · SIM %3$d\n%4$s · %5$s · Signal %6$s</string>
+    <string name="service_in">In service</string>
+    <string name="service_out">Out of service</string>
+    <string name="service_emergency">Emergency only</string>
+    <string name="service_power_off">Radio off</string>
+    <string name="service_unknown">Unknown service</string>
 </resources>

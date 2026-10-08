@@ -44,7 +44,7 @@ public final class LocalStore extends SQLiteOpenHelper {
 
     public synchronized List<JSONObject> pendingEvents(int limit)throws Exception{
         List<JSONObject> out=new ArrayList<>();
-        try(Cursor c=getReadableDatabase().query("events",null,null,null,null,null,"created_at ASC",String.valueOf(limit))){
+        try(Cursor c=getReadableDatabase().query("events",null,null,null,null,null,"CASE WHEN kind='sms.received' THEN 0 WHEN kind='sms.history' THEN 2 ELSE 1 END ASC, created_at ASC",String.valueOf(limit))){
             while(c.moveToNext())out.add(new JSONObject().put("eventId",c.getString(c.getColumnIndexOrThrow("id"))).put("kind",c.getString(c.getColumnIndexOrThrow("kind"))).put("occurredAt",c.getLong(c.getColumnIndexOrThrow("occurred_at"))).put("subscriptionId",c.getString(c.getColumnIndexOrThrow("subscription_id"))).put("hasOtp",c.getInt(c.getColumnIndexOrThrow("has_otp"))==1).put("metadata",new JSONObject(c.getString(c.getColumnIndexOrThrow("metadata_json")))).put("ciphertext",new JSONObject(c.getString(c.getColumnIndexOrThrow("ciphertext_json")))));
         }
         return out;

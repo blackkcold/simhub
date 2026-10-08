@@ -234,12 +234,12 @@ jobs:
           Guided deployment, hardened proxy handling, Passkey authentication and unified SMS conversations.
 
           ## Highlights
-          - newest-100 Android SMS bootstrap, on-demand older-100 backfill and durable cursors;
-          - encrypted 20-event batch uploads with per-message ACK and server idempotency;
-          - HTTP 429 Retry-After-aware backoff and preserved legacy single-event API;
-          - time-keyed 30-item inbox paging and bounded Web rendering;
-          - responsive device enrollment with a native confirmation modal;
-          - E2EE Node Keys, independent hosts and existing security controls retained.
+          - Docker published-port client IP, audit and health endpoint fixes (Issue #23);
+          - managed Caddy TLS, DNS checks and safe one-command Linux setup;
+          - administrator username, FIDO2 Passkey login, registration and step-up;
+          - unified SMS conversations, direct replies, multi-SIM routing and new-message button;
+          - consistent responsive UI spacing and browser regression coverage;
+          - compatibility preserved for existing E2EE Node Keys and Android/Modem Agents.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF

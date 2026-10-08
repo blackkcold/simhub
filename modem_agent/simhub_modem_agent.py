@@ -1216,6 +1216,7 @@ class Agent:
                 self.store.finish_command(command_id, "expired")
                 self.store.queue_ack(command_id, "expired", {})
                 continue
+            send_invoked=False
             try:
                 payload = decrypt_payload(
                     self.node_key,
@@ -1234,6 +1235,11 @@ class Agent:
                     body = str(payload.get("body", ""))
                     if not re.fullmatch(r"\+?[0-9 ()-]{3,40}", to) or not body or len(body) > 4000:
                         raise ValueError("invalid_sms")
+                    # Persist uncertainty before invoking the non-transactional modem.
+                    # On crash/restart, do not automatically resend a possibly sent SMS.
+                    self.store.finish_command(command_id,"submitted")
+                    self.store.queue_ack(command_id,"submitted",{"reason":"delivery_unconfirmed"})
+                    send_invoked=True
                     result = self.adapter.send_sms(to, body)
                     ts = now()
                     event_payload = {
@@ -1261,9 +1267,15 @@ class Agent:
                     self.store.finish_command(command_id, "rejected")
                     self.store.queue_ack(command_id, "rejected", {"reason": "unsupported_on_modem"})
             except Exception as exc:
-                reason = "channel_changed" if "channel_changed" in str(exc) else exc.__class__.__name__
-                self.store.finish_command(command_id, "failed")
-                self.store.queue_ack(command_id, "failed", {"reason": reason})
+                if send_invoked:
+                    # A modem timeout is NOT proof that the carrier did not send it.
+                    # Preserve nonterminal submitted status until an operator verifies.
+                    self.store.finish_command(command_id,"submitted")
+                    self.store.queue_ack(command_id,"submitted",{"reason":"send_result_unknown"})
+                else:
+                    reason = "channel_changed" if "channel_changed" in str(exc) else exc.__class__.__name__
+                    self.store.finish_command(command_id, "failed")
+                    self.store.queue_ack(command_id, "failed", {"reason": reason})
 
     def put_state(self) -> None:
         state = self.adapter.state()

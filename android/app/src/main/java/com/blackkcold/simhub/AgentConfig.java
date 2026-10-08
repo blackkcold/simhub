@@ -22,6 +22,8 @@ public final class AgentConfig {
     public String deviceName(){return prefs.getString("device_name","Android SIM Node");}
     public boolean alwaysOn(){return prefs.getBoolean("always_on",false);}
     public void setAlwaysOn(boolean v){prefs.edit().putBoolean("always_on",v).apply();}
+    public long nextSyncAllowedAt(){return prefs.getLong("next_sync_allowed_at",0L);}
+    public void setNextSyncAllowedAt(long at){prefs.edit().putLong("next_sync_allowed_at",at).apply();}
     public long historyDate(){
         if(prefs.contains("history_cursor_date")) return prefs.getLong("history_cursor_date",0L);
         long legacy=prefs.getLong("last_history_sync",0L);
@@ -79,7 +81,7 @@ public final class AgentConfig {
     }
 
     private void setBaseEnrollment(String server,String deviceId,String deviceName,String token)throws Exception{
-        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").apply();
+        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
         localQueueKey();
     }

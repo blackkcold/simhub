@@ -91,6 +91,8 @@ Relay 的设计目标就是**默认看不到短信明文**。新节点注册时�
 | **离线可靠性** | Android 本地持久化 Event Queue + Server Command Queue |
 | **安全** | AES-256-GCM E2EE、独立 Node Key、Android Keystore/受保护 Modem 配置、AAD 元数据绑定、两阶段 Device Token 轮换 |
 | **Controller** | 可安装 PWA：Inbox、OTP复制、搜索、发短信、设备、诊断 |
+| **中文与响应式 UI** | Android + Web/PWA 支持简体中文 / English；Android 可跟随系统语言，并适配手机、横屏、折叠屏展开态与平板 |
+| **开发者诊断** | Android 可选开发者模式；日志自动脱敏短信正文、OTP、Token 与密钥，支持轮转、查看、清空和 ZIP 导出 |
 | **认证** | 高强度 Admin Token + 可选 TOTP 登录，之后使用短时 HttpOnly Session |
 | **通知** | 可选 Bark / ntfy / 自定义 Metadata-only Webhook |
 | **运维** | Docker、Health Check、Audit、Backup、OTA Metadata |
@@ -141,6 +143,8 @@ curl http://127.0.0.1:8787/healthz
 
 通过浏览器访问你的 SIM Hub HTTPS 地址。
 
+控制端首次使用会根据浏览器语言自动选择 **简体中文 / English**，也可在界面中手动切换；安全相关配置旁提供 `ⓘ` 浮标说明。
+
 然后：
 
 1. 输入 Admin Token；
@@ -166,7 +170,7 @@ curl http://127.0.0.1:8787/healthz
 6. 如需要联系人名称映射，可额外授予 Contacts 权限；
 7. 如果需要尽可能低延迟的远程访问，启用 Always-on Relay。
 
-完整流程见 [安装说明](docs/INSTALLATION.md)。
+完整流程见 [安装说明](docs/INSTALLATION.md)。需要排查 Android 节点问题时，参见 [开发者诊断](docs/DEVELOPER_DIAGNOSTICS.md)。
 
 ---
 

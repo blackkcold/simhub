@@ -72,6 +72,24 @@ public final class SmsHistorySync {
         return count;
     }
 
+    /** Explicitly rescan the newest N SMS; stable provider event IDs prevent duplicates. */
+    public static synchronized int syncRecent(Context c,int requested){
+        AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
+        int limit=Math.max(1,Math.min(PAGE,requested)),count=0;
+        try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,
+                null,null,Telephony.Sms.DATE+" DESC, "+BaseColumns._ID+" DESC")){
+            if(cur==null){cfg.recordSyncError("SMS provider query returned null");return 0;}
+            while(count<limit&&cur.moveToNext()){
+                SmsRow row=new SmsRow(cur);
+                if(row.type==Telephony.Sms.MESSAGE_TYPE_DRAFT)continue;
+                if(!enqueue(c,row)){cfg.recordSyncError("History queue full");break;}
+                count++;
+            }
+            if(count>0)AppLogger.i(c,"SmsSync","Recent history rescan queued="+count);
+        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Recent history failed",error);}
+        return count;
+    }
+
     /** Explicit older history, descending in batches; marker only advances after durable queueing. */
     public static synchronized int syncOlder(Context c,int requested) {
         AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;

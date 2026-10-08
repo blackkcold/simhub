@@ -78,15 +78,15 @@ public final class SmsHistorySync {
         int limit=Math.max(1,Math.min(PAGE,requested)),count=0;
         try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,
                 null,null,Telephony.Sms.DATE+" DESC, "+BaseColumns._ID+" DESC")){
-            if(cur==null){cfg.recordSyncError("SMS provider query returned null");return 0;}
+            if(cur==null){cfg.recordSyncError("SMS provider query returned null");return -1;}
             while(count<limit&&cur.moveToNext()){
                 SmsRow row=new SmsRow(cur);
                 if(row.type==Telephony.Sms.MESSAGE_TYPE_DRAFT)continue;
-                if(!enqueue(c,row)){cfg.recordSyncError("History queue full");break;}
+                if(!enqueue(c,row)){cfg.recordSyncError("History queue full");return -1;}
                 count++;
             }
             if(count>0)AppLogger.i(c,"SmsSync","Recent history rescan queued="+count);
-        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Recent history failed",error);}
+        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Recent history failed",error);return -1;}
         return count;
     }
 

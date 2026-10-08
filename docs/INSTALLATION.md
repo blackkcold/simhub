@@ -100,6 +100,8 @@ See `ANDROID_SETUP.md` for Android build requirements.
 5. Grant SMS/SIM permissions.
 6. Optionally grant Contacts access if you want local contact-name mapping.
 7. Enable **always-on relay** for the lowest-latency personal remote operation.
+8. Optionally choose **简体中文 / English / Follow system** from the Android Settings section.
+9. Keep **Developer Mode** disabled for normal use; enable it only when diagnostic logs are needed.
 
 The v0.2.1 enrollment deep link contains a one-time token and one-time Bootstrap Secret, not the long-term Node Key. Treat it as sensitive until consumed; after successful enrollment the relay erases the bootstrap envelope and the token cannot be reused.
 
@@ -131,6 +133,7 @@ Run these checks in order:
 5. Send a test SMS remotely from the PWA through a selected subscription.
 6. Turn off the Android phone's network, receive/send test data, restore network and verify queued synchronization recovers.
 7. Reboot the phone and verify the Agent recovers after boot/unlock according to the configured background mode.
+8. If troubleshooting is required, enable Android Developer Mode, reproduce once, then export a redacted diagnostic ZIP as described in `DEVELOPER_DIAGNOSTICS.md`.
 
 ## 10. Backups
 

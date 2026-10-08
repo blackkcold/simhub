@@ -29,7 +29,7 @@ Keep contrast, tap size, keyboard focus visibility and reduced-motion preference
 
 ### Screenshot and preview policy
 
-The SVGs in this repository are **illustrative UI layouts**, not claims of live production screenshots. They contain synthetic/redacted text and explicitly say `DEMO / 示例界面`. They reflect the current navigation, sections and basic components. The mobile preview depicts the PWA; the Android preview depicts the native Agent.
+The SVGs in this repository are **illustrative UI layouts**, not claims of live production screenshots. They contain synthetic/redacted text and explicitly say `DEMO / 示例界面`. They illustrate the brand, navigation and basic surfaces, but **do not exhaustively depict v0.4.0 conversation and v0.5.0 device/diagnostics features**. Treat the README's feature table, live application and current tests as authoritative. The mobile preview depicts the PWA; the Android preview depicts the native Agent.
 
 If replacing them with real screenshots, capture on test devices with mock messages and a test-only server. Redact or eliminate recipient numbers, OTP codes, device identifiers, hostnames, admin tokens, recovery material and TOTP values. Validate the visual output at mobile, tablet and desktop widths, in light/dark themes and Chinese/English. Never publish real messages or keys in documentation.
 
@@ -38,3 +38,15 @@ If replacing them with real screenshots, capture on test devices with mock messa
 - Web 与 Android 必须同时更新图标及配色。
 - README 图仅使用虚构或脱敏数据，不展示真实验证码、手机号与设备凭据。
 - 文案由现有国际化资源维护，预览图不是功能测试证明。
+
+### v0.4.0–v0.5.0 UI inventory
+
+| Surface | Production behavior | Source |
+|---|---|---|
+| Admin login | Username, Admin Token/TOTP, optional Passkey authentication; Vault passphrase remains local | `web/index.html`, `web/app.js` |
+| Inbox | SMS threads, reply in selected conversation, right-aligned new-message action, locally decrypted search | `web/app.js` |
+| Devices | Per-SIM phone identification and browser-local edit, charging, Wi-Fi/cellular status, separate recent/older 100 sync controls, diagnostic modal | `web/app.js`, `web/styles.css` |
+| Networking | OS-default data SIM fallback policy validation; system mobile settings shortcut (Android) | `android/app/src/main/java/com/blackkcold/simhub/NetworkFailoverPolicy.java` |
+| Settings | Vault recovery, Passkey registration and sensitive-operation step-up, onboarding, developer logs | `web/index.html`, `android/app/src/main/res/layout/activity_main.xml` |
+
+**Documentation screenshots must not invent support for privileged Android data-SIM switching, background push-delivered OTP content, full MMS, or call handling.** UI messages and responsive behavior should be tested at desktop/phone/foldable widths. The repository runs Playwright screenshots for multiple browser sizes and light/dark themes in CI; these are regression artifacts, not proof of a fully provisioned physical SIM.

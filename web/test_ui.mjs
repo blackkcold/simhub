@@ -15,7 +15,9 @@ const server=spawn("python3",["server/simhub_server.py"],{
   cwd:root,env:{...process.env,SIMHUB_ADMIN_TOKEN:"A".repeat(48),
     SIMHUB_REQUIRE_TOTP:"false",SIMHUB_BIND:"127.0.0.1",
     SIMHUB_PORT:String(port),SIMHUB_DB:join(tmp,"test.db"),
-    SIMHUB_WEB_ROOT:join(root,"web")},stdio:"pipe"});
+    SIMHUB_WEB_ROOT:join(root,"web"),
+    SIMHUB_MANAGEMENT_ORIGIN:"http://127.0.0.1:"+port,
+    SIMHUB_PUBLIC_BASE_URL:"http://127.0.0.1:"+port},stdio:"pipe"});
 let browser;
 try {
   let ready=false;

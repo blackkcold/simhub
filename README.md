@@ -100,12 +100,21 @@ The relay is intentionally **blind to SMS plaintext**. New nodes receive a rando
 
 ---
 
-## v0.5.0 notes
 
-- Session and Vault share an eight-hour idle deadline; active tab refresh restores encrypted Vault session state after verifying the administrator cookie.
-- Node-Key-encrypted SIM phone numbers appear in controller devices and message lists; browser-local encrypted overrides handle unknown numbers.
-- Distinct latest-100 rescan and older-100 backfill controls with encrypted diagnostics.
-- Android OS handles mobile data fallback using the system-default SIM; changing the default SIM requires Android system setup.
+## What's new in v0.4.0 and v0.5.0
+
+| Release | User-facing change | Where to find it |
+|---|---|---|
+| **v0.4.0** | Two-domain deployment wizard, managed Caddy HTTPS, admin username and Passkeys, conversational SMS inbox and direct replies, responsive layout fixes | Setup wizard; **Settings → Passkeys**; **Inbox → conversation / + New message** |
+| **v0.5.0** | Refresh-safe active Vault, encrypted SIM phone numbers, charging and Wi-Fi status, explicit 100-message sync operations, readable encrypted diagnostics, native mobile-data fallback guidance | **Devices** → SIM number / recent or older sync / Diagnostics / cellular failover |
+
+**Authentication and Vault:** Administrator sessions default to **8 hours of inactivity** and a **24-hour absolute maximum**. The Vault follows the same *real-user activity* idle window. In the **same browser tab**, a refresh validates the HttpOnly session and resumes a locally encrypted Vault snapshot; manual lock, logout or expiry disables that recovery. A closed tab, another browser/device or cleared site data may still require the Vault passphrase. Passkeys authenticate the administrator; **they are not Vault-decryption keys**.
+
+**SIM numbers:** When the Android OS exposes the number, the Node Key encrypts it for the controller. If unavailable, use **Devices → Set number**. That override is encrypted **in the current browser only** and does not automatically appear on your other controllers. After a SIM replacement, verify the number again.
+
+**Three different "100 messages" operations:** **Sync latest 100** re-reads recent Android SMS; **Sync 100 older** advances a separate historical cursor; **Load older messages** in the inbox only fetches already-uploaded relay ciphertext (initial view batches 30). A command being queued does **not** mean every SMS is uploaded. Update the Android Agent to v0.5.0 before using the latest-100 rescan.
+
+**Cellular failover:** Ordinary Android apps cannot force-select another default-data SIM. When Wi-Fi drops, Android uses the **system-configured default-data SIM** if mobile data is enabled. SIM Hub lets you register/check the intended fallback SIM and open Android's network settings. See [Compatibility](docs/COMPATIBILITY.md).
 
 ## Features
 
@@ -137,73 +146,56 @@ See [Compatibility](docs/COMPATIBILITY.md) for OEM/background considerations.
 
 ---
 
-## Quick start
 
-### 1. Deploy the relay
+## Quick start: guided deployment (recommended since v0.4.0)
+
+**Requirements:** Linux server/VM, Docker Engine + Compose plugin, Python 3, a reachable public IPv4 address, and **two different hostnames** (`admin.example.com` and `node.example.com`). Create DNS **A** records for both. If publishing AAAA records, ensure IPv6 connectivity. Allow TCP **80/443** inbound; **never expose 8787 publicly**.
+
+### 1. First installation: managed Caddy HTTPS
 
 ```bash
 git clone https://github.com/blackkcold/simhub.git
 cd simhub
-
-cp .env.example .env
-python3 scripts/gen_admin_token.py
-python3 scripts/gen_totp_secret.py
+python3 scripts/setup.py \
+  --admin-domain admin.example.com \
+  --node-domain node.example.com
 ```
 
-Put the generated token into:
+The Linux wizard checks Docker/Compose, DNS and ports; creates a high-entropy admin token, a TOTP secret and an owner-only `.env` (**0600**); generates a Caddyfile and starts Relay + Caddy through Compose. It **does not modify your DNS provider's records**. Store `.env` securely and never commit it.
 
-```env
-SIMHUB_ADMIN_TOKEN=<your-random-token>
-SIMHUB_REQUIRE_TOTP=true
-SIMHUB_TOTP_SECRET=<your-base32-secret>
-SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
-```
-
-Start the service:
+**Already have Nginx/Caddy/Traefik?**
 
 ```bash
-docker compose up -d --build
-curl http://127.0.0.1:8787/healthz
+python3 scripts/setup.py --mode external \
+  --admin-domain admin.example.com \
+  --node-domain node.example.com
 ```
 
-Expose the relay only through **HTTPS** using Caddy, Nginx or Traefik.
-
-A ready-to-adapt Caddy example is included in [Caddyfile.example](Caddyfile.example).
+External mode does **not** configure your existing reverse proxy. You must terminate HTTPS for both domains, route to `127.0.0.1:8787`, replace forwarded-client-IP headers safely, and block public health endpoints. For DNS pre-provisioning use `--skip-dns-check --no-start` then run `--upgrade` once DNS is ready. Details: [Guided setup (Chinese)](docs/QUICKSTART.zh-CN.md) · [Deployment security](docs/DEPLOYMENT.md).
 
 ### 2. Open the Web/PWA controller
 
-Open your HTTPS SIM Hub URL in a modern browser.
+Open **`https://admin.example.com`**, not the node endpoint. Enter the configured **username** (default `admin`), Admin Token and TOTP to start a session; then create/import/unlock the browser-local Vault and **save its Recovery Key offline**. Register a Passkey under **Settings → Passkeys** if desired. Passkey login does not automatically unlock a new browser's Vault.
 
-The controller follows the browser language on first use and can switch between **简体中文 / English** from the UI. Contextual `ⓘ` help explains security-sensitive options.
-
-Then:
-
-1. enter the admin token;
-2. optionally enter TOTP to create a short-lived HttpOnly browser session;
-3. create, import, or unlock the local Vault;
-4. create an Android deep-link or Linux/DJI modem enrollment package.
+The responsive UI combines **SMS threads + direct replies + “+ New message”**. **Devices** shows phone identifiers, battery/charging, network, recent/older synchronization, diagnostics and fallback settings. Simplified Chinese and English are available.
 
 ### 3. Install the Android Agent
 
-Download the latest APK from:
+[Get the v0.5.0 signed APK](https://github.com/blackkcold/simhub/releases/tag/v0.5.0), install it on the Android phone, and create a one-time enrollment link from **Add Device** in the controller. Enroll, grant SMS/SIM permissions, make SIM Hub the **default SMS app** and start the always-on relay. For Wi-Fi-loss cellular operation, first **enable mobile data and choose the default data SIM in Android Settings**. Verify message reception and diagnostic reporting.
 
-**[GitHub Releases →](https://github.com/blackkcold/simhub/releases/latest)**
+Only officially release-signed APKs are distributed; certificate fingerprint and SHA-256 verification are documented in [Release signing](docs/RELEASE_SIGNING.md). See [Installation](docs/INSTALLATION.md) and [Android setup](docs/ANDROID_SETUP.md).
 
-Starting with v0.2.1, GitHub Releases publish only the **release-signed APK**. Missing signing secrets or a certificate fingerprint mismatch fails the release instead of falling back to a debug build.
+### 4. Existing deployment: non-destructive upgrade
 
-On the Android SIM Node:
+```bash
+./scripts/backup.sh
+git pull --ff-only
+python3 scripts/setup.py --upgrade \
+  --admin-domain admin.example.com \
+  --node-domain node.example.com
+```
 
-1. install the APK;
-2. open the enrollment link from the PWA;
-3. enroll the device;
-4. grant the requested SMS/SIM permissions;
-5. set SIM Hub as the **default SMS app**;
-6. optionally allow Contacts access;
-7. enable the always-on relay mode if low-latency remote access is required.
-
-Full procedure: [Installation Guide](docs/INSTALLATION.md). For troubleshooting, see [Android developer diagnostics](docs/DEVELOPER_DIAGNOSTICS.md).
-
----
+Retain `--mode external` if an external proxy manages TLS. Upgrade preserves existing `.env`, Caddyfile and databases. Do not casually change the management hostname: Passkeys are bound to its RP ID. **Upgrade Relay/PWA before installing new Android APKs**, and keep existing Node Keys/tokens/enrollment. See [v0.4–v0.5 migration and usage](docs/UPGRADE_0.4_TO_0.5.md).
 
 ## Installation and usage flow
 
@@ -483,9 +475,3 @@ For an Internet-facing installation, use distinct TLS hostnames for the manageme
 - **Web controller**: opens with the most recent 30 server events, retrieves older records on demand, and keeps the inbox responsive during historical backfill.
 
 **Upgrade order:** deploy the v0.3.2 Relay first, then upgrade Android Agents to v0.3.2. Older Android agents continue using the single-event endpoint. Existing Node Keys and SMS ciphertext require no reset. The Relay's configured event retention still applies, so historical server events may expire as designed.
-
-## v0.4.0: Guided deployment, Passkeys and SMS conversations
-
-For new Linux deployments run `python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com`. This configures DNS preflight and a managed Caddy HTTPS reverse proxy. Use `--mode external` for an existing proxy. See the [quick start](docs/QUICKSTART.zh-CN.md).
-
-The Web Controller now provides administrator usernames, FIDO2/WebAuthn Passkey login and step-up, a single SMS inbox with direct reply, multi-SIM channel selection and a new-message button. Passkeys authenticate the administrator but **never decrypt or upload local Vault keys**. Keep recovery materials offline. Preserve existing `.env` and domain during upgrades; encrypted SMS and existing device protocols stay compatible.

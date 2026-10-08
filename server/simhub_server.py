@@ -973,12 +973,20 @@ class SimHubHandler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_error_json(400,"invalid_query","since/limit must be integers"); return
         device=q.get("device",[""])[0]; kind=q.get("kind",[""])[0]
-        where=["seq>?"]; args:list[Any]=[since]
+        latest=q.get("latest",["0"])[0]=="1"
+        try: before=max(0,int(q.get("before",["0"])[0]))
+        except ValueError:
+            self.send_error_json(400,"invalid_query","before must be a sequence number");return
+        if latest and before:
+            self.send_error_json(400,"invalid_query","latest and before cannot both be set");return
+        where=["seq<?" if before else "seq>?" ]; args:list[Any]=[before if before else since]
         if device: where.append("device_id=?"); args.append(device)
         if kind: where.append("kind=?"); args.append(kind)
         args.append(limit)
         with open_db() as con:
-            rows=con.execute(f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY seq ASC LIMIT ?",args).fetchall()
+            rows=con.execute(f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY seq {'DESC' if latest or before else 'ASC'} LIMIT ?",args).fetchall()
+        if latest or before:
+            rows=list(reversed(rows))
         events=[{"seq":r["seq"],"eventId":r["id"],"deviceId":r["device_id"],"kind":r["kind"],"occurredAt":r["occurred_at"],"receivedAt":r["received_at"],"subscriptionId":r["subscription_id"],"hasOtp":bool(r["has_otp"]),"metadata":safe_json_loads(r["metadata_json"],{}),"ciphertext":safe_json_loads(r["ciphertext_json"],{})} for r in rows]
         self.send_json(200,{"events":events,"nextSince":events[-1]["seq"] if events else since})
 

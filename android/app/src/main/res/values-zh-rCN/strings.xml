@@ -69,4 +69,12 @@
     <string name="send">发送</string>
     <string name="no_active_sim">没有可用的 SIM 卡</string>
     <string name="sms_submitted">短信已提交发送</string>
+    <string name="sim_status_section">SIM 状态</string>
+    <string name="sim_status_empty">当前未检测到可用 SIM。请授予电话 / SIM 权限，并确认 SIM 已启用。</string>
+    <string name="sim_status_line">%1$s\n%2$s · SIM %3$d\n%4$s · %5$s · 信号 %6$s</string>
+    <string name="service_in">服务正常</string>
+    <string name="service_out">无服务</string>
+    <string name="service_emergency">仅紧急呼叫</string>
+    <string name="service_power_off">蜂窝网络已关闭</string>
+    <string name="service_unknown">服务状态未知</string>
 </resources>

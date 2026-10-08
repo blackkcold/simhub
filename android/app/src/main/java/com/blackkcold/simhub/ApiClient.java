@@ -43,7 +43,8 @@ public final class ApiClient {
             flushCommandAcks();
             putState();
             heartbeat();
-        }catch(Exception ignored){}finally{SYNC_BUSY.set(false);}
+            cfg.recordSyncSuccess();
+        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());}finally{SYNC_BUSY.set(false);}
     }
 
     private void rotateDeviceTokenIfNeeded()throws Exception{

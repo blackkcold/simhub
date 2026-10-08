@@ -19,11 +19,11 @@ public final class CommandProcessor {
         String id=env.getString("commandId"),type=env.getString("type"),idem=env.optString("idempotencyKey",id);
         long created=env.optLong("createdAt",0),exp=env.optLong("expiresAt",0),now=System.currentTimeMillis()/1000;
         if(exp>0&&exp<now){
-            if(store.claimCommand(id))ack(id,"expired",new JSONObject());
+            if(store.claimCommand(id,type))ack(id,"expired",new JSONObject());
             else store.queueCommandAck(id,"expired",new JSONObject().put("duplicate",true));
             return;
         }
-        if(!store.claimCommand(id)){
+        if(!store.claimCommand(id,type)){
             String state=store.commandState(id);
             if(state!=null&&!"claimed".equals(state))store.queueCommandAck(id,state,new JSONObject().put("duplicate",true));
             return;

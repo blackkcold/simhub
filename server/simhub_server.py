@@ -64,8 +64,8 @@ def docker_gateway_ip() -> str:
         pass
     return ""
 DOCKER_GATEWAY_IP = docker_gateway_ip()
-SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
-SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "900")), SESSION_TTL))
+SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "86400")), 604800))
+SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "28800")), SESSION_TTL))
 STEPUP_TTL = max(30, min(int(os.getenv("SIMHUB_STEPUP_TTL", "120")), 600))
 MANAGEMENT_ORIGIN = os.getenv("SIMHUB_MANAGEMENT_ORIGIN", PUBLIC_BASE_URL).rstrip("/")
 SEPARATE_SURFACES = os.getenv("SIMHUB_SEPARATE_SURFACES", "false").lower() in {"1","true","yes","on"}
@@ -861,7 +861,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin(): return
             with open_db() as con:
                 num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]
-            self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
+            self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
         if path=="/api/v1/auth/passkeys":
             if not self.require_admin(): return
             with open_db() as con:
@@ -1029,7 +1029,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         session,exp=create_session(self.ip)
         audit("auth.session","","ok",self.ip)
         cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
-        self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+        self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
 
     def passkey_action(self,path:str,body:dict[str,Any]) -> None:
         """Keep registration and step-up session-bound; login never receives Vault keys."""
@@ -1093,7 +1093,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
                 audit("auth.passkey.login","","ok",self.ip)
                 self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,
-                    "totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+                    "totpRequired":bool(TOTP_SECRET),"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
             else:
                 self.send_json(200,data)
         except (ValueError,TypeError,KeyError) as exc:

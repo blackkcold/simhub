@@ -8,7 +8,7 @@ const AUTO_LOCK_MS = 15 * 60 * 1000;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
-let olderCursor=null,historyHasMore=true,visibleOffset=0;
+let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null;
 const eventIds=new Set();
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
@@ -151,7 +151,7 @@ async function removePasskey(id){
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
 function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=false;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
-function lockVault(){$('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
+function lockVault(){activeConversationKey=null;$('smsLayout').classList.remove('conversation-open');$('conversationMessages').textContent='';$('replyBody').value='';$('replyTo').value='';$('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,AUTO_LOCK_MS-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();armAutoLock();}
 function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=AUTO_LOCK_MS){lockVault();return true;}armAutoLock();return false;}
@@ -168,7 +168,7 @@ async function loadDevices(){
   const d=await api('/api/v1/devices'),next=d.devices||[];
   const oldKeys=new Map(devices.map(x=>[x.id,[x.keyId,x.wrappedKey,x.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|')]));
   for(const node of next)if(oldKeys.get(node.id)!==[node.keyId,node.wrappedKey,node.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|'))deviceKeyCache.delete(node.id);
-  devices=next;renderDevices();renderDeviceSelectors();
+  devices=next;renderDevices();renderDeviceSelectors();updateReplyDevices();
 }
 async function ingestEvents(batch,notify=true){
   let changed=false;
@@ -208,14 +208,14 @@ async function loadEvents(){
 }
 async function loadOlder(){
   if(!vaultKey)return;
-  const count=collapseMessageEvents(decryptedEvents).length;
+  const count=buildThreads(filteredEvents()).length;
   if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
   if(!historyHasMore||!olderCursor)return;
   const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
   olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
   historyHasMore=!!r.hasMore;
   await ingestEvents(r.events||[],false);
-  if(collapseMessageEvents(decryptedEvents).length>visibleOffset+30)visibleOffset+=30;
+  if(buildThreads(filteredEvents()).length>visibleOffset+30)visibleOffset+=30;
   renderInbox();
 }
 let refreshing=null;
@@ -259,20 +259,154 @@ function collapseMessageEvents(source){
   }
   return rest.concat(Array.from(byProvider.values()));
 }
-function renderInbox(){
+function eventIsInbound(e){
+  const p=e.payload||{};
+  return e.kind==='sms.received'||p.direction==='in'||(e.kind==='sms.history'&&p.direction!=='out');
+}
+function messageAddress(e){
+  const p=e.payload||{};
+  return String((eventIsInbound(e)?p.sender:p.recipient)||p.sender||p.recipient||'').trim();
+}
+function messageChannel(e){
+  const p=e.payload||{},id=String(p.channelId||e.subscriptionId||'');
+  const d=devices.find(x=>x.id===e.deviceId);
+  const channel=nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id);
+  return channel?String(channel.id):id;
+}
+function threadKey(e){
+  const phone=messageAddress(e).replace(/[\s()-]/g,'');
+  return e.deviceId+'|'+messageChannel(e)+'|'+phone;
+}
+function filteredEvents(){
   const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
-  const list=collapseMessageEvents(decryptedEvents).filter(e=>(!dev||e.deviceId===dev)&&(!kind||e.kind===kind)).filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));}).sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
-  $('emptyInbox').hidden=!!list.length;let otpCount=0;
-  $('loadOlderBtn').hidden=!historyHasMore&&list.length<=visibleOffset+30;
+  return collapseMessageEvents(decryptedEvents).filter(e=>(!dev||e.deviceId===dev)&&(!kind||e.kind===kind))
+    .filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));});
+}
+function buildThreads(source){
+  const threads=new Map();
+  for(const e of source){
+    const key=threadKey(e);
+    if(!threads.has(key))threads.set(key,[]);
+    threads.get(key).push(e);
+  }
+  return [...threads.entries()].map(([key,messages])=>{
+    messages.sort((a,b)=>(a.occurredAt||0)-(b.occurredAt||0));
+    return {key,messages,latest:messages[messages.length-1]};
+  }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
+}
+function renderInbox(){
+  const threads=buildThreads(filteredEvents()),show=threads.slice(visibleOffset,visibleOffset+30);
+  $('emptyInbox').hidden=!!show.length;
+  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleOffset+30;
   $('loadNewerBtn').hidden=visibleOffset===0;
-  $('inboxList').innerHTML=list.slice(visibleOffset,visibleOffset+30).map(e=>{
-    const p=e.payload||{},inbound=e.kind==='sms.received'||p.direction==='in',who=p.contactName||p.sender||p.recipient||tr('unknown');
-    const body=e.decryptError?'['+tr('decrypt_failed')+': '+escapeHtml(e.decryptReason||'vault mismatch')+']':escapeHtml(p.body||'');
-    if(p.otp&&p.otp.value&&inbound)otpCount++;
-    const state=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):tr('sent'));
-    return '<article class="message"><div class="avatar">'+escapeHtml((who||'?').trim().slice(0,1).toUpperCase())+'</div><div><div class="msg-head"><strong>'+escapeHtml(who)+'</strong><span class="meta">'+escapeHtml(state)+' · '+escapeHtml(deviceName(e.deviceId))+'</span></div><div class="msg-body">'+body+'</div>'+(p.otp&&p.otp.value?'<div class="otp"><span>'+escapeHtml(tr('otp'))+'</span><code>'+escapeHtml(p.otp.value)+'</code><button class="ghost mini copy-otp" data-otp="'+escapeHtml(p.otp.value)+'">'+escapeHtml(tr('copy'))+'</button></div>':'')+'</div><div class="meta">'+fmtTime(e.occurredAt)+'<br>'+escapeHtml(p.subscriptionAlias||e.subscriptionId||'')+'</div></article>';
-  }).join('');
+  const otpCount=threads.reduce((n,t)=>n+t.messages.filter(e=>eventIsInbound(e)&&e.payload?.otp?.value).length,0);
   $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
+  $('inboxList').innerHTML=show.map(t=>{
+    const e=t.latest,p=e.payload||{},who=p.contactName||messageAddress(e)||tr('unknown');
+    const body=e.decryptError?'['+tr('decrypt_failed')+']':p.body||'';
+    return '<button type="button" class="message'+(activeConversationKey===t.key?' active':'')+
+      '" data-thread="'+escapeHtml(t.key)+'"><span class="avatar">'+escapeHtml(who.slice(0,1).toUpperCase())+
+      '</span><span class="message-body"><span class="message-title"><strong>'+escapeHtml(who)+
+      '</strong><small class="meta">'+fmtTime(e.occurredAt)+'</small></span>'+
+      '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
+      escapeHtml(deviceName(e.deviceId))+' · '+escapeHtml(messageChannel(e))+'</small></span></button>';
+  }).join('');
+  renderConversation();
+}
+function updateReplyDevices(){
+  const el=$('replyDevice'),chosen=el.value;
+  el.innerHTML='<option value="">'+escapeHtml(tr('sim_node'))+'</option>'+
+    devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');
+  if([...el.options].some(x=>x.value===chosen))el.value=chosen;
+  updateReplyChannels();
+}
+function updateReplyChannels(preferred){
+  const d=devices.find(x=>x.id===$('replyDevice').value),channels=nodeChannels(d);
+  const el=$('replySubscription'),selected=preferred||el.value;
+  el.innerHTML='<option value="">'+escapeHtml(tr('sim_subscription'))+'</option>'+
+    channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'">'+escapeHtml(ch.alias||ch.displayName||ch.carrierName||ch.id)+'</option>').join('');
+  if([...el.options].some(x=>x.value===selected))el.value=selected;
+}
+function renderConversation(){
+  if(!activeConversationKey){
+    $('conversationTitle').textContent=tr('choose_conversation');
+    $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('choose_conversation_hint'))+'</p>';
+    $('replyComposer').hidden=true;
+    return;
+  }
+  $('replyComposer').hidden=false;
+  if(activeConversationKey==='__new'){
+    $('conversationTitle').textContent=tr('new_sms');
+    $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('new_sms_hint'))+'</p>';
+    return;
+  }
+  const messages=buildThreads(collapseMessageEvents(decryptedEvents)).find(t=>t.key===activeConversationKey)?.messages||[];
+  if(!messages.length){
+    $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('load_older'))+'</p>';
+    return;
+  }
+  const last=messages[messages.length-1];
+  $('conversationTitle').textContent=(last.payload?.contactName||messageAddress(last)||tr('unknown'))+' · '+deviceName(last.deviceId);
+  $('conversationMessages').innerHTML=messages.map(e=>{
+    const p=e.payload||{},inbound=eventIsInbound(e),
+      status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent')),
+      body=e.decryptError?'['+tr('decrypt_failed')+']':p.body||'';
+    const otp=p.otp?.value&&inbound?'<div class="otp"><code>'+escapeHtml(p.otp.value)+
+      '</code><button class="ghost mini copy-otp" data-otp="'+escapeHtml(p.otp.value)+'" type="button">'+escapeHtml(tr('copy'))+'</button></div>':'';
+    return '<div class="bubble'+(inbound?'':' outbound')+'"><p>'+escapeHtml(body)+
+      '</p>'+otp+'<small class="meta">'+fmtTime(e.occurredAt)+' · '+escapeHtml(status)+'</small></div>';
+  }).join('');
+}
+function openConversation(key){
+  const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
+  if(!selected)return;
+  activeConversationKey=key;visibleOffset=0;
+  const last=selected.latest,number=messageAddress(last),did=last.deviceId,channel=messageChannel(last);
+  updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
+  $('replyTo').value=number;
+  const canReply=/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
+  $('replySend').disabled=!canReply;
+  if(!canReply)toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');
+  $('smsLayout').classList.add('conversation-open');
+  renderInbox();
+}
+function openNewMessage(){
+  switchView('inbox');activeConversationKey='__new';
+  updateReplyDevices();
+  $('replyDevice').value='';
+  updateReplyChannels();
+  $('replyTo').value='';$('replyBody').value='';$('replySend').disabled=false;
+  $('smsLayout').classList.add('conversation-open');
+  renderInbox();$('replyTo').focus();
+}
+function countSmsSegments(value){
+  const basic="@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+  const extended="^{}\\[~]|€",gsm=[...value].every(ch=>basic.includes(ch)||extended.includes(ch));
+  const units=gsm?[...value].reduce((n,ch)=>n+(extended.includes(ch)?2:1),0):value.length;
+  return units===0?0:Math.ceil(units/(gsm?(units<=160?160:153):(units<=70?70:67)));
+}
+function updateReplyCount(){
+  const v=$('replyBody').value;
+  $('replyCount').textContent=tr('chars_parts',{chars:v.length,parts:countSmsSegments(v)});
+}
+async function sendConversationReply(){
+  const btn=$('replySend');
+  if(btn.disabled)return;
+  const dest=$('replyTo').value.trim(),device=$('replyDevice').value,channel=$('replySubscription').value;
+  if(!device||!channel)throw new Error('请选择可用设备和 SIM 通道');
+  const sendDevice=$('sendDevice'),sendSub=$('sendSubscription');
+  sendDevice.value=device;updateSubscriptionSelector();sendSub.value=channel;
+  if(sendSub.value!==channel)throw new Error('该 SIM 通道已失效，重新选择后再发送');
+  $('sendTo').value=dest;$('sendBody').value=$('replyBody').value;
+  btn.disabled=true;
+  try{
+    await sendSms();
+    // The existing encrypted command path performs confirmation and step-up.
+    // Preserve the draft if user cancels or network fails.
+    if(!$('sendBody').value){
+      $('replyBody').value='';updateReplyCount();
+    }
+  }finally{btn.disabled=false;}
 }
 async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'||type==='node.rotate_key')await ensureStepUp();ttl=ttl||120;const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
 async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
@@ -304,7 +438,7 @@ async function copy(text,msg){await navigator.clipboard.writeText(text);toast(ms
 function updateCharCount(){const value=$('sendBody').value,n=value.length,per=n>0&&/^[\x00-\x7F]*$/.test(value)?160:70;$('smsCount').textContent=tr('chars_parts',{chars:n,parts:Math.max(1,Math.ceil(n/per))});}
 function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
 async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:100},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
-function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();}
+function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();$('newSmsBtn').hidden=!vaultKey||name!=='inbox';}
 
 function relocalizeDynamic(){
   applyI18n();
@@ -337,6 +471,14 @@ function wire(){
   $('kindFilter').onchange=()=>{visibleOffset=0;renderInbox();};
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
+  $('newSmsBtn').onclick=openNewMessage;
+  $('backConversation').onclick=()=>{$('smsLayout').classList.remove('conversation-open');activeConversationKey=null;renderInbox();};
+  $('replyDevice').onchange=()=>{updateReplyChannels();$('replySend').disabled=false;};
+  $('replySubscription').onchange=()=>{$('replySend').disabled=false;};
+  $('replyBody').oninput=updateReplyCount;
+  $('replyTo').oninput=()=>{$('replySend').disabled=false;};
+  $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
+  $('conversationMessages').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
   $('loadNewerBtn').onclick=()=>{visibleOffset=Math.max(0,visibleOffset-30);renderInbox();};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
@@ -353,7 +495,7 @@ function wire(){
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};
   $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast(tr('credentials_forgotten'));}};
   $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
-  $('inboxList').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
+  $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
   relocalizeDynamic();
 }

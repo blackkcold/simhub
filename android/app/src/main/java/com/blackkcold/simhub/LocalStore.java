@@ -12,11 +12,11 @@ import java.util.List;
 public final class LocalStore extends SQLiteOpenHelper {
     private static LocalStore INSTANCE;
     public static synchronized LocalStore get(Context c){if(INSTANCE==null)INSTANCE=new LocalStore(c.getApplicationContext());return INSTANCE;}
-    private LocalStore(Context c){super(c,"simhub-agent.db",null,3);}
+    private LocalStore(Context c){super(c,"simhub-agent.db",null,4);}
 
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,occurred_at INTEGER NOT NULL,subscription_id TEXT NOT NULL,has_otp INTEGER NOT NULL,metadata_json TEXT NOT NULL,ciphertext_json TEXT NOT NULL,created_at INTEGER NOT NULL)");
-        db.execSQL("CREATE TABLE processed_commands(id TEXT PRIMARY KEY,state TEXT NOT NULL DEFAULT 'succeeded',processed_at INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE processed_commands(id TEXT PRIMARY KEY,state TEXT NOT NULL DEFAULT 'succeeded',command_type TEXT NOT NULL DEFAULT '',processed_at INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE command_acks(command_id TEXT PRIMARY KEY,state TEXT NOT NULL,result_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE pending_sms(command_id TEXT PRIMARY KEY,provider_uri TEXT NOT NULL,total_parts INTEGER NOT NULL,sent_parts INTEGER NOT NULL DEFAULT 0,delivered_parts INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,event_cipher_json TEXT NOT NULL,sub_id INTEGER NOT NULL,created_at INTEGER NOT NULL)");
         createPartTable(db);
@@ -33,6 +33,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             db.execSQL("CREATE TABLE IF NOT EXISTS command_acks(command_id TEXT PRIMARY KEY,state TEXT NOT NULL,result_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)");
         }
         if(oldV<3)createPartTable(db);
+        if(oldV<4)db.execSQL("ALTER TABLE processed_commands ADD COLUMN command_type TEXT NOT NULL DEFAULT ''");
     }
 
     public synchronized boolean queueEvent(String id,String kind,long occurredAt,String subId,boolean hasOtp,JSONObject metadata,JSONObject cipher){
@@ -53,8 +54,8 @@ public final class LocalStore extends SQLiteOpenHelper {
     public synchronized void markEventSent(String id){getWritableDatabase().delete("events","id=?",new String[]{id});}
     public synchronized int pendingEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events",null)){return c.moveToFirst()?c.getInt(0):0;}}
 
-    public synchronized boolean claimCommand(String id){
-        ContentValues v=new ContentValues();v.put("id",id);v.put("state","claimed");v.put("processed_at",System.currentTimeMillis()/1000);
+    public synchronized boolean claimCommand(String id,String commandType){
+        ContentValues v=new ContentValues();v.put("id",id);v.put("state","claimed");v.put("command_type",commandType);v.put("processed_at",System.currentTimeMillis()/1000);
         return getWritableDatabase().insertWithOnConflict("processed_commands",null,v,SQLiteDatabase.CONFLICT_IGNORE)!=-1;
     }
     public synchronized String commandState(String id){
@@ -165,7 +166,21 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     public synchronized int pendingSmsCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM pending_sms",null)){return c.moveToFirst()?c.getInt(0):0;}}
-    public synchronized void recoverStaleClaims(){getWritableDatabase().execSQL("DELETE FROM processed_commands WHERE state='claimed' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{System.currentTimeMillis()/1000-120});}
+    public synchronized void recoverStaleClaims(){
+        long cutoff=System.currentTimeMillis()/1000-120;
+        SQLiteDatabase db=getWritableDatabase();
+        List<String> uncertain=new ArrayList<>();
+        try(Cursor cur=db.rawQuery("SELECT id FROM processed_commands WHERE state='claimed' AND command_type='sms.send' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new String[]{String.valueOf(cutoff)})){
+            while(cur.moveToNext())uncertain.add(cur.getString(0));
+        }
+        for(String id:uncertain){
+            // The process may have died after dispatching a radio side effect.
+            // Never retry this SMS automatically; report the outcome as unknown.
+            finishCommand(id,"submitted");
+            queueCommandAck(id,"submitted",new JSONObject().put("reason","interrupted_send_unknown"));
+        }
+        db.execSQL("DELETE FROM processed_commands WHERE state='claimed' AND command_type!='sms.send' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{cutoff});
+    }
 
     public synchronized void resetForReenrollment(){
         SQLiteDatabase db=getWritableDatabase();

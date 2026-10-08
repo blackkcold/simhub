@@ -365,7 +365,7 @@ SIM Hub 不假设 Android 后台进程或 WebSocket 永远在线。
 
 ### MMS
 
-当前包含成为 Default SMS Handler 所需能力，以及 **MMS Metadata / History Observation**，但没有实现完整、跨运营商可靠的 MMS PDU 下载 / 发送协议栈。
+现在会将收到的 MMS WAP PUSH 原始数据加密保存在本机并发出提示，但**仍不支持完整跨运营商 MMS 图片/媒体下载**。如果日常需要 MMS，请勿在主力手机上将其设为默认短信应用。
 
 当前生产路径仍是 SMS / OTP。
 
@@ -423,7 +423,7 @@ GitHub Actions CI 同样会执行完整的 Android API 37 Debug APK 构建验证
 
 当前版本：
 
-**[v0.2.1](https://github.com/blackkcold/simhub/releases/tag/v0.2.1)**
+**[v0.2.2](https://github.com/blackkcold/simhub/releases/tag/v0.2.2)**
 
 Release 中包含 Android APK、对应 Tag 的源码快照、文档包以及 SHA-256 校验文件。
 

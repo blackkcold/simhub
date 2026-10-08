@@ -711,11 +711,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def send_error_json(self,status:int,code:str,message:str) -> None:
-        self.send_json(status,{"error":code,"message":message})
+        self.send_json(status,{"error":code,"message":message},{"Retry-After":"60"} if status==429 else None)
 
     def read_json(self) -> dict[str,Any] | None:
         path=self.route()[0]
-        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state)$",path) else 65536
+        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state|events/batch)$",path) else 65536
         try:
             length=int(self.headers.get("Content-Length","0"))
         except ValueError:
@@ -769,7 +769,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/v1/ota": return True
         if re.fullmatch(r"/api/v1/devices/[^/]+/commands/pending", path):
             return method == "GET"
-        if re.fullmatch(r"/api/v1/devices/[^/]+/(?:events|state|heartbeat|token/(?:prepare|commit))", path):
+        if re.fullmatch(r"/api/v1/devices/[^/]+/(?:events(?:/batch)?|state|heartbeat|token/(?:prepare|commit))", path):
             return method == "POST"
         if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/ack", path):
             return method == "POST"
@@ -916,6 +916,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             self.enroll_device(body); return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["events","batch"]:
+            if not self.require_device(p[3]):return
+            body=self.read_json()
+            if body is None:return
+            self.ingest_events_batch(p[3],body); return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="events":
             if not self.require_device(p[3]):return
             body=self.read_json()
@@ -1169,12 +1174,69 @@ class SimHubHandler(BaseHTTPRequestHandler):
         signal_stream()
         self.send_json(201,{"accepted":True,"eventId":event_id,"serverSequence":seq})
 
+    def ingest_events_batch(self, device_id: str, body: dict[str, Any]) -> None:
+        """Authenticated, atomic, idempotent ingestion of up to 20 encrypted events."""
+        items = body.get("events")
+        if not isinstance(items,list) or not 1 <= len(items) <= 20:
+            self.send_error_json(400,"invalid_batch","Batch must contain 1 to 20 events");return
+        received=now(); prepared=[]; seen=set()
+        for item in items:
+            if not isinstance(item,dict):
+                self.send_error_json(400,"invalid_event","Each event must be an object");return
+            eid=item.get("eventId");kind=item.get("kind");cipher=item.get("ciphertext")
+            if not isinstance(eid,str) or not 1<=len(eid)<=160 or not isinstance(kind,str) or not 1<=len(kind)<=80 or not validate_cipher(cipher) or eid in seen:
+                self.send_error_json(400,"invalid_event","Invalid or duplicate event identity/ciphertext");return
+            seen.add(eid)
+            try: occurred=int(item.get("occurredAt",received))
+            except (TypeError,ValueError):
+                self.send_error_json(400,"invalid_time","Invalid occurredAt");return
+            if occurred>received+300:
+                self.send_error_json(400,"invalid_time","Event occurredAt is too far in the future");return
+            sub=str(item.get("subscriptionId",""))[:80]
+            meta=sanitize_metadata(kind,item.get("metadata",{}))
+            prepared.append((eid,device_id,kind,occurred,received,sub,int(bool(item.get("hasOtp",False))),json.dumps(meta,separators=(",",":")),json.dumps(cipher,separators=(",",":"))))
+        results=[];notifications=[]
+        with open_db() as con:
+            d=con.execute("SELECT name FROM devices WHERE id=?",(device_id,)).fetchone()
+            for row in prepared:
+                cur=con.execute("INSERT OR IGNORE INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",row)
+                duplicate=cur.rowcount==0
+                seq=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,row[0])).fetchone()["seq"]
+                results.append({"eventId":row[0],"accepted":True,"duplicate":duplicate,"serverSequence":seq})
+                if not duplicate and row[2]=="sms.received": notifications.append((bool(row[6]),row[3]))
+            con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
+        for has_otp,occurred in notifications:
+            notify_async("sms.received",device_id,d["name"] if d else "SIM Node",has_otp,occurred)
+        if any(not x["duplicate"] for x in results):signal_stream()
+        self.send_json(200,{"accepted":True,"results":results})
+
+    def get_events_by_time(self,q:dict[str,list[str]],limit:int,device:str,kind:str) -> None:
+        try:
+            bt=int(q.get("beforeTime",["0"])[0]);bs=int(q.get("beforeSeq",["0"])[0])
+            if bt<0 or bs<0 or bool(bt)!=bool(bs):raise ValueError()
+        except (ValueError,TypeError):
+            self.send_error_json(400,"invalid_query","Invalid time pagination cursor");return
+        where=["1=1"];args:list[Any]=[]
+        if bt:
+            where.append("(occurred_at<? OR (occurred_at=? AND seq<?))");args.extend([bt,bt,bs])
+        if device:where.append("device_id=?");args.append(device)
+        if kind:where.append("kind=?");args.append(kind)
+        args.append(limit+1)
+        with open_db() as con:
+            rows=con.execute(f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY occurred_at DESC, seq DESC LIMIT ?",args).fetchall()
+        has_more=len(rows)>limit;rows=rows[:limit]
+        events=[{"seq":r["seq"],"eventId":r["id"],"deviceId":r["device_id"],"kind":r["kind"],"occurredAt":r["occurred_at"],"receivedAt":r["received_at"],"subscriptionId":r["subscription_id"],"hasOtp":bool(r["has_otp"]),"metadata":safe_json_loads(r["metadata_json"],{}),"ciphertext":safe_json_loads(r["ciphertext_json"],{})} for r in rows]
+        last=rows[-1] if rows else None
+        self.send_json(200,{"events":events,"hasMore":has_more,"nextBeforeTime":last["occurred_at"] if last else None,"nextBeforeSeq":last["seq"] if last else None})
+
     def get_events(self,q:dict[str,list[str]]) -> None:
         try:
             since=max(0,int(q.get("since",["0"])[0])); limit=max(1,min(int(q.get("limit",["200"])[0]),1000))
         except ValueError:
             self.send_error_json(400,"invalid_query","since/limit must be integers"); return
         device=q.get("device",[""])[0]; kind=q.get("kind",[""])[0]
+        if q.get("order",[""])[0]=="occurred":
+            self.get_events_by_time(q,limit,device,kind);return
         latest=q.get("latest",["0"])[0]=="1"
         try: before=max(0,int(q.get("before",["0"])[0]))
         except ValueError:

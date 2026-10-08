@@ -29,6 +29,8 @@ public final class IncomingSmsReceiver extends BroadcastReceiver {
             String eventId=uri!=null?"sms-provider-"+ContentUris.parseId(uri):"sms-live-"+UUID.randomUUID();
             OtpParser.Result otp=OtpParser.parse(body.toString());String contact=ContactResolver.lookup(c,sender);
             JSONObject payload=new JSONObject().put("direction","in").put("sender",sender==null?"":sender).put("body",body.toString()).put("receivedAt",ts/1000).put("subscriptionId",subId);
+            ChannelIdentity.Channel channel=ChannelIdentity.forSubscription(c,subId);
+            if(channel!=null)payload.put("channelId",channel.channelId).put("channelRevision",channel.revision);
             if(contact!=null)payload.put("contactName",contact);if(otp.detected)payload.put("otp",new JSONObject().put("value",otp.value).put("confidence",otp.confidence));
             JSONObject meta=new JSONObject().put("parts",msgs.length).put("source","sms_deliver");
             boolean queued=EventQueue.queue(c,eventId,"sms.received",ts/1000,subId,otp.detected,payload,meta);

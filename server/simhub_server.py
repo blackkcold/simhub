@@ -864,7 +864,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             except Exception:
                 self.send_error_json(503,"database_not_ready","Database is not ready"); return
         if path=="/api/v1/auth/check":
-            if not self.require_admin(): return
+            # Passive browser session probes are not password guesses. Never
+            # increase the authentication-failure bucket for an absent or expired
+            # cookie; retain the independent per-IP preflight budget.
+            if not admin_auth(self.headers):
+                self.send_error_json(401,"unauthorized","No active administrator session"); return
             with open_db() as con:
                 num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]
             self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return

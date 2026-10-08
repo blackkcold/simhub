@@ -420,7 +420,7 @@ v0.2.1 起 Release workflow 强制使用固定长期签名身份；缺少 Secret
 
 ### Server
 
-Relay 尽量保持轻量，使用 Python Standard Library + SQLite。
+Relay 尽量保持轻量，采用 Python、SQLite 和 WebAuthn 验签依赖。
 
 ```bash
 export SIMHUB_ADMIN_TOKEN="$(python3 scripts/gen_admin_token.py --raw)"

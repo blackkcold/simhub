@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/brand-banner.svg" alt="SIM Hub — private, self-hosted SIM and SMS controller" width="100%" />
+
 # SIM Hub
 
 **Turn Android phones and supported cellular modems into a private, self-hosted SIM / SMS hub.**
@@ -17,6 +19,25 @@ Use your own server as an encrypted relay to remotely receive SMS, extract OTPs,
 [Download latest release](https://github.com/blackkcold/simhub/releases/latest) · [Installation](docs/INSTALLATION.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY_ARCHITECTURE.md)
 
 </div>
+
+---
+
+## Interface preview
+
+The Web controller adapts to desktop and mobile screens; the Android SIM Node uses a native interface. Both share the SIM Hub identity, with light and dark appearance support.
+
+> **Preview note:** These are **illustrative representations** based on the current UI layout, using synthetic, redacted demo content. They are not screenshots from a logged-in server or evidence of hardware testing. Actual screens vary by device, locale and data.
+
+**Web / PWA · Desktop**
+
+<p align="center"><img src="docs/assets/ui-desktop.svg" alt="SIM Hub desktop Web controller illustrative preview" width="100%" /></p>
+
+<table>
+<tr><th>Web / PWA · Mobile</th><th>Android SIM Node · Native UI</th></tr>
+<tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="Mobile SIM Hub PWA illustrative preview" width="100%" /></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="SIM Hub Android node illustrative preview" width="100%" /></td></tr>
+</table>
+
+**Get started:** [Download the APK](https://github.com/blackkcold/simhub/releases/latest) → [Deploy your relay](docs/DEPLOYMENT.md) → [Open the HTTPS controller and enroll a SIM Node](docs/INSTALLATION.md). Branding sources and design tokens: [Design System](docs/DESIGN_SYSTEM.md).
 
 ---
 
@@ -392,6 +413,7 @@ v0.2.1 and later release workflows require the pinned long-term signing identity
 | [Protocol](docs/PROTOCOL.md) | Enrollment, event and command protocol |
 | [Security Architecture](docs/SECURITY_ARCHITECTURE.md) | Encryption and trust model |
 | [Compatibility](docs/COMPATIBILITY.md) | Android/OEM behavior and test notes |
+| [Design System](docs/DESIGN_SYSTEM.md) | Brand assets, responsive UI and preview provenance |
 
 ---
 
@@ -426,9 +448,9 @@ CI also performs a complete API 37 debug APK build.
 
 ## Release
 
-Current release:
+Latest release:
 
-**[v0.2.2](https://github.com/blackkcold/simhub/releases/tag/v0.2.2)**
+**[Latest GitHub Release](https://github.com/blackkcold/simhub/releases/latest)**
 
 Release assets include the Android APK, tagged source snapshot, documentation bundle and SHA-256 checksums.
 

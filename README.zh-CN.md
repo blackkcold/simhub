@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/brand-banner.svg" alt="SIM Hub — private, self-hosted SIM and SMS controller" width="100%" />
+
 # SIM Hub
 
 **把 Android 手机和受支持的蜂窝 Modem 变成私有、自托管的 SIM / 短信远程管理中心。**
@@ -17,6 +19,25 @@
 [下载最新版本](https://github.com/blackkcold/simhub/releases/latest) · [安装说明](docs/INSTALLATION.md) · [系统架构](docs/ARCHITECTURE.md) · [安全架构](docs/SECURITY_ARCHITECTURE.md)
 
 </div>
+
+---
+
+## 界面预览
+
+Web 控制台提供响应式桌面/手机布局，Android Agent 则使用原生界面。两端共享统一 Logo 与品牌配色，并支持浅色、深色主题。
+
+> **预览说明：** 以下是依据当前界面结构绘制的**示意图**，使用脱敏的演示内容，并非已登录真实服务器的截图或功能验收结果。具体展示会随设备尺寸、语言及实际数据变化。
+
+**Web / PWA · 桌面端**
+
+<p align="center"><img src="docs/assets/ui-desktop.svg" alt="SIM Hub Web 控制台桌面端示意界面" width="100%" /></p>
+
+<table>
+<tr><th>Web / PWA · 手机端</th><th>Android SIM Node · 原生界面</th></tr>
+<tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="SIM Hub 移动端 PWA 示意界面" width="100%" /></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="SIM Hub Android 节点示意界面" width="100%" /></td></tr>
+</table>
+
+**开始使用：** [下载 APK](https://github.com/blackkcold/simhub/releases/latest) → [部署个人 Relay](docs/DEPLOYMENT.md) → [打开 HTTPS 管理控制台并注册 SIM 节点](docs/INSTALLATION.md)。UI 规范与资产位置见 [Design System](docs/DESIGN_SYSTEM.md)。
 
 ---
 
@@ -391,6 +412,7 @@ v0.2.1 起 Release workflow 强制使用固定长期签名身份；缺少 Secret
 | [Protocol](docs/PROTOCOL.md) | Enrollment、Event、Command 协议 |
 | [安全架构](docs/SECURITY_ARCHITECTURE.md) | 加密和 Trust Model |
 | [兼容性](docs/COMPATIBILITY.md) | Android / OEM 行为和测试说明 |
+| [视觉与 UI 规范](docs/DESIGN_SYSTEM.md) | 品牌图标、响应式布局及预览资产说明 |
 
 ---
 
@@ -425,9 +447,9 @@ GitHub Actions CI 同样会执行完整的 Android API 37 Debug APK 构建验证
 
 ## Release
 
-当前版本：
+最新版本入口：
 
-**[v0.2.2](https://github.com/blackkcold/simhub/releases/tag/v0.2.2)**
+**[查看最新 GitHub Release](https://github.com/blackkcold/simhub/releases/latest)**
 
 Release 中包含 Android APK、对应 Tag 的源码快照、文档包以及 SHA-256 校验文件。
 

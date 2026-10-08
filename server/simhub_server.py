@@ -84,6 +84,7 @@ _stream_condition = threading.Condition()
 _stream_epoch = 0
 _auth_lock = threading.Lock()
 _auth_failures: dict[str, list[int]] = {}
+_auth_gc_at = 0
 _rate_entries: dict[tuple[str,str], list[int]] = {}
 _rate_gc_at = 0
 _sse_lock = threading.Lock()
@@ -437,13 +438,17 @@ def admin_auth(headers) -> bool:
 
 
 def auth_rate_allowed(ip: str) -> bool:
+    global _auth_gc_at
     ts = now()
     with _auth_lock:
-        for key in list(_auth_failures):
-            valid = [v for v in _auth_failures[key] if ts-v < 60]
-            if valid: _auth_failures[key] = valid
-            else: _auth_failures.pop(key, None)
-        return len(_auth_failures.get(ip, [])) < 5 and (ip in _auth_failures or len(_auth_failures) < 4096)
+        if ts - _auth_gc_at >= 30:
+            for key in list(_auth_failures):
+                valid = [v for v in _auth_failures[key] if ts-v < 60]
+                if valid: _auth_failures[key] = valid
+                else: _auth_failures.pop(key, None)
+            _auth_gc_at = ts
+        attempts = [v for v in _auth_failures.get(ip, []) if ts-v < 60]
+        return len(attempts) < 5 and (ip in _auth_failures or len(_auth_failures) < 4096)
 
 
 def auth_rate_fail(ip: str) -> None:
@@ -672,7 +677,7 @@ def push_tickle_async(device_id: str, reason: str) -> None:
 
 
 class SimHubHandler(BaseHTTPRequestHandler):
-    server_version = "SimHubRelay/0.2.2"
+    server_version = "SimHubRelay/0.3.1"
     sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:
@@ -688,6 +693,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy","no-referrer")
         self.send_header("Cache-Control","no-store")
         self.send_header("Permissions-Policy","camera=(), microphone=(), geolocation=()")
+        self.send_header("Cross-Origin-Opener-Policy","same-origin")
+        self.send_header("Cross-Origin-Resource-Policy","same-origin")
+        self.send_header("X-Permitted-Cross-Domain-Policies","none")
         self.send_header("Content-Security-Policy","default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'")
 
     def send_json(self,status:int,obj:Any,extra_headers:dict[str,str]|None=None) -> None:
@@ -706,12 +714,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_json(status,{"error":code,"message":message})
 
     def read_json(self) -> dict[str,Any] | None:
+        path=self.route()[0]
+        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state)$",path) else 65536
         try:
             length=int(self.headers.get("Content-Length","0"))
         except ValueError:
             self.send_error_json(411,"length_required","Invalid Content-Length"); return None
-        if length<=0 or length>MAX_JSON_BODY:
-            self.send_error_json(413 if length>MAX_JSON_BODY else 400,"invalid_body","JSON body required and must be <= 1 MiB"); return None
+        if length<=0 or length>max_body:
+            self.send_error_json(413 if length>max_body else 400,"invalid_body","JSON body size exceeds route limit"); return None
         try:
             data=json.loads(self.rfile.read(length))
             if not isinstance(data,dict): raise ValueError()
@@ -766,8 +776,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         return False
 
     def preflight(self, method: str, path: str) -> bool:
-        if method == "GET" and path in {"/healthz", "/readyz"} and ipaddress.ip_address(self.client_address[0]).is_loopback:
-            return True
+        if method == "GET" and path in {"/healthz", "/readyz"}:
+            if ipaddress.ip_address(self.client_address[0]).is_loopback: return True
+            self.send_error_json(404,"not_found","Endpoint not available publicly"); return False
         if not rate_allowed("ip", self.ip, 180):
             self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False
         origin = self.headers.get("Origin", "").rstrip("/")

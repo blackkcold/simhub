@@ -18,55 +18,31 @@ This guide installs the personal relay server, opens the PWA controller, and enr
 - Physical SIM/eSIM telephony capability
 - Ability to set SIM Hub as the default SMS app
 
-## 2. Install the relay
+## 2. Install the relay (recommended v0.4.0+ workflow)
+
+For Linux, configure DNS A records for **two distinct names** (for example `admin.example.com` and `node.example.com`) to point at the public server IPv4. Any AAAA records must resolve to a reachable IPv6 host. Allow inbound TCP 80 and 443. Never publicly expose port 8787.
 
 ```bash
 git clone https://github.com/blackkcold/simhub.git
 cd simhub
-cp .env.example .env
-python3 scripts/gen_admin_token.py
+python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-Copy the generated token into `SIMHUB_ADMIN_TOKEN` in `.env` and set:
+The guided installer checks Docker/Compose, DNS and port availability; generates a strong Admin Token, TOTP secret, owner-only `.env`, Caddyfile and starts HTTPS/Relay. DNS entries are **not** created automatically at your registrar or DNS provider. Preserve `.env` securely.
 
-```env
-SIMHUB_PUBLIC_BASE_URL=https://simhub.example.com
-```
+Already use your own Nginx, Caddy or Traefik? Run `python3 scripts/setup.py --mode external --admin-domain admin.example.com --node-domain node.example.com`. External mode does not configure the proxy: terminate HTTPS on both hosts, proxy safely to `127.0.0.1:8787`, overwrite untrusted forwarded-IP headers, and hide `/healthz` and `/readyz` from public access.
 
-Generate and configure TOTP before first public deployment:
+To prepare files before DNS propagates, use `--skip-dns-check --no-start`, then `--upgrade` with the same hostnames and mode after DNS becomes valid.
+
+## 3. Verify HTTPS and internal health
+
+Open **`https://admin.example.com`** for the PWA; the separate `https://node.example.com` endpoint is for Android/Modem APIs, not the management UI.
 
 ```bash
-python3 scripts/gen_totp_secret.py
+docker compose exec -T simhub python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8787/readyz').read().decode())"
 ```
 
-Put the result in `SIMHUB_TOTP_SECRET`. The example config enables `SIMHUB_REQUIRE_TOTP=true`.
-
-Start the relay:
-
-```bash
-docker compose up -d --build
-curl http://127.0.0.1:8787/readyz
-```
-
-The readiness endpoint must report the current database schema before you continue.
-
-## 3. Enable HTTPS
-
-Use the provided `Caddyfile.example` or your existing reverse proxy. The public endpoint must use HTTPS because SMS/OTP management is high-value authentication infrastructure and the Android application disables cleartext traffic.
-
-With Caddy, adapt the hostname and proxy it to:
-
-```text
-127.0.0.1:8787
-```
-
-Then verify:
-
-```text
-https://simhub.example.com/
-```
-
-loads the PWA.
+If using managed Caddy, add `-f docker-compose.yml -f compose.caddy.yml` to Compose commands where needed. Public requests to either `/healthz` or `/readyz` must be denied.
 
 ## 4. Prepare the controller
 

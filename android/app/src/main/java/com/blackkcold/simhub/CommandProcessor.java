@@ -1,6 +1,7 @@
 package com.blackkcold.simhub;
 
 import android.content.Context;
+import android.app.role.RoleManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -40,6 +41,10 @@ public final class CommandProcessor {
                     if(!p.has("channelId")||p.optLong("channelRevision",0)<=0){ack(id,"failed",new JSONObject().put("reason","channel_identity_required"));return;}
                     ChannelIdentity.Channel ch=ChannelIdentity.resolve(c,p.getString("channelId"),p.getLong("channelRevision"));
                     if(ch==null){ack(id,"failed",new JSONObject().put("reason","subscription_changed"));return;}
+                    RoleManager role=c.getSystemService(RoleManager.class);
+                    if(role==null||!role.isRoleAvailable(RoleManager.ROLE_SMS)||!role.isRoleHeld(RoleManager.ROLE_SMS)){
+                        ack(id,"failed",new JSONObject().put("reason","sms_role_missing"));return;
+                    }
                     int subId=ch.subscriptionId;
                     SmsSender.send(c,id,subId,p.getString("to"),p.getString("body"));
                     ack(id,"submitted",new JSONObject().put("submitted",true).put("subscriptionId",subId));

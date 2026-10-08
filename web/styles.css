@@ -69,3 +69,12 @@ main{padding:16px 14px calc(102px + env(safe-area-inset-bottom))}
 .side-bottom{top:env(safe-area-inset-top);right:10px}
 }
 @media(prefers-reduced-motion:reduce){button,.button,.nav,.message,#toast,.help::after{transition:none!important}}
+
+/* Native modal top-layer fixes hit targets irrespective of sticky navigation. */
+#stepupDialog{width:min(430px,calc(100vw - 32px));border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--text);padding:24px;box-shadow:0 25px 90px rgba(0,0,0,.27)}
+#stepupDialog::backdrop{background:rgba(6,12,28,.65);backdrop-filter:blur(3px)}
+#stepupDialog h2{margin:0 0 12px;font-size:19px}
+#stepupDialog p{color:var(--muted);font-size:13px;line-height:1.5}
+#stepupDialog label{margin:16px 0 7px}
+#stepupDialog button{min-height:42px}
+#enrollCard{scroll-margin-top:85px}

@@ -21,7 +21,7 @@ Install the resulting APK with Android Studio or `adb install`.
 ## First-time setup order
 
 1. Open the PWA on your HTTPS relay and unlock/create the local Master Vault.
-2. In Settings, create an Android enrollment link. It contains only this node's independent Node Key, never the Master Vault Key.
+2. In Settings, create an Android enrollment link. It contains only a short-lived enrollment token and Bootstrap Secret; the independent long-term Node Key is delivered encrypted after successful enrollment, never as plaintext in the link.
 3. Open the `simhub://enroll?...` link on the Android SIM Node, or paste it into the Agent.
 4. Tap **Enroll this SIM Node / 注册此 SIM 节点**.
 5. Tap **Set as default SMS app / 设为默认短信应用** and approve Android's system role dialog.
@@ -67,3 +67,22 @@ The controller addresses a stable `channelId` plus `channelRevision`. Android ma
 - The app supports **Follow system**, **简体中文**, and **English** from the Settings section.
 - **Developer Mode** is off by default. When enabled it records redacted diagnostic events and exposes View/Clear/Export controls.
 - See [Developer diagnostics](DEVELOPER_DIAGNOSTICS.md) for the logging/redaction contract and support workflow.
+
+## v0.4.0–v0.5.0: UI and remote management
+
+- **v0.4.0 Web controller:** administrator username, Passkey registration/login/step-up, responsive SMS conversation list with direct reply, and **+ New message**. Passkey authenticates the administrator, not the browser-local Vault.
+- **v0.5.0 session:** in a valid active tab, browser refresh resumes the locally encrypted Vault after server session verification. The Vault inactivity deadline follows the administrator's default **8-hour idle** period; the session cannot exceed **24 hours** without signing in again. Explicit Lock/logout still requires unlocking.
+- **SIM numbers:** Android can report phone numbers only when allowed and supported by the OS/provider; some numbers are blank. They are carried in a Node-Key-encrypted inventory and shown in the Web device/message UI. Enter missing numbers using **Devices → Set number** in the Web controller; this encrypted override remains local to that browser.
+- **History:** the Agent supports **Sync latest 100 SMS** (independent newest rescan) and **Load 100 older SMS** (older-backfill cursor); the Web Inbox's **Load older messages** only fetches already-uploaded relay records. Success means the scan was queued; upload progress must be verified separately. Historical channel identities may be unknown on old SMS after a SIM swap.
+- **Diagnostics:** **Devices → Diagnostics** sends a `diagnostics.request` command and reads the encrypted health result in a Web dialog. The full Android Developer Mode log still stays on-device unless the user explicitly exports a redacted diagnostic ZIP.
+
+## Wi-Fi loss and mobile data SIM limitations
+
+Android normally routes data to its **system-selected default mobile-data SIM** when Wi-Fi is lost and mobile data is already enabled. A normal third-party APK is not privileged to enable another line or force a different default data SIM.
+
+1. In Android **system mobile network settings**, choose the intended default data SIM and enable mobile data for it.
+2. Open **SIM Hub → Open mobile data / default SIM settings** as a shortcut if needed.
+3. In the Web **Devices → Cellular failover SIM** action, choose the intended channel. SIM Hub checks that this matches the system's current default subscription and reports a configuration-needed state otherwise.
+4. Verify the phone can access the network after switching Wi-Fi off. The OS, not SIM Hub, performs the actual data routing. The feature is a **monitoring/policy validation aid**, not a privileged automatic SIM switch.
+
+See [Compatibility](COMPATIBILITY.md) and [v0.4–v0.5 migration](UPGRADE_0.4_TO_0.5.md).

@@ -84,9 +84,6 @@ public final class ChannelIdentity {
                 +"|iccid="+(iccid==null?"":iccid)
                 +"|mcc="+mcc
                 +"|mnc="+mnc
-                +"|number="+number
-                +"|carrier="+carrierName
-                +"|display="+displayName
                 +"|embedded="+embedded
                 +"|opportunistic="+opportunistic;
     }

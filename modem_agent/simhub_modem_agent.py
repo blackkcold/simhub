@@ -252,6 +252,11 @@ class Store:
               state TEXT NOT NULL,
               processed_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS sms_send_budget(
+              command_id TEXT PRIMARY KEY,
+              reserved_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sms_send_budget_time ON sms_send_budget(reserved_at);
             CREATE TABLE IF NOT EXISTS command_acks(
               command_id TEXT PRIMARY KEY,
               state TEXT NOT NULL,
@@ -318,6 +323,21 @@ class Store:
     def delete_multipart_group(self, group_id: str) -> None:
         self.db.execute("DELETE FROM multipart_parts WHERE group_id=?",(group_id,))
         self.db.commit()
+
+    def claim_sms_budget(self, command_id: str) -> bool:
+        """Sliding hourly quota, persisted before invoking the modem radio."""
+        limit = max(1, min(int(os.getenv("SIMHUB_SMS_PER_HOUR", "10")), 100))
+        ts = now()
+        with self.db:
+            self.db.execute("DELETE FROM sms_send_budget WHERE reserved_at<?", (ts-86400,))
+            existing = self.db.execute("SELECT 1 FROM sms_send_budget WHERE command_id=?", (command_id,)).fetchone()
+            if existing:
+                return True
+            count = self.db.execute("SELECT COUNT(*) FROM sms_send_budget WHERE reserved_at>?", (ts-3600,)).fetchone()[0]
+            if count >= limit:
+                return False
+            self.db.execute("INSERT INTO sms_send_budget(command_id,reserved_at) VALUES(?,?)", (command_id,ts))
+        return True
 
     def claim_command(self, command_id: str) -> bool:
         cur = self.db.execute(
@@ -1235,6 +1255,8 @@ class Agent:
                     body = str(payload.get("body", ""))
                     if not re.fullmatch(r"\+?[0-9 ()-]{3,40}", to) or not body or len(body) > 4000:
                         raise ValueError("invalid_sms")
+                    if not self.store.claim_sms_budget(command_id):
+                        raise RuntimeError("sms_hourly_limit")
                     # Persist uncertainty before invoking the non-transactional modem.
                     # On crash/restart, do not automatically resend a possibly sent SMS.
                     self.store.finish_command(command_id,"submitted")

@@ -84,14 +84,22 @@ try {
   }
   // Regression: arbitrary-length phone numbers / message previews must never
   // enlarge a thread beyond its column, and the floating dock must not scroll.
+  // Reuse one page and resize it. Creating 13 sessions would incorrectly trip
+  // the Relay's production IP request budget without exercising responsiveness.
+  const responsiveContext=await browser.newContext({viewport:{width:320,height:812},colorScheme:"light"});
+  const responsivePage=await responsiveContext.newPage(),responsiveErrors=[];
+  responsivePage.on("pageerror",e=>responsiveErrors.push(e.message));
+  const responsiveResponse=await responsivePage.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
+  assert.ok(responsiveResponse?.ok(),"Responsive test page failed to load");
+  await responsivePage.locator("#lockedPanel").waitFor({state:"attached"});
+  await responsivePage.evaluate(()=>{
+    document.getElementById("lockedPanel").hidden=true;
+    document.getElementById("appContent").hidden=false;
+  });
   for(const width of [320,360,375,390,430,600,760,768,900,1024,1180,1366,1920]){
-    const context=await browser.newContext({viewport:{width,height:812},colorScheme:"light"});
-    const page=await context.newPage(),jsErrors=[];
-    page.on("pageerror",e=>jsErrors.push(e.message));
-    const response=await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
-    if(!response?.ok()||!await page.locator("#lockedPanel").count()){
-      throw Error("Responsive test page not ready at "+width+": HTTP "+response?.status()+" "+(await page.locator("body").innerText()).slice(0,350));
-    }
+    const page=responsivePage,jsErrors=responsiveErrors;
+    await page.setViewportSize({width,height:812});
+    await page.locator('.nav[data-view="inbox"]').click();
     await page.evaluate(()=>{
       document.getElementById("lockedPanel").hidden=true;
       document.getElementById("appContent").hidden=false;
@@ -153,8 +161,8 @@ try {
       assert.ok(await page.locator("#view-devices").isVisible(),`Mobile navigation must work at ${width}`);
     }
     assert.deepEqual(jsErrors,[],`Responsive JS errors at ${width}`);
-    await context.close();
   }
+  await responsiveContext.close();
   // Reopening an active browser tab must not demand the Vault passphrase again.
   const c=await browser.newContext({viewport:{width:1120,height:800}});
   const p=await c.newPage();

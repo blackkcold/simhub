@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="414" height="776" viewBox="0 0 414 776" role="img" aria-label="SIM Hub illustrative UI preview"><defs><linearGradient id="gradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#756BFF"/><stop offset="1" stop-color="#423BC6"/></linearGradient><linearGradient id="wash" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1D2947"/><stop offset="1" stop-color="#0C1223"/></linearGradient></defs>
+<rect x="0" y="0" width="414" height="776" rx="30" fill="#F5F7FC" stroke="none" stroke-width="1"/>
+<rect x="8" y="8" width="398" height="760" rx="28" fill="#F5F7FC" stroke="#DBE1ED" stroke-width="2"/>
+<text x="27" y="48" fill="#18223A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="15" font-weight="650" >9:41</text>
+<text x="320" y="48" fill="#65718A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="12" font-weight="500" >● ● ●</text>
+<g transform="translate(27 69) scale(0.78)"><rect width="64" height="64" rx="17" fill="#635BFF"/><path d="M22 13h15l10 10v23a5 5 0 0 1-5 5H22a5 5 0 0 1-5-5V18a5 5 0 0 1 5-5Z" fill="none" stroke="#fff" stroke-width="3.2" stroke-linejoin="round"/><path d="M37 13v10h10" fill="none" stroke="#fff" stroke-width="3.2"/><path d="m25 37 9-8 7 11" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"/><g fill="#fff"><circle cx="25" cy="37" r="3.2"/><circle cx="34" cy="29" r="3.2"/><circle cx="41" cy="40" r="3.2"/></g><circle cx="50" cy="15" r="6.5" fill="#7EE5B0" stroke="#5E56ED" stroke-width="2.5"/></g>
+<text x="28" y="167" fill="#18223A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="33" font-weight="750" >SIM Hub</text>
+<text x="28" y="195" fill="#65718A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="15" font-weight="500" >Android SIM Node</text>
+<rect x="24" y="217" width="366" height="99" rx="18" fill="#FFFFFF" stroke="#E2E7F1" stroke-width="1"/>
+<text x="44" y="248" fill="#65718A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="12" font-weight="700" letter-spacing="1">NODE STATUS</text>
+<text x="44" y="285" fill="#18223A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="19" font-weight="700" >Enrolled · Relay active</text>
+<circle cx="364" cy="267" r="7" fill="#13865A"/>
+<text x="28" y="350" fill="#18223A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="20" font-weight="700" >SIM status</text>
+<rect x="24" y="366" width="366" height="112" rx="18" fill="#FFFFFF" stroke="#E2E7F1" stroke-width="1"/>
+<text x="43" y="402" fill="#18223A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="16" font-weight="700" >SIM 1  ·  Sample carrier</text>
+<text x="43" y="431" fill="#65718A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="14" font-weight="500" >Cellular connected   |   LTE</text>
+<text x="43" y="458" fill="#8792A9" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="12" font-weight="500" >Signal and subscription information</text>
+<text x="28" y="517" fill="#18223A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="20" font-weight="700" >Relay</text>
+<rect x="24" y="532" width="366" height="160" rx="18" fill="#FFFFFF" stroke="#E2E7F1" stroke-width="1"/>
+<rect x="44" y="554" width="326" height="52" rx="12" fill="#574FEA" stroke="none" stroke-width="1"/>
+<text x="207" y="587" fill="#FFFFFF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="16" font-weight="700" text-anchor="middle">Start relay</text>
+<rect x="44" y="619" width="326" height="50" rx="12" fill="#F0F2FF" stroke="none" stroke-width="1"/>
+<text x="207" y="650" fill="#423BC6" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="16" font-weight="700" text-anchor="middle">Sync now</text>
+<rect x="231" y="715" width="156" height="32" rx="16" fill="#E8EBF4" stroke="none" stroke-width="1"/><text x="245" y="736" fill="#65718A" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="13" font-weight="600" >DEMO / 示例界面</text>
+</svg>

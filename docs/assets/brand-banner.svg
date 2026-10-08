@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="SIM Hub illustrative UI preview"><defs><linearGradient id="gradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#756BFF"/><stop offset="1" stop-color="#423BC6"/></linearGradient><linearGradient id="wash" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1D2947"/><stop offset="1" stop-color="#0C1223"/></linearGradient></defs>
+<rect x="0" y="0" width="1200" height="300" rx="28" fill="#0C1223" stroke="none" stroke-width="1"/>
+<path d="M650 0H1200V300H520Z" fill="url(#wash)"/><circle cx="1050" cy="36" r="210" fill="#635BFF" opacity=".10"/><circle cx="770" cy="320" r="180" fill="#7EE5B0" opacity=".05"/>
+<g transform="translate(70 71) scale(1.7)"><rect width="64" height="64" rx="17" fill="#635BFF"/><path d="M22 13h15l10 10v23a5 5 0 0 1-5 5H22a5 5 0 0 1-5-5V18a5 5 0 0 1 5-5Z" fill="none" stroke="#fff" stroke-width="3.2" stroke-linejoin="round"/><path d="M37 13v10h10" fill="none" stroke="#fff" stroke-width="3.2"/><path d="m25 37 9-8 7 11" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"/><g fill="#fff"><circle cx="25" cy="37" r="3.2"/><circle cx="34" cy="29" r="3.2"/><circle cx="41" cy="40" r="3.2"/></g><circle cx="50" cy="15" r="6.5" fill="#7EE5B0" stroke="#5E56ED" stroke-width="2.5"/></g>
+<text x="210" y="143" fill="#FFFFFF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="67" font-weight="750" letter-spacing="-2">SIM Hub</text>
+<text x="214" y="186" fill="#BEC9E5" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="21" font-weight="500" >Your private SIM &amp; SMS command center</text>
+<rect x="215" y="210" width="110" height="32" rx="16" fill="#252D51" stroke="none" stroke-width="1"/><text x="229" y="231" fill="#DBE1FF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="13" font-weight="600" >Self-hosted</text>
+<rect x="337" y="210" width="145" height="32" rx="16" fill="#252D51" stroke="none" stroke-width="1"/><text x="351" y="231" fill="#DBE1FF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="13" font-weight="600" >Encrypted relay</text>
+<rect x="494" y="210" width="150" height="32" rx="16" fill="#252D51" stroke="none" stroke-width="1"/><text x="508" y="231" fill="#DBE1FF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="13" font-weight="600" >Android + Web</text>
+<rect x="842" y="65" width="270" height="172" rx="25" fill="#151E32" stroke="#48537A" stroke-width="1.5"/>
+<text x="870" y="104" fill="#F0F4FF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="17" font-weight="700" >SIM node</text>
+<rect x="994" y="80" width="94" height="32" rx="16" fill="#194C3D" stroke="none" stroke-width="1"/><text x="1008" y="101" fill="#7EE5B0" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="13" font-weight="600" >ONLINE</text>
+<rect x="869" y="130" width="212" height="9" rx="5" fill="#303C57" stroke="none" stroke-width="1"/>
+<rect x="869" y="130" width="152" height="9" rx="5" fill="#827AFF" stroke="none" stroke-width="1"/>
+<text x="869" y="165" fill="#AAB7CF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="14" font-weight="500" >Relay</text>
+<text x="1073" y="165" fill="#AAB7CF" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="14" font-weight="500" text-anchor="end">PWA</text>
+<path d="M900 190h135" stroke="#8F88FF" stroke-width="3" stroke-dasharray="7 6"/><circle cx="895" cy="190" r="8" fill="#7EE5B0"/><circle cx="1040" cy="190" r="8" fill="#8F88FF"/>
+<text x="1042" y="271" fill="#7E89A6" font-family="Inter,Arial,'Noto Sans',sans-serif" font-size="12" font-weight="600" text-anchor="end" letter-spacing="2">SIM / SMS · PRIVATE BY DESIGN</text>
+</svg>

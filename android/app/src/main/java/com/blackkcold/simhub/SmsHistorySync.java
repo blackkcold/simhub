@@ -22,26 +22,21 @@ public final class SmsHistorySync {
                 String direction=type==Telephony.Sms.MESSAGE_TYPE_INBOX?"in":"out";
                 OtpParser.Result otp=direction.equals("in")?OtpParser.parse(body):new OtpParser.Result(false,null,0f);String contact=ContactResolver.lookup(c,address);
                 JSONObject payload=new JSONObject().put("direction",direction).put(direction.equals("in")?"sender":"recipient",address==null?"":address).put("body",body==null?"":body).put("occurredAt",date/1000).put("subscriptionId",sub).put("providerType",type).put("providerId",id);
-                if(contact!=null)payload.put("contactName",contact);
-                if(otp.detected&&direction.equals("in"))payload.put("otp",new JSONObject().put("value",otp.value).put("confidence",otp.confidence));
+                if(contact!=null)payload.put("contactName",contact);if(otp.detected&&direction.equals("in"))payload.put("otp",new JSONObject().put("value",otp.value).put("confidence",otp.confidence));
                 boolean queued=EventQueue.queue(c,"sms-provider-"+id,"sms.history",date/1000,sub,otp.detected&&direction.equals("in"),payload,new JSONObject().put("providerType",type).put("history",true));
-                if(!queued)break;
-                cfg.setHistoryCursor(date,id);count++;
+                if(!queued)break;cfg.setHistoryCursor(date,id);count++;
             }
-        }catch(Exception ignored){}
+            if(count>0)AppLogger.i(c,"SmsSync","History scan queued count="+count);
+        }catch(Exception error){AppLogger.e(c,"SmsSync","History scan failed",error);}
         return count;
     }
-
     public static int syncMmsMetadata(Context c,int maxMessages){
         int count=0;String[] proj={BaseColumns._ID,Telephony.Mms.DATE,Telephony.Mms.MESSAGE_BOX,Telephony.Mms.SUBJECT,"sub_id"};
         try(Cursor cur=c.getContentResolver().query(Telephony.Mms.CONTENT_URI,proj,null,null,Telephony.Mms.DATE+" DESC")){
             if(cur==null)return 0;
-            while(cur.moveToNext()&&count<maxMessages){
-                long id=cur.getLong(0),date=cur.getLong(1);int box=cur.getInt(2),sub=cur.getInt(4);String subject=cur.getString(3);
-                JSONObject p=new JSONObject().put("direction",box==Telephony.Mms.MESSAGE_BOX_SENT?"out":"in").put("subject",subject==null?"":subject).put("occurredAt",date).put("subscriptionId",sub).put("transport","mms-metadata-only");
-                if(EventQueue.queue(c,"mms-provider-"+id,"mms.history",date,sub,false,p,new JSONObject().put("metadataOnly",true)))count++;
-            }
-        }catch(Exception ignored){}
+            while(cur.moveToNext()&&count<maxMessages){long id=cur.getLong(0),date=cur.getLong(1);int box=cur.getInt(2),sub=cur.getInt(4);String subject=cur.getString(3);JSONObject p=new JSONObject().put("direction",box==Telephony.Mms.MESSAGE_BOX_SENT?"out":"in").put("subject",subject==null?"":subject).put("occurredAt",date).put("subscriptionId",sub).put("transport","mms-metadata-only");if(EventQueue.queue(c,"mms-provider-"+id,"mms.history",date,sub,false,p,new JSONObject().put("metadataOnly",true)))count++;}
+            if(count>0)AppLogger.i(c,"MmsSync","MMS metadata queued count="+count);
+        }catch(Exception error){AppLogger.e(c,"MmsSync","MMS metadata scan failed",error);}
         return count;
     }
 }

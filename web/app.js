@@ -145,14 +145,44 @@ function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='g
 async function handleDeviceAction(btn){const id=btn.dataset.id,action=btn.dataset.action;if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync'){await queueCommand(id,'sms.sync_history',{maxMessages:5000},900);toast('History sync queued');}else if(action==='diagnostics'){await queueCommand(id,'diagnostics.request',{});toast('Diagnostics queued');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
 function switchView(name){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();}
 
+function relocalizeDynamic(){
+  applyI18n();
+  const active=document.querySelector('.nav.active')?.dataset.view||'inbox';
+  switchView(active);
+  setConnected($('relayDot').classList.contains('ok'));
+  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?tr('local_vault_found'):tr('no_local_vault');
+  if(vaultKey)$('vaultStatus').textContent=tr('vault_unlocked');
+  renderDeviceSelectors();
+  renderDevices();
+  renderInbox();
+  updateCharCount();
+}
+
 function wire(){
-  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?'Local vault found. Enter its passphrase.':'No local vault found. Create or import one before enrollment.';
-  $('unlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));$('createVaultBtn').onclick=()=>createVaultFlow().catch(e=>toast(e.message));$('importKeyBtn').onclick=()=>importRecoveryFlow().catch(e=>toast(e.message));$('lockBtn').onclick=lockVault;$('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast('Vault is locked');
-  document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));$('search').oninput=renderInbox;$('deviceFilter').onchange=renderInbox;$('kindFilter').onchange=renderInbox;$('sendDevice').onchange=updateSubscriptionSelector;$('sendBody').oninput=updateCharCount;
-  $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));$('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));$('enrollBtn').onclick=()=>createEnrollment().catch(e=>toast(e.message));$('copyEnroll').onclick=()=>copy($('enrollLink').value,'Enrollment link copied').catch(e=>toast(e.message));$('exportKeyBtn').onclick=()=>vaultRaw?copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),'Recovery key copied').catch(e=>toast(e.message)):toast('Vault locked');
-  $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(p==='granted'?'Browser notifications enabled':'Notification permission not granted');};
-  $('forgetBtn').onclick=async()=>{if(confirm('Forget the local wrapped vault and sign this browser out?')){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast('Browser credentials forgotten');}};
-  $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};$('inboxList').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,'OTP copied').catch(err=>toast(err.message));};
+  applyI18n();
+  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?tr('local_vault_found'):tr('no_local_vault');
+  $('languageSelect').onchange=()=>{setLocale($('languageSelect').value);relocalizeDynamic();};
+  $('unlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));
+  $('createVaultBtn').onclick=()=>createVaultFlow().catch(e=>toast(e.message));
+  $('importKeyBtn').onclick=()=>importRecoveryFlow().catch(e=>toast(e.message));
+  $('lockBtn').onclick=lockVault;
+  $('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast(tr('vault_locked'));
+  document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
+  $('search').oninput=renderInbox;
+  $('deviceFilter').onchange=renderInbox;
+  $('kindFilter').onchange=renderInbox;
+  $('sendDevice').onchange=updateSubscriptionSelector;
+  $('sendBody').oninput=updateCharCount;
+  $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
+  $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
+  $('enrollBtn').onclick=()=>createEnrollment().catch(e=>toast(e.message));
+  $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
+  $('exportKeyBtn').onclick=()=>vaultRaw?copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied')).catch(e=>toast(e.message)):toast(tr('vault_locked'));
+  $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
+  $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);lockVault();toast(tr('credentials_forgotten'));}};
+  $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
+  $('inboxList').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  relocalizeDynamic();
 }
 wire();

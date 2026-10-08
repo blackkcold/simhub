@@ -46,6 +46,9 @@ REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 NOTIFY_WEBHOOK = os.getenv("SIMHUB_NOTIFY_WEBHOOK_URL", "").strip()
+NOTIFY_BARK_URL = os.getenv("SIMHUB_NOTIFY_BARK_URL", "").strip()
+NOTIFY_NTFY_URL = os.getenv("SIMHUB_NOTIFY_NTFY_URL", "").strip()
+NOTIFY_NTFY_TOKEN = os.getenv("SIMHUB_NOTIFY_NTFY_TOKEN", "").strip()
 NOTIFY_BEARER = os.getenv("SIMHUB_NOTIFY_WEBHOOK_BEARER", "").strip()
 NOTIFY_OTP_ONLY = os.getenv("SIMHUB_NOTIFY_OTP_ONLY", "false").lower() in {"1","true","yes","on"}
 NOTIFY_MAX_AGE = max(30, min(int(os.getenv("SIMHUB_NOTIFY_MAX_AGE", "300")), 3600))
@@ -527,7 +530,7 @@ def signal_stream() -> None:
 
 
 def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occurred_at: int) -> None:
-    if not NOTIFY_WEBHOOK or kind != "sms.received":
+    if not (NOTIFY_WEBHOOK or NOTIFY_BARK_URL or NOTIFY_NTFY_URL) or kind != "sms.received":
         return
     if abs(now()-occurred_at) > NOTIFY_MAX_AGE:
         return
@@ -544,18 +547,36 @@ def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occ
         "occurredAt":occurred_at,
     }
     def send() -> None:
-        try:
-            req=urllib.request.Request(
-                NOTIFY_WEBHOOK,
-                data=json.dumps(payload).encode(),
-                headers={"Content-Type":"application/json", **({"Authorization":f"Bearer {NOTIFY_BEARER}"} if NOTIFY_BEARER else {})},
-                method="POST",
-            )
-            urllib.request.urlopen(req,timeout=5).read(1024)
-        except Exception as exc:
-            log.warning("notification_webhook_failed %s",type(exc).__name__)
+        # Notification providers receive only generic metadata, never sender/body/OTP.
+        if NOTIFY_WEBHOOK:
+            try:
+                req=urllib.request.Request(
+                    NOTIFY_WEBHOOK,data=json.dumps(payload).encode(),
+                    headers={"Content-Type":"application/json", **({"Authorization":f"Bearer {NOTIFY_BEARER}"} if NOTIFY_BEARER else {})},method="POST",
+                )
+                urllib.request.urlopen(req,timeout=5).read(1024)
+            except Exception as exc:
+                log.warning("notification_webhook_failed %s",type(exc).__name__)
+        if NOTIFY_BARK_URL:
+            try:
+                body={"title":"SIM Hub","body":payload["message"],"group":"SIM Hub"}
+                req=urllib.request.Request(NOTIFY_BARK_URL,data=json.dumps(body).encode(),
+                    headers={"Content-Type":"application/json"},method="POST")
+                urllib.request.urlopen(req,timeout=5).read(1024)
+            except Exception as exc:
+                log.warning("notification_bark_failed %s",type(exc).__name__)
+        if NOTIFY_NTFY_URL:
+            try:
+                headers={"Title":"SIM Hub","Priority":"4" if has_otp else "3","Content-Type":"text/plain; charset=utf-8"}
+                if NOTIFY_NTFY_TOKEN:
+                    headers["Authorization"]="Bearer "+NOTIFY_NTFY_TOKEN
+                req=urllib.request.Request(NOTIFY_NTFY_URL,data=payload["message"].encode("utf-8"),
+                    headers=headers,method="POST")
+                urllib.request.urlopen(req,timeout=5).read(1024)
+            except Exception as exc:
+                log.warning("notification_ntfy_failed %s",type(exc).__name__)
     if not _outbound_executor.submit(send):
-        log.warning("notification_webhook_dropped queue_full")
+        log.warning("notification_dropped queue_full")
 
 
 def push_tickle_async(device_id: str, reason: str) -> None:

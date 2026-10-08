@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.app.role.RoleManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.os.BatteryManager;
@@ -45,6 +46,13 @@ public final class StateCollector {
                         .put("charging",status==BatteryManager.BATTERY_STATUS_CHARGING||status==BatteryManager.BATTERY_STATUS_FULL);
             }
 
+
+            RoleManager role=c.getSystemService(RoleManager.class);
+            boolean smsRole=role!=null&&role.isRoleAvailable(RoleManager.ROLE_SMS)&&role.isRoleHeld(RoleManager.ROLE_SMS);
+            boolean recvPermission=c.checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED;
+            boolean sendPermission=c.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED;
+            o.put("smsRoleHeld",smsRole).put("smsReceivePermission",recvPermission)
+                    .put("smsSendPermission",sendPermission);
             JSONArray subscriptions=new JSONArray(),channels=new JSONArray();
             if(c.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)==PackageManager.PERMISSION_GRANTED){
                 SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);
@@ -75,6 +83,7 @@ public final class StateCollector {
                     channels.put(new JSONObject(x.toString()).put("id",ch.channelId).put("localId",String.valueOf(sub)).put("kind","android-sim").put("revision",ch.revision));
                 }
             }
+            o.put("smsOperational",smsRole&&recvPermission&&sendPermission&&subscriptions.length()>0);
             o.put("subscriptions",subscriptions)
                     .put("channels",channels)
                     .put("nodeType","android")

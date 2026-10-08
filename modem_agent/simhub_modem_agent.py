@@ -1284,6 +1284,10 @@ class Agent:
                     self.store.queue_ack(command_id, "succeeded", {"refreshed": True})
                 elif ctype == "diagnostics.request":
                     self.store.finish_command(command_id, "succeeded")
+                    stamp=now(); event_id="diag-"+command_id
+                    data={"requestId":command_id,"diagnosticAt":stamp,"nodeType":"modem","adapter":self.adapter.name,"pendingEvents":len(self.store.pending_events(1000))}
+                    cipher=self.encrypt_event(event_id,"device.diagnostics",stamp,False,data)
+                    self.store.queue_event(event_id,"device.diagnostics",stamp,self.channel_id,False,{},cipher)
                     self.store.queue_ack(command_id, "succeeded", {"adapter": self.adapter.name})
                 else:
                     self.store.finish_command(command_id, "rejected")

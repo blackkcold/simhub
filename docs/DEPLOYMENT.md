@@ -1,42 +1,59 @@
 # Deployment
 
-## Recommended topology
+## Recommended topology (v0.4.0+)
 
 ```text
-Internet
-  |
-HTTPS :443
-  |
-Caddy / Nginx / Traefik
-  |
-127.0.0.1:8787
-  |
-SIM Hub relay
-  |
-Docker named volume: simhub-data → /data/simhub.db
+Browsers / admins ----HTTPS----> admin.example.com:443 ----+
+                                                           |  Caddy / existing reverse proxy
+Android / modem nodes --HTTPS----> node.example.com:443 ---+            |
+                                                                     127.0.0.1:8787
+                                                                            |
+                                                                  SIM Hub Relay / SQLite WAL
 ```
 
-The relay intentionally binds to loopback in the Docker Compose example. Do not expose port 8787 directly to the public Internet without TLS termination.
+The two HTTPS hostnames **must be different**. The management hostname serves Web/PWA authentication; the node hostname is restricted to node API endpoints. DNS **A** records must point to your server's public IPv4; any **AAAA** record must be reachable. Allow inbound TCP 80/443 for managed Caddy. The Relay port **8787 binds only to loopback** and must not be publicly exposed.
 
-## 1. Configure
+## 1. Recommended: Linux interactive provisioning
 
 ```bash
-cp .env.example .env
-python3 scripts/gen_admin_token.py
+git clone https://github.com/blackkcold/simhub.git
+cd simhub
+python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-Set `SIMHUB_PUBLIC_BASE_URL` to the HTTPS URL that Android nodes will reach.
+This script validates Docker/Compose, DNS A/AAAA and ports, generates an owner-only `.env` (strong Admin Token, TOTP secret and username), creates a managed Caddyfile and starts Relay + Caddy. **It will never write DNS records at your DNS provider.** Back up `.env` privately, and register a Passkey under **Settings** after initial token/TOTP login. Passkeys do not unlock the local Vault on other devices.
 
-New deployments default to `SIMHUB_REQUIRE_TOTP=true`. Generate a Base32 secret with `python3 scripts/gen_totp_secret.py`, set `SIMHUB_TOTP_SECRET`, then use the code only when creating a short-lived browser session; normal API requests use the Secure HttpOnly session cookie.
-
-## 2. Start
+Already manage HTTPS with Nginx / Caddy / Traefik? Choose external mode:
 
 ```bash
-docker compose up -d --build
-curl http://127.0.0.1:8787/healthz
+python3 scripts/setup.py --mode external --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-Then configure your reverse proxy. `Caddyfile.example` is the shortest path.
+External mode starts the Relay but leaves TLS/reverse-proxy configuration to the operator. Route both hosts to `127.0.0.1:8787`, explicitly set the real client's forwarded IP, and deny public access to `/readyz` and `/healthz`. Never trust arbitrary public `X-Forwarded-For` input. For pre-DNS staging, `--skip-dns-check --no-start` creates config without launching containers.
+
+## 2. Verify and upgrade
+
+For internal health checks run:
+
+```bash
+docker compose exec -T simhub python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8787/readyz').read().decode())"
+```
+
+For managed-Caddy logs:
+
+```bash
+docker compose -f docker-compose.yml -f compose.caddy.yml logs --tail=50 caddy
+```
+
+Upgrade **after a consistent backup**, preserving the original management hostname (Passkey RP ID), node hostname and Node Keys:
+
+```bash
+./scripts/backup.sh
+git pull --ff-only
+python3 scripts/setup.py --upgrade --admin-domain admin.example.com --node-domain node.example.com
+```
+
+Add `--mode external` when applicable. This non-destructive upgrade applies to existing dual-host installs; earlier single-host deployments require an explicit DNS/proxy migration plan. After Relay/PWA is updated, install the [v0.5.0 signed Android APK](https://github.com/blackkcold/simhub/releases/tag/v0.5.0). See [two-release migration guide](UPGRADE_0.4_TO_0.5.md).
 
 ## 3. Backups
 
@@ -61,9 +78,9 @@ Mount a JSON file to `SIMHUB_OTA_FILE`, for example:
 
 ```json
 {
-  "versionCode": 8,
-  "versionName": "0.2.2",
-  "url": "https://github.com/blackkcold/simhub/releases/download/v0.2.2/simhub-agent-v0.2.2-release.apk",
+  "versionCode": 13,
+  "versionName": "0.5.0",
+  "url": "https://github.com/blackkcold/simhub/releases/download/v0.5.0/simhub-agent-v0.5.0-release.apk",
   "sha256": "...",
   "notes": "Bug fixes"
 }

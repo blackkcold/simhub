@@ -1098,6 +1098,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 audit("auth.passkey.login","","denied",self.ip)
             self.send_error_json(401 if login_path else 400,"invalid_passkey",str(exc)[:180])
         except Exception:
+            if login_path:
+                auth_rate_fail(self.ip)
+                audit("auth.passkey.login","","denied",self.ip)
             log.exception("passkey_operation_failed")
             self.send_error_json(400,"invalid_passkey","WebAuthn verification failed")
 

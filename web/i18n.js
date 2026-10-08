@@ -1,6 +1,7 @@
 const STORE='simhub_locale';
 const dict={
 'zh-CN':{
+sync_recent_100:'同步最近 100 条',sync_older_100:'同步更早 100 条',mobile_fallback:'备用数据 SIM',set_sim_phone:'设置号码',phone_unknown:'号码未识别',charging_now:'充电中',not_charging:'未充电',charging_state:'充电状态',online_state:'联网状态',fallback_state:'蜂窝数据接管',not_enabled:'未启用',pending_status:'待确认',wifi_online:'已连接 Wi-Fi',cellular_online:'使用移动数据',
 username:'用户名',login_passkey:'使用通行密钥登录',passkeys:'通行密钥（Passkeys）',passkeys_help:'使用 Touch ID、Windows Hello 或手机通行密钥登录。Passkey 不会解锁本地 Vault。',passkey_label:'通行密钥名称',register_passkey:'添加通行密钥',new_sms:'+ 新建短信',new_sms_hint:'输入收件人并选择 SIM 以发送加密短信。',back_messages:'返回',choose_conversation:'选择会话',choose_conversation_hint:'选择左侧短信，或点击新建短信。',
 
 nav_inbox:'短信',nav_send:'发送短信',nav_devices:'设备',nav_settings:'设置',private_relay:'私有中继',relay_connected:'中继服务器已连接',relay_disconnected:'未连接中继服务器',lock_vault:'锁定 Vault',refresh:'刷新',
@@ -20,6 +21,7 @@ err_passphrase_min:'Vault 密码至少需要 10 个字符。',err_recovery_forma
 enroll_modem_done:'一次性 Modem 注册包已创建，有效期 10 分钟',enroll_android_done:'一次性 Android 注册链接已创建，有效期 10 分钟'
 },
 en:{
+sync_recent_100:'Sync latest 100',sync_older_100:'Sync 100 older',mobile_fallback:'Cellular failover SIM',set_sim_phone:'Set number',phone_unknown:'Number unavailable',charging_now:'Charging',not_charging:'Not charging',charging_state:'Charging',online_state:'Connection',fallback_state:'Data failover',not_enabled:'Disabled',pending_status:'Pending',wifi_online:'Wi-Fi connected',cellular_online:'Using cellular',
 username:'Username',login_passkey:'Sign in with a passkey',passkeys:'Passkeys',passkeys_help:'Sign in with Touch ID, Windows Hello or a phone passkey. Passkeys do not unlock the local Vault.',passkey_label:'Passkey name',register_passkey:'Add passkey',new_sms:'+ New message',new_sms_hint:'Enter a recipient and select a SIM to send an encrypted SMS.',back_messages:'Back',choose_conversation:'Select conversation',choose_conversation_hint:'Choose a message from the list or start a new one.',
 
 nav_inbox:'Inbox',nav_send:'Send SMS',nav_devices:'Devices',nav_settings:'Settings',private_relay:'private relay',relay_connected:'Relay connected',relay_disconnected:'Not connected',lock_vault:'Lock vault',refresh:'Refresh',

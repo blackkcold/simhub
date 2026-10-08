@@ -23,6 +23,16 @@ public final class CommandProcessor {
                 case "sms.send" -> {if(!p.has("channelId")||p.optLong("channelRevision",0)<=0){ack(id,"failed",new JSONObject().put("reason","channel_identity_required"));return;}ChannelIdentity.Channel ch=ChannelIdentity.resolve(c,p.getString("channelId"),p.getLong("channelRevision"));if(ch==null){ack(id,"failed",new JSONObject().put("reason","subscription_changed"));return;}RoleManager role=c.getSystemService(RoleManager.class);if(role==null||!role.isRoleAvailable(RoleManager.ROLE_SMS)||!role.isRoleHeld(RoleManager.ROLE_SMS)){ack(id,"failed",new JSONObject().put("reason","sms_role_missing"));return;}int subId=ch.subscriptionId;if(!SmsRateLimiter.claim(c,ch.channelId)){ack(id,"rejected",new JSONObject().put("reason","sms_hourly_limit"));return;}SmsSender.send(c,id,subId,p.getString("to"),p.getString("body"));ack(id,"submitted",new JSONObject().put("submitted",true).put("subscriptionId",subId));}
                 case "sms.sync_recent" -> {result.put("queued",SmsHistorySync.syncRecent(c,Math.min(100,p.optInt("maxMessages",100))));ack(id,"succeeded",result);}
                  case "sms.sync_older","sms.sync_history" -> {result.put("queued",SmsHistorySync.syncOlder(c,Math.min(100,p.optInt("maxMessages",100))));ack(id,"succeeded",result);}
+                case "device.network_policy" -> {
+                    boolean enabled=p.optBoolean("enabled",false);
+                    String channel=enabled?p.optString("channelId",""):"";
+                    long revision=enabled?p.optLong("channelRevision",0):0;
+                    if(enabled&&ChannelIdentity.resolve(c,channel,revision)==null){ack(id,"rejected",new JSONObject().put("reason","selected_sim_missing_or_replaced"));return;}
+                    new AgentConfig(c).setDataFallback(enabled,channel,revision);
+                    String status=NetworkFailoverPolicy.status(c);
+                    result.put("enabled",enabled).put("status",status);
+                    api.putState();ack(id,"succeeded",result);
+                }
                 case "device.refresh_state","subscription.refresh" -> {api.putState();result.put("refreshed",true);ack(id,"succeeded",result);}
                 case "diagnostics.request" -> {JSONObject d=StateCollector.collect(c).put("diagnosticAt",now).put("requestId",id);EventQueue.diagnostics(c,d);result.put("queued",true);ack(id,"succeeded",result);}
                 case "ota.check" -> {JSONObject ota=api.ota();EventQueue.diagnostics(c,new JSONObject().put("ota",ota));result.put("checked",true);ack(id,"succeeded",result);}

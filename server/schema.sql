@@ -132,3 +132,23 @@ CREATE TABLE IF NOT EXISTS channels(
   UNIQUE(device_id,id)
 );
 CREATE INDEX IF NOT EXISTS idx_channels_device ON channels(device_id,last_seen_at);
+
+-- A single bootstrap administrator has multiple discoverable FIDO2 passkeys.
+-- Public verification keys are NOT Vault encryption keys.
+CREATE TABLE IF NOT EXISTS admin_passkeys(
+  credential_id TEXT PRIMARY KEY,
+  public_key BLOB NOT NULL,
+  sign_count INTEGER NOT NULL DEFAULT 0,
+  label TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS passkey_challenges(
+  id TEXT PRIMARY KEY,
+  challenge TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  username TEXT NOT NULL,
+  session_hash TEXT NOT NULL DEFAULT '',
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_passkey_challenges_expiry ON passkey_challenges(expires_at);

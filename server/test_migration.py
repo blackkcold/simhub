@@ -50,7 +50,7 @@ class MigrationTest(unittest.TestCase):
             finally:
                 srv.DB_PATH=old
             with sqlite3.connect(db) as con:
-                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],7)
+                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],8)
                 self.assertEqual(con.execute("SELECT COUNT(*) FROM events").fetchone()[0],1)
                 device_cols={r[1] for r in con.execute("PRAGMA table_info(devices)")}
                 token_cols={r[1] for r in con.execute("PRAGMA table_info(enrollment_tokens)")}

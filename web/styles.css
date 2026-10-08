@@ -78,3 +78,70 @@ main{padding:16px 14px calc(102px + env(safe-area-inset-bottom))}
 #stepupDialog label{margin:16px 0 7px}
 #stepupDialog button{min-height:42px}
 #enrollCard{scroll-margin-top:85px}
+
+
+/* v0.4.0 shared form rhythm; override legacy global styles in a single place */
+:root{--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px}
+:where(.card,.gate,.conversation-panel) label{min-width:0}
+:where(.card,.gate,.conversation-panel) input,:where(.card,.gate,.conversation-panel) select,:where(.card,.gate,.conversation-panel) textarea{min-width:0}
+:where(.card,.gate,.conversation-panel) .form-grid{gap:var(--space-4)}
+:where(.card,.gate,.conversation-panel) .form-grid label{gap:var(--space-2)}
+:where(.settings-grid>.card)>button{margin-top:var(--space-4)}
+#stepupDialog{max-width:480px;max-height:min(90dvh,720px);overflow-y:auto}
+#stepupDialog form{display:flex;flex-direction:column;gap:0}
+#stepupDialog label{display:block;margin:var(--space-5) 0 var(--space-2)}
+#stepupDialog input{display:block;width:100%;min-height:48px;font-size:16px}
+#stepupDialog .stepup-actions{display:flex;justify-content:flex-end;gap:var(--space-3);margin:var(--space-6) 0 0}
+#stepupDialog .stepup-actions button{min-width:88px;min-height:44px}
+#stepupDialog p{margin:var(--space-3) 0 0}
+#stepupDialog h2{margin:0}
+#stepupDialog::backdrop{background:rgba(6,12,28,.66)}
+.logged-in-user{font-size:13px;color:var(--muted);max-width:130px;text-overflow:ellipsis;overflow:hidden}
+.top-actions{flex-wrap:wrap;justify-content:flex-end}
+.sms-layout{display:grid;grid-template-columns:minmax(290px,0.88fr) minmax(0,1.4fr);gap:14px;align-items:start;min-height:520px}
+.sms-sidebar{min-width:0}
+.sms-sidebar .message{display:flex;align-items:flex-start;cursor:pointer;gap:12px;width:100%;font:inherit;color:inherit;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:14px;box-shadow:var(--shadow)}
+.sms-sidebar .message:hover,.sms-sidebar .message.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 5%,var(--panel))}
+.sms-sidebar .message-body{flex:1;min-width:0}
+.sms-sidebar .message-title{display:flex;gap:6px;align-items:baseline;justify-content:space-between}
+.sms-sidebar .message-preview{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:7px}
+.sms-sidebar .message .avatar{width:38px;height:38px;flex-shrink:0}
+.conversation-panel{display:flex;flex-direction:column;min-height:520px;max-height:min(76dvh,950px);min-width:0;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+.conversation-header{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line);min-height:66px}
+.conversation-header #backConversation{display:none}
+.conversation-messages{display:flex;flex:1;min-height:230px;flex-direction:column;gap:11px;overflow:auto;overscroll-behavior:contain;padding:18px}
+.bubble{max-width:min(85%,450px);align-self:flex-start;padding:10px 13px;border-radius:14px;background:var(--panel2);overflow-wrap:anywhere;white-space:pre-wrap}
+.bubble.outbound{align-self:flex-end;background:color-mix(in srgb,var(--accent) 20%,var(--panel))}
+.bubble p{margin:0 0 7px;font-size:14px;line-height:1.5}
+.bubble .meta{font-size:11px}
+.bubble .otp{margin-top:5px}
+.reply-composer{border-top:1px solid var(--line);padding:16px;display:grid;gap:12px}
+.reply-composer[hidden]{display:none}
+.reply-composer .form-grid{margin:0;gap:8px}
+.reply-composer textarea{resize:vertical;min-height:72px}
+.composer-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.passkeys-list{display:grid;gap:8px;margin-top:16px}
+.passkey-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;background:var(--panel2);border-radius:10px}
+.passkey-row small{display:block;color:var(--muted)}
+.passkey-row button{flex:none}
+@media(max-width:900px){.sms-layout{grid-template-columns:minmax(0,1fr)}.conversation-panel{min-height:450px;max-height:none}.sms-sidebar .message{padding:13px}}
+@media(max-width:760px){
+ nav{grid-template-columns:repeat(3,minmax(0,1fr))}
+ .sms-layout{display:block}
+ .conversation-panel{display:none;max-height:none;min-height:calc(100dvh - 260px)}
+ .sms-layout.conversation-open .sms-sidebar{display:none}
+ .sms-layout.conversation-open .conversation-panel{display:flex}
+ .conversation-header #backConversation{display:inline-flex}
+ .reply-composer{padding:12px}
+ .top-actions .logged-in-user{display:none}
+ #newSmsBtn{font-size:12px;min-height:44px}
+ #stepupDialog{width:min(430px,calc(100vw - 28px));padding:20px}
+ #stepupDialog .stepup-actions button{flex:1}
+}
+
+/* Avoid inline style attributes that violate the strict style-src CSP. */
+.pager-actions{justify-content:center;padding:14px}
+.device-heading-actions{justify-content:flex-end;margin-bottom:14px}
+
+/* Hidden semantics must win over authored button/grid display styles. */
+[hidden]{display:none!important}

@@ -420,7 +420,7 @@ v0.2.1 起 Release workflow 强制使用固定长期签名身份；缺少 Secret
 
 ### Server
 
-Relay 尽量保持轻量，使用 Python Standard Library + SQLite。
+Relay 尽量保持轻量，采用 Python、SQLite 和 WebAuthn 验签依赖。
 
 ```bash
 export SIMHUB_ADMIN_TOKEN="$(python3 scripts/gen_admin_token.py --raw)"
@@ -475,3 +475,11 @@ SIM Hub 使用 [MIT License](LICENSE)。
 - **Web 收件箱**：初始只加载最近 30 条服务器事件，点击「加载更早」分步获取，避免历史批量上传拖慢页面。
 
 **升级顺序**：先升级至 v0.3.2 Relay，再更新 Android APK。旧版 Android 仍可通过原有单条事件接口运行。现有 Node Key、设备绑定及短信密文不需要重置。Relay 原有数据保留期限仍然适用，历史事件可能按策略被清理。
+
+## v0.4.0 快速部署与安全升级
+
+Linux 服务器推荐通过 `python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.example.com` 初始化，支持自动配置 Caddy HTTPS、DNS 校验、管理员用户名与 TOTP。已有代理可指定 `--mode external`。详见 [快速部署](docs/QUICKSTART.zh-CN.md)。
+
+Web 控制台新增 **Passkey 通行密钥**、短信会话列表、直接回复、右上角新建短信与统一响应式表单样式。Passkey 负责管理员身份验证，**不会解锁本地 Vault**；仍需用户自己的 Vault 密码或恢复密钥才能解密短信。
+
+从 v0.3.2 升级时请先备份 SQLite 与 Vault 恢复材料，保留 `.env`，管理域名不要直接改名（Passkey 绑定原域名）。设备和 Node Keys 不需要重新注册；服务器更新到 v0.4.0 后旧版 Android 节点仍可按现有协议同步。

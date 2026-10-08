@@ -12,6 +12,7 @@ import mimetypes
 import os
 import re
 import secrets
+import socket
 import sqlite3
 import struct
 import threading
@@ -24,9 +25,11 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import passkeys
 from typing import Any
 
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.4.0"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -34,6 +37,7 @@ WEB_ROOT = Path(os.getenv("SIMHUB_WEB_ROOT", str(Path(__file__).resolve().parent
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 PUBLIC_BASE_URL = os.getenv("SIMHUB_PUBLIC_BASE_URL", "").rstrip("/")
 ADMIN_TOKEN = os.getenv("SIMHUB_ADMIN_TOKEN", "")
+ADMIN_USERNAME = os.getenv("SIMHUB_ADMIN_USERNAME", "admin").strip()
 TOTP_SECRET = os.getenv("SIMHUB_TOTP_SECRET", "").strip().replace(" ", "")
 ENROLL_TTL = int(os.getenv("SIMHUB_ENROLL_TTL", "600"))
 COMMAND_TTL = int(os.getenv("SIMHUB_COMMAND_TTL", "120"))
@@ -44,6 +48,22 @@ COMMAND_RETENTION_DAYS = max(1, int(os.getenv("SIMHUB_COMMAND_RETENTION_DAYS", "
 MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL", "3600")), 86400))
 REQUIRE_TOTP = os.getenv("SIMHUB_REQUIRE_TOTP", "true").lower() in {"1","true","yes","on"}
 TRUSTED_PROXY_CIDRS = tuple(x.strip() for x in os.getenv("SIMHUB_TRUSTED_PROXIES", "127.0.0.1/32,::1/128").split(",") if x.strip())
+# The loopback-published Docker port is SNATed by docker-proxy to the exact
+# bridge gateway address. Trust that one peer only when explicitly enabled.
+TRUST_DOCKER_GATEWAY = os.getenv("SIMHUB_TRUST_DOCKER_GATEWAY", "false").lower() in {"1", "true", "yes", "on"}
+def docker_gateway_ip() -> str:
+    if not TRUST_DOCKER_GATEWAY:
+        return ""
+    try:
+        with open("/proc/net/route", encoding="ascii") as routes:
+            for line in list(routes)[1:]:
+                fields = line.split()
+                if len(fields) > 3 and fields[1] == "00000000" and int(fields[3], 16) & 2:
+                    return socket.inet_ntoa(bytes.fromhex(fields[2])[::-1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return ""
+DOCKER_GATEWAY_IP = docker_gateway_ip()
 SESSION_TTL = max(900, min(int(os.getenv("SIMHUB_SESSION_TTL", "28800")), 604800))
 SESSION_IDLE_TTL = max(60, min(int(os.getenv("SIMHUB_SESSION_IDLE_TTL", "900")), SESSION_TTL))
 STEPUP_TTL = max(30, min(int(os.getenv("SIMHUB_STEPUP_TTL", "120")), 600))
@@ -170,7 +190,7 @@ def new_token(nbytes: int = 36) -> str:
 def trusted_proxy(peer: str) -> bool:
     try:
         addr=ipaddress.ip_address(peer)
-        return any(addr in ipaddress.ip_network(cidr,strict=False) for cidr in TRUSTED_PROXY_CIDRS)
+        return (bool(DOCKER_GATEWAY_IP and peer == DOCKER_GATEWAY_IP) or any(addr in ipaddress.ip_network(cidr,strict=False) for cidr in TRUSTED_PROXY_CIDRS))
     except ValueError:
         return False
 
@@ -329,7 +349,7 @@ def init_db() -> None:
         _migrate_v6(con)
         _migrate_v7(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=7")
+        con.execute("PRAGMA user_version=8")
     run_maintenance()
 
 
@@ -777,7 +797,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def preflight(self, method: str, path: str) -> bool:
         if method == "GET" and path in {"/healthz", "/readyz"}:
-            if ipaddress.ip_address(self.client_address[0]).is_loopback: return True
+            if ipaddress.ip_address(self.client_address[0]).is_loopback or (DOCKER_GATEWAY_IP and self.client_address[0] == DOCKER_GATEWAY_IP): return True
             self.send_error_json(404,"not_found","Endpoint not available publicly"); return False
         if not rate_allowed("ip", self.ip, 180):
             self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False
@@ -832,14 +852,21 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<7:
+                if version<8:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
                 self.send_error_json(503,"database_not_ready","Database is not ready"); return
         if path=="/api/v1/auth/check":
             if not self.require_admin(): return
-            self.send_json(200,{"ok":True,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
+            with open_db() as con:
+                num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]
+            self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
+        if path=="/api/v1/auth/passkeys":
+            if not self.require_admin(): return
+            with open_db() as con:
+                keys=passkeys.list_keys(con)
+            self.send_json(200,{"username":ADMIN_USERNAME,"passkeys":keys}); return
         if path=="/api/v1/devices":
             if not self.require_admin(): return
             self.get_devices(); return
@@ -873,6 +900,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path,p,q=self.route()
         if not self.preflight("POST", path): return
+        if path.startswith("/api/v1/auth/passkeys/"):
+            body=self.read_json()
+            if body is None: return
+            self.passkey_action(path,body); return
         if path=="/api/v1/auth/session":
             body=self.read_json()
             if body is None:return
@@ -989,15 +1020,93 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not auth_rate_allowed(self.ip):
             self.send_error_json(429,"rate_limited","Too many authentication failures"); return
         token=str(body.get("adminToken",""))
+        username=str(body.get("username",ADMIN_USERNAME))
         totp=str(body.get("totp",""))
-        if not ADMIN_TOKEN or not hmac.compare_digest(token,ADMIN_TOKEN) or not totp_valid(totp):
+        if not ADMIN_TOKEN or not hmac.compare_digest(username,ADMIN_USERNAME) or not hmac.compare_digest(token,ADMIN_TOKEN) or not totp_valid(totp):
             auth_rate_fail(self.ip); audit("auth.session","","denied",self.ip)
             self.send_error_json(401,"unauthorized","Invalid admin token or TOTP"); return
         auth_rate_success(self.ip)
         session,exp=create_session(self.ip)
         audit("auth.session","","ok",self.ip)
         cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
-        self.send_json(201,{"ok":True,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+        self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,"totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+
+    def passkey_action(self,path:str,body:dict[str,Any]) -> None:
+        """Keep registration and step-up session-bound; login never receives Vault keys."""
+        username=str(body.get("username",ADMIN_USERNAME))[:80]
+        login_path=path in {"/api/v1/auth/passkeys/login/options","/api/v1/auth/passkeys/login/verify"}
+        if login_path:
+            if not auth_rate_allowed(self.ip):
+                self.send_error_json(429,"rate_limited","Too many authentication attempts");return
+        else:
+            if not self.require_admin():return
+            if path.startswith("/api/v1/auth/passkeys/register/") or path=="/api/v1/auth/passkeys/remove":
+                if not self.require_stepup():return
+            username=ADMIN_USERNAME
+        session=_cookie_session(self.headers) if not login_path else ""
+        fingerprint=sha256_text(session) if session else ""
+        audit_action = ""
+        audit_target = ""
+        try:
+            with open_db() as con:
+                if path=="/api/v1/auth/passkeys/login/options":
+                    data=passkeys.authentication_options(con,MANAGEMENT_ORIGIN,username,"","login")
+                elif path=="/api/v1/auth/passkeys/login/verify":
+                    if not hmac.compare_digest(username,ADMIN_USERNAME):
+                        raise ValueError("Invalid administrator")
+                    result=passkeys.authenticate(con,MANAGEMENT_ORIGIN,username,"","login",
+                        str(body.get("challengeId","")),body.get("credential",{}))
+                    data={"authenticated":True}
+                elif path=="/api/v1/auth/passkeys/register/options":
+                    if not fingerprint:raise ValueError("Browser session required")
+                    data=passkeys.registration_options(con,MANAGEMENT_ORIGIN,username,fingerprint)
+                elif path=="/api/v1/auth/passkeys/register/verify":
+                    if not fingerprint:raise ValueError("Browser session required")
+                    data=passkeys.register(con,MANAGEMENT_ORIGIN,username,fingerprint,
+                        str(body.get("challengeId","")),body.get("credential",{}),
+                        str(body.get("label","My passkey")).strip())
+                    audit_action, audit_target = "auth.passkey.register", data["id"][:28]
+                elif path=="/api/v1/auth/passkeys/elevate/options":
+                    if not fingerprint:raise ValueError("Browser session required")
+                    data=passkeys.authentication_options(con,MANAGEMENT_ORIGIN,username,fingerprint,"elevate")
+                elif path=="/api/v1/auth/passkeys/elevate/verify":
+                    if not fingerprint:raise ValueError("Browser session required")
+                    data=passkeys.authenticate(con,MANAGEMENT_ORIGIN,username,fingerprint,"elevate",
+                        str(body.get("challengeId","")),body.get("credential",{}))
+                    expiry=now()+STEPUP_TTL
+                    con.execute("UPDATE admin_sessions SET elevated_until=? WHERE token_hash=?",(expiry,fingerprint))
+                    data={"ok":True,"elevatedUntil":expiry}
+                    audit_action = "auth.passkey.elevate"
+                elif path=="/api/v1/auth/passkeys/remove":
+                    cid=str(body.get("id",""))
+                    n=con.execute("DELETE FROM admin_passkeys WHERE credential_id=?",(cid,)).rowcount
+                    if not n:raise ValueError("Passkey not found")
+                    data={"ok":True}
+                    audit_action, audit_target = "auth.passkey.remove", cid[:28]
+                else:
+                    self.send_error_json(404,"not_found","Passkey route not found");return
+            if audit_action:
+                audit(audit_action,audit_target,"ok",self.ip)
+            if path=="/api/v1/auth/passkeys/login/verify":
+                auth_rate_success(self.ip)
+                session,exp=create_session(self.ip)
+                cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
+                audit("auth.passkey.login","","ok",self.ip)
+                self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,
+                    "totpRequired":bool(TOTP_SECRET),"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+            else:
+                self.send_json(200,data)
+        except (ValueError,TypeError,KeyError) as exc:
+            if login_path:
+                auth_rate_fail(self.ip)
+                audit("auth.passkey.login","","denied",self.ip)
+            self.send_error_json(401 if login_path else 400,"invalid_passkey",str(exc)[:180])
+        except Exception:
+            if login_path:
+                auth_rate_fail(self.ip)
+                audit("auth.passkey.login","","denied",self.ip)
+            log.exception("passkey_operation_failed")
+            self.send_error_json(400,"invalid_passkey","WebAuthn verification failed")
 
     def create_enrollment(self,body:dict[str,Any]) -> None:
         eid=str(uuid.uuid4()); token=new_token(); ts=now()
@@ -1461,6 +1570,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{2,64}", ADMIN_USERNAME):
+        raise SystemExit("SIMHUB_ADMIN_USERNAME must contain 2-64 safe characters")
     if len(ADMIN_TOKEN)<32 or ADMIN_TOKEN.startswith("change-me"):
         raise SystemExit("SIMHUB_ADMIN_TOKEN must be set to a strong >=32 character random token")
     if REQUIRE_TOTP and not TOTP_SECRET:

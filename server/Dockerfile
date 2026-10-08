@@ -1,6 +1,7 @@
 FROM python:3.13-alpine
 WORKDIR /app
 COPY server /app/server
+RUN pip install --no-cache-dir -r /app/server/requirements.txt
 COPY web /app/web
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SIMHUB_WEB_ROOT=/app/web SIMHUB_DB=/data/simhub.db
 RUN mkdir -p /data && chown 65534:65534 /data

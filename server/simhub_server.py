@@ -985,7 +985,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
-            if str(body.get("type","")) in {"sms.send","node.rotate_key"} and not self.require_stepup():return
+            if str(body.get("type","")) in {"sms.send","node.rotate_key","device.network_policy"} and not self.require_stepup():return
             self.create_command(p[3],body); return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return

@@ -77,4 +77,15 @@
     <string name="service_emergency">仅紧急呼叫</string>
     <string name="service_power_off">蜂窝网络已关闭</string>
     <string name="service_unknown">服务状态未知</string>
+    <string name="err_already_enrolled">此节点已经注册。如需配对其他 Vault 或 Relay，请先重置注册。</string>
+    <string name="err_invalid_enrollment">注册链接无效。</string>
+    <string name="err_enrollment_missing">注册链接缺少必要字段。</string>
+    <string name="err_https_required">中继服务器必须使用 HTTPS。</string>
+    <string name="err_bootstrap_missing">注册链接缺少 Bootstrap Secret。</string>
+    <string name="err_bootstrap_invalid">注册链接中的 Bootstrap Secret 无效。</string>
+    <string name="err_key_mismatch">节点加密密钥与注册链接不匹配。</string>
+    <string name="err_invalid_destination">收件人号码格式无效。</string>
+    <string name="err_invalid_body">短信内容为空或超过长度限制。</string>
+    <string name="err_sms_provider">无法将待发送短信写入 Android 短信数据库。</string>
+    <string name="err_not_enrolled">此 SIM 节点尚未完成注册。</string>
 </resources>

@@ -284,7 +284,7 @@ class ApiTest(unittest.TestCase):
             if not page["hasMore"]:break
             cursor=f"&beforeTime={page['nextBeforeTime']}&beforeSeq={page['nextBeforeSeq']}"
         self.assertEqual(len(seen),5);self.assertEqual(len(set(x[0] for x in seen)),5)
-        self.assertEqual([x[1] for x in seen],sorted(x[1] for x in seen,reverse=True))
+        self.assertEqual([x[1] for x in seen],sorted((x[1] for x in seen),reverse=True))
         status,wrong,_=self.req("GET","/api/v1/events?order=occurred&beforeTime=10")
         self.assertEqual(status,400);self.assertEqual(wrong["error"],"invalid_query")
 

@@ -77,4 +77,15 @@
     <string name="service_emergency">Emergency only</string>
     <string name="service_power_off">Radio off</string>
     <string name="service_unknown">Unknown service</string>
+    <string name="err_already_enrolled">This node is already enrolled. Reset enrollment before pairing another Vault or Relay.</string>
+    <string name="err_invalid_enrollment">The enrollment link is invalid.</string>
+    <string name="err_enrollment_missing">The enrollment link is missing required fields.</string>
+    <string name="err_https_required">The Relay must use HTTPS.</string>
+    <string name="err_bootstrap_missing">The enrollment bootstrap secret is missing.</string>
+    <string name="err_bootstrap_invalid">The enrollment bootstrap secret is invalid.</string>
+    <string name="err_key_mismatch">The node encryption key does not match the enrollment package.</string>
+    <string name="err_invalid_destination">The recipient number format is invalid.</string>
+    <string name="err_invalid_body">The SMS content is empty or too long.</string>
+    <string name="err_sms_provider">Unable to save the outgoing SMS to Android.</string>
+    <string name="err_not_enrolled">This SIM node has not been enrolled yet.</string>
 </resources>

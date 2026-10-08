@@ -34,7 +34,9 @@ public final class ApiClient {
             LocalStore store=LocalStore.get(c);
             store.recoverStaleClaims();
             for(String id:store.expireStalePendingSms(48L*3600)){store.finishCommand(id,"failed");store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));}
-            SmsHistorySync.sync(c,200);
+            // Drain live arrivals before bounded historical backfill.
+            flushEvents();
+            SmsHistorySync.sync(c,30);
             flushEvents();
             flushCommandAcks();
             fetchCommands();

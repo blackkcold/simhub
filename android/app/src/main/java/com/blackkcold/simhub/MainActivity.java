@@ -26,9 +26,9 @@ import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int REQ_SMS_ROLE=2101,REQ_CORE=2201,REQ_CONTACTS=2202,REQ_EXPORT_DIAGNOSTICS=2301;
-    private EditText enrollLink;private TextView status,detail;private Switch developerSwitch;private LinearLayout developerTools;private Spinner languageSpinner;
+    private EditText enrollLink;private TextView status,detail,simSummary;private Switch developerSwitch;private LinearLayout developerTools;private Spinner languageSpinner;
     private final java.util.concurrent.ExecutorService exec=Executors.newSingleThreadExecutor();private File pendingDiagnosticFile;
-    @Override protected void onCreate(Bundle b){super.onCreate(b);UiLocale.apply(this);setContentView(R.layout.activity_main);enrollLink=findViewById(R.id.enrollLink);status=findViewById(R.id.status);detail=findViewById(R.id.detail);developerSwitch=findViewById(R.id.developerSwitch);developerTools=findViewById(R.id.developerTools);languageSpinner=findViewById(R.id.languageSpinner);wire();wireLanguage();wireDeveloper();handleIntent(getIntent());refreshLocal();AppLogger.i(this,"MainActivity","UI started");}
+    @Override protected void onCreate(Bundle b){super.onCreate(b);UiLocale.apply(this);setContentView(R.layout.activity_main);enrollLink=findViewById(R.id.enrollLink);status=findViewById(R.id.status);detail=findViewById(R.id.detail);simSummary=findViewById(R.id.simSummary);developerSwitch=findViewById(R.id.developerSwitch);developerTools=findViewById(R.id.developerTools);languageSpinner=findViewById(R.id.languageSpinner);wire();wireLanguage();wireDeveloper();handleIntent(getIntent());refreshLocal();AppLogger.i(this,"MainActivity","UI started");}
     @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);handleIntent(i);}
     private void wire(){
         findViewById(R.id.enrollButton).setOnClickListener(v->doEnroll());findViewById(R.id.smsRoleButton).setOnClickListener(v->requestSmsRole());findViewById(R.id.permissionButton).setOnClickListener(v->requestCorePermissions());findViewById(R.id.contactButton).setOnClickListener(v->requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},REQ_CONTACTS));
@@ -48,7 +48,36 @@ public final class MainActivity extends Activity {
     private void doEnroll(){String link=enrollLink.getText().toString().trim();if(link.isEmpty()){toast(R.string.enrollment_link_first);return;}AppLogger.i(this,"Enrollment","Enrollment started");exec.execute(()->{try{EnrollmentManager.enroll(this,link);runOnUiThread(()->{enrollLink.setText("");toast(R.string.enrollment_complete);refreshLocal();});AppLogger.i(this,"Enrollment","Enrollment completed");}catch(Exception e){AppLogger.e(this,"Enrollment","Enrollment failed",e);runOnUiThread(()->toast(e.getMessage()));}});}
     private void requestSmsRole(){RoleManager rm=getSystemService(RoleManager.class);if(rm.isRoleAvailable(RoleManager.ROLE_SMS)&&!rm.isRoleHeld(RoleManager.ROLE_SMS))startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_SMS),REQ_SMS_ROLE);else toast(R.string.sms_role_already);}
     private void requestCorePermissions(){ArrayList<String> p=new ArrayList<>();for(String x:new String[]{Manifest.permission.RECEIVE_SMS,Manifest.permission.SEND_SMS,Manifest.permission.READ_SMS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS})if(checkSelfPermission(x)!=PackageManager.PERMISSION_GRANTED)p.add(x);if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)p.add(Manifest.permission.POST_NOTIFICATIONS);if(p.isEmpty())toast(R.string.permissions_granted);else requestPermissions(p.toArray(new String[0]),REQ_CORE);}
-    private void refreshLocal(){AgentConfig cfg=new AgentConfig(this);RoleManager rm=getSystemService(RoleManager.class);boolean role=rm.isRoleAvailable(RoleManager.ROLE_SMS)&&rm.isRoleHeld(RoleManager.ROLE_SMS);if(cfg.isEnrolled())status.setText(getString(R.string.status_enrolled,cfg.deviceName(),cfg.server(),getString(role?R.string.status_yes:R.string.status_no),getString(cfg.alwaysOn()?R.string.status_enabled:R.string.status_disabled),LocalStore.get(this).pendingEventCount()));else status.setText(R.string.status_not_enrolled);if(DeveloperSettings.isEnabled(this)&&detail.getText().length()==0)showRecentLogs();}
+    private void refreshLocal(){
+        AgentConfig cfg=new AgentConfig(this);RoleManager rm=getSystemService(RoleManager.class);boolean role=rm.isRoleAvailable(RoleManager.ROLE_SMS)&&rm.isRoleHeld(RoleManager.ROLE_SMS);
+        if(cfg.isEnrolled())status.setText(getString(R.string.status_enrolled,cfg.deviceName(),cfg.server(),getString(role?R.string.status_yes:R.string.status_no),getString(cfg.alwaysOn()?R.string.status_enabled:R.string.status_disabled),LocalStore.get(this).pendingEventCount()));else status.setText(R.string.status_not_enrolled);
+        renderSimSummary(StateCollector.collect(this));
+        if(DeveloperSettings.isEnabled(this)&&detail.getText().length()==0)showRecentLogs();
+    }
+    private void renderSimSummary(JSONObject state){
+        org.json.JSONArray sims=state.optJSONArray("subscriptions");
+        if(sims==null||sims.length()==0){simSummary.setText(R.string.sim_status_empty);return;}
+        StringBuilder out=new StringBuilder();
+        for(int i=0;i<sims.length();i++){
+            JSONObject x=sims.optJSONObject(i);if(x==null)continue;
+            if(out.length()>0)out.append("\n\n");
+            String display=x.optString("displayName","SIM"),carrier=x.optString("carrierName","");
+            if(carrier.isBlank())carrier=display;
+            int slot=Math.max(0,x.optInt("slotIndex",i))+1;
+            String radio=x.optString("networkType","—");if(radio.isBlank())radio="—";
+            String signal=x.isNull("signalLevel")?"—":String.valueOf(x.optInt("signalLevel"))+"/4";
+            if(!x.isNull("signalDbm"))signal+=" · "+x.optInt("signalDbm")+" dBm";
+            out.append(getString(R.string.sim_status_line,display,carrier,slot,serviceLabel(x.optString("serviceState","UNKNOWN")),radio,signal));
+        }
+        simSummary.setText(out.length()==0?getString(R.string.sim_status_empty):out.toString());
+    }
+    private String serviceLabel(String value){return switch(value){
+        case "IN_SERVICE" -> getString(R.string.service_in);
+        case "OUT_OF_SERVICE" -> getString(R.string.service_out);
+        case "EMERGENCY_ONLY" -> getString(R.string.service_emergency);
+        case "POWER_OFF" -> getString(R.string.service_power_off);
+        default -> getString(R.string.service_unknown);
+    };}
     private void showOta(JSONObject o){if(!o.optBoolean("available")){toast(R.string.update_none);return;}String msg=getString(R.string.update_version,o.optString("versionName","?"),o.optString("notes",""));new AlertDialog.Builder(this).setTitle(R.string.update_title).setMessage(msg).setNegativeButton(R.string.close,null).setPositiveButton(R.string.open_download,(d,w)->{String url=o.optString("url","");if(url.startsWith("https://"))startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}).show();}
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);AppLogger.i(this,"Permissions","Permission result request="+requestCode);refreshLocal();}
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){super.onActivityResult(requestCode,resultCode,data);if(requestCode==REQ_SMS_ROLE){AppLogger.i(this,"Permissions","Default SMS role flow completed result="+resultCode);refreshLocal();return;}if(requestCode==REQ_EXPORT_DIAGNOSTICS&&resultCode==RESULT_OK&&data!=null&&data.getData()!=null&&pendingDiagnosticFile!=null){Uri uri=data.getData();File source=pendingDiagnosticFile;exec.execute(()->{try(FileInputStream in=new FileInputStream(source);OutputStream out=getContentResolver().openOutputStream(uri,"w")){if(out==null)throw new IllegalStateException("No output stream");byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);AppLogger.i(this,"Diagnostics","Diagnostic package exported");runOnUiThread(()->toast(R.string.diagnostic_export_done));}catch(Exception e){AppLogger.e(this,"Diagnostics","Diagnostic package export failed",e);runOnUiThread(()->toast(R.string.diagnostic_export_failed));}finally{source.delete();pendingDiagnosticFile=null;}});}}

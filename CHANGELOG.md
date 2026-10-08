@@ -1,3 +1,14 @@
+## v0.5.0 — Session continuity, SIM identity and dependable diagnostics
+
+- Align Vault and administrator idle expiry (default 8 hours), with a 24-hour absolute session limit and encrypted same-tab Vault recovery across refresh. The relay still never receives Vault plaintext; local XSS/device compromise remains a threat.
+- Transmit discovered Android SIM numbers only in Node-Key-encrypted state envelopes, and support encrypted browser-local manual number overrides for carrier APIs that return no MSISDN.
+- Display per-SIM phone identification, charging, Wi-Fi/cellular status and network fallback readiness in the Web Controller.
+- Split newest-100 SMS rescan from the existing resumable older-100 backfill; keep batching, durable cursors and event-id deduplication.
+- Open a remote diagnostic inspector for recent encrypted health results, linked by request ID. Modem nodes can produce diagnostic events.
+- Add an Android-network-policy control: the OS chooses the configured default data SIM when Wi-Fi drops; unprivileged apps do not forcibly switch the default-data subscription.
+- Ensure mutable SIM phone numbers and display labels are excluded from channel identity revision fingerprints; retain revision fail-closed checks for remote sends.
+- Extend CI/Release regression tests; preserve the signed APK release gate and existing encrypted protocol compatibility.
+
 ## v0.4.0 — Secure guided deployment and unified SMS conversations
 
 - Fix Issue #23: trust only the exact Docker default-route gateway for loopback-published ports, preserve forwarded client IP isolation and restore host health probes.

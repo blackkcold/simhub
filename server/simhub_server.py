@@ -868,8 +868,34 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin(): return
             delete_session(self.headers)
             self.send_json(200,{"ok":True},{"Set-Cookie":f"{SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"}); return
+        if path=="/api/v1/auth/elevate":
+            if not self.require_admin(): return
+            body=self.read_json()
+            if body is None: return
+            if not auth_rate_allowed(self.ip):
+                self.send_error_json(429,"rate_limited","Too many authentication attempts"); return
+            correct = totp_valid(str(body.get("totp",""))) if TOTP_SECRET else hmac.compare_digest(str(body.get("adminToken","")), ADMIN_TOKEN)
+            if not correct:
+                auth_rate_fail(self.ip)
+                audit("auth.stepup","","denied",self.ip)
+                self.send_error_json(401,"invalid_second_factor","Invalid second factor"); return
+            session = _cookie_session(self.headers)
+            if not session or not session_valid(self.headers):
+                self.send_error_json(401,"unauthorized","Session required for step-up"); return
+            expiry = now()+STEPUP_TTL
+            with open_db() as con:
+                con.execute("UPDATE admin_sessions SET elevated_until=? WHERE token_hash=?", (expiry,sha256_text(session)))
+            auth_rate_success(self.ip)
+            audit("auth.stepup","","ok",self.ip)
+            self.send_json(200,{"ok":True,"elevatedUntil":expiry}); return
+        if path=="/api/v1/auth/revoke-all":
+            if not self.require_stepup(): return
+            with open_db() as con:
+                con.execute("DELETE FROM admin_sessions")
+            audit("auth.revoke_all","","ok",self.ip)
+            self.send_json(200,{"ok":True},{"Set-Cookie":f"{SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"}); return
         if path=="/api/v1/enrollments":
-            if not self.require_admin():return
+            if not self.require_stepup():return
             body=self.read_json()
             if body is None:return
             self.create_enrollment(body); return
@@ -904,6 +930,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
+            if str(body.get("type","")) in {"sms.send","node.rotate_key"} and not self.require_stepup():return
             self.create_command(p[3],body); return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return
@@ -916,7 +943,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         path,p,q=self.route()
         if not self.preflight("DELETE", path): return
         if path=="/api/v1/events":
-            if not self.require_admin():return
+            if not self.require_stepup():return
             try: before=int(q.get("before",["0"])[0])
             except ValueError:
                 self.send_error_json(400,"invalid_query","before must be a Unix timestamp");return
@@ -936,6 +963,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
+            if (body.get("revoke") is True or "pendingKeyId" in body or "pendingWrappedKey" in body) and not self.require_stepup():return
             self.patch_device(p[3],body); return
         self.send_error_json(404,"not_found","API endpoint not found")
 

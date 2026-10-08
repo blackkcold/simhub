@@ -90,11 +90,11 @@ try {
   await p.locator("#adminToken").fill("A".repeat(48));
   await p.locator("#passphrase").fill("session-resume-test-passphrase");
   await p.locator("#createVaultBtn").click();
-  await p.waitForTimeout(300);
+  await p.waitForFunction(()=>!!sessionStorage.getItem("simhub_session_vault_v1"),null,{timeout:12000});
   await p.locator("#unlockBtn").click();
-  await p.waitForFunction(()=>!document.getElementById("appContent").hidden,{timeout:12000});
+  await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
   await p.reload({waitUntil:"networkidle"});
-  await p.waitForFunction(()=>!document.getElementById("appContent").hidden,{timeout:12000});
+  await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
   assert.equal(await p.locator("#lockedPanel").isVisible(),false,"Refresh must restore Vault in a valid active tab");
   await p.locator("#lockBtn").click();
   await p.reload({waitUntil:"networkidle"});

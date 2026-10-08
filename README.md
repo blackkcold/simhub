@@ -466,3 +466,13 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for platform/tooling notice
 
 For an Internet-facing installation, use distinct TLS hostnames for the management PWA and node API. Enable an identity-aware gateway on the management hostname, plus SIM Hub TOTP. The relay enforces CSRF, short-lived step-up verification, idle session expiry, bounded request resources and durable SMS send quotas. Follow [the hardening and migration guide](docs/PUBLIC_SECURITY_HARDENING.md) **before enabling strict origin separation** so existing nodes are not disconnected.
 
+
+## Efficient SMS synchronization (v0.3.2)
+
+- **First registration**: Android queues at most the **100 most recent SMS** (rather than processing thousands of older messages first).
+- **New messages**: a separate date-and-Provider-ID cursor syncs subsequent SMS incrementally.
+- **Older messages**: choose **Load 100 older SMS** in Android, or **Sync history** on an enrolled Web device. Each action queues at most 100 older SMS; repeat as needed.
+- **Network**: batches of 20 encrypted events use atomic, idempotent confirmations. Failed and rate-limited uploads stay in local SQLite until acknowledged; 429 responses honor Retry-After.
+- **Web controller**: opens with the most recent 30 server events, retrieves older records on demand, and keeps the inbox responsive during historical backfill.
+
+**Upgrade order:** deploy the v0.3.2 Relay first, then upgrade Android Agents to v0.3.2. Older Android agents continue using the single-event endpoint. Existing Node Keys and SMS ciphertext require no reset. The Relay's configured event retention still applies, so historical server events may expire as designed.

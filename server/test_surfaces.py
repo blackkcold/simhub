@@ -59,7 +59,8 @@ class SurfaceTest(unittest.TestCase):
         request=urllib.request.Request(self.base+path,method=method,data=data,headers=headers)
         try:
             with urllib.request.urlopen(request,timeout=3) as response:
-                return response.status, json.loads(response.read())
+                raw=response.read()
+                return response.status, json.loads(raw) if response.headers.get('Content-Type','').startswith('application/json') else {}
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
 

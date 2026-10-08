@@ -21,7 +21,8 @@
     <string name="relay_section">Relay &amp; synchronization</string>
     <string name="start_relay">Start always-on relay</string>
     <string name="stop_relay">Stop always-on relay</string>
-    <string name="sync_now">Sync SMS history now</string>
+    <string name="sync_now">Sync latest SMS (max 100)</string>
+    <string name="sync_older">Load 100 older SMS</string>
     <string name="refresh_state">Refresh SIM / device state</string>
     <string name="settings_section">Settings</string>
     <string name="language_label">Language</string>

@@ -44,9 +44,10 @@
 | 能力 | 说明 |
 |---|---|
 | **短信与验证码** | 多 SIM 收发、会话直接回复、新建短信、OTP 识别与复制 |
-| **Android 原生界面** | 四 Tab（概览 / 短信 / SIM / 设置）、矢量图标与动效、折叠屏自适应单双栏、本机短信会话与快捷回复 |
+| **Android 原生界面** | 唯一 Material 3 自适应四 Tab 界面，折叠屏双栏、SIM 标签、完整高级工具与脱敏诊断 |
 | **设备与 SIM** | Android / Linux 蜂窝 Modem 节点；SIM 号码、信号、充电、Wi-Fi 与在线状态 |
-| **历史与诊断** | 最近 100 条重扫、每批更早 100 条同步、已同步记录分页、加密设备健康检查 |
+| **共享短信池（主动开启）** | 已授权的 Android 设备通过加密共享池同步短信，最近 100 条、分页及来源 SIM 尾号 |
+| **历史与诊断** | 最近 100 条重扫、更早 100 条分批同步、Web 滚动自动分页、脱敏健康诊断 |
 | **设备配对** | 管理中心生成二维码扫码接入；Android 也可生成八位配对码，在管理中心核验设备指纹后授权 |
 | **隐私与登录** | Node Key 端到端加密、用户名 / TOTP / Passkey、Vault 活动会话刷新恢复 |
 | **离线恢复** | 本地队列、断网后重试、常驻中继、后台任务恢复 |
@@ -83,4 +84,4 @@ Relay 无法读取短信和 Vault 明文；Passkey 用于认证，不代替 Vaul
 
 ## 文档
 
-[一键部署](docs/QUICKSTART.zh-CN.md) · [完整安装](docs/INSTALLATION.md) · [Android 设置](docs/ANDROID_SETUP.md) · [安全设计](docs/SECURITY_ARCHITECTURE.md) · [架构与协议](docs/ARCHITECTURE.md) · [开源协议](LICENSE)
+[一键部署](docs/QUICKSTART.zh-CN.md) · [完整安装](docs/INSTALLATION.md) · [Android 设置](docs/ANDROID_SETUP.md) · [安全设计](docs/SECURITY_ARCHITECTURE.md) · [共享短信](docs/SHARED_SMS.md) · [架构与协议](docs/ARCHITECTURE.md) · [开源协议](LICENSE)

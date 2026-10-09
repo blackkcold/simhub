@@ -609,7 +609,8 @@ function messageChannel(e){
 }
 function threadKey(e){
   const phone=messageAddress(e).replace(/[\s()-]/g,'');
-  return e.deviceId+'|'+messageChannel(e)+'|'+phone;
+  const revision=e.payload?.channelRevision||'historical';
+  return e.deviceId+'|'+messageChannel(e)+'|'+revision+'|'+phone;
 }
 function filteredEvents(){
   const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
@@ -724,7 +725,11 @@ function openConversation(key){
   updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
   $('replyTo').value=number;
   $('replyOptions').open=false;
-  const canReply=/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
+  const originalRevision=Number(last.payload?.channelRevision||0);
+  const currentChannel=nodeChannels(devices.find(x=>x.id===did)).find(ch=>String(ch.id)===channel);
+  const stale=originalRevision>0&&
+    (!currentChannel||Number(currentChannel.revision||currentChannel.channelRevision||1)!==originalRevision);
+  const canReply=!stale&&/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
   $('replySend').disabled=!canReply;
   if(!canReply){$('replyOptions').open=true;toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');}
   syncResponsiveConversation();

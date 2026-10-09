@@ -51,7 +51,8 @@ public final class SharedPoolClient {
         if(!config.isEnrolled())throw new SecurityException("Pairing required");
         client().request("POST",path()+"/request",new JSONObject().put("enabled",value));
         prefs.edit().putBoolean("requested",value).putBoolean("approved",false)
-            .putLong("last_download",0).putLong("oldest_download",0).apply();
+            .putLong("last_download",0).putLong("oldest_download",0)
+            .remove("oldest_download_time").remove("older_has_more").remove("initial_staged").apply();
         if(!value){
             store.clear();
             SecretStore secret=new SecretStore(context);
@@ -128,7 +129,10 @@ public final class SharedPoolClient {
         if(!status.optBoolean("requested",false)){
             // Server-side opt-out wins; do not silently re-enable.
             prefs.edit().putBoolean("requested",false).putBoolean("approved",false).apply();
-            store.clear();return;
+            store.clear();
+            SecretStore secret=new SecretStore(context);
+            for(int epoch:epochs())secret.remove("pool-key-"+epoch);
+            prefs.edit().remove("key_epochs").apply();return;
         }
         boolean wasApproved=approved();
         boolean isApproved=status.optBoolean("approved",false);
@@ -193,7 +197,7 @@ public final class SharedPoolClient {
         JSONObject response=client().request("GET",path()+"/messages"+query,null);
         JSONArray messages=response.optJSONArray("messages");
         if(messages==null)return;
-        long max=cursor,min=Long.MAX_VALUE;
+        long max=cursor;
         for(int i=0;i<messages.length();i++){
             JSONObject m=messages.getJSONObject(i);
             int epoch=m.getInt("epoch");
@@ -205,9 +209,14 @@ public final class SharedPoolClient {
             new JSONObject(new String(plaintext,StandardCharsets.UTF_8));
             Arrays.fill(key,(byte)0);Arrays.fill(plaintext,(byte)0);
             store.cache(m);
-            long seq=m.getLong("seq");max=Math.max(max,seq);min=Math.min(min,seq);
+            long seq=m.getLong("seq");max=Math.max(max,seq);
         }
-        if(cursor==0&&min!=Long.MAX_VALUE)prefs.edit().putLong("oldest_download",min).apply();
+        if(cursor==0&&messages.length()>0){
+            JSONObject oldest=messages.getJSONObject(messages.length()-1);
+            prefs.edit().putLong("oldest_download",oldest.getLong("seq"))
+                .putLong("oldest_download_time",oldest.getLong("occurredAt"))
+                .putBoolean("older_has_more",response.optBoolean("hasMore",false)).apply();
+        }
         if(max>cursor)prefs.edit().putLong("last_download",max).apply();
         store.trim(500);
         if(response.optBoolean("hasMore")&&cursor>0)SyncJobService.scheduleAfter(context,10000);
@@ -215,12 +224,11 @@ public final class SharedPoolClient {
 
     public synchronized int loadOlder()throws Exception{
         if(!approved())return 0;
-        long before=prefs.getLong("oldest_download",0);
-        if(before<=0)return 0;
-        JSONObject response=client().request("GET",path()+"/messages?before="+before+"&limit=50",null);
+        long before=prefs.getLong("oldest_download",0),time=prefs.getLong("oldest_download_time",0);
+        if(before<=0||time<=0||!prefs.getBoolean("older_has_more",false))return 0;
+        JSONObject response=client().request("GET",path()+"/messages?beforeTime="+time+"&beforeSeq="+before+"&limit=50",null);
         JSONArray items=response.optJSONArray("messages");
         if(items==null)return 0;
-        long min=before;
         for(int i=0;i<items.length();i++){
             JSONObject row=items.getJSONObject(i);
             // Validate MAC before persisting.
@@ -230,10 +238,13 @@ public final class SharedPoolClient {
                     row.getLong("occurredAt"),row.optString("channelId",""),row.getInt("epoch")));
             Arrays.fill(bytes,(byte)0);Arrays.fill(key,(byte)0);
             store.cache(row);
-            min=Math.min(min,row.getLong("seq"));
         }
-        if(min<before)prefs.edit().putLong("oldest_download",min).apply();
-        if(!response.optBoolean("hasMore"))prefs.edit().putLong("oldest_download",0).apply();
+        if(items.length()>0){
+            JSONObject last=items.getJSONObject(items.length()-1);
+            prefs.edit().putLong("oldest_download",last.getLong("seq"))
+                .putLong("oldest_download_time",last.getLong("occurredAt")).apply();
+        }
+        prefs.edit().putBoolean("older_has_more",response.optBoolean("hasMore",false)).apply();
         store.trim(500);
         return items.length();
     }

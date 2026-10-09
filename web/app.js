@@ -13,6 +13,7 @@ let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
 let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null,diagnosticsDeviceId=null;
+const expandedDeviceDetails=new Set();
 const eventIds=new Set();
 let securityEpoch=0;
 const vaultLockChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('simhub-vault-lock-v1'):null;
@@ -239,9 +240,11 @@ function purgeSensitiveUI(){
     const el=$(id);if(el)el.replaceChildren();
   }
   const link=$('openEnroll');if(link){link.removeAttribute('href');link.hidden=true;}
+  expandedDeviceDetails.clear();
   const enroll=$('enrollResult');if(enroll)enroll.hidden=true;
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open)stepup.close();
+  const operations=$('commandActivity');if(operations)operations.replaceChildren();
   const badge=$('otpBadge');if(badge){badge.textContent='';badge.hidden=true;}
 }
 function lockVault(broadcast=true){
@@ -358,7 +361,7 @@ let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
   const epoch=securityEpoch;
-  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
+  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
@@ -382,6 +385,26 @@ function messageChannelLabel(e){
   return channel?channelTitle(channel):id;
 }
 function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(channelTitle(ch))+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">'+escapeHtml(tr('no_active_channel'))+'</option>';}
+function renderCommandActivity(commands){
+  const box=$('commandActivity');if(!box||!vaultKey)return;
+  const zh=getLocale()==='zh-CN';
+  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation'};
+  const statuses={queued:zh?'已排队':'Queued',dispatched:zh?'已下发':'Dispatched',submitted:zh?'已提交运营商':'Submitted',sent:zh?'已发送':'Sent',delivered:zh?'已送达':'Delivered',succeeded:zh?'节点已执行':'Executed',failed:zh?'失败':'Failed',rejected:zh?'已拒绝':'Rejected',expired:zh?'已过期':'Expired'};
+  box.innerHTML=commands.length?commands.map(c=>{
+    const detail=c.result||{},status=statuses[c.state]||c.state||'—';
+    const progress=c.type.startsWith('sms.sync_')&&c.state==='succeeded'
+      ?' · '+(zh?'扫描':'Scanned')+' '+escapeHtml(detail.scanned??'—')+', '+(zh?'新排队':'New queued')+' '+escapeHtml(detail.queued??'—'):'';
+    const reason=detail.reason?' · '+escapeHtml(detail.reason):'';
+    return '<div class="command-item"><span class="command-label">'+escapeHtml(types[c.type]||c.type)+'<small>'+escapeHtml(deviceName(c.deviceId))+' · '+fmtTime(c.createdAt)+'</small></span><span class="command-status">'+escapeHtml(status)+progress+reason+'</span></div>';
+  }).join(''):'<p class="hint">'+(zh?'暂无设备操作。':'No recent device operations.')+'</p>';
+}
+async function loadCommandActivity(){
+  if(!vaultKey)return;
+  const epoch=securityEpoch;
+  const result=await api('/api/v1/commands/recent?limit=20');
+  if(epoch!==securityEpoch||!vaultKey)return;
+  renderCommandActivity(result.commands||[]);
+}
 function renderDevices(){
   const box=$('deviceList');
   if(!devices.length){box.innerHTML='<div class="empty card">'+escapeHtml(tr('no_devices'))+'</div>';return;}
@@ -397,7 +420,7 @@ function renderDevices(){
     return '<article class="card device device-card"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+'</p></div><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(tr(stateKey))+'</span></div>'+
       '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':escapeHtml(s.batteryPct)+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':escapeHtml(s.pendingEvents))+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+
       '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.charging===true?'充电中':s.charging===false?'未充电':'—')+'</b><span>充电状态</span></div><div class="stat"><b>'+escapeHtml(s.network==='WIFI'?'已连接 Wi-Fi':s.network==='CELLULAR'?'使用移动数据':s.network||'—')+'</b><span>联网状态</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+'</b><span>蜂窝数据接管</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
-      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.phoneNumber||tr('phone_unknown'))+' · '+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small><button class="ghost mini" data-action="edit-sim" data-id="'+escapeHtml(d.id)+'" data-channel="'+escapeHtml(x.id)+'" title="号码仅在当前浏览器加密保存">'+escapeHtml(tr('set_sim_phone'))+'</button></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';
+      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.phoneNumber||tr('phone_unknown'))+' · '+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small><button class="ghost mini" data-action="edit-sim" data-id="'+escapeHtml(d.id)+'" data-channel="'+escapeHtml(x.id)+'" title="号码仅在当前浏览器加密保存">'+escapeHtml(tr('set_sim_phone'))+'</button></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><details class="device-actions" data-device="'+escapeHtml(d.id)+'"'+(expandedDeviceDetails.has(d.id)?' open':'')+'><summary>'+(getLocale()==='zh-CN'?'更多操作 · 同步 / 诊断 / 安全':'More actions · Sync / Diagnostics / Security')+'</summary><div class="row wrap">'+buttons+'</div></details></article>';
   }).join('');
 }
 function collapseMessageEvents(source){
@@ -704,6 +727,8 @@ function wire(){
   $('diagnosticsClose').onclick=()=>$('diagnosticsDialog').close();
   $('diagnosticsRefresh').onclick=()=>refreshDiagnostics().catch(e=>toast(e.message));
   $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
+  $('deviceList').addEventListener('toggle',e=>{const details=e.target.closest('details[data-device]');if(!details)return;if(details.open)expandedDeviceDetails.add(details.dataset.device);else expandedDeviceDetails.delete(details.dataset.device);},true);
+  $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
   $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
   relocalizeDynamic();

@@ -53,7 +53,7 @@ git pull --ff-only
 python3 scripts/setup.py --upgrade --admin-domain admin.example.com --node-domain node.example.com
 ```
 
-Add `--mode external` when applicable. This non-destructive upgrade applies to existing dual-host installs; earlier single-host deployments require an explicit DNS/proxy migration plan. After Relay/PWA is updated, install the [v0.5.0 signed Android APK](https://github.com/blackkcold/simhub/releases/tag/v0.5.0). See [two-release migration guide](UPGRADE_0.4_TO_0.5.md).
+Add `--mode external` when applicable. This non-destructive upgrade applies to existing dual-host installs; earlier single-host deployments require an explicit DNS/proxy migration plan. After Relay/PWA is updated, install the [latest signed Android APK](https://github.com/blackkcold/simhub/releases/latest). Verify matching version and signing certificate before installation. For legacy releases, consult [migration guidance](UPGRADE_0.4_TO_0.5.md).
 
 ## 3. Backups
 

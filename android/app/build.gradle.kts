@@ -50,6 +50,7 @@ dependencies {
     implementation("androidx.compose.runtime:runtime-saveable")
     implementation("androidx.window:window:1.5.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

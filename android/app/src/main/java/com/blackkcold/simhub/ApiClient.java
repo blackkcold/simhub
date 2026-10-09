@@ -65,6 +65,8 @@ public final class ApiClient {
                 cfg.recordSmsProviderError("SMS_PROVIDER_SECURITY_EXCEPTION");
                 AppLogger.e(c,"ApiClient","Non-critical local SMS synchronization failed",error);
             }
+            try{new SharedPoolClient(c).sync();}
+            catch(Exception poolError){AppLogger.e(c,"SharedPool","Non-critical shared SMS sync failed",poolError);}
             putState();heartbeat();cfg.recordSyncSuccess();cfg.resetSyncBackoff();
             if(scanned>=30||store.pendingEventCount()>0)SyncJobService.scheduleAfter(c,5000);
             if(pendingBefore>0)AppLogger.i(c,"ApiClient","Sync cycle completed pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
@@ -185,7 +187,7 @@ public final class ApiClient {
     public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}
     public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("osVersion",Build.VERSION.RELEASE));}
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}
-    private JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
+    JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
     private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
     private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId)throws Exception{
         return raw(url,method,body,auth,deviceId,12000);

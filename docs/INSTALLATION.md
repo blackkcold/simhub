@@ -136,3 +136,7 @@ Upgrade the server/PWA first, then Android nodes. Existing v1/v2 events remain d
 Android and Linux Modem nodes automatically rotate their per-node API bearer token after 60 days. Rotation is a two-phase prepare/commit exchange: the old token remains usable until the node has durably stored the replacement, so a network/process interruption cannot permanently lock out an unattended node.
 
 This token is independent from the E2EE Node Key. Rotating one does not rotate the other.
+
+## Deployment version identification
+
+The Web controller shows the Relay release version and deployment timestamp (persisted in `/data/deployment.json` when that version first starts). Restarting the same version does not change its deployment date. Android displays its APK version and actual last-install/update time from PackageManager. For a safe update, deploy Relay/PWA first, then the matching Android v0.5.3 release APK without clearing application data.

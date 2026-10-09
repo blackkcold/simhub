@@ -12,7 +12,8 @@ let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
-let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null,diagnosticsDeviceId=null;
+let olderCursor=null,historyHasMore=true,visibleCount=40,activeConversationKey=null,diagnosticsDeviceId=null;
+let historyFetchInFlight=null,loadObserver=null,lastAutoScroll=-1;
 const expandedDeviceDetails=new Set();
 const eventIds=new Set();
 let securityEpoch=0;
@@ -231,7 +232,7 @@ function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textCon
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxList','conversationMessages','deviceList','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
+  for(const id of ['inboxItems','conversationMessages','deviceList','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
@@ -260,7 +261,7 @@ function lockVault(broadcast=true){
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
   vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
   devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
-  initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;
+  initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
   clearTimeout(refreshTimer);refreshTimer=null;
   if(eventSource){eventSource.close();eventSource=null;}
@@ -335,7 +336,7 @@ async function loadEvents(){
   if(!initialEventsLoaded){
     const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&limit=30');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    const first=await api('/api/v1/events?order=occurred&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
@@ -354,19 +355,24 @@ async function loadEvents(){
 }
 async function loadOlder(){
   if(!vaultKey)return;
-  const epoch=securityEpoch, dataGeneration=eventDataGeneration;
-  const count=buildThreads(filteredEvents()).length;
-  if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
+  if(historyFetchInFlight)return historyFetchInFlight;
+  const threads=buildThreads(filteredEvents());
+  if(visibleCount<threads.length){visibleCount=Math.min(visibleCount+30,threads.length);renderInbox();return;}
   if(!historyHasMore||!olderCursor)return;
-  const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
-  if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
-  olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
-  historyHasMore=!!r.hasMore;
-  await ingestEvents(r.events||[],false);
-  if(epoch!==securityEpoch||!vaultKey)return;
-  if(buildThreads(filteredEvents()).length>visibleOffset+30)visibleOffset+=30;
-  renderInbox();
+  const epoch=securityEpoch, dataGeneration=eventDataGeneration;
+  historyFetchInFlight=(async()=>{
+    const r=await api('/api/v1/events?order=occurred&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
+    historyHasMore=!!r.hasMore;
+    await ingestEvents(r.events||[],false);
+    if(epoch!==securityEpoch||!vaultKey)return;
+    visibleCount=Math.min(Math.max(visibleCount+30,buildThreads(filteredEvents()).length),1000);
+    renderInbox();
+  })();
+  try{await historyFetchInFlight;}finally{historyFetchInFlight=null;}
 }
+
 let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
@@ -513,13 +519,14 @@ function buildThreads(source){
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
 function renderInbox(){
-  const threads=buildThreads(filteredEvents()),show=threads.slice(visibleOffset,visibleOffset+30);
+  const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
+  const list=$('inboxList'),previousTop=list.scrollTop;
   $('emptyInbox').hidden=!!show.length;
-  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleOffset+30;
-  $('loadNewerBtn').hidden=visibleOffset===0;
+  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleCount;
+  $('loadNewerBtn').hidden=true;
   const otpCount=threads.reduce((n,t)=>n+t.messages.filter(e=>eventIsInbound(e)&&e.payload?.otp?.value).length,0);
   $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
-  $('inboxList').innerHTML=show.map(t=>{
+  $('inboxItems').innerHTML=show.map(t=>{
     const e=t.latest,p=e.payload||{},who=p.contactName||messageAddress(e)||tr('unknown');
     const body=e.decryptError?'['+tr('decrypt_failed')+']':p.body||'';
     return '<button type="button" class="message'+(activeConversationKey===t.key?' active':'')+
@@ -529,6 +536,7 @@ function renderInbox(){
       '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
       escapeHtml(deviceName(e.deviceId))+' · '+escapeHtml(messageChannelLabel(e))+'</small></span></button>';
   }).join('');
+  list.scrollTop=previousTop;
   renderConversation();
 }
 function updateReplyDevices(){
@@ -546,6 +554,17 @@ function updateReplyChannels(preferred){
   if([...el.options].some(x=>x.value===selected))el.value=selected;
   const selectedChannel=channels.find(ch=>String(ch.id)===el.value);
   $('replyChannelLabel').textContent=selectedChannel?(d.name+' · '+channelTitle(selectedChannel)):tr('choose_channel');
+}
+function messageTags(e){
+  const inbound=eventIsInbound(e),d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e),
+    historic=e.kind==='sms.history'&&!e.payload?.channelId,
+    channel=historic?null:nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id),
+    digits=String(channel?.phoneNumber||'').replace(/\\D/g,''),
+    sim=historic?(getLocale()==='zh-CN'?'历史 SIM · 归属待确认':'Historical SIM · unverified'):
+      (channel?.alias||channel?.displayName||channel?.carrierName||'SIM')+(digits.length>=4?' · ••••'+digits.slice(-4):' · '+(getLocale()==='zh-CN'?'号码未知':'number unknown')),
+    status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent'));
+  return [fmtTime(e.occurredAt),status,deviceName(e.deviceId),sim].map((v,i)=>
+    '<span class="message-tag'+(historic&&i===3?' warning':'')+'">'+escapeHtml(v)+'</span>').join('');
 }
 function renderConversation(){
   if(!activeConversationKey){
@@ -581,7 +600,7 @@ function renderConversation(){
     const otp=p.otp?.value&&inbound?'<div class="otp"><code>'+escapeHtml(p.otp.value)+
       '</code><button class="ghost mini copy-otp" data-otp="'+escapeHtml(p.otp.value)+'" type="button">'+escapeHtml(tr('copy'))+'</button></div>':'';
     return '<div class="bubble'+(inbound?'':' outbound')+'"><p>'+escapeHtml(body)+
-      '</p>'+otp+'<small class="meta">'+fmtTime(e.occurredAt)+' · '+escapeHtml(status)+'</small></div>';
+      '</p>'+otp+'<div class="message-tags">'+messageTags(e)+'</div></div>';
   }).join('');
   pane.dataset.threadKey=activeConversationKey;
   if(previousKey!==activeConversationKey||nearBottom)pane.scrollTop=pane.scrollHeight;
@@ -590,7 +609,7 @@ function renderConversation(){
 function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
   if(!selected)return;
-  activeConversationKey=key;visibleOffset=0;
+  activeConversationKey=key;
   const last=selected.latest,number=messageAddress(last),did=last.deviceId,channel=messageChannel(last);
   updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
   $('replyTo').value=number;
@@ -839,9 +858,9 @@ function wire(){
   $('lockBtn').onclick=lockVault;
   $('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast(tr('vault_locked'));
   document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
-  $('search').oninput=()=>{visibleOffset=0;renderInbox();};
-  $('deviceFilter').onchange=()=>{visibleOffset=0;renderInbox();};
-  $('kindFilter').onchange=()=>{visibleOffset=0;renderInbox();};
+  $('search').oninput=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
+  $('deviceFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
+  $('kindFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
   $('newSmsBtn').onclick=openNewMessage;
@@ -855,7 +874,22 @@ function wire(){
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
   $('conversationMessages').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
-  $('loadNewerBtn').onclick=()=>{visibleOffset=Math.max(0,visibleOffset-30);renderInbox();};
+  const inboxScroller=$('inboxList');
+  const maybeLoadMore=()=>{
+    if(!vaultKey||historyFetchInFlight||(!historyHasMore&&visibleCount>=buildThreads(filteredEvents()).length))return;
+    if(inboxScroller.scrollTop<lastAutoScroll+16)return;
+    if(inboxScroller.scrollTop+inboxScroller.clientHeight<inboxScroller.scrollHeight-240)return;
+    lastAutoScroll=inboxScroller.scrollTop;
+    loadOlder().catch(e=>toast(e.message));
+  };
+  inboxScroller.addEventListener('scroll',maybeLoadMore,{passive:true});
+  if('IntersectionObserver' in window){
+    loadObserver=new IntersectionObserver(entries=>{
+      if(entries[0]?.isIntersecting&&inboxScroller.scrollTop>0)maybeLoadMore();
+    },{root:inboxScroller,rootMargin:'0px 0px 240px 0px'});
+    loadObserver.observe($('loadSentinel'));
+  }
+  $('loadNewerBtn').onclick=()=>{$('inboxList').scrollTop=0;};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
   $('addDeviceBtn').onclick=()=>{switchView('settings');$('enrollCard').scrollIntoView({behavior:'smooth',block:'start'});$('enrollName').focus({preventScroll:true});};
   $('enrollBtn').onclick=async()=>{

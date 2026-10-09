@@ -1,3 +1,12 @@
+## v0.6.0 — Secure pairing and conversational inbox
+
+- Prioritize pending device commands and acknowledgements ahead of SMS history scans; separate transport health from Android SMS Provider permission failures.
+- Attribute new historical SMS only to previously observed stable SIM identities; use a short unverified label for older ambiguous messages.
+- Give desktop SMS threads and conversation panes independent fixed-height scrolling and compact the direct-reply composer; improve mobile/tablet responsiveness.
+- Generate QR enrollment packages inside the PWA and scan locally in the Android app.
+- Add Android-generated eight-digit pairing codes with five-minute expiry, mandatory administrator approval, P-256 ECDH transport encryption, and independent Node Keys; resume activation after network interruption.
+- Include device-pairing API tests, browser layout regression and signed APK release.
+
 ## 0.5.3 — Device lifecycle and deployment identification
 
 - Clear a selected device's encrypted SMS stored on Relay without touching SMS on Android or modem hardware.

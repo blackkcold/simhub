@@ -36,6 +36,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class PairingDisplay(val code:String,val fingerprint:String,val waiting:Boolean,val error:String="")
 /** Ephemeral ECDH key stays in process RAM across fold/unfold Activity recreation. */
@@ -53,13 +57,23 @@ interface HubController {
     fun setRealtime(value:Boolean)
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
-    fun advanced()
+    fun requestContacts()
+    fun resetEnrollment()
+    fun checkOta()
+    fun exportDiagnostics()
+    fun setDeveloperEnabled(value:Boolean)
+    fun viewLogs()
+    fun clearLogs()
+    fun refreshDiagnostics()
+    fun setLanguage(index:Int)
     fun openNetworkSettings()
     fun loadMoreSms()
     fun copyOtp(code:String)
 }
 class HubActivity: ComponentActivity(), HubController {
     private var snapshot by mutableStateOf<HubSnapshot?>(null)
+    private val tools=HubToolsState()
+    private var pendingDiagnosticFile:File?=null
     private var loading by mutableStateOf(true)
     private var smsLimit=400
     private var incomingId by mutableStateOf(0)
@@ -78,15 +92,27 @@ class HubActivity: ComponentActivity(), HubController {
     }
     private val smsRoleLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){refresh()}
     private val permissionsLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){refresh()}
+    private val contactsLauncher=registerForActivityResult(ActivityResultContracts.RequestPermission()){refresh()}
+    private val exportLauncher=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val source=pendingDiagnosticFile; pendingDiagnosticFile=null
+        if(uri!=null && source!=null)lifecycleScope.launch {
+            try{withContext(Dispatchers.IO){contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } } ?: throw IllegalStateException("No export stream")}}
+            catch(e:Exception){AppLogger.e(this@HubActivity,"Diagnostics","Export failed",e);toast(getString(R.string.diagnostic_export_failed))}
+            finally{source.delete()}
+        }
+    }
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
         UiLocale.apply(this)
+        tools.developer=DeveloperSettings.isEnabled(this)
+        tools.language=UiLocale.index(this)
+        tools.installedAt=try { SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date(packageManager.getPackageInfo(packageName,0).lastUpdateTime)) } catch(_:Exception){"—"}
         window.statusBarColor=android.graphics.Color.TRANSPARENT
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         handleComposeIntent(intent)
-        setContent { HubApp(snapshot,loading,pairing,fold,this,incomingId,incomingRecipient,incomingBody) }
+        setContent { HubApp(snapshot,loading,pairing,fold,this,tools,incomingId,incomingRecipient,incomingBody) }
         // ACTION_VIEW is delivered to onCreate for a cold-start browser QR link;
         // onNewIntent only handles an already running Activity.
         if(intent?.action==Intent.ACTION_VIEW &&
@@ -291,7 +317,67 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun loadMoreSms(){smsLimit=(smsLimit+400).coerceAtMost(10000);refresh()}
-    override fun advanced(){startActivity(Intent(this,MainActivity::class.java))}
+    override fun requestContacts(){
+        if(checkSelfPermission(Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED)
+            contactsLauncher.launch(Manifest.permission.READ_CONTACTS)
+        else toast(getString(R.string.permissions_granted))
+    }
+    override fun resetEnrollment(){
+        if(!AgentConfig(this).isEnrolled())return
+        AlertDialog.Builder(this).setTitle(R.string.reset_title).setMessage(R.string.reset_message)
+            .setNegativeButton(R.string.cancel,null)
+            .setPositiveButton(R.string.reset){_,_->
+                EnrollmentManager.requestReset(this);SyncJobService.scheduleNow(this);refresh()
+                toast(getString(R.string.enrollment_reset_pending))
+            }.show()
+    }
+    override fun checkOta(){
+        lifecycleScope.launch {
+            try{val info=withContext(Dispatchers.IO){ApiClient(applicationContext).ota()}
+                tools.ota=if(info.optBoolean("available"))
+                    "发现版本 "+info.optString("versionName","?")+" · 请从已签名的官方 Release 更新"
+                else getString(R.string.update_none)
+            }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
+        }
+    }
+    override fun exportDiagnostics(){
+        lifecycleScope.launch {
+            try{val source=withContext(Dispatchers.IO){DiagnosticExporter.create(applicationContext)}
+                pendingDiagnosticFile=source
+                exportLauncher.launch("simhub-diagnostics-"+SimpleDateFormat("yyyyMMdd-HHmmss",Locale.US).format(Date())+".zip")
+            }catch(e:Exception){AppLogger.e(this@HubActivity,"Diagnostics","Export preparation failed",e)
+                toast(getString(R.string.diagnostic_export_failed))}
+        }
+    }
+    override fun setDeveloperEnabled(value:Boolean){
+        DeveloperSettings.setEnabled(this,value);tools.developer=value
+        AppLogger.i(this,"Developer",if(value)"Diagnostic logging enabled" else "Diagnostic logging disabled")
+        if(!value){tools.logs="";tools.diagnostics=""}else viewLogs()
+    }
+    override fun viewLogs(){if(!DeveloperSettings.isEnabled(this))return
+        tools.logs=AppLogger.recent(this,24000).ifBlank{getString(R.string.logs_empty)}
+    }
+    override fun clearLogs(){AppLogger.clear(this);tools.logs=getString(R.string.logs_empty)
+        toast(getString(R.string.logs_cleared))
+    }
+    override fun refreshDiagnostics(){
+        lifecycleScope.launch{
+            try{val json=withContext(Dispatchers.IO){
+                val state=StateCollector.collect(applicationContext)
+                if(AgentConfig(applicationContext).isEnrolled())ApiClient(applicationContext).putState()
+                state.toString(2)
+            }
+            tools.diagnostics=if(DeveloperSettings.isEnabled(this@HubActivity))json else ""
+            refresh()
+            }catch(e:Exception){AppLogger.e(this@HubActivity,"Diagnostics","State refresh failed",e)
+                toast(UiErrors.message(this@HubActivity,e))}
+        }
+    }
+    override fun setLanguage(index:Int){
+        val next=UiLocale.fromIndex(index)
+        if(next==UiLocale.get(this))return
+        UiLocale.set(this,next);UiLocale.apply(this);tools.language=index;recreate()
+    }
     override fun openNetworkSettings(){
         try{startActivity(Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS))}
         catch(_:Exception){toast(getString(R.string.generic_error))}

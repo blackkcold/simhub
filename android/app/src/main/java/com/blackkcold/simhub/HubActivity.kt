@@ -58,6 +58,9 @@ class HubActivity: ComponentActivity(), HubController {
     private var snapshot by mutableStateOf<HubSnapshot?>(null)
     private var loading by mutableStateOf(true)
     private var smsLimit=400
+    private var incomingId by mutableStateOf(0)
+    private var incomingRecipient by mutableStateOf("")
+    private var incomingBody by mutableStateOf("")
     private var pairing by mutableStateOf<PairingDisplay?>(null)
     private var fold by mutableStateOf<FoldingFeature?>(null)
     private var pendingTask:Job?=null
@@ -70,7 +73,8 @@ class HubActivity: ComponentActivity(), HubController {
         window.statusBarColor=android.graphics.Color.TRANSPARENT
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
-        setContent { HubApp(snapshot,loading,pairing,fold,this) }
+        handleComposeIntent(intent)
+        setContent { HubApp(snapshot,loading,pairing,fold,this,incomingId,incomingRecipient,incomingBody) }
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 WindowInfoTracker.getOrCreate(this@HubActivity).windowLayoutInfo(this@HubActivity)
@@ -87,9 +91,18 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun onNewIntent(intent:Intent){
         super.onNewIntent(intent)
+        handleComposeIntent(intent)
         if(intent.action==Intent.ACTION_VIEW && intent.data?.scheme=="simhub") {
             enrollLink(intent.data.toString())
         }
+    }
+    private fun handleComposeIntent(intent:Intent?){
+        if(intent?.action!=Intent.ACTION_SENDTO)return
+        val scheme=intent.data?.scheme?.lowercase()
+        if(scheme !in setOf("sms","smsto","mms","mmsto"))return
+        incomingRecipient=intent.data?.schemeSpecificPart?.substringBefore("?").orEmpty()
+        incomingBody=intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty().take(4000)
+        incomingId+=1
     }
     override fun refresh(){
         lifecycleScope.launch {

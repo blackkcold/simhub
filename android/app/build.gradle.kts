@@ -1,4 +1,4 @@
-plugins { id("com.android.application") }
+plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" }
 
 val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
 val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
@@ -13,10 +13,10 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
-        versionCode = 17
-        versionName = "0.6.0"
+        versionCode = 18
+        versionName = "0.7.0"
     }
-    buildFeatures { buildConfig = true }
+    buildFeatures { buildConfig = true; compose = true }
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -40,5 +40,16 @@ android {
 
 dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    implementation(composeBom)
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.animation:animation")
+    implementation("androidx.compose.runtime:runtime-saveable")
+    implementation("androidx.window:window:1.5.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
+    debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

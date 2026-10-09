@@ -1,6 +1,7 @@
 package com.blackkcold.simhub;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
@@ -24,6 +25,7 @@ import javax.crypto.spec.SecretKeySpec;
  */
 public final class SharedPoolClient {
     private static final String PREF="simhub_pool_v1",POOL="default";
+    public static final String ACTION_CACHE_UPDATED="com.blackkcold.simhub.SHARED_SMS_CACHE_UPDATED";
     private static final int PAGE=100,UPLOAD=20;
     private static final SecureRandom RANDOM=new SecureRandom();
     private final Context context;
@@ -248,6 +250,7 @@ public final class SharedPoolClient {
         }
         if(max>cursor)prefs.edit().putLong("last_download",max).apply();
         store.trim(500);
+        if(messages.length()>0)context.sendBroadcast(new Intent(ACTION_CACHE_UPDATED).setPackage(context.getPackageName()));
         if(response.optBoolean("hasMore")&&cursor>0)SyncJobService.scheduleAfter(context,10000);
     }
 

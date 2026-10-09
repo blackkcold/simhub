@@ -243,7 +243,7 @@ function purgeSensitiveUI(){
   expandedDeviceDetails.clear();
   const enroll=$('enrollResult');if(enroll)enroll.hidden=true;
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
-  const stepup=$('stepupDialog');if(stepup?.open)stepup.close();
+  const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
   const badge=$('otpBadge');if(badge){badge.textContent='';badge.hidden=true;}
 }
@@ -587,14 +587,18 @@ async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'||typ
 async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
 async function createEnrollment(){
   if(!vaultRaw)throw new Error('Vault must be unlocked.');
+  const epoch=securityEpoch;
   await ensureStepUp();
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked while creating enrollment');
   const type=$('enrollType').value==='modem'?'modem':'android',name=$('enrollName').value.trim()||(type==='modem'?'DJI / Modem SIM Node':'Android SIM Node');
   const nodeRaw=crypto.getRandomValues(new Uint8Array(32)),bootstrapRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw);
   let value='';
   try{
     const wrapped=await wrapNodeKey(nodeRaw,kid),bootstrapEnvelope=await encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid),bootstrap=b64u(bootstrapRaw),bootstrapHash=b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',bootstrapRaw)));
     const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
-    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope,bootstrapHash:bootstrapHash}}),server=r.server||location.origin;
+    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope,bootstrapHash:bootstrapHash}});
+    if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked while creating enrollment');
+    const server=r.server||location.origin;
     if(type==='modem'){
       value=JSON.stringify({version:4,server:server,token:r.token,bootstrap:bootstrap,name:name,nodeType:'modem'},null,2);
       $('openEnroll').hidden=true;
@@ -615,22 +619,26 @@ async function copy(text,msg){await navigator.clipboard.writeText(text);toast(ms
 function updateCharCount(){const value=$('sendBody').value;$('smsCount').textContent=tr('chars_parts',{chars:value.length,parts:countSmsSegments(value)});}
 function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
 async function refreshDiagnostics(){
-  if(!diagnosticsDeviceId)return;
+  if(!diagnosticsDeviceId||!vaultKey)return;
+  const epoch=securityEpoch;
   const pane=$('diagnosticsOutput');pane.textContent='正在获取最近诊断结果…';
   try{
     const path='/api/v1/events?order=occurred&kind=device.diagnostics&limit=20&device='+encodeURIComponent(diagnosticsDeviceId);
     const result=await api(path),records=[];
+    if(epoch!==securityEpoch||!vaultKey)return;
     for(const e of result.events||[]){
+      if(epoch!==securityEpoch||!vaultKey)return;
       try{
         const payload=await decryptEvent(e);
+        if(epoch!==securityEpoch||!vaultKey)return;
         // Never render the encrypted SIM inventory or any secret envelopes in support UI.
         const sanitized={...payload};
         delete sanitized.encryptedSimNumbers;
         records.push({time:new Date(e.occurredAt*1000).toLocaleString(),requestId:payload.requestId||null,diagnostics:sanitized});
       }catch(err){records.push({time:e.occurredAt,error:'无法解密诊断结果'});}
     }
-    pane.textContent=records.length?JSON.stringify(records,null,2):'暂无诊断记录。点击设备上的“健康检查”后，再刷新结果。';
-  }catch(e){pane.textContent='诊断读取失败：'+e.message;}
+    if(epoch===securityEpoch&&vaultKey)pane.textContent=records.length?JSON.stringify(records,null,2):'暂无诊断记录。点击设备上的“健康检查”后，再刷新结果。';
+  }catch(e){if(epoch===securityEpoch&&vaultKey)pane.textContent='诊断读取失败：'+e.message;}
 }
 async function openDiagnostics(id){
   diagnosticsDeviceId=id;

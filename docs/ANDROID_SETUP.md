@@ -2,7 +2,7 @@
 
 ## Build
 
-The background SIM/SMS/crypto Agent remains Java; the v0.7.0 Android interface uses Kotlin Jetpack Compose, AndroidX Material 3 and Jetpack WindowManager. The APK targets API 37.
+The background SIM/SMS/crypto Agent remains Java; the v0.8.0 Android interface uses Kotlin Jetpack Compose, AndroidX Material 3 and Jetpack WindowManager. The APK targets API 37.
 
 Requirements:
 
@@ -60,13 +60,13 @@ The controller addresses a stable `channelId` plus `channelRevision`. Android ma
 - Upgraded legacy 0.1.5 nodes can receive `node.rotate_key` after pending outbound SMS completes; the legacy Master Vault Key is then deleted from the node.
 
 
-## Native Android UI (v0.7.0)
+## Native Android UI (v0.8.0)
 
 - The launch screen uses four accessible tabs: **Overview**, **Messages**, **SIM cards** and **Settings**, with a compact bottom bar or expanded side rail.
 - **Overview** summarizes Relay health, pending uploads, SIM service and the most recent local messages. An actionable permissions card appears when SMS capability is unavailable.
 - **Messages** reads Android's SMS Provider locally, supports recent conversation paging, sender/body search, OTP copy, and an inline composer with an explicit physical subscription selection. Submission is not proof of carrier delivery; MMS/RCS are not advertised as implemented.
 - **SIM cards** lists reported subscriptions and radio diagnostics. Network switching shortcuts open system settings instead of requesting unsupported privileged telephony actions.
-- **Settings** includes QR and short-code enrollment, SMS role/permission requests, foreground relay mode, manual history sync, and an **Advanced tools** entry for legacy diagnostics, language, OTA and recovery controls.
+- **Settings** is the single Compose-adaptive settings surface: QR/short-code enrollment, required/optional permissions, foreground relay, manual recent/older SMS sync, device reset, OTA checking, app language, developer-mode toggles, redacted logs, diagnostic ZIP export and encrypted pool-sharing consent. The old Android MainActivity and duplicate XML settings layouts have been removed.
 - Expanded/folded windows use the current app window size and WindowManager hinge state. UI navigation and drafts are in ViewModel memory; ephemeral ECDH keys survive Activity recreation only within the current process, never in saved-state bundles.
 - Compose and AndroidX are now required at build and runtime; built-in AGP9 Kotlin + Compose compiler plugin 2.4.20, Compose BOM 2026.09.00, and WindowManager 1.5.1 are pinned.
 - Chinese/English string resources, system dark appearance and developer log redaction remain supported.
@@ -98,3 +98,8 @@ See [Compatibility](COMPATIBILITY.md) and [v0.4–v0.5 migration](UPGRADE_0.4_TO
 **Android-initiated:** On an unpaired Android Agent, enter the **HTTPS device-origin URL** (not the admin hostname if separated), tap **Generate pairing code**, and note the eight-digit code and device fingerprint. In the unlocked Web controller, open **Add device → Pair with Android code**, enter the code, verify the **fingerprint displayed on both devices** and approve with administrator step-up. Android completes the pairing automatically while the request remains valid (five minutes).
 
 Both methods require the usual SMS role and SIM permissions after enrollment. If the device was previously paired, unpair it first. A QR code is a one-time credential and should not be shared or saved publicly; a short code alone never grants access.
+
+
+## Optional SMS sharing (v0.8)
+
+Open **Settings → Shared SMS**, enable explicit opt-in, then in the logged-in Web controller open **Devices → Shared pool** and approve that device while the local Vault is unlocked. The relay stores only ciphertext and individually wrapped Pool Keys. This is independent of SMS Provider storage and remote sending permissions. Pool sharing is disabled by default; the current implementation uses the owner's single default pool. Read [Shared SMS security and sync](SHARED_SMS.md) before approving a device.

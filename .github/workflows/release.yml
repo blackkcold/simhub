@@ -229,7 +229,7 @@ jobs:
           apk=f"simhub-agent-v{version}-release.apk"
           source=f"simhub-v{version}-source.zip"
           import re
-          schema=re.search(r"PRAGMA user_version=(\\d+)",pathlib.Path("server/simhub_server.py").read_text())
+          schema=re.search(r"PRAGMA user_version=([0-9]+)",pathlib.Path("server/simhub_server.py").read_text())
           if not schema:raise SystemExit("Missing relay database schema declaration")
           db_schema=int(schema.group(1))
           data={

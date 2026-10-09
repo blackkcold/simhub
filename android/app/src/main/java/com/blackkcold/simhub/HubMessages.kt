@@ -136,8 +136,14 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                     Spacer(Modifier.height(5.dp))
                 }
                 item{
-                    TextButton(onClick=controller::loadMoreSms,modifier=Modifier.fillMaxWidth()){
-                        Text(stringResource(R.string.hub_load_more))
+                    if((state?.sms?.size?:0)>=2000){
+                        Text("已达到本机加密缓存上限（2000 条），新短信继续增量同步",
+                            style=MaterialTheme.typography.labelSmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }else{
+                        TextButton(onClick=controller::loadMoreSms,modifier=Modifier.fillMaxWidth()){
+                            Text(stringResource(R.string.hub_load_more))
+                        }
                     }
                 }
             }

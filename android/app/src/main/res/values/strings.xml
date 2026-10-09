@@ -200,4 +200,12 @@
     <string name="hub_sms_queued">Queued</string>
     <string name="hub_sms_failed">Failed to send</string>
     <string name="hub_sms_draft">Draft</string>
+    <string name="hub_historical_sim">Historical SIM · source unverified</string>
+    <string name="hub_sim_slot">SIM %1$d</string>
+    <string name="hub_sim_tail">SIM ending %1$s</string>
+    <string name="hub_cache_limit">Encrypted cache window reached (2,000 per source). New SMS continue syncing.</string>
+    <string name="hub_shared_readonly">Shared SMS is read-only; reply from its original SIM is not available on this device.</string>
+    <string name="hub_sent">Sent</string>
+    <string name="hub_received">Received</string>
+    <string name="hub_unknown_sim">SIM number unknown</string>
 </resources>

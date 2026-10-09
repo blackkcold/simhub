@@ -243,6 +243,9 @@ function purgeSensitiveUI(){
   const link=$('openEnroll');if(link){link.removeAttribute('href');link.hidden=true;}
   expandedDeviceDetails.clear();
   const enroll=$('enrollResult');if(enroll)enroll.hidden=true;
+  if($('enrollQr'))$('enrollQr').replaceChildren();
+  if($('pairCodeInput'))$('pairCodeInput').value='';
+  if($('pairCodeStatus'))$('pairCodeStatus').textContent='';
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
@@ -663,9 +666,56 @@ async function createEnrollment(){
       $('openEnroll').removeAttribute('href');$('openEnroll').hidden=true;
     }
     $('enrollLink').value=value;$('enrollResult').hidden=false;
+    const qr=$('enrollQr');qr.replaceChildren();
+    if(type==='android'&&typeof QRCode!=='undefined')new QRCode(qr,{text:value,width:248,height:248,correctLevel:QRCode.CorrectLevel.L});
     toast(tr(type==='modem'?'enroll_modem_done':'enroll_android_done'));
   }finally{
     nodeRaw.fill(0);bootstrapRaw.fill(0);
+  }
+}
+async function sha256Hex(text){
+  const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(text)));
+  return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function approveDevicePairCode(){
+  if(!vaultRaw||!vaultKey)throw Error('请先解锁 Vault');
+  const code=$('pairCodeInput').value.trim();
+  if(!/^\\d{8}$/.test(code))throw Error('请输入完整的八位配对码');
+  const epoch=securityEpoch;
+  const item=await api('/api/v1/pairings/lookup?code='+encodeURIComponent(code));
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
+  const fingerprint=(await sha256Hex(item.publicKey)).slice(0,12).toUpperCase();
+  $('pairCodeStatus').textContent='待配对设备 '+item.name+' · '+item.model+' · 指纹 '+fingerprint;
+  if(!confirm('确认 Android 手机上显示的设备指纹为 '+fingerprint+'，且设备名称为 '+item.name+'？\\n仅在已核对实体设备时继续。'))return;
+  await ensureStepUp();
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
+  const nodeRaw=crypto.getRandomValues(new Uint8Array(32));
+  const tokenBytes=crypto.getRandomValues(new Uint8Array(48));
+  const deviceToken=b64u(tokenBytes);
+  let shared;
+  try{
+    const keyId=await keyIdForRaw(nodeRaw);
+    const wrappedKey=await wrapNodeKey(nodeRaw,keyId);
+    const peer=await crypto.subtle.importKey('spki',unb64u(item.publicKey),{name:'ECDH',namedCurve:'P-256'},false,[]);
+    const ephemeral=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+    shared=new Uint8Array(await crypto.subtle.deriveBits({name:'ECDH',public:peer},ephemeral.privateKey,256));
+    const base=await crypto.subtle.importKey('raw',shared,'HKDF',false,['deriveKey']);
+    const key=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:enc.encode('simhub-pair-v1|'+item.requestId),info:enc.encode('node-key')},base,{name:'AES-GCM',length:256},false,['encrypt']);
+    const iv=crypto.getRandomValues(new Uint8Array(12));
+    const plaintext=enc.encode(JSON.stringify({nodeKey:b64u(nodeRaw),deviceToken}));
+    const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-pair-v1|'+item.requestId+'|'+keyId)},key,plaintext));
+    const spki=b64u(new Uint8Array(await crypto.subtle.exportKey('spki',ephemeral.publicKey)));
+    await api('/api/v1/pairings/'+encodeURIComponent(item.requestId)+'/approve',{method:'POST',body:{
+      code,keyId,wrappedKey,
+      envelope:{v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct),publicKey:spki},
+      deviceTokenHash:await sha256Hex(deviceToken),
+      completeProofHash:await sha256Hex('simhub-pair-complete-v1|'+item.requestId+'|'+deviceToken)
+    }});
+    $('pairCodeStatus').textContent='已授权 '+item.name+'。等待 Android 完成加密确认。';
+    $('pairCodeInput').value='';
+    await fullRefresh();
+  }finally{
+    nodeRaw.fill(0);tokenBytes.fill(0);if(shared)shared.fill(0);
   }
 }
 async function rotateDeviceKey(deviceId){await ensureStepUp();const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
@@ -815,6 +865,7 @@ function wire(){
     finally{enrolling=false;btn.disabled=false;btn.removeAttribute('aria-busy');}
   };
   $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
+  $('approvePairCode').onclick=async()=>{const b=$('approvePairCode');if(b.disabled)return;b.disabled=true;try{await approveDevicePairCode();}catch(e){$('pairCodeStatus').textContent=e.message;toast(e.message);}finally{b.disabled=false;}};
   $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};

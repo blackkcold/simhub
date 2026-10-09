@@ -1,3 +1,11 @@
+## 0.5.3 — Device lifecycle and deployment identification
+
+- Clear a selected device's encrypted SMS stored on Relay without touching SMS on Android or modem hardware.
+- Bidirectional device-initiated/server-initiated pairing reset, with offline recovery, enforced access suspension, and force-delete tombstones.
+- Device cleanup audit history, refreshed responsive management actions, and explicit second-factor confirmation.
+- Android app version and installation date; Web management version with persistent deployment date.
+- Database migration and purge/reset regression tests.
+
 ## v0.5.2 — Vault data hygiene, encrypted-key continuity and device reliability
 
 - Purge SMS text, phone numbers, drafts, diagnostic data, Vault recovery fields and one-time enrollment secrets from the DOM and browser on manual/idle Vault lock; synchronize locks across tabs and reject late async content after locking.

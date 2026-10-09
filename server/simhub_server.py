@@ -949,7 +949,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_json(200,{"username":ADMIN_USERNAME,"passkeys":keys}); return
         if path=="/api/v1/version":
             if not self.require_admin(): return
-            self.send_json(200,{"version":APP_VERSION,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None,"nodeBaseUrl":PUBLIC_BASE_URL or None}); return
+            self.send_json(200,{"version":APP_VERSION,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None,"nodeBaseUrl":PUBLIC_BASE_URL or (MANAGEMENT_ORIGIN if not SEPARATE_SURFACES else None),"separateSurfaces":bool(SEPARATE_SURFACES)}); return
         if path=="/api/v1/update":
             if not self.require_admin(): return
             result={"installed": APP_VERSION, "ignored":update_bridge.ignored(), "agent":False}

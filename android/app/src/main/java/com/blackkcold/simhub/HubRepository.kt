@@ -107,7 +107,8 @@ object HubRepository {
                     shared=true,historicalUnverified=channel.isBlank(),channelRevision=revision)
             }
         }catch(error:Exception){AppLogger.e(context,"SharedPool","Cannot read shared cache",error);emptyList()}
-        val unified=(local+remote).sortedWith(compareByDescending<HubSms>{it.date}.thenByDescending{it.id}).take(limit)
+        // Keep independent per-source windows: a busy local inbox must not hide shared SMS.
+        val unified=(local+remote).sortedWith(compareByDescending<HubSms>{it.date}.thenByDescending{it.id})
         return HubSnapshot(
             cfg.isEnrolled(), cfg.deviceName(),cfg.server(),cfg.alwaysOn(),
             LocalStore.get(context).pendingEventCount(),cfg.lastSyncSuccessAt(),

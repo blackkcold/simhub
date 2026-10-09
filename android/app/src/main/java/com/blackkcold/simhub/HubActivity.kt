@@ -1,6 +1,10 @@
 package com.blackkcold.simhub
 
 import android.Manifest
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.Telephony
 import android.app.AlertDialog
 import android.app.role.RoleManager
 import android.content.ClipData
@@ -64,6 +68,14 @@ class HubActivity: ComponentActivity(), HubController {
     private var pairing by mutableStateOf<PairingDisplay?>(null)
     private var fold by mutableStateOf<FoldingFeature?>(null)
     private var pendingTask:Job?=null
+    private val refreshHandler=Handler(Looper.getMainLooper())
+    private val refreshAfterChange=Runnable { refresh() }
+    private val smsObserver=object:ContentObserver(refreshHandler){
+        override fun onChange(selfChange:Boolean){
+            refreshHandler.removeCallbacks(refreshAfterChange)
+            refreshHandler.postDelayed(refreshAfterChange,400)
+        }
+    }
     private val smsRoleLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){refresh()}
     private val permissionsLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){refresh()}
 
@@ -82,7 +94,17 @@ class HubActivity: ComponentActivity(), HubController {
                         .firstOrNull { it.isSeparating } }
             }
         }
-        refresh()
+    }
+    override fun onStart(){
+        super.onStart()
+        try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
+        catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
+    }
+    override fun onStop(){
+        try{contentResolver.unregisterContentObserver(smsObserver)}
+        catch(_:Exception){}
+        refreshHandler.removeCallbacks(refreshAfterChange)
+        super.onStop()
     }
     override fun onResume(){
         super.onResume();refresh()

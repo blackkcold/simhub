@@ -20,6 +20,14 @@ public final class SimTagStore {
             return new JSONObject();
         }
     }
+    /** Forget metadata from the previous enrollment without touching OS SMS data. */
+    public static void clearAll(Context c){
+        SecretStore store=new SecretStore(c);
+        for(String name:c.getSharedPreferences("simhub_secret_store",Context.MODE_PRIVATE)
+                .getAll().keySet()){
+            if(name.startsWith("sim-tag-"))store.remove(name);
+        }
+    }
     public static void set(Context c,String channelId,long revision,String label,String number)throws Exception{
         String tag=label==null?"":label.trim();
         if(tag.length()>40)throw new IllegalArgumentException("SIM tag too long");

@@ -128,6 +128,13 @@ def current_version():
                     return v.removeprefix("v")
     except OSError:
         pass
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8787/readyz", timeout=2) as response:
+            version = json.load(response).get("version")
+        if VERSION.fullmatch(str(version)):
+            return str(version).removeprefix("v")
+    except (OSError, ValueError):
+        pass
     text = (ROOT / "server" / "simhub_server.py").read_text("utf-8")
     m = re.search(r'^APP_VERSION = "([0-9.]+)"', text, re.M)
     return m.group(1) if m else "0.0.0"
@@ -242,8 +249,9 @@ def job(version):
         image, schema = release_image(info)
         if schema != database_schema():
             raise ValueError("Schema migration requires supervised deployment")
-        save("verifying_image", imageDigest=image.partition("@")[2])
+        save("verifying_image", imageDigest=image.partition("@")[2], signatureVerified=False)
         pull_verified_image(image)
+        save("verified_image", signatureVerified=True)
         old_version = current_version()
         old_id = current_image()
         old_image = "simhub-relay:rollback-" + str(int(time.time()))
@@ -262,7 +270,7 @@ def job(version):
         error = str(err)[:400]
         if switched and old_image and old_version:
             try:
-                save("rolling_back", error=error)
+                save("rolling_back", error=error, signatureVerified=False)
                 update_env(old_image, old_version)
                 compose("up", "-d", "--no-build", "--pull", "never",
                         "--force-recreate", "simhub")
@@ -305,7 +313,7 @@ class Handler(socketserver.StreamRequestHandler):
                     raise ValueError("Update already running")
                 try:
                     require_rootless()
-                    save("queued", requested=version, error=None)
+                    save("queued", requested=version, error=None, signatureVerified=False)
                     threading.Thread(target=job, args=(version,), daemon=True).start()
                 except Exception:
                     RUN_LOCK.release()

@@ -47,8 +47,19 @@ public final class ApiClient {
             if(checkServerReset())return;
             rotateDeviceTokenIfNeeded();LocalStore store=LocalStore.get(c);store.recoverStaleClaims();
             for(String id:store.expireStalePendingSms(48L*3600)){store.finishCommand(id,"failed");store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));}
-            flushEvents();int scanned=LocalStore.get(c).pendingEventCount()<200?SmsHistorySync.sync(c,30):0;
-            flushEvents();flushCommandAcks();fetchCommands();flushCommandAcks();putState();heartbeat();cfg.recordSyncSuccess();cfg.resetSyncBackoff();
+            // Priority lane: ACK and inbound remote commands must not wait for an
+            // expensive SMS-provider scan or full historical event upload.
+            flushCommandAcks();fetchCommands();flushCommandAcks();
+            int scanned=0;
+            try{
+                flushEvents();
+                if(store.pendingEventCount()<200)scanned=SmsHistorySync.sync(c,30);
+                flushEvents();
+            }catch(SecurityException error){
+                cfg.recordSmsProviderError("SMS_PROVIDER_SECURITY_EXCEPTION");
+                AppLogger.e(c,"ApiClient","Non-critical local SMS synchronization failed",error);
+            }
+            putState();heartbeat();cfg.recordSyncSuccess();cfg.resetSyncBackoff();
             if(scanned>=30||store.pendingEventCount()>0)SyncJobService.scheduleAfter(c,5000);
             if(pendingBefore>0)AppLogger.i(c,"ApiClient","Sync cycle completed pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
         }catch(Exception error){

@@ -14,6 +14,8 @@ let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
 let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null,diagnosticsDeviceId=null;
 const eventIds=new Set();
+let securityEpoch=0;
+const vaultLockChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('simhub-vault-lock-v1'):null;
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
 
@@ -224,7 +226,43 @@ async function removePasskey(id){
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
 function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=false;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
-function lockVault(){phoneOverrides={};clearTabVault();activeConversationKey=null;$('smsLayout').classList.remove('conversation-open');$('conversationMessages').textContent='';$('replyBody').value='';$('replyTo').value='';$('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
+function purgeSensitiveUI(){
+  // Hidden DOM is still observable to local browser extensions and scripts.
+  // Wipe all decrypted data and one-time credentials, not merely app arrays.
+  for(const id of ['inboxList','conversationMessages','deviceList','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
+    const el=$(id);if(!el)continue;
+    if('value' in el)el.value='';
+    if(id==='diagnosticsOutput')el.textContent='';
+    else if(!('value' in el))el.replaceChildren();
+  }
+  for(const id of ['deviceFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
+    const el=$(id);if(el)el.replaceChildren();
+  }
+  const link=$('openEnroll');if(link){link.removeAttribute('href');link.hidden=true;}
+  const enroll=$('enrollResult');if(enroll)enroll.hidden=true;
+  const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
+  const stepup=$('stepupDialog');if(stepup?.open)stepup.close();
+  const badge=$('otpBadge');if(badge){badge.textContent='';badge.hidden=true;}
+}
+function lockVault(broadcast=true){
+  securityEpoch++;
+  phoneOverrides={};clearTabVault();activeConversationKey=null;diagnosticsDeviceId=null;
+  $('smsLayout').classList.remove('conversation-open');
+  purgeSensitiveUI();
+  $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
+  vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
+  devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
+  initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;
+  clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
+  clearTimeout(refreshTimer);refreshTimer=null;
+  if(eventSource){eventSource.close();eventSource=null;}
+  $('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;
+  $('vaultStatus').textContent=tr('vault_locked');setConnected(false);
+  if(broadcast)try{vaultLockChannel?.postMessage({action:'lock'});}catch{}
+  toast('Vault locked');
+}
+if(vaultLockChannel)vaultLockChannel.onmessage=e=>{if(e.data?.action==='lock'&&vaultKey)lockVault(false);};
+
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,sessionIdleMs-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();try{const s=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE)||'null');if(s){s.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(s));}}catch{}armAutoLock();}
 function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=sessionIdleMs){lockVault();return true;}armAutoLock();return false;}
@@ -238,25 +276,32 @@ async function connectAndUnlock(){await establishSession();await unlockVault($('
 async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent=tr('vault_created_hint');toast(tr('vault_created'));}
 
 async function loadDevices(){
-  const d=await api('/api/v1/devices'),next=d.devices||[];
+  const epoch=securityEpoch;
+  const d=await api('/api/v1/devices');if(epoch!==securityEpoch||!vaultKey)return;
+  const next=d.devices||[];
   const oldKeys=new Map(devices.map(x=>[x.id,[x.keyId,x.wrappedKey,x.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|')]));
   for(const node of next)if(oldKeys.get(node.id)!==[node.keyId,node.wrappedKey,node.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|'))deviceKeyCache.delete(node.id);
   devices=next;
   // Decrypt SIM numbers locally; the Relay only stores an opaque Node-Key envelope.
   for(const d of devices){
+    if(epoch!==securityEpoch||!vaultKey)return;
     const n=d.state?.encryptedSimNumbers;
     if(!n||!vaultKey)continue;
     try{
       const event={deviceId:d.id,eventId:n.eventId,kind:'device.sim_inventory',occurredAt:n.occurredAt,subscriptionId:'-1',hasOtp:false,ciphertext:n.ciphertext};
       const clear=await decryptEvent(event);
+      if(epoch!==securityEpoch||!vaultKey)return;
       d.state._phoneNumbers=Array.isArray(clear.numbers)?clear.numbers:[];
     }catch(err){console.warn('SIM number inventory unavailable',d.id,err.name);}
   }
+  if(epoch!==securityEpoch||!vaultKey)return;
   renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();
 }
 async function ingestEvents(batch,notify=true){
+  const epoch=securityEpoch;
   let changed=false;
   for(const e of batch){
+    if(epoch!==securityEpoch||!vaultKey)return false;
     lastSeq=Math.max(lastSeq,e.seq||0);
     const id=e.deviceId+':'+e.eventId;
     if(eventIds.has(id))continue;
@@ -265,47 +310,55 @@ async function ingestEvents(batch,notify=true){
     events.push(e);eventIds.add(id);changed=true;
     try{
       const payload=await decryptEvent(e),row=Object.assign({},e,{payload});
+      if(epoch!==securityEpoch||!vaultKey)return false;
       decryptedEvents.push(row);if(notify)maybeNotify(row);
-    }catch(err){decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}
+    }catch(err){if(epoch!==securityEpoch||!vaultKey)return false;decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}
   }
   return changed;
 }
 async function loadEvents(){
   if(!vaultKey)return;
+  const epoch=securityEpoch;
   if(!initialEventsLoaded){
-    const head=await api('/api/v1/events?latest=1&limit=1');
+    const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&limit=30');
+    const first=await api('/api/v1/events?order=occurred&limit=30');if(epoch!==securityEpoch||!vaultKey)return;
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
+    if(epoch!==securityEpoch||!vaultKey)return;
     initialEventsLoaded=true;renderInbox();return;
   }
   let changed=false,loops=0;
   while(loops++<3){
-    const r=await api('/api/v1/events?since='+lastSeq+'&limit=100'),batch=r.events||[];
+    const r=await api('/api/v1/events?since='+lastSeq+'&limit=100');if(epoch!==securityEpoch||!vaultKey)return;
+    const batch=r.events||[];
     if(!batch.length)break;
     changed=await ingestEvents(batch)||changed;
     if(batch.length<100)break;
   }
-  if(changed)renderInbox();
+  if(changed&&epoch===securityEpoch&&vaultKey)renderInbox();
 }
 async function loadOlder(){
   if(!vaultKey)return;
+  const epoch=securityEpoch;
   const count=buildThreads(filteredEvents()).length;
   if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
   if(!historyHasMore||!olderCursor)return;
   const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
+  if(epoch!==securityEpoch||!vaultKey)return;
   olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
   historyHasMore=!!r.hasMore;
   await ingestEvents(r.events||[],false);
+  if(epoch!==securityEpoch||!vaultKey)return;
   if(buildThreads(filteredEvents()).length>visibleOffset+30)visibleOffset+=30;
   renderInbox();
 }
 let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
-  refreshing=(async()=>{try{await loadDevices();await loadEvents();setConnected(true);}catch(e){setConnected(false);throw e;}finally{refreshing=null;}})();
+  const epoch=securityEpoch;
+  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}

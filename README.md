@@ -42,6 +42,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 | **SMS and OTP** | Multi-SIM receive/send, conversation replies, new messages, code detection and copy |
 | **Devices and SIMs** | Android and Linux modem nodes; phone numbers, signal, charging, Wi-Fi and connectivity |
 | **History and diagnostics** | Latest 100 rescan, older 100 backfill, relay message pagination, encrypted health checks |
+| **Pairing** | Scan the controller QR from Android, or enter the Android eight-digit pairing code and verify the device fingerprint |
 | **Privacy and authentication** | Node-Key end-to-end encryption, username / TOTP / Passkeys, active Vault session recovery |
 | **Offline resilience** | Durable queues, retries, foreground relay and scheduled background recovery |
 
@@ -67,7 +68,7 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 The installer checks DNS / Docker / ports, creates the Admin Token, TOTP and owner-only `.env`, then starts Relay and Caddy HTTPS. **You must create DNS records at your provider.** For an existing Nginx / Caddy / Traefik proxy, add `--mode external` and configure dual-host TLS routing yourself.
 
-Open the management URL, log in, create/import your local Vault, then install the signed Android APK and configure enrollment, SMS permissions and **default SMS app** access.
+Open the management URL, log in, create/import your local Vault, then install the signed Android APK, enroll by QR/code and configure SMS permissions and **default SMS app** access.
 
 ## Boundaries
 

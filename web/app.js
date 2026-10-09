@@ -542,6 +542,7 @@ async function grantPoolDevice(deviceId){
   await loadPool();
 }
 async function rotatePool(){
+  await ensureStepUp();
   await loadPool();
   if(!poolState?.epoch)return;
   const key=await poolNewKey(),epoch=poolState.epoch+1;

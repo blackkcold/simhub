@@ -39,14 +39,22 @@ If replacing them with real screenshots, capture on test devices with mock messa
 - README 图仅使用虚构或脱敏数据，不展示真实验证码、手机号与设备凭据。
 - 文案由现有国际化资源维护，预览图不是功能测试证明。
 
+### Responsive workspace rules
+
+- The mobile inbox fills the viewport area left after the header, filters and floating bottom navigation; no fixed half-screen max-height.
+- Device cards are short summaries; SIM/channel metadata, sync actions and destructive controls live in the detail dialog.
+- Device enrollment has two modes: QR/copy one-time package, or node URL plus Android eight-digit pairing code and fingerprint verification.
+- Settings use category navigation with a focused single-column content area. All new UI labels are localized in `web/i18n.js`.
+- Mobile dialogs use safe-area-aware viewport sizing; reduced-motion users are respected.
+
 ### Current UI inventory
 
 | Surface | Production behavior | Source |
 |---|---|---|
 | Admin login | Username, Admin Token/TOTP, optional Passkey authentication; Vault passphrase remains local | `web/index.html`, `web/app.js` |
 | Inbox | SMS threads, reply in selected conversation, right-aligned new-message action, locally decrypted search | `web/app.js` |
-| Devices | Per-SIM phone identification and browser-local edit, charging, Wi-Fi/cellular status, separate recent/older 100 sync controls, diagnostic modal | `web/app.js`, `web/styles.css` |
+| Devices | Compact responsive summary cards, SIM/channel detail dialog, two-path QR/link or eight-digit-code setup wizard, sync diagnostics and safety controls | `web/app.js`, `web/styles.css` |
 | Networking | OS-default data SIM fallback policy validation; system mobile settings shortcut (Android) | `android/app/src/main/java/com/blackkcold/simhub/NetworkFailoverPolicy.java` |
-| Settings | Vault recovery, Passkey registration and sensitive-operation step-up, onboarding, developer logs | `web/index.html`, `android/app/src/main/res/layout/activity_main.xml` |
+| Settings | Categorized account/security, notification and system/update views; no node enrollment controls | `web/index.html`, `android/app/src/main/res/layout/activity_main.xml` |
 
 **Documentation screenshots must not invent support for privileged Android data-SIM switching, background push-delivered OTP content, full MMS, or call handling.** UI messages and responsive behavior should be tested at desktop/phone/foldable widths. The repository runs Playwright screenshots for multiple browser sizes and light/dark themes in CI; these are regression artifacts, not proof of a fully provisioned physical SIM.

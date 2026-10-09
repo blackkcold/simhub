@@ -36,6 +36,10 @@ try {
       page.on("requestfailed",r=>httpErrors.push(r.failure()?.errorText+" "+r.url()));
       page.on("pageerror",e=>errors.push(e.message));
       await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"networkidle"});
+      if(width===375){
+        const gateOverflow=await page.locator("main").evaluate(el=>getComputedStyle(el).overflowY);
+        assert.notEqual(gateOverflow,"hidden","Locked mobile login must remain vertically scrollable");
+      }
       assert.equal(await page.locator("#username").count(),1);
       assert.equal(await page.locator("#passkeyLoginBtn").count(),1);
       assert.equal(await page.evaluate(()=>typeof window.QRCode),"function","Offline QR renderer must load");
@@ -145,6 +149,8 @@ try {
       assert.ok(layout.panel.y>=layout.list.bottom-1,`Tablet columns must stack at ${width}`);
     }else{
       const before=await page.locator(".sidebar").boundingBox();
+      assert.ok(layout.list.height>=200,`Inbox must remain useful at ${width}: ${JSON.stringify(layout)}`);
+      assert.ok(layout.list.bottom>=before.y-40,`Inbox must fill viewport above floating dock at ${width}: ${JSON.stringify(layout)}`);
       assert.ok(before&&before.y>=width*0,`Mobile floating dock not rendered at ${width}`);
       assert.ok(before.y>600&&before.y+before.height<=812,`Dock must sit at bottom at ${width}: ${JSON.stringify(before)}`);
       assert.ok(before.x>=8&&before.x+before.width<=width-8,`Dock must float with margins at ${width}`);
@@ -193,6 +199,45 @@ try {
     console.error("SESSION-LOGIN-DEBUG",JSON.stringify({state,loginErrors}));
     throw error;
   }
+  // v0.10.0 device onboarding: both user-selected methods must work without
+  // relocating the administrator to Settings or exposing bootstrap secrets.
+  await p.locator('.nav[data-view="devices"]').click();
+  await p.locator("#addDeviceBtn").click();
+  assert.equal(await p.locator("#enrollDialog").evaluate(el=>el.open),true,"Device wizard must open on Devices");
+  assert.equal(await p.locator("#enrollCard").getAttribute("data-enroll-step"),"1");
+  await p.locator('[data-enroll-mode-choice="code"]').click();
+  await p.locator("#enrollNext").click();
+  assert.equal(await p.locator("#enrollCard").getAttribute("data-enroll-step"),"2");
+  assert.equal(await p.locator("#enrollCard").getAttribute("data-enroll-mode"),"code");
+  await p.waitForFunction(()=>!!document.getElementById("nodeEndpointValue").value,null,{timeout:5000});
+  assert.equal(await p.locator("#nodeEndpointValue").inputValue(),"http://127.0.0.1:"+port);
+  assert.equal(await p.locator("#copyNodeEndpoint").isEnabled(),true);
+  await p.locator("#closeEnroll").click();
+  assert.equal(await p.locator("#enrollDialog").evaluate(el=>el.open),false);
+  await p.locator("#addDeviceBtn").click();
+  await p.locator("#enrollNext").click();
+  assert.equal(await p.locator("#enrollCard").getAttribute("data-enroll-mode"),"package");
+  assert.equal(await p.locator("#enrollBtn").isVisible(),true);
+  assert.equal(await p.locator("#enrollLink").isVisible(),false);
+  await p.locator("#closeEnroll").click();
+  await p.locator("#languageSelect").selectOption("en");
+  await p.locator("#addDeviceBtn").click();
+  assert.equal(await p.locator('[data-i18n="ux_package_mode"]').textContent(),"Scan QR / copy link");
+  await p.locator('[data-enroll-mode-choice="code"]').click();
+  await p.locator("#enrollNext").click();
+  await p.locator("#pairCodeInput").fill("123");
+  await p.locator("#approvePairCode").click();
+  assert.match(await p.locator("#pairCodeStatus").textContent(),/8-digit pairing code/);
+  await p.locator("#closeEnroll").click();
+  await p.locator("#languageSelect").selectOption("zh-CN");
+  await p.locator('.nav[data-view="settings"]').click();
+  await p.locator('[data-settings-link="system"]').click();
+  assert.equal(await p.locator('[data-settings-group="system"]').isVisible(),true);
+  assert.equal(await p.locator('[data-settings-group="security"]').first().isVisible(),false);
+  await p.locator('[data-settings-link="security"]').click();
+  assert.equal(await p.locator('[data-settings-group="security"]').first().isVisible(),true);
+  // A desktop settings category never stretches unrelated cards into the same row.
+  assert.equal(await p.locator(".settings-grid").evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(" ").length),1);
   await p.reload({waitUntil:"domcontentloaded"});
   await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
   assert.equal(await p.locator("#lockedPanel").isVisible(),false,"Refresh must restore Vault in a valid active tab");

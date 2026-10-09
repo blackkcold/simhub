@@ -9,7 +9,7 @@ public final class NotificationHelper {
             if(nm==null)return;
             String alerts="simhub_alerts";
             nm.createNotificationChannel(new NotificationChannel(alerts,c.getString(R.string.app_name),NotificationManager.IMPORTANCE_DEFAULT));
-            Intent view=new Intent(c,MainActivity.class);
+            Intent view=new Intent(c,HubActivity.class);
             PendingIntent intent=PendingIntent.getActivity(c,2,view,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
             nm.notify(2102,new Notification.Builder(c,alerts)
                 .setSmallIcon(R.drawable.ic_simhub)
@@ -18,5 +18,5 @@ public final class NotificationHelper {
                 .setAutoCancel(true).setContentIntent(intent).build());
         }catch(SecurityException ignored){/* Permission denied: the activity still displays reset status. */}
     }
-    public static Notification relay(Context c){ensureChannels(c);Intent i=new Intent(c,MainActivity.class);PendingIntent pi=PendingIntent.getActivity(c,1,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);return new Notification.Builder(c,CHANNEL).setSmallIcon(R.drawable.ic_simhub).setContentTitle(c.getString(R.string.app_name)).setContentText(c.getString(R.string.relay_running)).setOngoing(true).setContentIntent(pi).build();}
+    public static Notification relay(Context c){ensureChannels(c);Intent i=new Intent(c,HubActivity.class);PendingIntent pi=PendingIntent.getActivity(c,1,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);return new Notification.Builder(c,CHANNEL).setSmallIcon(R.drawable.ic_simhub).setContentTitle(c.getString(R.string.app_name)).setContentText(c.getString(R.string.relay_running)).setOngoing(true).setContentIntent(pi).build();}
 }

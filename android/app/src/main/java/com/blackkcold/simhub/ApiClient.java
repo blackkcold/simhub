@@ -33,11 +33,18 @@ public final class ApiClient {
         return raw(server+"/api/v1/enroll","POST",b,null,null);
     }
     public void syncCycle(){
+        if(cfg.resetPending()){
+            if(!SYNC_BUSY.compareAndSet(false,true))return;
+            try{performPendingReset();}
+            finally{SYNC_BUSY.set(false);}
+            return;
+        }
         if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
         long delay=cfg.nextSyncAllowedAt()-System.currentTimeMillis();
         if(delay>0){SYNC_BUSY.set(false);SyncJobService.scheduleAfter(c,delay);return;}
         int pendingBefore=LocalStore.get(c).pendingEventCount();
         try{
+            if(checkServerReset())return;
             rotateDeviceTokenIfNeeded();LocalStore store=LocalStore.get(c);store.recoverStaleClaims();
             for(String id:store.expireStalePendingSms(48L*3600)){store.finishCommand(id,"failed");store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));}
             flushEvents();int scanned=LocalStore.get(c).pendingEventCount()<200?SmsHistorySync.sync(c,30):0;
@@ -59,6 +66,53 @@ public final class ApiClient {
             cfg.setNextSyncAllowedAt(System.currentTimeMillis()+wait);
             SyncJobService.scheduleAfter(c,wait);
         }finally{SYNC_BUSY.set(false);}
+    }
+    private boolean checkServerReset()throws Exception{
+        try{
+            JSONObject status=request("GET","/api/v1/devices/"+cfg.deviceId()+"/lifecycle",null);
+            if(status.optBoolean("resetRequired",false)){
+                cfg.markResetPending();performPendingReset();return true;
+            }
+            return false;
+        }catch(ApiFailure error){
+            if(error.status==410){
+                EnrollmentManager.reset(c);
+                AppLogger.i(c,"Enrollment","Previously deleted node reset locally");
+                return true;
+            }
+            // Rolling upgrades: earlier relays do not expose lifecycle endpoint.
+            if(error.status==404)return false;
+            throw error;
+        }
+    }
+    private void performPendingReset(){
+        long delay=cfg.nextSyncAllowedAt()-System.currentTimeMillis();
+        if(delay>0){SyncJobService.scheduleAfter(c,delay);return;}
+        try{
+            requireHttps(cfg.server());
+            raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/reset","POST",new JSONObject(),
+                "Device "+cfg.deviceToken(),cfg.deviceId());
+            EnrollmentManager.reset(c);
+            cfg.resetSyncBackoff();
+            AppLogger.i(c,"Enrollment","Server confirmed reset; local data cleared");
+        }catch(ApiFailure failure){
+            if(failure.status==410){
+                EnrollmentManager.reset(c);
+                AppLogger.i(c,"Enrollment","Server already deleted device; local data cleared");
+                return;
+            }
+            retryPendingReset(failure);
+        }catch(Exception failure){
+            retryPendingReset(failure);
+        }
+    }
+    private void retryPendingReset(Exception reason){
+        cfg.recordSyncError("reset_pending");
+        int attempts=cfg.incrementSyncBackoff();
+        long delay=Math.min(15L*60*1000,15000L*(1L<<Math.min(6,attempts-1)));
+        cfg.setNextSyncAllowedAt(System.currentTimeMillis()+delay);
+        SyncJobService.scheduleAfter(c,delay);
+        AppLogger.e(c,"Enrollment","Device unpair awaiting relay confirmation",reason);
     }
     private void rotateDeviceTokenIfNeeded()throws Exception{
         long ts=System.currentTimeMillis()/1000;

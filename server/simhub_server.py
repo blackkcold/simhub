@@ -30,7 +30,7 @@ import passkeys
 import shared_pool
 from typing import Any
 
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.9.0"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -365,6 +365,7 @@ def purge_device_record(con: sqlite3.Connection, device_id: str, ts: int) -> boo
                 "INSERT OR IGNORE INTO device_reset_tombstones(device_id,token_hash,created_at,expires_at) VALUES(?,?,?,?)",
                 (device_id, token_hash, ts, ts + 90 * 86400),
             )
+    shared_pool.member_departure(con,device_id)
     for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history"):
         con.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
     con.execute("DELETE FROM devices WHERE id=?", (device_id,))
@@ -384,7 +385,7 @@ def init_db() -> None:
         _migrate_v8(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         shared_pool.init(con)
-        con.execute("PRAGMA user_version=10")
+        con.execute("PRAGMA user_version=11")
     run_maintenance()
 
 
@@ -904,7 +905,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<10:
+                if version<11:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -1492,6 +1493,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         vals.append(device_id)
         with open_db() as con:
             cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
+            if cur.rowcount and body.get("revoke") is True:
+                shared_pool.member_departure(con,device_id)
         if not cur.rowcount:
             self.send_error_json(404,"device_not_found","Device not found"); return
         audit("device.patch",device_id,"ok",self.ip); signal_stream()
@@ -1519,6 +1522,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not d:
                 self.send_error_json(404,"device_not_found","Device not found");return
             if not d["reset_requested_at"]:
+                shared_pool.member_departure(con,device_id)
                 con.execute("UPDATE devices SET reset_requested_at=?,reset_source='admin' WHERE id=?",(ts,device_id))
                 con.execute("UPDATE commands SET state='rejected',ack_at=? WHERE device_id=? AND state IN ('queued','dispatched')",(ts,device_id))
         audit("device.reset.request",device_id,"ok",self.ip);signal_stream()
@@ -1806,11 +1810,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         try: wait=max(0,min(int(q.get("wait",["0"])[0]),15))
         except ValueError: wait=0
         if wait:
+            # Snapshot the event generation BEFORE querying the durable queue.
+            # A change between query and wait is observed and never loses a wakeup.
+            with _stream_condition:
+                initial=_stream_epoch
             with open_db() as con:
                 pending=con.execute("SELECT 1 FROM commands WHERE device_id=? AND state IN ('queued','dispatched') AND expires_at>? LIMIT 1",(device_id,now())).fetchone()
             if not pending:
                 with _stream_condition:
-                    initial=_stream_epoch
                     _stream_condition.wait_for(lambda:_stream_epoch!=initial,timeout=wait)
         ts=now()
         try: limit=max(1,min(int(q.get("limit",["50"])[0]),200))
@@ -1837,15 +1844,26 @@ class SimHubHandler(BaseHTTPRequestHandler):
         safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate"}
         result={k:(v[:120] if isinstance(v,str) else v) for k,v in result.items()
                 if k in safe_result_keys and isinstance(v,(str,int,float,bool,type(None)))}
-        rank={"queued":0,"dispatched":1,"submitted":2,"sent":3,"delivered":4,"succeeded":4,"failed":4,"rejected":4,"expired":4}
+        # Terminal ACKs are immutable; duplicate ACKs never replace stored result metadata.
+        successors={
+            "queued":{"submitted","sent","delivered","succeeded","failed","rejected","expired"},
+            "dispatched":{"submitted","sent","delivered","succeeded","failed","rejected","expired"},
+            "submitted":{"sent","delivered","failed"},
+            "sent":{"delivered","failed"},
+        }
         with open_db() as con:
             row=con.execute("SELECT state FROM commands WHERE id=? AND device_id=?",(command_id,device_id)).fetchone()
             if not row:
                 self.send_error_json(404,"command_not_found","Command not found"); return
             current=row["state"]
-            if rank.get(state,9) >= rank.get(current,0):
-                con.execute("UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=?",(state,now(),json.dumps(result,separators=(",",":")),command_id,device_id))
-        signal_stream()
+            if state==current:
+                self.send_json(200,{"ok":True,"duplicate":True});return
+            if state not in successors.get(current,set()):
+                self.send_error_json(409,"invalid_transition","Command state transition rejected");return
+            updated=con.execute(
+                "UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=? AND state=?",
+                (state,now(),json.dumps(result,separators=(",",":")),command_id,device_id,current)).rowcount
+        if updated:signal_stream()
         self.send_json(200,{"ok":True})
 
     def get_recent_commands(self,q:dict[str,list[str]]) -> None:

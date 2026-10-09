@@ -28,9 +28,10 @@ from pathlib import Path
 
 import passkeys
 import shared_pool
+import update_bridge
 from typing import Any
 
-APP_VERSION = "0.9.0"
+APP_VERSION = "0.9.1"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -949,6 +950,23 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if path=="/api/v1/version":
             if not self.require_admin(): return
             self.send_json(200,{"version":APP_VERSION,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None}); return
+        if path=="/api/v1/update":
+            if not self.require_admin(): return
+            result={"installed": APP_VERSION, "ignored":update_bridge.ignored(), "agent":False}
+            try:
+                result.update(update_bridge.host("status"))
+                result["agent"]=True
+            except (OSError,ValueError) as err:
+                result["agentError"]=str(err)[:180]
+            try:
+                remote=update_bridge.release()
+                result["latest"]=remote["version"]
+                result["available"]=(update_bridge.version_tuple(remote["version"])>
+                                     update_bridge.version_tuple(APP_VERSION))
+                result["ignoredLatest"]=result["ignored"]==remote["version"]
+            except (OSError,ValueError,KeyError) as err:
+                result["releaseError"]=str(err)[:180]
+            self.send_json(200,result);return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="lifecycle":
             self.get_device_lifecycle(p[3]); return
         if path=="/api/v1/pairings/lookup":
@@ -1036,6 +1054,31 @@ class SimHubHandler(BaseHTTPRequestHandler):
             auth_rate_success(self.ip)
             audit("auth.stepup","","ok",self.ip)
             self.send_json(200,{"ok":True,"elevatedUntil":expiry}); return
+        if path in {"/api/v1/update/apply","/api/v1/update/ignore"}:
+            if not self.require_stepup(): return
+            body=self.read_json()
+            if body is None:return
+            version=body.get("version")
+            if not isinstance(version,str) and version is not None:
+                self.send_error_json(400,"invalid_version","Version must be a string");return
+            try:
+                if path.endswith("/apply"):
+                    if not version or not update_bridge.VERSION.fullmatch(version):
+                        raise ValueError("Specify a valid version")
+                    result=update_bridge.host("apply",version)
+                    if not result.get("ok"):
+                        raise RuntimeError(result.get("error","Update agent refused the request"))
+                else:
+                    update_bridge.set_ignored(version)
+                    result={"ok":True,"ignored":version}
+                audit("system.update."+path.rsplit("/",1)[-1],str(version or ""),
+                      "ok",self.ip)
+                self.send_json(200,result)
+            except (ValueError,OSError,RuntimeError) as err:
+                audit("system.update."+path.rsplit("/",1)[-1],str(version or ""),
+                      "failed",self.ip)
+                self.send_error_json(503,"update_failed",str(err)[:250])
+            return
         if path=="/api/v1/auth/revoke-all":
             if not self.require_stepup(): return
             with open_db() as con:
@@ -1958,14 +2001,16 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 else: _sse_clients.pop(session_key,None)
 
     def get_ota(self) -> None:
-        if not OTA_FILE.exists():
-            self.send_json(200,{"available":False}); return
         try:
-            data=json.loads(OTA_FILE.read_text("utf-8"))
-            if not isinstance(data,dict): raise ValueError()
-            self.send_json(200,{"available":True,**data})
-        except Exception:
-            self.send_error_json(500,"ota_invalid","OTA metadata file is invalid")
+            # Explicit local OTA metadata remains a supported self-hosted override.
+            if OTA_FILE.exists():
+                data=json.loads(OTA_FILE.read_text("utf-8"))
+                if not isinstance(data,dict): raise ValueError("Invalid OTA metadata")
+                self.send_json(200,{"available":True,**data});return
+            self.send_json(200,update_bridge.android_ota())
+        except Exception as error:
+            logging.warning("OTA lookup failed: %s",type(error).__name__)
+            self.send_error_json(503,"ota_unavailable","Update metadata temporarily unavailable")
 
     def serve_static(self,path:str) -> None:
         rel="index.html" if path in ("","/") else path.lstrip("/")

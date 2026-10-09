@@ -41,6 +41,7 @@ public final class StateCollector {
                     .put("lastSmsReceivedAt",cfg.lastSmsReceivedAt())
                     .put("lastSyncSuccessAt",cfg.lastSyncSuccessAt())
                     .put("lastSyncError",cfg.lastSyncError())
+                    .put("smsProviderError",cfg.smsProviderError())
                     .put("nextSyncAllowedAt",cfg.nextSyncAllowedAt()/1000)
                     .put("syncBackoffFailures",cfg.syncBackoffFailures());
 
@@ -120,7 +121,13 @@ public final class StateCollector {
                 o.put("encryptedSimNumbers",new JSONObject().put("eventId",eventId).put("occurredAt",stamp)
                         .put("ciphertext",crypt.encryptEvent(secret,eventId,"device.sim_inventory",stamp,"-1",false)));
             }
-        }catch(Exception ignored){}
+        }catch(SecurityException error){
+            AppLogger.e(c,"StateCollector","Telephony permission denied",error);
+            try{o.put("stateCollectionError","TELEPHONY_PERMISSION_DENIED");}catch(Exception ignored){}
+        }catch(Exception error){
+            AppLogger.e(c,"StateCollector","Partial device state collected",error);
+            try{o.put("stateCollectionError",error.getClass().getSimpleName());}catch(Exception ignored){}
+        }
         return o;
     }
 

@@ -166,11 +166,13 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
         HubRepository.activeSubscriptions(context)
     }
     var selectedSim by remember(key,subscriptions){mutableIntStateOf(
-        thread?.subscription?.takeIf{it>=0}?:subscriptions.firstOrNull()?.first?:-1)}
+        thread?.subscription?.takeIf{old->subscriptions.any{it.first==old}}
+            ?:subscriptions.firstOrNull()?.first?:-1)}
     var dropdown by remember { mutableStateOf(false) }
     var newTo by remember(key){ mutableStateOf(if(new)ui.newRecipient else thread?.address.orEmpty()) }
     val draft=ui.drafts[key].orEmpty()
-    val canSend=state?.smsSend==true&&state.smsRole&&selectedSim>=0
+    val canSend=state?.smsSend==true&&state.smsRole&&
+        subscriptions.any{it.first==selectedSim}
     val listState=rememberLazyListState()
     LaunchedEffect(key){if(history.isNotEmpty())listState.scrollToItem(history.lastIndex)}
     HubCard(modifier){
@@ -244,7 +246,15 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
 }
 @Composable
 private fun SmsBubble(sms:HubSms,controller:HubController){
-    val sent=sms.type!=1
+    val sent=sms.type!=android.provider.Telephony.Sms.MESSAGE_TYPE_INBOX
+    val sendStatus=when(sms.type) {
+        android.provider.Telephony.Sms.MESSAGE_TYPE_SENT -> R.string.hub_sms_sent_not_delivered
+        android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED -> R.string.hub_sms_failed
+        android.provider.Telephony.Sms.MESSAGE_TYPE_QUEUED -> R.string.hub_sms_queued
+        android.provider.Telephony.Sms.MESSAGE_TYPE_OUTBOX -> R.string.hub_sms_sending
+        android.provider.Telephony.Sms.MESSAGE_TYPE_DRAFT -> R.string.hub_sms_draft
+        else -> null
+    }
     val otp=remember(sms.text){OtpParser.parse(sms.text)}
     Row(Modifier.fillMaxWidth(),horizontalArrangement=if(sent)Arrangement.End else Arrangement.Start){
         Column(Modifier.fillMaxWidth(.88f)
@@ -260,9 +270,15 @@ private fun SmsBubble(sms:HubSms,controller:HubController){
                 }
             }
             Spacer(Modifier.height(5.dp))
-            Text(DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT)
-                .format(Date(sms.date)),
-                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){
+                Text(DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT)
+                    .format(Date(sms.date)),
+                    style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                if(sendStatus!=null)Text(stringResource(sendStatus),
+                    style=MaterialTheme.typography.labelSmall,
+                    color=if(sms.type==android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED)
+                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

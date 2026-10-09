@@ -25,6 +25,8 @@ class HubToolsState {
     var logs by mutableStateOf("")
     var diagnostics by mutableStateOf("")
     var ota by mutableStateOf("")
+    var autoCheckUpdates by mutableStateOf(true)
+    var autoDownloadUpdates by mutableStateOf(false)
     var installedAt by mutableStateOf("")
     var language by mutableIntStateOf(0)
     var poolEnabled by mutableStateOf(false)
@@ -177,6 +179,23 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
                     style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked=tools.developer,onCheckedChange=controller::setDeveloperEnabled)
+        }
+        HorizontalDivider(Modifier.padding(vertical=12.dp))
+        Row(verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("自动检查更新","Automatic update checks"))
+                Text(hubLabel("每天检查一次正式版本","Check stable releases daily"),
+                    style=MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked=tools.autoCheckUpdates,onCheckedChange=controller::setAutoCheckUpdates)
+        }
+        Row(verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("自动下载安装","Automatic download & installation"))
+                Text(hubLabel("需要时由 Android 系统确认安装","Android may require approval"),
+                    style=MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked=tools.autoDownloadUpdates,onCheckedChange=controller::setAutoDownloadUpdates)
         }
         HorizontalDivider(Modifier.padding(vertical=12.dp))
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){

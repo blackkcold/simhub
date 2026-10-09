@@ -1740,6 +1740,25 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.security_headers(); self.end_headers(); self.wfile.write(data)
 
 
+def load_deployment_timestamp() -> str:
+    """Pin the date this relay version first started against the persistent data volume."""
+    if DEPLOYED_AT:
+        return DEPLOYED_AT
+    path=DB_PATH.parent / "deployment.json"
+    try:
+        if path.exists():
+            cached=json.loads(path.read_text("utf-8"))
+            if cached.get("version")==APP_VERSION and isinstance(cached.get("deployedAt"),str):
+                return cached["deployedAt"]
+        value=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(SERVER_STARTED_AT))
+        temporary=path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"version":APP_VERSION,"deployedAt":value}),encoding="utf-8")
+        temporary.replace(path)
+        return value
+    except (OSError,ValueError,TypeError):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(SERVER_STARTED_AT))
+
+
 def main() -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]{2,64}", ADMIN_USERNAME):
         raise SystemExit("SIMHUB_ADMIN_USERNAME must contain 2-64 safe characters")
@@ -1756,6 +1775,8 @@ def main() -> None:
         except Exception as exc:
             raise SystemExit("SIMHUB_TOTP_SECRET must be valid Base32") from exc
     init_db()
+    global DEPLOYED_AT
+    DEPLOYED_AT=load_deployment_timestamp()
     threading.Thread(target=maintenance_loop,name="simhub-maintenance",daemon=True).start()
     if SEPARATE_SURFACES and (not MANAGEMENT_ORIGIN.startswith("https://") or not PUBLIC_BASE_URL.startswith("https://") or MANAGEMENT_ORIGIN == PUBLIC_BASE_URL):
         raise SystemExit("Separated origins require distinct HTTPS management and node URLs")

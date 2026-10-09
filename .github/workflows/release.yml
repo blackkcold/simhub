@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.5.2.trigger'
+      - '.github/release/v0.5.3.trigger'
 
 permissions:
   contents: read

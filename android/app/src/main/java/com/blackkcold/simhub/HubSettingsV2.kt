@@ -27,6 +27,9 @@ class HubToolsState {
     var ota by mutableStateOf("")
     var installedAt by mutableStateOf("")
     var language by mutableIntStateOf(0)
+    var poolEnabled by mutableStateOf(false)
+    var poolApproved by mutableStateOf(false)
+    var poolStatus by mutableStateOf("未开启")
 }
 
 @Composable
@@ -139,6 +142,27 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,modifie
 }
 
 @Composable
+private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubController,modifier:Modifier){
+    ToolSection("共享短信池",modifier){
+        Row(verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){
+                Text("允许同一管理池设备共享短信",fontWeight=FontWeight.Medium)
+                Text("默认关闭。开启后需 Web 管理员授权；通信始终使用端到端加密。",
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked=tools.poolEnabled,onCheckedChange=controller::toggleSharing,
+                enabled=state?.enrolled==true)
+        }
+        Spacer(Modifier.height(8.dp))
+        StatePill(tools.poolStatus,tools.poolApproved)
+        Text("首次上传最近 100 条；更多历史按需加载。关闭后清除本机共享缓存，不删除原始短信。",
+            style=MaterialTheme.typography.labelSmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
 private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:HubController,modifier:Modifier){
     ToolSection("高级工具与诊断",modifier){
         Row(verticalAlignment=Alignment.CenterVertically){
@@ -231,6 +255,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 }
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
                     RelayRuntimeCard(state,controller,Modifier.fillMaxWidth())
+                    SharingCard(state,tools,controller,Modifier.fillMaxWidth())
                     DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 }
             }
@@ -240,6 +265,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 PairedNodeCard(state,pairing,ui,controller,Modifier.fillMaxWidth())
                 PermissionsCard(state,controller,Modifier.fillMaxWidth())
                 RelayRuntimeCard(state,controller,Modifier.fillMaxWidth())
+                SharingCard(state,tools,controller,Modifier.fillMaxWidth())
                 DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 PreferencesCard(tools,controller,Modifier.fillMaxWidth())
             }

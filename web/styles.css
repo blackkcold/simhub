@@ -455,9 +455,9 @@ input,select,textarea { min-width:0; min-height:44px; }
   #view-inbox .toolbar input,#view-inbox .toolbar select { min-height:42px;width:100%; }
   /* The inbox *main* is a viewport-sized flex column, so its list grows to occupy
      the actual free space after the header, filters and floating navigation. */
-  main:has(#view-inbox.active) { height:100dvh;max-height:100dvh;display:flex;flex-direction:column;overflow:hidden;padding-bottom:calc(98px + env(safe-area-inset-bottom)); }
-  main:has(#view-inbox.active)>.topbar { flex:0 0 auto; }
-  main:has(#view-inbox.active) #appContent { display:flex;flex:1 1 0;flex-direction:column;min-width:0;min-height:0;overflow:hidden; }
+  main:has(#appContent:not([hidden]) #view-inbox.active) { height:100dvh;max-height:100dvh;display:flex;flex-direction:column;overflow:hidden;padding-bottom:calc(98px + env(safe-area-inset-bottom)); }
+  main:has(#appContent:not([hidden]) #view-inbox.active)>.topbar { flex:0 0 auto; }
+  main:has(#appContent:not([hidden]) #view-inbox.active) #appContent { display:flex;flex:1 1 0;flex-direction:column;min-width:0;min-height:0;overflow:hidden; }
   #view-inbox.active { flex:1 1 0;display:flex;flex-direction:column;min-height:0;overflow:hidden; }
   #view-inbox .toolbar { flex:0 0 auto; }
   #view-inbox .sms-layout { display:flex;flex:1 1 0;min-height:0;height:auto;max-height:none;overflow:hidden; }

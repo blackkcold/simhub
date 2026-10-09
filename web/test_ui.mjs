@@ -36,6 +36,10 @@ try {
       page.on("requestfailed",r=>httpErrors.push(r.failure()?.errorText+" "+r.url()));
       page.on("pageerror",e=>errors.push(e.message));
       await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"networkidle"});
+      if(width===375){
+        const gateOverflow=await page.locator("main").evaluate(el=>getComputedStyle(el).overflowY);
+        assert.notEqual(gateOverflow,"hidden","Locked mobile login must remain vertically scrollable");
+      }
       assert.equal(await page.locator("#username").count(),1);
       assert.equal(await page.locator("#passkeyLoginBtn").count(),1);
       assert.equal(await page.evaluate(()=>typeof window.QRCode),"function","Offline QR renderer must load");

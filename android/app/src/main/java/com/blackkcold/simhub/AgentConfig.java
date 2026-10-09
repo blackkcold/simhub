@@ -38,7 +38,7 @@ public final class AgentConfig {
         return failures;
     }
     public int syncBackoffFailures(){return prefs.getInt("sync_backoff_failures",0);}
-    public void resetSyncBackoff(){prefs.edit().remove("sync_backoff_failures").remove("next_sync_allowed_at").apply();}
+    public void resetSyncBackoff(){prefs.edit().remove("sync_backoff_failures").remove("next_sync_allowed_at").remove("sync_backoff_failures").apply();}
     public long historyDate(){
         if(prefs.contains("history_cursor_date")) return prefs.getLong("history_cursor_date",0L);
         long legacy=prefs.getLong("last_history_sync",0L);

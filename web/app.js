@@ -432,7 +432,7 @@ async function loadLifecycleHistory(){
 function resetEventCache(){
   eventDataGeneration++;
   events=[];decryptedEvents=[];eventIds.clear();
-  lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;
+  lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   activeConversationKey=null;
   $('smsLayout').classList.remove('conversation-open');
 }
@@ -559,7 +559,7 @@ function messageTags(e){
   const inbound=eventIsInbound(e),d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e),
     historic=e.kind==='sms.history'&&!e.payload?.channelId,
     channel=historic?null:nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id),
-    digits=String(channel?.phoneNumber||'').replace(/\\D/g,''),
+    digits=String(channel?.phoneNumber||'').replace(/\D/g,''),
     sim=historic?(getLocale()==='zh-CN'?'历史 SIM · 归属待确认':'Historical SIM · unverified'):
       (channel?.alias||channel?.displayName||channel?.carrierName||'SIM')+(digits.length>=4?' · ••••'+digits.slice(-4):' · '+(getLocale()==='zh-CN'?'号码未知':'number unknown')),
     status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent'));

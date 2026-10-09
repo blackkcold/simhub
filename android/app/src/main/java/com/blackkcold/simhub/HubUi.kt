@@ -189,7 +189,15 @@ fun HubHome(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controller:HubCon
         verticalArrangement=Arrangement.spacedBy(18.dp)){
         item {
             HubCard {
-                val healthy=state?.enrolled==true && state.smsRole && state.smsRead && state.transportError.isBlank()
+                // Paired locally != connected remotely. Require an actual recent
+                // acknowledged sync before describing the Relay as connected.
+                val nowSec=System.currentTimeMillis()/1000
+                val maxAge=if(state?.realtime==true)180L else 3600L
+                val healthy=state?.enrolled==true && state.smsRole && state.smsRead &&
+                    state.smsSend && state.transportError.isBlank() && state.providerError.isBlank() &&
+                    state.lastSync>0 && nowSec>=state.lastSync &&
+                    nowSec-state.lastSync<=maxAge &&
+                    state.state.optString("network")!="OFFLINE"
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
                     horizontalArrangement=Arrangement.SpaceBetween){
                     Text(stringResource(if(healthy)R.string.hub_ready else R.string.hub_attention),

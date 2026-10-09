@@ -1011,15 +1011,15 @@ async function refreshEnrolledDeviceStatus() {
 }
 
 async function approveDevicePairCode(){
-  if(!vaultRaw||!vaultKey)throw Error('请先解锁 Vault');
+  if(!vaultRaw||!vaultKey)throw Error(tr('ux_pair_unlock'));
   const code=$('pairCodeInput').value.trim();
-  if(!/^\d{8}$/.test(code))throw Error('请输入完整的八位配对码');
+  if(!/^\d{8}$/.test(code))throw Error(tr('ux_pair_length'));
   const epoch=securityEpoch;
   const item=await api('/api/v1/pairings/lookup?code='+encodeURIComponent(code));
   if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
   const fingerprint=(await sha256Hex(item.publicKey)).slice(0,12).toUpperCase();
-  $('pairCodeStatus').textContent='待配对设备 '+item.name+' · '+item.model+' · 指纹 '+fingerprint;
-  if(!confirm('确认 Android 手机上显示的设备指纹为 '+fingerprint+'，且设备名称为 '+item.name+'？\n仅在已核对实体设备时继续。'))return;
+  $('pairCodeStatus').textContent=tr('ux_pair_candidate',{name:item.name,model:item.model,fingerprint:fingerprint});
+  if(!confirm(tr('ux_pair_confirm',{fingerprint:fingerprint,name:item.name})))return;
   await ensureStepUp();
   if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
   const nodeRaw=crypto.getRandomValues(new Uint8Array(32));
@@ -1044,7 +1044,7 @@ async function approveDevicePairCode(){
       deviceTokenHash:await sha256Hex(deviceToken),
       completeProofHash:await sha256Hex('simhub-pair-complete-v1|'+item.requestId+'|'+deviceToken)
     }});
-    $('pairCodeStatus').textContent='已授权 '+item.name+'。等待 Android 完成加密确认。';
+    $('pairCodeStatus').textContent=tr('ux_pair_approved',{name:item.name});
     $('pairCodeInput').value='';
     showEnrollStep(3);
     await refreshEnrolledDeviceStatus();

@@ -1,6 +1,14 @@
 const STORE='simhub_locale';
 const dict={
 'zh-CN':{
+"ux_pair_unlock":"请先解锁 Vault",
+"ux_pair_length":"请输入完整的八位配对码",
+"ux_pair_candidate":"待配对设备 {name} · {model} · 指纹 {fingerprint}",
+"ux_pair_confirm":"确认 Android 手机上显示的设备指纹为 {fingerprint}，且设备名称为 {name}？仅在已核对实体设备时继续。",
+"ux_pair_approved":"已授权 {name}。等待 Android 完成加密确认。",
+"ux_node_placeholder":"正在读取已配置节点地址",
+"ux_sim_id_hint":"设备管理、SIM 通道与安全操作统一在此完成",
+
 "ux_my_devices":"我的设备",
 "ux_device_intro":"在这里管理设备、SIM、配对及远程操作。",
 "ux_shared_pool":"共享短信池",
@@ -72,7 +80,7 @@ historical_sim_unverified:'历史 SIM · 归属待确认',choose_channel:'请选
 username:'用户名',login_passkey:'使用通行密钥登录',passkeys:'通行密钥（Passkeys）',passkeys_help:'使用 Touch ID、Windows Hello 或手机通行密钥登录。Passkey 不会解锁本地 Vault。',passkey_label:'通行密钥名称',register_passkey:'添加通行密钥',new_sms:'+ 新建短信',new_sms_hint:'输入收件人并选择 SIM 以发送加密短信。',back_messages:'返回',choose_conversation:'选择会话',choose_conversation_hint:'选择左侧短信，或点击新建短信。',
 
 nav_inbox:'短信',nav_send:'发送短信',nav_devices:'设备',nav_settings:'设置',private_relay:'私有中继',relay_connected:'中继服务器已连接',relay_disconnected:'未连接中继服务器',lock_vault:'锁定 Vault',refresh:'刷新',
-title_inbox:'短信',subtitle_inbox:'端到端加密短信',title_send:'发送短信',subtitle_send:'加密远程发送',title_devices:'设备',subtitle_devices:'SIM 节点与实时状态',title_settings:'设置',subtitle_settings:'节点注册、Vault 与通知',
+title_inbox:'短信',subtitle_inbox:'端到端加密短信',title_send:'发送短信',subtitle_send:'加密远程发送',title_devices:'设备',subtitle_devices:'SIM 节点与实时状态',title_settings:'设置',subtitle_settings:'账户安全、通知与系统更新',
 connect_title:'连接你的私有中继',connect_help:'Admin Token 用于验证浏览器访问权限；Vault Key 始终只保留在本机，不会发送到 Relay。',admin_token:'Admin Token',totp:'TOTP',vault_passphrase:'Vault 密码',connect_unlock:'连接并解锁',create_vault:'创建新 Vault',session_hint:'Admin Token + TOTP 仅用于创建短期 HttpOnly 浏览器会话；根 Token 不会写入 localStorage。',
 search_placeholder:'在本地搜索已解密短信…',all_devices:'全部设备',all_messages:'全部短信',received:'收到',sent:'已发送',failed:'失败',no_messages:'暂无短信。',load_older:'加载更早短信',load_newer:'加载较新短信',add_device:'添加设备',stepup_title:'确认敏感操作',stepup_cancel:'取消',stepup_confirm:'确认',sim_node:'SIM 节点',sim_subscription:'SIM / 卡槽',recipient:'收件人',message:'短信内容',recipient_placeholder:'+86…',message_placeholder:'输入短信内容',queue_sms:'发送加密短信',relay_privacy:'Relay 隐私保护',relay_privacy_help:'收件人和短信正文均在本浏览器内加密；服务器仅保存命令类型、过期时间和密文。',
 enroll_node:'添加 SIM 节点',enroll_help:'创建短期一次性注册包，并为节点生成独立 Node Key。Master Vault Key 不会离开控制端。',node_type:'节点类型',android_node:'Android SIM 节点',modem_node:'Linux / DJI Modem 节点',device_label:'设备名称',device_label_placeholder:'例如：vivo SIM 节点 / DJI 4G 节点',create_enrollment:'创建注册包',copy_link:'复制注册链接',open_android:'在 Android 打开',enroll_warning:'注册完成前请把这份注册包视为密码。它只包含一次性 Enrollment Token 与 Bootstrap Secret，不包含长期 Node Key 或 Master Vault Key。',
@@ -88,6 +96,14 @@ err_passphrase_min:'Vault 密码至少需要 10 个字符。',err_recovery_forma
 enroll_modem_done:'一次性 Modem 注册包已创建，有效期 10 分钟',enroll_android_done:'一次性 Android 注册链接已创建，有效期 10 分钟'
 },
 en:{
+"ux_pair_unlock":"Unlock the Vault first",
+"ux_pair_length":"Enter the complete 8-digit pairing code",
+"ux_pair_candidate":"Pending: {name} · {model} · fingerprint {fingerprint}",
+"ux_pair_confirm":"Does your Android device show fingerprint {fingerprint} and name {name}? Only proceed after verifying the physical device.",
+"ux_pair_approved":"Authorized {name}. Waiting for Android to finish encrypted confirmation.",
+"ux_node_placeholder":"Loading configured node URL",
+"ux_sim_id_hint":"Manage devices, SIM channels and security actions here",
+
 "ux_my_devices":"My devices",
 "ux_device_intro":"Manage devices, SIM channels, enrollment and remote actions here.",
 "ux_shared_pool":"Shared SMS pool",
@@ -159,7 +175,7 @@ historical_sim_unverified:'Historical SIM · unconfirmed',choose_channel:'Choose
 username:'Username',login_passkey:'Sign in with a passkey',passkeys:'Passkeys',passkeys_help:'Sign in with Touch ID, Windows Hello or a phone passkey. Passkeys do not unlock the local Vault.',passkey_label:'Passkey name',register_passkey:'Add passkey',new_sms:'+ New message',new_sms_hint:'Enter a recipient and select a SIM to send an encrypted SMS.',back_messages:'Back',choose_conversation:'Select conversation',choose_conversation_hint:'Choose a message from the list or start a new one.',
 
 nav_inbox:'Inbox',nav_send:'Send SMS',nav_devices:'Devices',nav_settings:'Settings',private_relay:'private relay',relay_connected:'Relay connected',relay_disconnected:'Not connected',lock_vault:'Lock vault',refresh:'Refresh',
-title_inbox:'Inbox',subtitle_inbox:'End-to-end encrypted SMS',title_send:'Send SMS',subtitle_send:'Encrypted remote sending',title_devices:'Devices',subtitle_devices:'SIM nodes and live state',title_settings:'Settings',subtitle_settings:'Enrollment, vault and notifications',
+title_inbox:'Inbox',subtitle_inbox:'End-to-end encrypted SMS',title_send:'Send SMS',subtitle_send:'Encrypted remote sending',title_devices:'Devices',subtitle_devices:'SIM nodes and live state',title_settings:'Settings',subtitle_settings:'Account security, notifications and system updates',
 connect_title:'Connect your private relay',connect_help:'The Admin Token authenticates this browser to your server. The Vault Key never goes to the relay.',admin_token:'Admin Token',totp:'TOTP',vault_passphrase:'Vault passphrase',connect_unlock:'Connect & unlock',create_vault:'Create new vault',session_hint:'Admin Token + TOTP are used only to create a short-lived HttpOnly browser session; the root token is not stored in localStorage.',
 search_placeholder:'Search decrypted SMS locally…',all_devices:'All devices',all_messages:'All messages',received:'Received',sent:'Sent',failed:'Failed',no_messages:'No messages yet.',load_older:'Load older messages',load_newer:'Newer messages',add_device:'Add device',stepup_title:'Confirm sensitive action',stepup_cancel:'Cancel',stepup_confirm:'Confirm',sim_node:'SIM Node',sim_subscription:'SIM / subscription',recipient:'Recipient',message:'Message',recipient_placeholder:'+86…',message_placeholder:'SMS text',queue_sms:'Queue encrypted SMS',relay_privacy:'Relay privacy',relay_privacy_help:'Recipient and SMS body are encrypted in this browser. The server stores only the command type, expiry and ciphertext.',
 enroll_node:'Enroll SIM node',enroll_help:'Create a short-lived enrollment package with an independent Node Key. The Master Vault Key never leaves the controller.',node_type:'Node type',android_node:'Android SIM Node',modem_node:'Linux / DJI Modem Node',device_label:'Device label',device_label_placeholder:'e.g. vivo SIM Node / DJI 4G Node',create_enrollment:'Create enrollment package',copy_link:'Copy link',open_android:'Open on Android',enroll_warning:'Treat this enrollment package like a password until enrollment finishes. It contains only a one-time Enrollment Token and Bootstrap Secret, never the long-term Node Key or Master Vault Key.',

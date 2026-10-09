@@ -216,6 +216,16 @@ try {
   assert.equal(await p.locator("#enrollBtn").isVisible(),true);
   assert.equal(await p.locator("#enrollLink").isVisible(),false);
   await p.locator("#closeEnroll").click();
+  await p.locator("#languageSelect").selectOption("en");
+  await p.locator("#addDeviceBtn").click();
+  assert.equal(await p.locator('[data-i18n="ux_package_mode"]').textContent(),"Scan QR / copy link");
+  await p.locator('[data-enroll-mode-choice="code"]').click();
+  await p.locator("#enrollNext").click();
+  await p.locator("#pairCodeInput").fill("123");
+  await p.locator("#approvePairCode").click();
+  assert.match(await p.locator("#pairCodeStatus").textContent(),/8-digit pairing code/);
+  await p.locator("#closeEnroll").click();
+  await p.locator("#languageSelect").selectOption("zh-CN");
   await p.locator('.nav[data-view="settings"]').click();
   await p.locator('[data-settings-link="system"]').click();
   assert.equal(await p.locator('[data-settings-group="system"]').isVisible(),true);

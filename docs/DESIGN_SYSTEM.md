@@ -39,6 +39,14 @@ If replacing them with real screenshots, capture on test devices with mock messa
 - README 图仅使用虚构或脱敏数据，不展示真实验证码、手机号与设备凭据。
 - 文案由现有国际化资源维护，预览图不是功能测试证明。
 
+### Responsive workspace rules
+
+- The mobile inbox fills the viewport area left after the header, filters and floating bottom navigation; no fixed half-screen max-height.
+- Device cards are short summaries; SIM/channel metadata, sync actions and destructive controls live in the detail dialog.
+- Device enrollment has two modes: QR/copy one-time package, or node URL plus Android eight-digit pairing code and fingerprint verification.
+- Settings use category navigation with a focused single-column content area. All new UI labels are localized in `web/i18n.js`.
+- Mobile dialogs use safe-area-aware viewport sizing; reduced-motion users are respected.
+
 ### Current UI inventory
 
 | Surface | Production behavior | Source |

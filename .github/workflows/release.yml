@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.7.0.trigger'
+      - '.github/release/v0.8.0.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.7.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.8.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -78,6 +78,7 @@ jobs:
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py
+      - run: PYTHONPATH=server python3 server/test_shared_pool.py
       - run: PYTHONPATH=server python3 server/test_migration.py
       - run: PYTHONPATH=server python3 server/test_maintenance.py
       - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
@@ -233,16 +234,15 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Native Android multi-tab UI with foldable-screen adaptive layouts.
+          Self-hosted encrypted SMS sharing, reliable Web pagination and a single adaptive Android workspace.
 
           ## Highlights
-          - Introduce native Material 3 four-tab Overview / Messages / SIM / Settings navigation;
-          - Add scalable vector icons, subtle page and card animations and coherent light/dark surfaces;
-          - Adapt navigation and messaging panes to compact, expanded and fold-hinge window postures;
-          - Bring local SMS conversations, search, OTP copying and per-SIM inline composing into the Android Agent;
-          - Simplify SIM diagnostics, background relay controls, permissions and QR/short-code enrollment;
-          - Preserve existing encrypted device credentials, Java Agent, SMS Provider data and signing identity;
-          - Add foldable layout decision regression tests and document Android limitations.
+          - Add explicit Android SMS-pool opt-in and Vault-admin approval, Node-Key-wrapped AES-256-GCM pool keys, revocation, rotation and encrypted offline caches;
+          - Fix Web inbox card shrinkage and independent scrolling, introduce automatic older-message pagination;
+          - Show per-message date, direction, device and masked SIM source details with honest historical attribution;
+          - Consolidate diagnostics, developer logs, export, OTA, language, permissions and reset into the sole Compose settings surface;
+          - Adapt dashboard, SIM and SMS flows across portrait, landscape and foldable windows without the duplicate legacy Activity;
+          - Validate database migration, authorization, encryption metadata, Android release build and UI regressions before signing.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF

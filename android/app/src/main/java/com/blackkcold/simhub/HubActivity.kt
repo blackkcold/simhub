@@ -338,7 +338,7 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun loadMoreSms(){
-        smsLimit=(smsLimit+50).coerceAtMost(1000)
+        smsLimit=(smsLimit+50).coerceAtMost(2000)
         lifecycleScope.launch{
             try{withContext(Dispatchers.IO){SharedPoolClient(applicationContext).loadOlder()}}
             catch(e:Exception){AppLogger.e(this@HubActivity,"SharedPool","History load failed",e)}

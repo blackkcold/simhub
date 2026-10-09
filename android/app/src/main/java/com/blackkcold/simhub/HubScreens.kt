@@ -7,6 +7,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -47,6 +50,19 @@ fun HubSimScreen(state:HubSnapshot?,ui:HubViewModel,controller:HubController,wid
                 }
             }else if(current!=null){
                 SimDetails(current,ui.simDetail,controller,Modifier.fillMaxWidth()){ui.simDetail=-1}
+            }else if(wide){
+                LazyVerticalGrid(columns=GridCells.Adaptive(290.dp),
+                    horizontalArrangement=Arrangement.spacedBy(12.dp),
+                    verticalArrangement=Arrangement.spacedBy(12.dp),
+                    contentPadding=PaddingValues(bottom=28.dp)){
+                    gridItemsIndexed(sims){index,item->
+                        SimSummary(item,index,false){ui.simDetail=index}
+                    }
+                    item {
+                        OutlinedButton(onClick=controller::openNetworkSettings,
+                            modifier=Modifier.fillMaxWidth()){Text(stringResource(R.string.hub_system_network))}
+                    }
+                }
             }else{
                 LazyColumn(verticalArrangement=Arrangement.spacedBy(12.dp),
                     contentPadding=PaddingValues(bottom=28.dp)){
@@ -134,121 +150,5 @@ private fun SimDetails(item:JSONObject,index:Int,controller:HubController,modifi
         OutlinedButton(onClick=controller::openNetworkSettings,Modifier.fillMaxWidth()){
             Text(stringResource(R.string.hub_system_network))
         }
-    }
-}
-@Composable
-fun HubSettings(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
-                controller:HubController,wide:Boolean){
-    val paired=state?.enrolled==true
-    val scroll=androidx.compose.foundation.rememberScrollState()
-    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal=18.dp,vertical=16.dp),
-        verticalArrangement=Arrangement.spacedBy(16.dp)){
-        if(!paired){
-            HubSectionTitle(stringResource(R.string.hub_setup))
-            HubCard(Modifier.fillMaxWidth()){
-                Text(stringResource(R.string.hub_setup_help),
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(16.dp))
-                Button(onClick=controller::scan,Modifier.fillMaxWidth()){
-                    HubIcon(R.drawable.ic_hub_qr,Modifier.size(18.dp),MaterialTheme.colorScheme.onPrimary)
-                    Spacer(Modifier.width(8.dp));Text(stringResource(R.string.hub_scan))
-                }
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(ui.enrollmentLink,{ui.enrollmentLink=it},
-                    label={Text(stringResource(R.string.hub_paste))},modifier=Modifier.fillMaxWidth(),
-                    singleLine=true)
-                TextButton(onClick={controller.enrollLink(ui.enrollmentLink)},
-                    enabled=ui.enrollmentLink.startsWith("simhub://enroll")){
-                    Text(stringResource(R.string.hub_enroll))
-                }
-                HorizontalDivider(Modifier.padding(vertical=12.dp),color=MaterialTheme.colorScheme.outlineVariant)
-                OutlinedTextField(ui.serverUrl,{ui.serverUrl=it},
-                    label={Text(stringResource(R.string.hub_enter_relay))},
-                    placeholder={Text("https://node.example.com")},
-                    keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Uri),
-                    modifier=Modifier.fillMaxWidth(),singleLine=true)
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(onClick={controller.startPairing(ui.serverUrl)},
-                    enabled=ui.serverUrl.startsWith("https://"),modifier=Modifier.fillMaxWidth()){
-                    Text(stringResource(R.string.hub_generate_code))
-                }
-                AnimatedVisibility(visible=pairing!=null){
-                    Column(Modifier.padding(top=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                        if(pairing!=null){
-                            Text(pairing.code.chunked(4).joinToString(" "),fontSize=28.sp,
-                                fontWeight=FontWeight.Bold,letterSpacing=3.sp)
-                            Text(stringResource(R.string.hub_pair_fingerprint)+" · "+pairing.fingerprint)
-                            Text(if(pairing.waiting)stringResource(R.string.hub_pair_wait)
-                                 else pairing.error.ifBlank{stringResource(R.string.pair_done)},
-                                color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            if(pairing.waiting)LinearProgressIndicator(Modifier.fillMaxWidth())
-                        }
-                    }
-                }
-            }
-        }else{
-            HubSectionTitle(stringResource(R.string.hub_connected_server))
-            HubCard(Modifier.fillMaxWidth()){
-                StatePill(stringResource(R.string.hub_connected),true)
-                Spacer(Modifier.height(12.dp))
-                Text(state?.device.orEmpty(),fontWeight=FontWeight.SemiBold)
-                Text(state?.server.orEmpty(),style=MaterialTheme.typography.bodySmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        HubSectionTitle(stringResource(R.string.hub_permissions))
-        HubCard(Modifier.fillMaxWidth()){
-            InfoRow(stringResource(R.string.hub_sms_role),stringResource(
-                if(state?.smsRole==true)R.string.hub_yes else R.string.hub_no))
-            InfoRow("READ_SMS",stringResource(if(state?.smsRead==true)R.string.hub_yes else R.string.hub_no))
-            InfoRow("SEND_SMS",stringResource(if(state?.smsSend==true)R.string.hub_yes else R.string.hub_no))
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick=controller::requestSmsRole,Modifier.fillMaxWidth()){
-                Text(stringResource(R.string.hub_grant_role))
-            }
-            OutlinedButton(onClick=controller::requestAccess,Modifier.fillMaxWidth()){
-                Text(stringResource(R.string.hub_grant_permissions))
-            }
-        }
-        HubSectionTitle(stringResource(R.string.hub_runtime))
-        HubCard(Modifier.fillMaxWidth()){
-            Row(verticalAlignment=Alignment.CenterVertically){
-                Column(Modifier.weight(1f)){
-                    Text(stringResource(R.string.hub_realtime),fontWeight=FontWeight.SemiBold)
-                    Text(stringResource(R.string.hub_realtime_desc),
-                        style=MaterialTheme.typography.bodySmall,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked=state?.realtime==true,onCheckedChange=controller::setRealtime,enabled=paired)
-            }
-            HorizontalDivider(Modifier.padding(vertical=12.dp))
-            OutlinedButton(onClick={controller.syncHistory(false)},enabled=paired,
-                modifier=Modifier.fillMaxWidth()){
-                Text(stringResource(R.string.hub_sync_recent))
-            }
-            Spacer(Modifier.height(7.dp))
-            OutlinedButton(onClick={controller.syncHistory(true)},enabled=paired,
-                modifier=Modifier.fillMaxWidth()){
-                Text(stringResource(R.string.hub_sync_older))
-            }
-            Text(stringResource(R.string.hub_sync_help),style=MaterialTheme.typography.labelSmall,
-                color=MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        HubSectionTitle(stringResource(R.string.hub_more))
-        HubCard(Modifier.fillMaxWidth()){
-            OutlinedButton(onClick=controller::advanced,modifier=Modifier.fillMaxWidth()){
-                Text(stringResource(R.string.hub_advanced))
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick=controller::openNetworkSettings,modifier=Modifier.fillMaxWidth()){
-                Text(stringResource(R.string.hub_system_network))
-            }
-            Spacer(Modifier.height(10.dp))
-            InfoRow(stringResource(R.string.hub_version),BuildConfig.VERSION_NAME)
-            Text(stringResource(R.string.hub_fold_mode),
-                style=MaterialTheme.typography.labelSmall,
-                color=MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Spacer(Modifier.height(18.dp))
     }
 }

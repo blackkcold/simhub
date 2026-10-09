@@ -805,7 +805,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if method == "GET" and path in {"/healthz", "/readyz"}:
             if ipaddress.ip_address(self.client_address[0]).is_loopback or (DOCKER_GATEWAY_IP and self.client_address[0] == DOCKER_GATEWAY_IP): return True
             self.send_error_json(404,"not_found","Endpoint not available publicly"); return False
-        if not rate_allowed("ip", self.ip, 180):
+        # Distinct budgets prevent static shell reloads / multiple enrolled devices
+        # behind one NAT from exhausting the authentication request budget.
+        bucket = "auth" if path.startswith("/api/v1/auth/") else ("api" if path.startswith("/api/") else "static")
+        budget = 180 if bucket == "auth" else (600 if bucket == "api" else 500)
+        if not rate_allowed("ip:"+bucket, self.ip, budget):
             self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False
         origin = self.headers.get("Origin", "").rstrip("/")
         if origin:

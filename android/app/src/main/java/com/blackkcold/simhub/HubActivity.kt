@@ -34,6 +34,11 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 data class PairingDisplay(val code:String,val fingerprint:String,val waiting:Boolean,val error:String="")
+/** Ephemeral ECDH key stays in process RAM across fold/unfold Activity recreation. */
+private object ActivePairing {
+    @Volatile var session:PairingManager.Session?=null
+    @Volatile var expiresAt:Long=0L
+}
 interface HubController {
     fun refresh()
     fun requestAccess()
@@ -64,6 +69,7 @@ class HubActivity: ComponentActivity(), HubController {
         UiLocale.apply(this)
         window.statusBarColor=android.graphics.Color.TRANSPARENT
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
+        ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         setContent { HubApp(snapshot,loading,pairing,fold,this) }
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -74,7 +80,11 @@ class HubActivity: ComponentActivity(), HubController {
         }
         refresh()
     }
-    override fun onResume(){super.onResume();refresh()}
+    override fun onResume(){
+        super.onResume();refresh()
+        val active=ActivePairing.session
+        if(active!=null && pendingTask==null)pollSession(active)
+    }
     override fun onNewIntent(intent:Intent){
         super.onNewIntent(intent)
         if(intent.action==Intent.ACTION_VIEW && intent.data?.scheme=="simhub") {
@@ -157,23 +167,45 @@ class HubActivity: ComponentActivity(), HubController {
                 pendingTask=lifecycleScope.launch {
                     try{
                         val session=withContext(Dispatchers.IO){PairingManager.start(applicationContext,server)}
+                        ActivePairing.session=session
+                        ActivePairing.expiresAt=System.currentTimeMillis()+300000
                         pairing=PairingDisplay(session.code,session.fingerprint,true)
-                        repeat(72){
-                            delay(4000)
-                            val complete=withContext(Dispatchers.IO){PairingManager.poll(applicationContext,session)}
-                            if(complete){
-                                pairing=PairingDisplay(session.code,session.fingerprint,false)
-                                toast(getString(R.string.pair_done));refresh()
-                                return@launch
-                            }
-                        }
-                        pairing=PairingDisplay(session.code,session.fingerprint,false,getString(R.string.hub_pair_timeout))
+                        pollSession(session)
                     }catch(e:Exception){
+
                         AppLogger.e(this@HubActivity,"Pairing","Code pairing failed",e)
                         pairing=PairingDisplay("","",false,UiErrors.message(this@HubActivity,e))
                     }
                 }
             }.show()
+    }
+    private fun pollSession(session:PairingManager.Session){
+        pendingTask?.cancel()
+        pendingTask=lifecycleScope.launch {
+            try{
+                while(ActivePairing.session===session && System.currentTimeMillis()<ActivePairing.expiresAt){
+                    delay(3500)
+                    val complete=withContext(Dispatchers.IO){PairingManager.poll(applicationContext,session)}
+                    if(complete){
+                        ActivePairing.session=null
+                        pairing=PairingDisplay(session.code,session.fingerprint,false)
+                        toast(getString(R.string.pair_done));refresh()
+                        return@launch
+                    }
+                }
+                if(ActivePairing.session===session){
+                    ActivePairing.session=null
+                    pairing=PairingDisplay(session.code,session.fingerprint,false,getString(R.string.hub_pair_timeout))
+                }
+            }catch(e:kotlinx.coroutines.CancellationException){throw e}
+            catch(e:Exception){
+                AppLogger.e(this@HubActivity,"Pairing","Code pairing interrupted",e)
+                if(ActivePairing.session===session){
+                    pairing=PairingDisplay(session.code,session.fingerprint,false,UiErrors.message(this@HubActivity,e))
+                    // A network failure retains ephemeral credentials until expiry.
+                }
+            }finally { pendingTask=null }
+        }
     }
     override fun setRealtime(value:Boolean){
         try{

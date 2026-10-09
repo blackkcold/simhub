@@ -456,6 +456,55 @@ function resetEventCache(){
   activeConversationKey=null;
   $('smsLayout').classList.remove('conversation-open');
 }
+let updatePolling=null;
+async function refreshUpdateInfo(){
+  const zh=getLocale()==='zh-CN', el=$('updateStatus');
+  if(!el)return;
+  el.textContent=zh?'正在查询版本信息…':'Checking available updates…';
+  let result;
+  try{result=await api('/api/v1/update');}catch(error){el.textContent=error.message;return;}
+  const phase=result.phase||'idle', latest=result.latest||null;
+  const states={queued:'排队中',checking:'检查版本',downloading:'下载中',
+    building:'构建镜像',backup:'备份数据',switching:'切换容器',
+    verifying:'正在验证',complete:'更新成功',rolling_back:'自动回滚中',
+    rolled_back:'已回滚',failed:'更新失败',rollback_failed:'回滚失败',
+    interrupted:'更新中断',idle:'就绪'};
+  const status=states[phase]||phase;
+  const ignored=result.ignoredLatest;
+  const version=latest||'—';
+  el.textContent=(zh?'服务端 ':'Server ')+'v'+(result.installed||'?')+
+      (zh?' · 最新 v':' · Latest v')+version+' · '+status+
+      (ignored?(zh?'（已忽略）':' (ignored)'):'')+
+      (result.error?' · '+result.error:'');
+  $('applyUpdateBtn').hidden=!result.agent||!result.available||ignored||
+    ['queued','checking','downloading','building','backup','switching','verifying','rolling_back'].includes(phase);
+  $('ignoreUpdateBtn').hidden=!latest||!result.available;
+  $('ignoreUpdateBtn').textContent=ignored?(zh?'恢复提醒':'Restore reminders'):(zh?'忽略此版本':'Ignore this version');
+  $('updateAgentHelp').textContent=result.agent?'':(zh?
+    '自动部署未启用：需在宿主机执行 sudo bash scripts/install-updater.sh 并重新创建 simhub 容器。':
+    'Host updater unavailable. Run sudo bash scripts/install-updater.sh and recreate the simhub container.');
+  if(result.releaseError)$('updateAgentHelp').textContent+=' · '+result.releaseError;
+  clearTimeout(updatePolling);
+  if(['queued','checking','downloading','building','backup','switching','verifying','rolling_back'].includes(phase))
+    updatePolling=setTimeout(()=>refreshUpdateInfo().catch(e=>toast(e.message)),3500);
+}
+async function applyServerUpdate(){
+  const status=await api('/api/v1/update');
+  if(!status.agent||!status.available||status.ignoredLatest)throw new Error('No installable update');
+  if(!confirm('将备份数据库、下载并构建 GitHub 正式版本 v'+status.latest+'，短暂重启服务。是否继续？'))return;
+  await ensureStepUp();
+  await api('/api/v1/update/apply',{method:'POST',body:{version:status.latest}});
+  toast('升级任务已提交');await refreshUpdateInfo();
+}
+async function toggleIgnoreUpdate(){
+  const status=await api('/api/v1/update');
+  if(!status.latest)throw new Error('No release found');
+  await ensureStepUp();
+  await api('/api/v1/update/ignore',{method:'POST',
+    body:{version:status.ignoredLatest?null:status.latest}});
+  await refreshUpdateInfo();
+}
+
 async function refreshVersionInfo(){
   const el=$('deploymentInfo');
   if(!el)return;
@@ -958,6 +1007,7 @@ function syncResponsiveConversation(){
   layout.classList.toggle('conversation-open',mobile&&inbox&&!!activeConversationKey);
 }
 function switchView(name){
+  if(name==='settings'&&vaultKey)refreshUpdateInfo().catch(()=>{});
   if(name!=='inbox'){
     // Preserve the selected thread for desktop, but never leave a mobile overlay
     // floating above another section or behind the persistent bottom dock.
@@ -1043,6 +1093,9 @@ function wire(){
   $('deviceList').addEventListener('toggle',e=>{const details=e.target.closest('details[data-device]');if(!details)return;if(details.open)expandedDeviceDetails.add(details.dataset.device);else expandedDeviceDetails.delete(details.dataset.device);},true);
   $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
   $('refreshPoolBtn').onclick=()=>loadPool().catch(e=>toast(e.message));
+  $('checkUpdateBtn').onclick=()=>refreshUpdateInfo().catch(e=>toast(e.message));
+  $('applyUpdateBtn').onclick=()=>applyServerUpdate().catch(e=>toast(e.message));
+  $('ignoreUpdateBtn').onclick=()=>toggleIgnoreUpdate().catch(e=>toast(e.message));
   $('smsPoolMembers').onclick=e=>{const button=e.target.closest('[data-pool-action]');if(!button)return;
     const task=button.dataset.poolAction==='rotate'?rotatePool():
       button.dataset.poolAction==='approve'?grantPoolDevice(button.dataset.id):revokePoolDevice(button.dataset.id);

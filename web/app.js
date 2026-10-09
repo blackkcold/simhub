@@ -239,6 +239,17 @@ function purgeSensitiveUI(){
     if(id==='diagnosticsOutput')el.textContent='';
     else if(!('value' in el))el.replaceChildren();
   }
+  // Never trust the scroll container to contain only authored child nodes.
+  // Keep its pagination shell intact, but erase unexpected injected nodes as well.
+  const inboxRoot=$('inboxList');
+  if(inboxRoot){
+    for(const child of [...inboxRoot.childNodes]){
+      const known=child.nodeType===1 && (
+        ['inboxItems','emptyInbox','loadSentinel'].includes(child.id) ||
+        child.classList?.contains('pager-actions'));
+      if(!known)child.remove();
+    }
+  }
   for(const id of ['deviceFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
     const el=$(id);if(el)el.replaceChildren();
   }

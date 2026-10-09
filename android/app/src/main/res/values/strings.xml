@@ -193,4 +193,5 @@
     <string name="hub_no_service">No cellular service</string>
     <string name="hub_fold_mode">Adaptive screen layout</string>
     <string name="hub_connected_server">Server</string>
+    <string name="hub_code_copied">Copied to clipboard</string>
 </resources>

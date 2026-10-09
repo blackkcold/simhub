@@ -11,6 +11,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ClipDescription
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -86,6 +89,14 @@ class HubActivity: ComponentActivity(), HubController {
     private var pendingTask:Job?=null
     private val refreshHandler=Handler(Looper.getMainLooper())
     private val refreshAfterChange=Runnable { refresh() }
+    private val poolObserver=object:BroadcastReceiver(){
+        override fun onReceive(context:Context?,intent:Intent?){
+            if(intent?.action==SharedPoolClient.ACTION_CACHE_UPDATED){
+                refreshHandler.removeCallbacks(refreshAfterChange)
+                refreshHandler.postDelayed(refreshAfterChange,350)
+            }
+        }
+    }
     private val smsObserver=object:ContentObserver(refreshHandler){
         override fun onChange(selfChange:Boolean){
             refreshHandler.removeCallbacks(refreshAfterChange)
@@ -132,10 +143,14 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun onStart(){
         super.onStart()
+        val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
+        if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
+        else @Suppress("DEPRECATION") registerReceiver(poolObserver,poolFilter)
         try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
         catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
     }
     override fun onStop(){
+        try{unregisterReceiver(poolObserver)}catch(_:Exception){}
         try{contentResolver.unregisterContentObserver(smsObserver)}
         catch(_:Exception){}
         refreshHandler.removeCallbacks(refreshAfterChange)

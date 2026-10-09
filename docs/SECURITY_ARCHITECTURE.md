@@ -71,3 +71,12 @@ The long-term Node Key is **not** present in the enrollment link/package. The Co
 
 The Master Vault Key never leaves the Controller. Enrollment packages remain sensitive until consumed because possession before enrollment allows an attacker to race the legitimate node.
 
+## Operational Vault and key-rotation boundaries
+
+Vault manual/idle locking now purges decrypted DOM, forms, diagnostic views and one-time enrollment materials. Active tabs propagate locking through BroadcastChannel; late asynchronous results are rejected after a lock. An unlocked or compromised origin can still be abused by XSS: this does not replace strict CSP, trusted-device hygiene or MFA.
+
+The Relay retains only Vault-wrapped *retired* Node Keys after a successful rotation, along with active/pending wrapped envelopes. It cannot decrypt traffic. These historical envelopes are needed to read old ciphertext after multiple rotations; do not indiscriminately remove them during backups. When an older Vault or node changes ownership, explicit user-controlled re-enrollment is still required.
+
+Device enrollment credentials are short-lived single-use packages. New Web guidance disables clickable custom-scheme dispatch of credentials; copy/paste into the target Agent instead, then confirm the HTTPS host on the device. Avoid sharing package links with other apps or message forwarding services.
+
+Device command status exposes only whitelisted operational metadata. Auth/API/static rate budgets are separated; Android respects Retry-After and applies exponential network backoff.

@@ -1,3 +1,13 @@
+## v0.5.2 — Vault data hygiene, encrypted-key continuity and device reliability
+
+- Purge SMS text, phone numbers, drafts, diagnostic data, Vault recovery fields and one-time enrollment secrets from the DOM and browser on manual/idle Vault lock; synchronize locks across tabs and reject late async content after locking.
+- Avoid Android custom-scheme intent dispatch for enrollment packages: explicitly copy and paste into the SIM Hub Agent; require the Android user to confirm the HTTPS relay hostname before consuming credentials.
+- Partition anonymous/auth, API and static rate budgets to reduce false throttling for multi-SIM installations sharing one public IP; maintain MFA and per-device rate limits.
+- Archive only Vault-wrapped historical Node Keys at successful rotation and make older ciphertext readable by its original key ID, without storing plaintext on the Relay.
+- Deduplicate previously acknowledged Android SMS uploads using an on-device receipt index; report scanned versus newly queued SMS counts.
+- Expose authenticated, metadata-only recent command status, with a positive allowlist on device ACK results; show progress and fold low-frequency operations into device details.
+- Add cross-tab Vault purge/browser regression, API integration tests, stronger CI security coverage for Android Java, and refreshed PWA cache assets.
+
 ## v0.5.1 — Responsive SMS and navigation hotfix
 
 - Constrain all SMS conversation grid/flex tracks, long senders, previews, device/SIM metadata and message bubbles to their own columns; no clipping behind the conversation panel.

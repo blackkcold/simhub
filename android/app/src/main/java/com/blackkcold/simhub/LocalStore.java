@@ -12,7 +12,7 @@ import java.util.List;
 public final class LocalStore extends SQLiteOpenHelper {
     private static LocalStore INSTANCE;
     public static synchronized LocalStore get(Context c){if(INSTANCE==null)INSTANCE=new LocalStore(c.getApplicationContext());return INSTANCE;}
-    private LocalStore(Context c){super(c,"simhub-agent.db",null,4);}
+    private LocalStore(Context c){super(c,"simhub-agent.db",null,5);}
 
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,occurred_at INTEGER NOT NULL,subscription_id TEXT NOT NULL,has_otp INTEGER NOT NULL,metadata_json TEXT NOT NULL,ciphertext_json TEXT NOT NULL,created_at INTEGER NOT NULL)");
@@ -20,6 +20,12 @@ public final class LocalStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE command_acks(command_id TEXT PRIMARY KEY,state TEXT NOT NULL,result_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE pending_sms(command_id TEXT PRIMARY KEY,provider_uri TEXT NOT NULL,total_parts INTEGER NOT NULL,sent_parts INTEGER NOT NULL DEFAULT 0,delivered_parts INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,event_cipher_json TEXT NOT NULL,sub_id INTEGER NOT NULL,created_at INTEGER NOT NULL)");
         createPartTable(db);
+        createUploadIndex(db);
+    }
+
+    private static void createUploadIndex(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE IF NOT EXISTS uploaded_event_ids(id TEXT PRIMARY KEY,uploaded_at INTEGER NOT NULL)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_uploaded_event_age ON uploaded_event_ids(uploaded_at)");
     }
 
     private static void createPartTable(SQLiteDatabase db){
@@ -34,9 +40,15 @@ public final class LocalStore extends SQLiteOpenHelper {
         }
         if(oldV<3)createPartTable(db);
         if(oldV<4)db.execSQL("ALTER TABLE processed_commands ADD COLUMN command_type TEXT NOT NULL DEFAULT ''");
+        if(oldV<5)createUploadIndex(db);
     }
 
     public synchronized boolean queueEvent(String id,String kind,long occurredAt,String subId,boolean hasOtp,JSONObject metadata,JSONObject cipher){
+        // Retain durable upload receipts so explicit rescans do not reupload
+        // already-delivered provider SMS; unsent events remain separately queued.
+        try(Cursor seen=getReadableDatabase().query("uploaded_event_ids",new String[]{"id"},"id=?",new String[]{id},null,null,null)){
+            if(seen.moveToFirst())return true;
+        }
         ContentValues v=new ContentValues();v.put("id",id);v.put("kind",kind);v.put("occurred_at",occurredAt);v.put("subscription_id",subId==null?"":subId);v.put("has_otp",hasOtp?1:0);v.put("metadata_json",metadata==null?"{}":metadata.toString());v.put("ciphertext_json",cipher.toString());v.put("created_at",System.currentTimeMillis()/1000);
         long x=getWritableDatabase().insertWithOnConflict("events",null,v,SQLiteDatabase.CONFLICT_IGNORE);
         if(x!=-1)return true;
@@ -51,7 +63,20 @@ public final class LocalStore extends SQLiteOpenHelper {
         return out;
     }
 
-    public synchronized void markEventSent(String id){getWritableDatabase().delete("events","id=?",new String[]{id});}
+    public synchronized void markEventSent(String id){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{
+            ContentValues v=new ContentValues();v.put("id",id);v.put("uploaded_at",System.currentTimeMillis()/1000);
+            db.insertWithOnConflict("uploaded_event_ids",null,v,SQLiteDatabase.CONFLICT_IGNORE);
+            // Provider receipts are useful for months, not indefinitely. The
+            // indexed prune bounds offline journal growth on long-running nodes.
+            long cutoff=System.currentTimeMillis()/1000-365L*86400;
+            db.delete("uploaded_event_ids","uploaded_at<?",new String[]{Long.toString(cutoff)});
+            db.delete("events","id=?",new String[]{id});
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+    }
+    public synchronized int uploadedEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM uploaded_event_ids",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events",null)){return c.moveToFirst()?c.getInt(0):0;}}
 
     public synchronized boolean claimCommand(String id,String commandType){
@@ -188,7 +213,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try{
-            db.delete("events",null,null);db.delete("processed_commands",null,null);db.delete("command_acks",null,null);db.delete("sms_part_status",null,null);db.delete("pending_sms",null,null);
+            db.delete("events",null,null);db.delete("uploaded_event_ids",null,null);db.delete("processed_commands",null,null);db.delete("command_acks",null,null);db.delete("sms_part_status",null,null);db.delete("pending_sms",null,null);
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }

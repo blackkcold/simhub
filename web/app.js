@@ -13,7 +13,10 @@ let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
 let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null,diagnosticsDeviceId=null;
+const expandedDeviceDetails=new Set();
 const eventIds=new Set();
+let securityEpoch=0;
+const vaultLockChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('simhub-vault-lock-v1'):null;
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
 
@@ -114,7 +117,7 @@ async function encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid){
   return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
 }
 async function deviceCrypto(deviceId){if(deviceKeyCache.has(deviceId))return deviceKeyCache.get(deviceId);const info=devices.find(x=>x.id===deviceId);let out;if(info&&info.keyId&&info.wrappedKey){const raw=await unwrapNodeKey(info.wrappedKey,info.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);out={raw:raw,key:key,kid:info.keyId,mode:'node'};}else out=await deriveLegacyDevice(deviceId);deviceKeyCache.set(deviceId,out);return out;}
-async function decryptEvent(e){const cipher=e.ciphertext;if(cipher&&cipher.v===1){const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode('simhub-event-v1')},vaultKey,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}if(!cipher||cipher.v!==2)throw new Error('Unsupported ciphertext version');let d=await deviceCrypto(e.deviceId);if(cipher.kid!==d.kid){const info=devices.find(x=>x.id===e.deviceId);if(info&&info.pendingKeyId===cipher.kid&&info.pendingWrappedKey){const raw=await unwrapNodeKey(info.pendingWrappedKey,info.pendingKeyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw:raw,key:key,kid:info.pendingKeyId,mode:'pending-node'};}else{const legacy=await deriveLegacyDevice(e.deviceId);if(cipher.kid!==legacy.kid)throw new Error('Node key mismatch');d=legacy;}}const aad=eventAad(e.deviceId,e.eventId,e.kind,e.occurredAt,e.subscriptionId,e.hasOtp),pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode(aad)},d.key,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}
+async function decryptEvent(e){const cipher=e.ciphertext;if(cipher&&cipher.v===1){const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode('simhub-event-v1')},vaultKey,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}if(!cipher||cipher.v!==2)throw new Error('Unsupported ciphertext version');let d=await deviceCrypto(e.deviceId);if(cipher.kid!==d.kid){const info=devices.find(x=>x.id===e.deviceId);if(info&&info.pendingKeyId===cipher.kid&&info.pendingWrappedKey){const raw=await unwrapNodeKey(info.pendingWrappedKey,info.pendingKeyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw:raw,key:key,kid:info.pendingKeyId,mode:'pending-node'};}else{const hist=(info?.historicalWrappedKeys||[]).find(k=>k.keyId===cipher.kid);if(hist){const raw=await unwrapNodeKey(hist.wrappedKey,hist.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw,key,kid:hist.keyId,mode:'retired-node'};}else{const legacy=await deriveLegacyDevice(e.deviceId);if(cipher.kid!==legacy.kid)throw new Error('Node key mismatch');d=legacy;}}}const aad=eventAad(e.deviceId,e.eventId,e.kind,e.occurredAt,e.subscriptionId,e.hasOtp),pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode(aad)},d.key,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}
 function versionAtLeast(v,target){const a=String(v||'0').split('.').map(Number),b=String(target).split('.').map(Number);for(let i=0;i<Math.max(a.length,b.length);i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x>y;}return true;}
 async function encryptCommand(deviceId,outer,payload){const info=devices.find(x=>x.id===deviceId);if(!versionAtLeast(info&&info.appVersion,'0.1.5')){const iv=crypto.getRandomValues(new Uint8Array(12)),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-command-v1')},vaultKey,enc.encode(JSON.stringify(payload))));return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};}const d=await deviceCrypto(deviceId),iv=crypto.getRandomValues(new Uint8Array(12)),aad=commandAad(deviceId,outer.commandId,outer.type,outer.createdAt,outer.expiresAt,outer.idempotencyKey),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode(aad)},d.key,enc.encode(JSON.stringify(payload))));return {v:2,alg:'A256GCM',kid:d.kid,iv:b64u(iv),ct:b64u(ct)};}
 
@@ -224,7 +227,45 @@ async function removePasskey(id){
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
 function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=false;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
-function lockVault(){phoneOverrides={};clearTabVault();activeConversationKey=null;$('smsLayout').classList.remove('conversation-open');$('conversationMessages').textContent='';$('replyBody').value='';$('replyTo').value='';$('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;clearTimeout(refreshTimer);refreshTimer=null;if(eventSource){eventSource.close();eventSource=null;}$('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;setConnected(false);$('passphrase').value='';toast('Vault locked');}
+function purgeSensitiveUI(){
+  // Hidden DOM is still observable to local browser extensions and scripts.
+  // Wipe all decrypted data and one-time credentials, not merely app arrays.
+  for(const id of ['inboxList','conversationMessages','deviceList','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
+    const el=$(id);if(!el)continue;
+    if('value' in el)el.value='';
+    if(id==='diagnosticsOutput')el.textContent='';
+    else if(!('value' in el))el.replaceChildren();
+  }
+  for(const id of ['deviceFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
+    const el=$(id);if(el)el.replaceChildren();
+  }
+  const link=$('openEnroll');if(link){link.removeAttribute('href');link.hidden=true;}
+  expandedDeviceDetails.clear();
+  const enroll=$('enrollResult');if(enroll)enroll.hidden=true;
+  const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
+  const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
+  const operations=$('commandActivity');if(operations)operations.replaceChildren();
+  const badge=$('otpBadge');if(badge){badge.textContent='';badge.hidden=true;}
+}
+function lockVault(broadcast=true){
+  securityEpoch++;
+  phoneOverrides={};clearTabVault();activeConversationKey=null;diagnosticsDeviceId=null;
+  $('smsLayout').classList.remove('conversation-open');
+  purgeSensitiveUI();
+  $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
+  vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
+  devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
+  initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;
+  clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
+  clearTimeout(refreshTimer);refreshTimer=null;
+  if(eventSource){eventSource.close();eventSource=null;}
+  $('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;
+  $('vaultStatus').textContent=tr('vault_locked');setConnected(false);
+  if(broadcast)try{vaultLockChannel?.postMessage({action:'lock'});}catch{}
+  toast('Vault locked');
+}
+if(vaultLockChannel)vaultLockChannel.onmessage=e=>{if(e.data?.action==='lock'&&vaultKey)lockVault(false);};
+
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,sessionIdleMs-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();try{const s=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE)||'null');if(s){s.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(s));}}catch{}armAutoLock();}
 function enforceAutoLock(){if(!vaultKey)return false;if(Date.now()-lastActivity>=sessionIdleMs){lockVault();return true;}armAutoLock();return false;}
@@ -238,25 +279,32 @@ async function connectAndUnlock(){await establishSession();await unlockVault($('
 async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent=tr('vault_created_hint');toast(tr('vault_created'));}
 
 async function loadDevices(){
-  const d=await api('/api/v1/devices'),next=d.devices||[];
-  const oldKeys=new Map(devices.map(x=>[x.id,[x.keyId,x.wrappedKey,x.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|')]));
-  for(const node of next)if(oldKeys.get(node.id)!==[node.keyId,node.wrappedKey,node.pendingKeyId].map(v=>JSON.stringify(v||'')).join('|'))deviceKeyCache.delete(node.id);
+  const epoch=securityEpoch;
+  const d=await api('/api/v1/devices');if(epoch!==securityEpoch||!vaultKey)return;
+  const next=d.devices||[];
+  const oldKeys=new Map(devices.map(x=>[x.id,[x.keyId,x.wrappedKey,x.pendingKeyId,x.historicalWrappedKeys].map(v=>JSON.stringify(v||'')).join('|')]));
+  for(const node of next)if(oldKeys.get(node.id)!==[node.keyId,node.wrappedKey,node.pendingKeyId,node.historicalWrappedKeys].map(v=>JSON.stringify(v||'')).join('|'))deviceKeyCache.delete(node.id);
   devices=next;
   // Decrypt SIM numbers locally; the Relay only stores an opaque Node-Key envelope.
   for(const d of devices){
+    if(epoch!==securityEpoch||!vaultKey)return;
     const n=d.state?.encryptedSimNumbers;
     if(!n||!vaultKey)continue;
     try{
       const event={deviceId:d.id,eventId:n.eventId,kind:'device.sim_inventory',occurredAt:n.occurredAt,subscriptionId:'-1',hasOtp:false,ciphertext:n.ciphertext};
       const clear=await decryptEvent(event);
+      if(epoch!==securityEpoch||!vaultKey)return;
       d.state._phoneNumbers=Array.isArray(clear.numbers)?clear.numbers:[];
     }catch(err){console.warn('SIM number inventory unavailable',d.id,err.name);}
   }
+  if(epoch!==securityEpoch||!vaultKey)return;
   renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();
 }
 async function ingestEvents(batch,notify=true){
+  const epoch=securityEpoch;
   let changed=false;
   for(const e of batch){
+    if(epoch!==securityEpoch||!vaultKey)return false;
     lastSeq=Math.max(lastSeq,e.seq||0);
     const id=e.deviceId+':'+e.eventId;
     if(eventIds.has(id))continue;
@@ -265,47 +313,55 @@ async function ingestEvents(batch,notify=true){
     events.push(e);eventIds.add(id);changed=true;
     try{
       const payload=await decryptEvent(e),row=Object.assign({},e,{payload});
+      if(epoch!==securityEpoch||!vaultKey)return false;
       decryptedEvents.push(row);if(notify)maybeNotify(row);
-    }catch(err){decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}
+    }catch(err){if(epoch!==securityEpoch||!vaultKey)return false;decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}
   }
   return changed;
 }
 async function loadEvents(){
   if(!vaultKey)return;
+  const epoch=securityEpoch;
   if(!initialEventsLoaded){
-    const head=await api('/api/v1/events?latest=1&limit=1');
+    const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&limit=30');
+    const first=await api('/api/v1/events?order=occurred&limit=30');if(epoch!==securityEpoch||!vaultKey)return;
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
+    if(epoch!==securityEpoch||!vaultKey)return;
     initialEventsLoaded=true;renderInbox();return;
   }
   let changed=false,loops=0;
   while(loops++<3){
-    const r=await api('/api/v1/events?since='+lastSeq+'&limit=100'),batch=r.events||[];
+    const r=await api('/api/v1/events?since='+lastSeq+'&limit=100');if(epoch!==securityEpoch||!vaultKey)return;
+    const batch=r.events||[];
     if(!batch.length)break;
     changed=await ingestEvents(batch)||changed;
     if(batch.length<100)break;
   }
-  if(changed)renderInbox();
+  if(changed&&epoch===securityEpoch&&vaultKey)renderInbox();
 }
 async function loadOlder(){
   if(!vaultKey)return;
+  const epoch=securityEpoch;
   const count=buildThreads(filteredEvents()).length;
   if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
   if(!historyHasMore||!olderCursor)return;
   const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
+  if(epoch!==securityEpoch||!vaultKey)return;
   olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
   historyHasMore=!!r.hasMore;
   await ingestEvents(r.events||[],false);
+  if(epoch!==securityEpoch||!vaultKey)return;
   if(buildThreads(filteredEvents()).length>visibleOffset+30)visibleOffset+=30;
   renderInbox();
 }
 let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
-  refreshing=(async()=>{try{await loadDevices();await loadEvents();setConnected(true);}catch(e){setConnected(false);throw e;}finally{refreshing=null;}})();
+  const epoch=securityEpoch;
+  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
@@ -329,6 +385,26 @@ function messageChannelLabel(e){
   return channel?channelTitle(channel):id;
 }
 function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(channelTitle(ch))+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">'+escapeHtml(tr('no_active_channel'))+'</option>';}
+function renderCommandActivity(commands){
+  const box=$('commandActivity');if(!box||!vaultKey)return;
+  const zh=getLocale()==='zh-CN';
+  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation'};
+  const statuses={queued:zh?'已排队':'Queued',dispatched:zh?'已下发':'Dispatched',submitted:zh?'已提交运营商':'Submitted',sent:zh?'已发送':'Sent',delivered:zh?'已送达':'Delivered',succeeded:zh?'节点已执行':'Executed',failed:zh?'失败':'Failed',rejected:zh?'已拒绝':'Rejected',expired:zh?'已过期':'Expired'};
+  box.innerHTML=commands.length?commands.map(c=>{
+    const detail=c.result||{},status=statuses[c.state]||c.state||'—';
+    const progress=c.type.startsWith('sms.sync_')&&c.state==='succeeded'
+      ?' · '+(zh?'扫描':'Scanned')+' '+escapeHtml(detail.scanned??'—')+', '+(zh?'新排队':'New queued')+' '+escapeHtml(detail.queued??'—'):'';
+    const reason=detail.reason?' · '+escapeHtml(detail.reason):'';
+    return '<div class="command-item"><span class="command-label">'+escapeHtml(types[c.type]||c.type)+'<small>'+escapeHtml(deviceName(c.deviceId))+' · '+fmtTime(c.createdAt)+'</small></span><span class="command-status">'+escapeHtml(status)+progress+reason+'</span></div>';
+  }).join(''):'<p class="hint">'+(zh?'暂无设备操作。':'No recent device operations.')+'</p>';
+}
+async function loadCommandActivity(){
+  if(!vaultKey)return;
+  const epoch=securityEpoch;
+  const result=await api('/api/v1/commands/recent?limit=20');
+  if(epoch!==securityEpoch||!vaultKey)return;
+  renderCommandActivity(result.commands||[]);
+}
 function renderDevices(){
   const box=$('deviceList');
   if(!devices.length){box.innerHTML='<div class="empty card">'+escapeHtml(tr('no_devices'))+'</div>';return;}
@@ -344,7 +420,8 @@ function renderDevices(){
     return '<article class="card device device-card"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+'</p></div><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(tr(stateKey))+'</span></div>'+
       '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':escapeHtml(s.batteryPct)+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':escapeHtml(s.pendingEvents))+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+
       '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.charging===true?'充电中':s.charging===false?'未充电':'—')+'</b><span>充电状态</span></div><div class="stat"><b>'+escapeHtml(s.network==='WIFI'?'已连接 Wi-Fi':s.network==='CELLULAR'?'使用移动数据':s.network||'—')+'</b><span>联网状态</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+'</b><span>蜂窝数据接管</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
-      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.phoneNumber||tr('phone_unknown'))+' · '+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small><button class="ghost mini" data-action="edit-sim" data-id="'+escapeHtml(d.id)+'" data-channel="'+escapeHtml(x.id)+'" title="号码仅在当前浏览器加密保存">'+escapeHtml(tr('set_sim_phone'))+'</button></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><div class="row wrap">'+buttons+'</div></article>';
+      '<p class="hint device-retry-status">'+(s.nextSyncAllowedAt&&s.nextSyncAllowedAt>Math.floor(Date.now()/1000)?(getLocale()==='zh-CN'?'网络重试：':'Next retry: ')+fmtTime(s.nextSyncAllowedAt)+' · '+(getLocale()==='zh-CN'?'失败次数 ':'Failures ')+escapeHtml(s.syncBackoffFailures||0):'')+'</p>'+
+      '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.phoneNumber||tr('phone_unknown'))+' · '+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small><button class="ghost mini" data-action="edit-sim" data-id="'+escapeHtml(d.id)+'" data-channel="'+escapeHtml(x.id)+'" title="号码仅在当前浏览器加密保存">'+escapeHtml(tr('set_sim_phone'))+'</button></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><details class="device-actions" data-device="'+escapeHtml(d.id)+'"'+(expandedDeviceDetails.has(d.id)?' open':'')+'><summary>'+(getLocale()==='zh-CN'?'更多操作 · 同步 / 诊断 / 安全':'More actions · Sync / Diagnostics / Security')+'</summary><div class="row wrap">'+buttons+'</div></details></article>';
   }).join('');
 }
 function collapseMessageEvents(source){
@@ -511,20 +588,26 @@ async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'||typ
 async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
 async function createEnrollment(){
   if(!vaultRaw)throw new Error('Vault must be unlocked.');
+  const epoch=securityEpoch;
   await ensureStepUp();
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked while creating enrollment');
   const type=$('enrollType').value==='modem'?'modem':'android',name=$('enrollName').value.trim()||(type==='modem'?'DJI / Modem SIM Node':'Android SIM Node');
   const nodeRaw=crypto.getRandomValues(new Uint8Array(32)),bootstrapRaw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(nodeRaw);
   let value='';
   try{
     const wrapped=await wrapNodeKey(nodeRaw,kid),bootstrapEnvelope=await encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid),bootstrap=b64u(bootstrapRaw),bootstrapHash=b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',bootstrapRaw)));
     const capabilities=type==='modem'?['sms.receive','sms.send','sms.history','signal.basic','signal.radio']:['sms.receive','sms.send','sms.history','signal.basic','dual-sim'];
-    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope,bootstrapHash:bootstrapHash}}),server=r.server||location.origin;
+    const r=await api('/api/v1/enrollments',{method:'POST',body:{ttlSeconds:600,nodeType:type,capabilities:capabilities,keyId:kid,wrappedKey:wrapped,bootstrapEnvelope:bootstrapEnvelope,bootstrapHash:bootstrapHash}});
+    if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked while creating enrollment');
+    const server=r.server||location.origin;
     if(type==='modem'){
       value=JSON.stringify({version:4,server:server,token:r.token,bootstrap:bootstrap,name:name,nodeType:'modem'},null,2);
       $('openEnroll').hidden=true;
     }else{
       value='simhub://enroll?v=4&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&bootstrap='+encodeURIComponent(bootstrap)+'&name='+encodeURIComponent(name);
-      $('openEnroll').href=value;$('openEnroll').hidden=false;
+      // Never hand bootstrap credentials to another app through a custom-Scheme
+      // intent chooser: copy and paste the one-time package INSIDE the Agent.
+      $('openEnroll').removeAttribute('href');$('openEnroll').hidden=true;
     }
     $('enrollLink').value=value;$('enrollResult').hidden=false;
     toast(tr(type==='modem'?'enroll_modem_done':'enroll_android_done'));
@@ -537,22 +620,26 @@ async function copy(text,msg){await navigator.clipboard.writeText(text);toast(ms
 function updateCharCount(){const value=$('sendBody').value;$('smsCount').textContent=tr('chars_parts',{chars:value.length,parts:countSmsSegments(value)});}
 function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
 async function refreshDiagnostics(){
-  if(!diagnosticsDeviceId)return;
+  if(!diagnosticsDeviceId||!vaultKey)return;
+  const epoch=securityEpoch;
   const pane=$('diagnosticsOutput');pane.textContent='正在获取最近诊断结果…';
   try{
     const path='/api/v1/events?order=occurred&kind=device.diagnostics&limit=20&device='+encodeURIComponent(diagnosticsDeviceId);
     const result=await api(path),records=[];
+    if(epoch!==securityEpoch||!vaultKey)return;
     for(const e of result.events||[]){
+      if(epoch!==securityEpoch||!vaultKey)return;
       try{
         const payload=await decryptEvent(e);
+        if(epoch!==securityEpoch||!vaultKey)return;
         // Never render the encrypted SIM inventory or any secret envelopes in support UI.
         const sanitized={...payload};
         delete sanitized.encryptedSimNumbers;
         records.push({time:new Date(e.occurredAt*1000).toLocaleString(),requestId:payload.requestId||null,diagnostics:sanitized});
       }catch(err){records.push({time:e.occurredAt,error:'无法解密诊断结果'});}
     }
-    pane.textContent=records.length?JSON.stringify(records,null,2):'暂无诊断记录。点击设备上的“健康检查”后，再刷新结果。';
-  }catch(e){pane.textContent='诊断读取失败：'+e.message;}
+    if(epoch===securityEpoch&&vaultKey)pane.textContent=records.length?JSON.stringify(records,null,2):'暂无诊断记录。点击设备上的“健康检查”后，再刷新结果。';
+  }catch(e){if(epoch===securityEpoch&&vaultKey)pane.textContent='诊断读取失败：'+e.message;}
 }
 async function openDiagnostics(id){
   diagnosticsDeviceId=id;
@@ -649,6 +736,8 @@ function wire(){
   $('diagnosticsClose').onclick=()=>$('diagnosticsDialog').close();
   $('diagnosticsRefresh').onclick=()=>refreshDiagnostics().catch(e=>toast(e.message));
   $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
+  $('deviceList').addEventListener('toggle',e=>{const details=e.target.closest('details[data-device]');if(!details)return;if(details.open)expandedDeviceDetails.add(details.dataset.device);else expandedDeviceDetails.delete(details.dataset.device);},true);
+  $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
   $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
   relocalizeDynamic();

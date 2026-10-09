@@ -91,4 +91,7 @@
     <string name="err_invalid_body">The SMS content is empty or too long.</string>
     <string name="err_sms_provider">Unable to save the outgoing SMS to Android.</string>
     <string name="err_not_enrolled">This SIM node has not been enrolled yet.</string>
+    <string name="enrollment_confirm_title">Confirm SIM Hub pairing</string>
+    <string name="enrollment_confirm_message">Pair this phone with %1$s? Only continue if you recognize and control this HTTPS relay. Your device will accept encrypted remote SMS commands from this server.</string>
+    <string name="enrollment_confirm_action">Pair device</string>
 </resources>

@@ -185,9 +185,46 @@ try {
   await p.reload({waitUntil:"domcontentloaded"});
   await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
   assert.equal(await p.locator("#lockedPanel").isVisible(),false,"Refresh must restore Vault in a valid active tab");
-  await p.locator("#lockBtn").click();
+  const sibling=await c.newPage();
+  await sibling.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
+  await sibling.locator("#passphrase").fill("session-resume-test-passphrase");
+  await sibling.locator("#unlockBtn").click();
+  await sibling.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
+  // Use synthetic secrets only: test that hidden DOM, fields, links and even
+  // diagnostic dialogs are destroyed when locking one of two active tabs.
+  await p.evaluate(()=>{
+    document.getElementById("inboxList").innerHTML='<div>PRIVATE_SMS_TEST_MARKER</div>';
+    document.getElementById("deviceList").innerHTML='<div>PRIVATE_SIM_TEST_MARKER</div>';
+    document.getElementById("conversationMessages").textContent='PRIVATE_THREAD_TEST_MARKER';
+    document.getElementById("sendBody").value="PRIVATE_DRAFT_TEST_MARKER";
+    document.getElementById("replyBody").value="PRIVATE_REPLY_TEST_MARKER";
+    document.getElementById("recoveryKey").value="PRIVATE_KEY_TEST_MARKER";
+    document.getElementById("enrollLink").value="PRIVATE_BOOTSTRAP_TEST_MARKER";
+    document.getElementById("openEnroll").href="simhub://enroll?token=PRIVATE_LINK_TEST_MARKER";
+    document.getElementById("enrollResult").hidden=false;
+    document.getElementById("diagnosticsDialog").showModal();
+    document.getElementById("diagnosticsOutput").textContent="PRIVATE_DIAG_TEST_MARKER";
+  });
+  // Programmatic click models the idle-expiry path even while a modal is open:
+  // a pointer click cannot reach controls behind an active <dialog>.
+  await p.evaluate(()=>document.getElementById("lockBtn").click());
+  const leak=await p.evaluate(()=>{
+    const ids=['inboxList','deviceList','conversationMessages','diagnosticsOutput','enrollLink','sendBody','replyBody','recoveryKey'];
+    return {fields:ids.map(id=>{const el=document.getElementById(id);return {id,content:el.value??el.textContent??'',html:el.innerHTML}}),
+      link:document.getElementById("openEnroll").getAttribute('href'),
+      dialog:document.getElementById("diagnosticsDialog").open,
+      appHidden:document.getElementById("appContent").hidden,
+      sessionSnapshot:sessionStorage.getItem("simhub_session_vault_v1")};
+  });
+  assert.ok(leak.appHidden,"Locked Vault must hide app");
+  assert.equal(leak.link,null,"Pairing href must be destroyed");
+  assert.equal(leak.dialog,false,"Sensitive diagnostics dialog must close");
+  assert.equal(leak.sessionSnapshot,null,"Local tab recovery must be invalidated");
+  assert.ok(leak.fields.every(f=>!f.content&&!f.html),`Sensitive DOM not purged: ${JSON.stringify(leak.fields)}`);
+  await sibling.waitForFunction(()=>document.getElementById("appContent").hidden,null,{timeout:12000});
   await p.reload({waitUntil:"domcontentloaded"});
   assert.equal(await p.locator("#appContent").isVisible(),false,"Manual lock must invalidate tab recovery");
+  await sibling.close();
   await c.close();
   console.log("PASS: UI breakpoints, light/dark, dialog spacing and SMS new-compose");
 } finally {

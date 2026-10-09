@@ -29,7 +29,7 @@ from pathlib import Path
 import passkeys
 from typing import Any
 
-APP_VERSION = "0.5.1"
+APP_VERSION = "0.5.2"
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -560,7 +560,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsReceivePermission","smsSendPermission","smsOperational","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsReceivePermission","smsSendPermission","smsOperational","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -805,7 +805,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if method == "GET" and path in {"/healthz", "/readyz"}:
             if ipaddress.ip_address(self.client_address[0]).is_loopback or (DOCKER_GATEWAY_IP and self.client_address[0] == DOCKER_GATEWAY_IP): return True
             self.send_error_json(404,"not_found","Endpoint not available publicly"); return False
-        if not rate_allowed("ip", self.ip, 180):
+        # Distinct budgets prevent static shell reloads / multiple enrolled devices
+        # behind one NAT from exhausting the authentication request budget.
+        bucket = "auth" if path.startswith("/api/v1/auth/") else ("api" if path.startswith("/api/") else "static")
+        budget = 180 if bucket == "auth" else (600 if bucket == "api" else 500)
+        if not rate_allowed("ip:"+bucket, self.ip, budget):
             self.send_error_json(429, "rate_limited", "Request rate exceeded"); return False
         origin = self.headers.get("Origin", "").rstrip("/")
         if origin:
@@ -890,6 +894,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if path=="/api/v1/audit":
             if not self.require_admin(): return
             self.get_audit(q); return
+        if path=="/api/v1/commands/recent":
+            if not self.require_admin(): return
+            self.get_recent_commands(q); return
         if path=="/api/v1/metrics":
             if not self.require_admin(): return
             self.get_metrics(); return
@@ -1194,6 +1201,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         ts=now()
         with open_db() as con:
             rows=con.execute("SELECT d.*,s.state_json,s.updated_at AS state_updated_at FROM devices d LEFT JOIN device_state s ON s.device_id=d.id ORDER BY d.created_at DESC").fetchall()
+        # No plaintext keys or key material are stored server-side. Read-only
+        # Vault-wrapped envelopes permit offline decryption of pre-rotation SMS.
+        history_by_device:dict[str,list[sqlite3.Row]]={}
+        with open_db() as con:
+            history=con.execute("SELECT device_id,key_id,wrapped_key_json FROM device_key_history ORDER BY archived_at DESC").fetchall()
+        for key in history:
+            old=history_by_device.setdefault(key["device_id"],[])
+            if len(old)<64: old.append(key)
         out=[]
         for r in rows:
             last=r["last_seen_at"] or 0
@@ -1204,6 +1219,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
                 "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),
                 "state":safe_json_loads(r["state_json"],{}) if r["state_json"] else None,
+                "historicalWrappedKeys": [
+                    {"keyId": k["key_id"], "wrappedKey": safe_json_loads(k["wrapped_key_json"], {})}
+                    for k in history_by_device.get(r["id"], [])
+                ],
             })
         self.send_json(200,{"devices":out,"offlineAfterSeconds":OFFLINE_AFTER})
 
@@ -1390,6 +1409,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
             con.execute("INSERT INTO device_state(device_id,state_json,updated_at) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET state_json=excluded.state_json,updated_at=excluded.updated_at",(device_id,raw,ts))
             row=con.execute("SELECT pending_key_id,pending_wrapped_key_json FROM devices WHERE id=?",(device_id,)).fetchone()
             if row and active_key and row["pending_key_id"]==active_key:
+                current=con.execute("SELECT key_id,wrapped_key_json FROM devices WHERE id=?",(device_id,)).fetchone()
+                if current and current["key_id"] and current["key_id"]!=active_key and validate_cipher(safe_json_loads(current["wrapped_key_json"],{})):
+                    con.execute("INSERT OR IGNORE INTO device_key_history(device_id,key_id,wrapped_key_json,archived_at) VALUES(?,?,?,?)",
+                                (device_id,current["key_id"],current["wrapped_key_json"],ts))
                 con.execute(
                     "UPDATE devices SET last_seen_at=?,node_type=?,capabilities_json=?,key_id=pending_key_id,wrapped_key_json=pending_wrapped_key_json,pending_key_id='',pending_wrapped_key_json='{}' WHERE id=?",
                     (ts,node_type,json.dumps(capabilities,separators=(",",":")),device_id),
@@ -1489,7 +1512,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(400,"invalid_state","Invalid command state"); return
         result=body.get("result",{})
         if not isinstance(result,dict): result={}
-        result={k:v for k,v in result.items() if k.lower() not in {"body","text","otp","code","recipient","sender","number","phone"} and isinstance(v,(str,int,float,bool,type(None)))}
+        # Positive allowlist: a compromised node must not smuggle SMS text into
+        # command status/audit metadata via arbitrary result keys.
+        safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate"}
+        result={k:(v[:120] if isinstance(v,str) else v) for k,v in result.items()
+                if k in safe_result_keys and isinstance(v,(str,int,float,bool,type(None)))}
         rank={"queued":0,"dispatched":1,"submitted":2,"sent":3,"delivered":4,"succeeded":4,"failed":4,"rejected":4,"expired":4}
         with open_db() as con:
             row=con.execute("SELECT state FROM commands WHERE id=? AND device_id=?",(command_id,device_id)).fetchone()
@@ -1500,6 +1527,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 con.execute("UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=?",(state,now(),json.dumps(result,separators=(",",":")),command_id,device_id))
         signal_stream()
         self.send_json(200,{"ok":True})
+
+    def get_recent_commands(self,q:dict[str,list[str]]) -> None:
+        """Safe controller progress read: state/result metadata, never ciphertext."""
+        try: limit=max(1,min(int(q.get("limit",["20"])[0]),50))
+        except ValueError: limit=20
+        with open_db() as con:
+            rows=con.execute("SELECT id,device_id,type,created_at,expires_at,ack_at,state,result_json FROM commands ORDER BY seq DESC LIMIT ?",(limit,)).fetchall()
+        self.send_json(200,{"commands":[{"commandId":r["id"],"deviceId":r["device_id"],"type":r["type"],"createdAt":r["created_at"],"expiresAt":r["expires_at"],"ackAt":r["ack_at"],"state":r["state"],"result":safe_json_loads(r["result_json"],{})} for r in rows]})
 
     def get_audit(self,q:dict[str,list[str]]) -> None:
         try: limit=max(1,min(int(q.get("limit",["200"])[0]),1000))

@@ -152,3 +152,15 @@ CREATE TABLE IF NOT EXISTS passkey_challenges(
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_passkey_challenges_expiry ON passkey_challenges(expires_at);
+
+-- Vault-wrapped historical Node Keys (Relay cannot decrypt any key).
+-- Preserve old ciphertext readability when the node completes a key rotation.
+CREATE TABLE IF NOT EXISTS device_key_history(
+  device_id TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  wrapped_key_json TEXT NOT NULL,
+  archived_at INTEGER NOT NULL,
+  PRIMARY KEY(device_id,key_id),
+  FOREIGN KEY(device_id) REFERENCES devices(id)
+);
+CREATE INDEX IF NOT EXISTS idx_key_history_recent ON device_key_history(device_id,archived_at DESC);

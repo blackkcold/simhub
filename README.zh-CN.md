@@ -47,6 +47,8 @@
 | **隐私与登录** | Node Key 端到端加密、用户名 / TOTP / Passkey、Vault 活动会话刷新恢复 |
 | **离线恢复** | 本地队列、断网后重试、常驻中继、后台任务恢复 |
 
+Android 矢量图标原始 SVG 位于 [design/icons](design/icons)，APK 使用同路径的 Android VectorDrawable，并在 CI 中校验一致性。
+
 ## 工作原理
 
 ```mermaid

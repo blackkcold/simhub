@@ -1,6 +1,6 @@
 services:
   simhub:
-    image: simhub-relay:${SIMHUB_IMAGE_TAG:-local}
+    image: ${SIMHUB_IMAGE_REF:-simhub-relay:${SIMHUB_IMAGE_TAG:-local}}
     build:
       context: .
       dockerfile: server/Dockerfile

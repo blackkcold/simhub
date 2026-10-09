@@ -114,6 +114,10 @@ def host(action, version=None):
         raise ValueError("Unsupported updater action")
     if version is not None and not VERSION.fullmatch(version):
         raise ValueError("Invalid target version")
+    if action == "apply":
+        status = host("status")
+        if not status.get("ok") or status.get("mode") != "rootless-verified":
+            raise PermissionError("Privileged/legacy updater is forbidden; install the rootless verified updater")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
         conn.settimeout(12 if action == "check" else 3)
         conn.connect(SOCKET)

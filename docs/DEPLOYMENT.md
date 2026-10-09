@@ -55,44 +55,37 @@ python3 scripts/setup.py --upgrade --admin-domain admin.example.com --node-domai
 
 Add `--mode external` when applicable. This non-destructive upgrade applies to existing dual-host installs; earlier single-host deployments require an explicit DNS/proxy migration plan. After Relay/PWA is updated, install the [latest signed Android APK](https://github.com/blackkcold/simhub/releases/latest). Verify matching version and signing certificate before installation. For legacy releases, consult [migration guidance](UPGRADE_0.4_TO_0.5.md).
 
-## v0.9.1: GitHub Release self-update (Docker compatible)
+## v0.11.0: verified, rootless Docker updates
 
-The Relay remains read-only and non-root, without a Docker daemon socket.
-An independent, host-only `simhub-updater.service` executes the narrowly
-specified actions after verifying the official stable GitHub Release's
-`update-manifest.json` and source ZIP SHA-256.
+**Security boundary:** The admin PWA only submits a fixed version request to a Unix socket. The updater is never root, must connect to a rootless Docker daemon and refuses unverified images. The service no longer runs Docker builds on the production host. A valid SHA-256 in an unsigned release manifest is *not* accepted as authorization: the server image must have a Cosign signature bound to the exact GitHub Actions release workflow identity.
 
-**One-time host enrollment after the 0.9.1 deployment:**
+### Migration from the old root updater
+
+1. On the **original rootful** host, make a consistent SQLite backup and an offline copy of .env, volume data and Vault recovery material. Verify the backup before cutover.
+2. **Disable the previous root service:** `sudo systemctl disable --now simhub-updater.service`. Do not leave it running; it retains elevated control even after code changes.
+3. Install and configure Docker Engine in [Rootless mode](https://docs.docker.com/engine/security/rootless/) under a dedicated normal user. Configure user lingering and verify `docker info` contains `rootless`. Do not add this user to the rootful docker group or mount /var/run/docker.sock.
+4. Move the SIM Hub deployment checkout, its .env and the **verified existing named-volume data** to the dedicated rootless Docker daemon. Rootful and rootless volume stores are separate; never assume switching the Docker context migrates data. Start the rootless SIM Hub and verify `/readyz`, devices, database and HTTPS ingress before removing the old installation.
+5. Install a trusted Cosign CLI (see [official instructions](https://docs.sigstore.dev/cosign/system_config/installation/)) and Linux POSIX ACL support (`setfacl`). Keep the rootless Docker user logged in for installation:
 
 ```bash
-sudo bash scripts/install-updater.sh
-docker compose up -d --no-build --force-recreate simhub
+# As the dedicated non-root user; never with sudo:
+docker info --format '{{json .SecurityOptions}}'
+docker compose up -d --no-build simhub
+bash scripts/install-updater.sh
+systemctl --user status simhub-updater
 ```
 
-The service is provisioned at the original deployment checkout. It communicates
-with Relay through `.simhub-updater/control.sock` mounted *read-only at the
-directory level* inside the container. Relay **never** receives the Docker
-socket or shell-command privileges. This is not usable on hosts without a
-privileged updater service; the UI explains the enrollment requirement.
+6. Confirm that .simhub-updater/control.sock exists, is not publicly accessible, and that the management UI reports `rootless-verified`. If the old root service is still running or the image signature is unavailable, updates must fail closed.
 
-In the Web admin **Settings → System version** you can:
-- Check the newest stable GitHub Release and see the current version;
-- Ignore a version until the next stable release or restore reminders;
-- Complete recent admin step-up and start a one-click source rebuild/update;
-- See durable update stages and recent errors.
+### Updating and recovery
 
-The agent accepts only the newest stable tag, builds the verified source in a
-temporary directory, performs an online SQLite backup and preserves `.env`,
-the named Docker volume, node identity, TLS routing and the prior image.
-It then recreates only `simhub`, checks `/readyz` and the expected version,
-and returns to the previous image automatically on failed verification.
-Database migrations are **not** automatically reversed: do not deploy a release
-that changes the SQLite schema without an explicit migration/recovery plan.
-Backups reside in `.simhub-updater/backups/` with restricted access.
-
-Self-update cannot be bootstrapped solely from within a secure Docker
-container. If the service is missing, continue to use the documented manual
-`git pull --ff-only` / `setup.py --upgrade` path.
+- GitHub Actions builds linux/amd64 and linux/arm64 images, pushes to GHCR, signs the immutable OCI **digest** and publishes that digest in update-manifest.json.
+- The updater validates the release/schema/version, verifies exact Cosign certificate identity and issuer, pulls the pinned digest, verifies again, backs up SQLite, updates only SIMHUB_IMAGE_REF and SIMHUB_INSTALLED_VERSION in .env and restarts the SIM Hub service.
+- On failed readiness or version validation, it restores the previously tagged local image and .env version, then checks readiness again. Restoring an incompatible schema is **not** automatic. Schema changes require supervised migration and a restore runbook.
+- The container still runs UID/GID 65534, with read-only root filesystem and no Docker socket. The updater's local socket ACL authorizes only its mapped container UID. Do not grant the whole deployment folder to that UID.
+- GHCR image packages must be publicly readable (or the rootless deploy user must have narrowly scoped pull-only access). If the package is private and unauthenticated, update attempts fail rather than using an unsigned fallback.
+- Do not enable update automation in a rootful Docker context. On Docker hosts that cannot run Rootless Docker, use a controlled manual update process rather than a web-reachable root daemon.
+- GitHub repository **Release immutability** is a repository setting and must be enabled by the repository administrator; signed image verification is enforced independently.
 
 ## 3. Backups
 

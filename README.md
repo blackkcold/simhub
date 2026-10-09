@@ -41,7 +41,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 
 ## Updates (v0.9.1)
 
-Web Settings provides GitHub Release checking, ignoring and one-click Docker source rebuilds. A **one-time host bootstrap** (`sudo bash scripts/install-updater.sh`) is required: the read-only Relay never receives the Docker socket. Updates take a SQLite backup and return to the previous image if readiness fails; incompatible DB migrations require supervised recovery. Android Settings can check, ignore, auto-download and submit signed APKs to PackageInstaller with system consent when required. See [Deployment](docs/DEPLOYMENT.md) and [Android setup](docs/ANDROID_SETUP.md).
+Web Settings offers GitHub Release checking, ignore and one-click deployment of **Sigstore-verified GHCR OCI digests**. Automatic updates require a dedicated Rootless Docker daemon, trusted Cosign CLI and one-time **non-root** enrollment (`bash scripts/install-updater.sh`); the retired root updater must be disabled explicitly. The Relay never receives a Docker socket. Each update backs up SQLite, validates readiness and restores the prior image on failure; schema migrations remain supervised. Android Settings can check, ignore and download signed APKs for user-approved installation. See [Rootless migration](docs/DEPLOYMENT.md) and [Android setup](docs/ANDROID_SETUP.md).
 
 ## Features
 

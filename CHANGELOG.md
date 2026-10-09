@@ -1,3 +1,14 @@
+## v0.11.0 — Rootless signed OCI deployment
+
+- Remove the root-run Docker source build/update path and disable legacy updater activation from the Web UI.
+- Publish digest-pinned multi-platform OCI images to GHCR from the release workflow and sign them with GitHub OIDC/Sigstore.
+- Require rootless Docker, pinned signer identity and Sigstore verification before any image is pulled or deployed.
+- Isolate the update control socket with per-container-UID ACL, refuse unsafe requests and enforce fixed Compose/image operations.
+- Preserve snapshot backups, readiness validation, protected deployment status and previous-image rollback.
+- Provide a one-time non-root installer and explicit legacy root-service retirement/migration guidance.
+
+**Migration:** The former host-root service must be disabled separately. Rootful Docker deployments use manual supervised upgrades until moved to Rootless Docker. GHCR package visibility and deployment permissions must be configured before the first automatic update.
+
 ## v0.9.1 — Relay and Android signed updates
 
 - Add a restricted host-side Docker updater: GitHub Release source verification, online SQLite backup, tagged-image build, live readiness check and previous-image rollback.

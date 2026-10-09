@@ -168,7 +168,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
     val new=key=="__new__"
     val thread=state?.threads?.find{it.key==key}
     val history=if(new)emptyList() else state?.sms.orEmpty()
-        .filter{HubSnapshot.keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId)==key}.sortedBy{it.date}
+        .filter{HubSnapshot.keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision)==key}.sortedBy{it.date}
     val context=LocalContext.current
     val subscriptions=remember(state?.smsRead,state?.smsRole){
         HubRepository.activeSubscriptions(context)

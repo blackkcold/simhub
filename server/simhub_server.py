@@ -894,6 +894,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if path=="/api/v1/audit":
             if not self.require_admin(): return
             self.get_audit(q); return
+        if path=="/api/v1/commands/recent":
+            if not self.require_admin(): return
+            self.get_recent_commands(q); return
         if path=="/api/v1/metrics":
             if not self.require_admin(): return
             self.get_metrics(); return
@@ -1520,6 +1523,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 con.execute("UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=?",(state,now(),json.dumps(result,separators=(",",":")),command_id,device_id))
         signal_stream()
         self.send_json(200,{"ok":True})
+
+    def get_recent_commands(self,q:dict[str,list[str]]) -> None:
+        """Safe controller progress read: state/result metadata, never ciphertext."""
+        try: limit=max(1,min(int(q.get("limit",["20"])[0]),50))
+        except ValueError: limit=20
+        with open_db() as con:
+            rows=con.execute("SELECT id,device_id,type,created_at,expires_at,ack_at,state,result_json FROM commands ORDER BY seq DESC LIMIT ?",(limit,)).fetchall()
+        self.send_json(200,{"commands":[{"commandId":r["id"],"deviceId":r["device_id"],"type":r["type"],"createdAt":r["created_at"],"expiresAt":r["expires_at"],"ackAt":r["ack_at"],"state":r["state"],"result":safe_json_loads(r["result_json"],{})} for r in rows]})
 
     def get_audit(self,q:dict[str,list[str]]) -> None:
         try: limit=max(1,min(int(q.get("limit",["200"])[0]),1000))

@@ -146,12 +146,14 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
 private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
                                   controller:HubController,modifier:Modifier){
     val key=ui.thread
-    if(key==null)Box(modifier,contentAlignment=Alignment.Center){
+    if(key==null){
+        Box(modifier,contentAlignment=Alignment.Center){
         Column(horizontalAlignment=Alignment.CenterHorizontally){
             HubIcon(R.drawable.ic_hub_messages,Modifier.size(52.dp),MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(14.dp))
             Text(stringResource(R.string.hub_empty_conversation),
                 color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         }
         return
     }

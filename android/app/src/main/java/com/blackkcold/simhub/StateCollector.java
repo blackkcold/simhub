@@ -40,7 +40,9 @@ public final class StateCollector {
                     .put("lastQueueFailureAt",cfg.lastQueueFailureAt())
                     .put("lastSmsReceivedAt",cfg.lastSmsReceivedAt())
                     .put("lastSyncSuccessAt",cfg.lastSyncSuccessAt())
-                    .put("lastSyncError",cfg.lastSyncError());
+                    .put("lastSyncError",cfg.lastSyncError())
+                    .put("nextSyncAllowedAt",cfg.nextSyncAllowedAt()/1000)
+                    .put("syncBackoffFailures",cfg.syncBackoffFailures());
 
             Intent bat=c.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             if(bat!=null){

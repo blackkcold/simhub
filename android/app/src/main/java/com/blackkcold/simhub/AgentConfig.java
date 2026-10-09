@@ -62,6 +62,9 @@ public final class AgentConfig {
     public long queueFailures(){return prefs.getLong("queue_failures",0);}
     public long lastQueueFailureAt(){return prefs.getLong("last_queue_failure_at",0);}
     public void recordSmsReceived(long at){prefs.edit().putLong("last_sms_received_at",at).apply();}
+    public void recordSmsProviderError(String reason){prefs.edit().putString("sms_provider_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
+    public void clearSmsProviderError(){prefs.edit().remove("sms_provider_error").apply();}
+    public String smsProviderError(){return prefs.getString("sms_provider_error","");}
     public void recordSyncSuccess(){prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
     public void recordSyncError(String reason){prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
     public long lastSmsReceivedAt(){return prefs.getLong("last_sms_received_at",0);}
@@ -130,7 +133,7 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("sms_provider_error").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
         secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);
     }
 }

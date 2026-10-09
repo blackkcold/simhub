@@ -66,6 +66,8 @@ interface HubController {
     fun clearLogs()
     fun refreshDiagnostics()
     fun setLanguage(index:Int)
+    fun toggleSharing(value:Boolean)
+    fun setSimTag(channelId:String,revision:Long,label:String,number:String)
     fun openNetworkSettings()
     fun loadMoreSms()
     fun copyOtp(code:String)
@@ -75,7 +77,7 @@ class HubActivity: ComponentActivity(), HubController {
     private val tools=HubToolsState()
     private var pendingDiagnosticFile:File?=null
     private var loading by mutableStateOf(true)
-    private var smsLimit=400
+    private var smsLimit=100
     private var incomingId by mutableStateOf(0)
     private var incomingRecipient by mutableStateOf("")
     private var incomingBody by mutableStateOf("")
@@ -164,6 +166,10 @@ class HubActivity: ComponentActivity(), HubController {
             try{
                 val next=withContext(Dispatchers.IO){HubRepository.snapshot(applicationContext,smsLimit)}
                 snapshot=next
+                val pool=SharedPoolClient(applicationContext)
+                tools.poolEnabled=pool.optedIn()
+                tools.poolApproved=pool.approved()
+                tools.poolStatus=pool.status()
             }catch(error:Exception){
                 AppLogger.e(this@HubActivity,"Dashboard","State refresh failed",error)
                 toast(getString(R.string.hub_refresh_error))
@@ -316,7 +322,38 @@ class HubActivity: ComponentActivity(), HubController {
             }
         }
     }
-    override fun loadMoreSms(){smsLimit=(smsLimit+400).coerceAtMost(10000);refresh()}
+    override fun loadMoreSms(){
+        smsLimit=(smsLimit+50).coerceAtMost(1000)
+        lifecycleScope.launch{
+            try{withContext(Dispatchers.IO){SharedPoolClient(applicationContext).loadOlder()}}
+            catch(e:Exception){AppLogger.e(this@HubActivity,"SharedPool","History load failed",e)}
+            refresh()
+        }
+    }
+    override fun toggleSharing(value:Boolean){
+        lifecycleScope.launch{
+            try{
+                withContext(Dispatchers.IO){SharedPoolClient(applicationContext).setEnabled(value)}
+                refresh();toast(if(value)"已申请共享，请在 Web 管理后台授权" else "共享已关闭，本机共享缓存已清理")
+            }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e));refresh()}
+        }
+    }
+    override fun setSimTag(channelId:String,revision:Long,label:String,number:String){
+        lifecycleScope.launch{
+            try{
+                withContext(Dispatchers.IO){
+                    SimTagStore.set(applicationContext,channelId,revision,label,number)
+                    val profile=SimTagStore.get(applicationContext,channelId,revision)
+                    val payload=org.json.JSONObject().put("channelId",channelId).put("channelRevision",revision)
+                        .put("tag",profile.optString("tag","")).put("tail",profile.optString("tail",""))
+                    EventQueue.queue(applicationContext,"sim-profile-"+UUID.randomUUID(),"sim.profile",
+                        System.currentTimeMillis()/1000,-1,false,payload,org.json.JSONObject())
+                    SyncJobService.scheduleNow(applicationContext)
+                }
+                refresh();toast("SIM 标签已保存")
+            }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
+        }
+    }
     override fun requestContacts(){
         if(checkSelfPermission(Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED)
             contactsLauncher.launch(Manifest.permission.READ_CONTACTS)

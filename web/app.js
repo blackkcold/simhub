@@ -233,7 +233,7 @@ function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textCon
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxItems','conversationMessages','deviceList','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
+  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
@@ -513,8 +513,17 @@ async function grantPoolDevice(deviceId){
   }
   try{
     const memberEnvelope=await poolMemberEncrypt(deviceId,raw,epoch);
+    const historyEnvelopes={};
+    for(const past of (state.keys||[]).filter(k=>k.epoch<epoch)){
+      const pastRaw=await poolVaultDecrypt(past.vaultEnvelope,past.epoch);
+      try{
+        const digest=b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',pastRaw)).slice(0,12));
+        if(digest!==past.keyId)throw new Error('历史池密钥身份不匹配');
+        historyEnvelopes[String(past.epoch)]=await poolMemberEncrypt(deviceId,pastRaw,past.epoch);
+      }finally{pastRaw.fill(0);}
+    }
     await api('/api/v1/pool/authorize',{method:'POST',body:{deviceId,epoch,keyId,
-      vaultEnvelope,memberEnvelope}});
+      vaultEnvelope,memberEnvelope,historyEnvelopes}});
   }finally{raw.fill(0);}
   await loadPool();
 }

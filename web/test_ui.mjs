@@ -128,7 +128,7 @@ try {
     assert.ok(layout.docWidth<=width+1,`Horizontal page overflow at ${width}: ${JSON.stringify(layout)}`);
     assert.ok(layout.message.right<=layout.list.right+1,`Message overlaps another column at ${width}`);
     assert.equal(layout.previewStyle,"block",`SMS preview must ellipsize as a block at ${width}`);
-    if(width>1180){
+    if(width>900){
       assert.ok(layout.list.right+5<=layout.panel.x,`Desktop SMS columns overlap at ${width}`);
     }else if(width>760){
       assert.ok(layout.panel.y>=layout.list.bottom-1,`Tablet columns must stack at ${width}`);

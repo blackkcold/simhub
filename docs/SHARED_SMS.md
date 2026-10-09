@@ -11,7 +11,7 @@ The administrator's unlocked local Vault generates a 256-bit Pool Key. The relay
 Pool message authenticated-data string is:
 `simhub-pool-sms-v1|default|<originDeviceId>|<originEventId>|<occurredAt>|<channelId>|<epoch>`.
 
-The admin creates a different independently wrapped Pool Key after a revocation. The Web controller handles **key epochs** and may authorize historical epochs for new devices. Source-device encrypted originals are still individually protected by Node Keys.
+The Relay durably records rotation-required state on opt-out, device revoke, reset or deletion, immediately blocks revoked members, and suspends new pool uploads until the administrator unlocks the local Vault and completes a new key epoch. This safe pending state survives Relay restart; a banner in Web → Devices → Shared pool offers retry. Old ciphertext is not re-encrypted or exposed to the Relay. The admin creates a different independently wrapped Pool Key after a revocation. The Web controller handles **key epochs** and may authorize historical epochs for new devices. Source-device encrypted originals are still individually protected by Node Keys.
 
 ## Synchronization behavior
 
@@ -20,7 +20,7 @@ The admin creates a different independently wrapped Pool Key after a revocation.
 - Subsequent pool reads use the relay's monotonic sequence cursor (`since`), while historical pagination uses timestamp + sequence keyset pagination (`beforeTime` and `beforeSeq`). This distinction prevents losing older messages arriving late.
 - UI history requests fetch **50** ciphertext events at a time. Cache is bounded to **2,000** encrypted records; historical Provider scan is independently limited to **100** per request.
 - Upload/replay deduplication identity: `originDeviceId + originEventId`. Source-device encrypted originals remain distinct.
-- Low-latency command and ACK processing runs **before** optional pool traffic. Pool transport failures must not stop ordinary Relay functions.
+- Low-latency command and ACK processing runs **before** optional pool traffic. Pool transport failures must not stop ordinary Relay functions. Failed transfers use persistent bounded exponential backoff and pending staged uploads schedule follow-up sync jobs.
 - Local opt-out is immediate, even if the network is down; remote opt-out is journaled for retry. Server may still temporarily hold ciphertext created before revocation until the remote request completes.
 - Server deletion of device SMS deletes its shared ciphertext as well, and enforces a replay barrier, without changing on-phone SMS.
 

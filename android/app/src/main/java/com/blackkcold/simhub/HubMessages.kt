@@ -64,7 +64,7 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
             Text(stringResource(R.string.hub_conversations),style=MaterialTheme.typography.titleLarge,
                 fontWeight=FontWeight.Bold)
             FilledIconButton(onClick={ui.thread="__new__";ui.newRecipient=""}){
-                HubIcon(R.drawable.ic_hub_add,Modifier.size(23.dp),MaterialTheme.colorScheme.onPrimary)
+                HubIcon(R.drawable.ic_hub_add,Modifier.size(23.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_new_sms))
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -235,7 +235,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
                     controller.sendSms(selectedSim,to,draft) { ui.drafts.remove(key) }
                 },modifier=Modifier.size(52.dp)
             ){
-                HubIcon(R.drawable.ic_hub_send,Modifier.size(22.dp),MaterialTheme.colorScheme.onPrimary)
+                HubIcon(R.drawable.ic_hub_send,Modifier.size(22.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_send))
             }
         }
         if(!canSend)Text(stringResource(R.string.hub_read_only),

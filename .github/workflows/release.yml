@@ -75,6 +75,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
       - run: python3 scripts/test_docs.py
+      - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py
       - run: PYTHONPATH=server python3 server/test_migration.py

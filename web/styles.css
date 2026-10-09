@@ -269,3 +269,7 @@ main{padding:16px 14px calc(102px + env(safe-area-inset-bottom))}
   .device-actions .row{gap:7px}
   .device-actions .mini{min-height:40px}
 }
+
+/* Informational build footer: never expands the floating mobile dock. */
+.deployment-info { display:block; padding-top:8px; font-size:11px; color:var(--text-secondary, #94a3b8); overflow-wrap:anywhere; }
+@media(max-width:760px){.deployment-info{display:none}}

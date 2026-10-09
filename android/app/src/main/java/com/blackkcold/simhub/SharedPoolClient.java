@@ -249,7 +249,7 @@ public final class SharedPoolClient {
                 .putBoolean("older_has_more",response.optBoolean("hasMore",false)).apply();
         }
         if(max>cursor)prefs.edit().putLong("last_download",max).apply();
-        store.trim(500);
+        store.trim(2000);
         if(messages.length()>0)context.sendBroadcast(new Intent(ACTION_CACHE_UPDATED).setPackage(context.getPackageName()));
         if(response.optBoolean("hasMore")&&cursor>0)SyncJobService.scheduleAfter(context,10000);
     }
@@ -277,7 +277,7 @@ public final class SharedPoolClient {
                 .putLong("oldest_download_time",last.getLong("occurredAt")).apply();
         }
         prefs.edit().putBoolean("older_has_more",response.optBoolean("hasMore",false)).apply();
-        store.trim(500);
+        store.trim(2000);
         return items.length();
     }
 

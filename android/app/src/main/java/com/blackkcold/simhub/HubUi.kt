@@ -52,8 +52,8 @@ class HubViewModel:ViewModel(){
     var serverUrl by mutableStateOf("")
 }
 @Composable
-fun HubIcon(id:Int,modifier:Modifier=Modifier,tint:Color=LocalContentColor.current) {
-    Icon(painterResource(id),contentDescription=null,modifier=modifier,tint=tint)
+fun HubIcon(id:Int,modifier:Modifier=Modifier,tint:Color=LocalContentColor.current,description:String?=null) {
+    Icon(painterResource(id),contentDescription=description,modifier=modifier,tint=tint)
 }
 @Composable
 private fun HubTheme(content:@Composable ()->Unit){
@@ -110,7 +110,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                         }},
                         actions={
                             IconButton(onClick=controller::refresh){
-                                HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp))
+                                HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),description=stringResource(R.string.hub_refresh))
                             }
                         },
                         colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.surface))

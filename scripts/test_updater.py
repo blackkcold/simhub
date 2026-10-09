@@ -85,12 +85,12 @@ class UpdaterTests(unittest.TestCase):
         """PrivateTmp/ProtectSystem under systemd --user can remap Docker socket GIDs."""
         installer = Path(__file__).with_name("install-updater.sh").read_text("utf-8")
         self.assertIn('cat > "$UNIT" <<EOF', installer)
-        unit = installer.split('cat > "$UNIT" <<EOF', 1)[1].split("\\nEOF", 1)[0]
+        unit = installer.split('cat > "$UNIT" <<EOF', 1)[1].split("\nEOF", 1)[0]
         for setting in ("PrivateTmp", "ProtectSystem", "PrivateUsers",
                         "PrivateMounts", "PrivateDevices", "ProtectHome",
                         "ReadOnlyPaths", "ReadWritePaths", "InaccessiblePaths",
                         "BindPaths", "TemporaryFileSystem"):
-            self.assertNotRegex(unit, r"(?m)^" + setting + r"\\s*=")
+            self.assertNotRegex(unit, r"(?m)^" + setting + r"\s*=")
         # Preserve non-namespace controls and the non-root Docker architecture.
         self.assertIn("NoNewPrivileges=true", unit)
         self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", unit)

@@ -30,6 +30,11 @@ public final class ApiClient {
         if(!path.startsWith("/api/v1/pairings/"))throw new SecurityException("Pairing path required");
         return raw(server+path,method,body,pairBearer==null?null:"Pair "+pairBearer,null);
     }
+    public static JSONObject pairingRequest(String server,String method,String path,JSONObject body,String pairBearer)throws Exception{
+        requireHttps(server);
+        if(!path.startsWith("/api/v1/pairings/"))throw new SecurityException("Pairing path required");
+        return raw(server+path,method,body,pairBearer==null?null:"Pair "+pairBearer,null);
+    }
     public static JSONObject enroll(String server,String token,String name)throws Exception{return enroll(server,token,name,null);}
     public static JSONObject enroll(String server,String token,String name,String bootstrapProof)throws Exception{
         requireHttps(server);
@@ -49,6 +54,7 @@ public final class ApiClient {
         if(delay>0){SYNC_BUSY.set(false);SyncJobService.scheduleAfter(c,delay);return;}
         int pendingBefore=LocalStore.get(c).pendingEventCount();
         try{
+            PairingManager.completePending(c);
             PairingManager.completePending(c);
             if(checkServerReset())return;
             rotateDeviceTokenIfNeeded();LocalStore store=LocalStore.get(c);store.recoverStaleClaims();

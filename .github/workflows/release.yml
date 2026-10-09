@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.5.1.trigger'
+      - '.github/release/v0.5.2.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.5.1.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.5.2.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -73,7 +73,7 @@ jobs:
           node-version: '22'
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
       - run: python3 scripts/test_docs.py
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py

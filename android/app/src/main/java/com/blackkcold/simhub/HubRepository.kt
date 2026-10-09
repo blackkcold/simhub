@@ -10,7 +10,11 @@ import org.json.JSONObject
 
 data class HubSms(
     val id: Long, val from: String, val text: String, val date: Long, val type: Int,
-    val subscription: Int
+    val subscription: Int,
+    val sourceDeviceId:String="",val sourceDeviceName:String="",
+    val channelId:String="",val simTag:String="",val simTail:String="",
+    val shared:Boolean=false,val historicalUnverified:Boolean=false,
+    val channelRevision:Long=0
 )
 data class HubThread(
     val key: String, val address: String, val subscription: Int,
@@ -29,13 +33,16 @@ data class HubSnapshot(
     val smsRead: Boolean,
     val smsSend: Boolean,
     val state: JSONObject,
-    val sms: List<HubSms>
+    val sms: List<HubSms>,
+    val localDeviceId:String=""
 ) {
-    val threads: List<HubThread> get() = sms.groupBy { keyFor(it.from,it.subscription) }
+    val threads: List<HubThread> get() = sms.groupBy { keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision) }
         .map { (key, items) -> HubThread(key,items.first().from,items.first().subscription,items.first(),items.size) }
         .sortedByDescending { it.latest.date }
     companion object {
-        fun keyFor(address: String, subscription: Int) = subscription.toString() + "|" + address.lowercase()
+        fun keyFor(address:String,subscription:Int,deviceId:String="",channelId:String="",revision:Long=0) =
+            deviceId+"|"+(if(channelId.isNotBlank())channelId else subscription.toString())+
+                "|"+revision+"|"+address.lowercase()
     }
 }
 object HubRepository {
@@ -46,6 +53,14 @@ object HubRepository {
         val read=context.checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED
         val send=context.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED
         val state=StateCollector.collect(context)
+        state.optJSONArray("subscriptions")?.let{arr->
+            for(i in 0 until arr.length()){
+                val item=arr.optJSONObject(i)?:continue
+                val tag=SimTagStore.get(context,item.optString("channelId",""),item.optLong("channelRevision",1))
+                item.put("localSimTag",tag.optString("tag",""))
+                item.put("localSimTail",tag.optString("tail",""))
+            }
+        }
         // SMS permission or OEM provider failure must not take down the SIM,
         // connection-health and enrollment screens.
         val messages=if(!read) emptyList() else try {
@@ -55,11 +70,49 @@ object HubRepository {
                 "SMS_PROVIDER_SECURITY_EXCEPTION" else "SMS_PROVIDER_QUERY_FAILED")
             emptyList()
         }
+        val local=messages.map{ sms->
+            val channel=ChannelIdentity.forHistoricalSubscription(context,sms.subscription,sms.date)
+            val tag=channel?.let{SimTagStore.get(context,it.channelId,it.revision)}?:JSONObject()
+            sms.copy(sourceDeviceId=cfg.deviceId(),sourceDeviceName=cfg.deviceName(),
+                channelId=channel?.channelId.orEmpty(),simTag=tag.optString("tag",""),
+                simTail=tag.optString("tail",""),historicalUnverified=channel==null,
+                channelRevision=channel?.revision?:0)
+        }
+        val remote=try{
+            val poolRows=SharedPoolClient(context).cached(limit)
+            val profiles=poolRows.filter{row->
+                row.optJSONObject("payload")?.has("channelRevision")==true &&
+                row.optJSONObject("payload")?.has("tag")==true
+            }.groupBy{row->row.optString("deviceId","")+"|"+row.optString("channelId","")+"|"+
+                row.optJSONObject("payload")?.optLong("channelRevision",0)}
+                .mapValues{(_,items)->items.maxByOrNull{it.optLong("occurredAt",0)}?.optJSONObject("payload")}
+            poolRows.mapNotNull{row->
+                if(row.optString("deviceId")==cfg.deviceId())return@mapNotNull null
+                val body=row.optJSONObject("payload")?:return@mapNotNull null
+                val direction=body.optString("direction","")
+                if(direction!="in"&&direction!="out")return@mapNotNull null
+                val address=if(direction=="out")body.optString("recipient","") else body.optString("sender","")
+                if(address.isBlank())return@mapNotNull null
+                val device=row.optString("deviceId","")
+                val channel=row.optString("channelId","")
+                val revision=body.optLong("channelRevision",0)
+                val profile=if(revision>0)profiles[device+"|"+channel+"|"+revision] else null
+                HubSms(-row.optLong("seq"),address,body.optString("body",""),row.optLong("occurredAt")*1000,
+                    if(direction=="out")Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX,-1,
+                    device,body.optString("sourceDeviceName","Shared SIM"),
+                    channel,profile?.optString("tag","")?.ifBlank{body.optString("simTag","")}
+                        ?:body.optString("simTag",""),
+                    profile?.optString("tail","")?.ifBlank{body.optString("simTail","")}
+                        ?:body.optString("simTail",""),
+                    shared=true,historicalUnverified=channel.isBlank(),channelRevision=revision)
+            }
+        }catch(error:Exception){AppLogger.e(context,"SharedPool","Cannot read shared cache",error);emptyList()}
+        val unified=(local+remote).sortedWith(compareByDescending<HubSms>{it.date}.thenByDescending{it.id}).take(limit)
         return HubSnapshot(
             cfg.isEnrolled(), cfg.deviceName(),cfg.server(),cfg.alwaysOn(),
             LocalStore.get(context).pendingEventCount(),cfg.lastSyncSuccessAt(),
             cfg.lastSyncError(),cfg.smsProviderError(),smsRole,read,send,state,
-            messages
+            unified,cfg.deviceId()
         )
     }
     fun readMessages(context: Context,limit:Int): List<HubSms> {

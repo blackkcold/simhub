@@ -126,7 +126,9 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                             Text(thread.latest.text,style=MaterialTheme.typography.bodySmall,
                                 color=MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines=1,overflow=TextOverflow.Ellipsis)
-                            Text("SIM ${thread.subscription}",
+                            Text(listOfNotNull(thread.latest.sourceDeviceName.takeIf{it.isNotBlank()},
+                                thread.latest.simTag.takeIf{it.isNotBlank()} ?: (if(thread.latest.historicalUnverified)"历史 SIM 待确认" else "SIM ${thread.subscription}"),
+                                thread.latest.simTail.takeIf{it.isNotBlank()}?.let{"尾号 $it"}).joinToString(" · "),
                                 color=MaterialTheme.colorScheme.onSurfaceVariant,
                                 style=MaterialTheme.typography.labelSmall)
                         }
@@ -134,8 +136,14 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                     Spacer(Modifier.height(5.dp))
                 }
                 item{
-                    TextButton(onClick=controller::loadMoreSms,modifier=Modifier.fillMaxWidth()){
-                        Text(stringResource(R.string.hub_load_more))
+                    if((state?.sms?.size?:0)>=2000){
+                        Text("已达到本机加密缓存上限（2000 条），新短信继续增量同步",
+                            style=MaterialTheme.typography.labelSmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }else{
+                        TextButton(onClick=controller::loadMoreSms,modifier=Modifier.fillMaxWidth()){
+                            Text(stringResource(R.string.hub_load_more))
+                        }
                     }
                 }
             }
@@ -160,7 +168,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
     val new=key=="__new__"
     val thread=state?.threads?.find{it.key==key}
     val history=if(new)emptyList() else state?.sms.orEmpty()
-        .filter{HubSnapshot.keyFor(it.from,it.subscription)==key}.sortedBy{it.date}
+        .filter{HubSnapshot.keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision)==key}.sortedBy{it.date}
     val context=LocalContext.current
     val subscriptions=remember(state?.smsRead,state?.smsRole){
         HubRepository.activeSubscriptions(context)
@@ -171,7 +179,9 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
     var dropdown by remember { mutableStateOf(false) }
     var newTo by remember(key){ mutableStateOf(if(new)ui.newRecipient else thread?.address.orEmpty()) }
     val draft=ui.drafts[key].orEmpty()
-    val canSend=state?.smsSend==true&&state.smsRole&&
+    val isRemote=thread?.latest?.shared==true
+    val canSend=!isRemote&&(new||thread?.latest?.historicalUnverified==false)&&
+        state?.smsSend==true&&state.smsRole&&
         subscriptions.any{it.first==selectedSim}
     val listState=rememberLazyListState()
     LaunchedEffect(key){if(history.isNotEmpty())listState.scrollToItem(history.lastIndex)}
@@ -209,7 +219,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
         }else Spacer(Modifier.weight(1f))
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
             Box{
-                TextButton(onClick={dropdown=true}){
+                TextButton(onClick={dropdown=true},enabled=!isRemote){
                     HubIcon(R.drawable.ic_hub_sim,Modifier.size(17.dp))
                     Spacer(Modifier.width(5.dp))
                     Text(subscriptions.find{it.first==selectedSim}?.second ?: stringResource(R.string.hub_choose_sim),
@@ -226,6 +236,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
             horizontalArrangement=Arrangement.spacedBy(8.dp)){
             OutlinedTextField(
                 value=draft,onValueChange={if(it.length<=4000)ui.drafts[key]=it},
+                enabled=!isRemote,
                 modifier=Modifier.weight(1f),minLines=1,maxLines=4,
                 label={Text(stringResource(R.string.hub_message_placeholder))},
                 shape=RoundedCornerShape(17.dp)
@@ -240,7 +251,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
                 HubIcon(R.drawable.ic_hub_send,Modifier.size(22.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_send))
             }
         }
-        if(!canSend)Text(stringResource(R.string.hub_read_only),
+        if(!canSend)Text(if(isRemote)"共享设备短信：当前只读，不能使用本机 SIM 冒充原始号码回复" else stringResource(R.string.hub_read_only),
             style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
     }
 }
@@ -270,14 +281,23 @@ private fun SmsBubble(sms:HubSms,controller:HubController){
                 }
             }
             Spacer(Modifier.height(5.dp))
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){
-                Text(DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT)
-                    .format(Date(sms.date)),
-                    style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                if(sendStatus!=null)Text(stringResource(sendStatus),
-                    style=MaterialTheme.typography.labelSmall,
-                    color=if(sms.type==android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED)
-                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp),
+                verticalArrangement=Arrangement.spacedBy(5.dp)){
+                @Composable fun Tag(value:String){
+                    Surface(shape=RoundedCornerShape(8.dp),
+                        color=MaterialTheme.colorScheme.surface.copy(alpha=.35f)){
+                        Text(value,Modifier.padding(horizontal=6.dp,vertical=3.dp),
+                            style=MaterialTheme.typography.labelSmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Tag(DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(Date(sms.date)))
+                Tag(if(sent)"发送" else "接收")
+                if(sendStatus!=null)Tag(stringResource(sendStatus))
+                if(sms.sourceDeviceName.isNotBlank())Tag(sms.sourceDeviceName)
+                if(sms.simTag.isNotBlank())Tag(sms.simTag)
+                if(sms.simTail.isNotBlank())Tag("SIM 尾号 "+sms.simTail)
+                else Tag(if(sms.historicalUnverified)"历史 SIM · 归属待确认" else "SIM 号码未知")
             }
         }
     }

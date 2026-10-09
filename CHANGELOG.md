@@ -1,3 +1,12 @@
+## v0.8.0 — Encrypted SMS sharing and unified adaptive Android
+
+- Repair Web inbox card compression and scrolling; preserve a separate conversation scroll area and load history incrementally as the list approaches the end.
+- Show date/time, direction, source device, SIM label and masked four-digit provenance on individual SMS messages; clearly mark unverified historical SIMs.
+- Add opt-in shared SMS via per-pool AES-GCM encryption, explicit device consent, administrator approval, independently Node-Key-wrapped Pool Keys, versioned rotation and paginated encrypted relay storage.
+- Add encrypted offline Android cache and locally encrypted upload staging; restrict remote pool SMS to read-only unless separately authorized for sending.
+- Consolidate pairing, optional contacts permission, background sync, reset, languages, OTA, developer logs and ZIP diagnostic export into one Compose settings page; delete the legacy advanced Activity and duplicate XML views.
+- Use responsive Android dashboard/SIM grids alongside compact/expanded and hinge-aware SMS layouts; add server authorization, pagination and browser layout regression tests.
+
 ## v0.7.0 — Native Android UI and foldable adaptive experience
 
 - Replace the Android Agent's default single long setup screen with an adaptive native Material 3 four-tab dashboard (Overview, Messages, SIM cards and Settings), retaining the legacy advanced tools as a secondary destination.

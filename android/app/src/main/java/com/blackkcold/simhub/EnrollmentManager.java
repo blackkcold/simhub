@@ -30,6 +30,6 @@ public final class EnrollmentManager {
         SyncJobService.scheduleNow(c);
         AppLogger.i(c,"Enrollment","Reset requested; awaiting relay confirmation");
     }
-    public static void reset(Context c){RelayForegroundService.stop(c);LocalStore.get(c).resetForReenrollment();new AgentConfig(c).clearEnrollment();AppLogger.i(c,"Enrollment","Node enrollment cleared");}
+    public static void reset(Context c){RelayForegroundService.stop(c);SharedPoolClient.clearLocalForReset(c);SimTagStore.clearAll(c);LocalStore.get(c).resetForReenrollment();new AgentConfig(c).clearEnrollment();AppLogger.i(c,"Enrollment","Node enrollment and pool secrets cleared");}
     private EnrollmentManager(){}
 }

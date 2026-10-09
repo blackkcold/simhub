@@ -12,7 +12,9 @@ let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
-let olderCursor=null,historyHasMore=true,visibleOffset=0,activeConversationKey=null,diagnosticsDeviceId=null;
+let olderCursor=null,historyHasMore=true,visibleCount=40,activeConversationKey=null,diagnosticsDeviceId=null;
+let historyFetchInFlight=null,loadObserver=null,lastAutoScroll=-1;
+let poolState=null;
 const expandedDeviceDetails=new Set();
 const eventIds=new Set();
 let securityEpoch=0;
@@ -231,11 +233,22 @@ function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textCon
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxList','conversationMessages','deviceList','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
+  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
     else if(!('value' in el))el.replaceChildren();
+  }
+  // Never trust the scroll container to contain only authored child nodes.
+  // Keep its pagination shell intact, but erase unexpected injected nodes as well.
+  const inboxRoot=$('inboxList');
+  if(inboxRoot){
+    for(const child of [...inboxRoot.childNodes]){
+      const known=child.nodeType===1 && (
+        ['inboxItems','emptyInbox','loadSentinel'].includes(child.id) ||
+        child.classList?.contains('pager-actions'));
+      if(!known)child.remove();
+    }
   }
   for(const id of ['deviceFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
     const el=$(id);if(el)el.replaceChildren();
@@ -259,8 +272,8 @@ function lockVault(broadcast=true){
   purgeSensitiveUI();
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
   vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
-  devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
-  initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;
+  poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
+  initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
   clearTimeout(refreshTimer);refreshTimer=null;
   if(eventSource){eventSource.close();eventSource=null;}
@@ -335,7 +348,7 @@ async function loadEvents(){
   if(!initialEventsLoaded){
     const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&limit=30');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    const first=await api('/api/v1/events?order=occurred&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
@@ -354,24 +367,29 @@ async function loadEvents(){
 }
 async function loadOlder(){
   if(!vaultKey)return;
-  const epoch=securityEpoch, dataGeneration=eventDataGeneration;
-  const count=buildThreads(filteredEvents()).length;
-  if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
+  if(historyFetchInFlight)return historyFetchInFlight;
+  const threads=buildThreads(filteredEvents());
+  if(visibleCount<threads.length){visibleCount=Math.min(visibleCount+30,threads.length);renderInbox();return;}
   if(!historyHasMore||!olderCursor)return;
-  const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
-  if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
-  olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
-  historyHasMore=!!r.hasMore;
-  await ingestEvents(r.events||[],false);
-  if(epoch!==securityEpoch||!vaultKey)return;
-  if(buildThreads(filteredEvents()).length>visibleOffset+30)visibleOffset+=30;
-  renderInbox();
+  const epoch=securityEpoch, dataGeneration=eventDataGeneration;
+  historyFetchInFlight=(async()=>{
+    const r=await api('/api/v1/events?order=occurred&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
+    historyHasMore=!!r.hasMore;
+    await ingestEvents(r.events||[],false);
+    if(epoch!==securityEpoch||!vaultKey)return;
+    visibleCount=Math.min(Math.max(visibleCount+30,buildThreads(filteredEvents()).length),1000);
+    renderInbox();
+  })();
+  try{await historyFetchInFlight;}finally{historyFetchInFlight=null;}
 }
+
 let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
   const epoch=securityEpoch;
-  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
+  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
@@ -382,9 +400,15 @@ function nodeChannels(d){
   if(!d||!d.state)return[];
   const channels=Array.isArray(d.state.channels)&&d.state.channels.length?d.state.channels:(d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));
   const phones=d.state._phoneNumbers||[];
+  const profiles=decryptedEvents.filter(e=>e.deviceId===d.id&&e.kind==='sim.profile'&&e.payload)
+    .sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
   return channels.map(ch=>{
     const found=phones.find(n=>String(n.channelId)===String(ch.id));
-    return {...ch,phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||'').trim()};
+    const profile=profiles.find(e=>String(e.payload.channelId)===String(ch.id)&&
+      Number(e.payload.channelRevision||1)===Number(ch.revision||ch.channelRevision||1))?.payload;
+    return {...ch,alias:profile?.tag||ch.alias,
+      phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||
+        (profile?.tail?'••••'+profile.tail:'')).trim()};
   });
 }
 function channelTitle(ch){return (ch.phoneNumber?ch.phoneNumber+' · ':'')+(ch.alias||ch.displayName||ch.carrierName||ch.id);}
@@ -426,7 +450,7 @@ async function loadLifecycleHistory(){
 function resetEventCache(){
   eventDataGeneration++;
   events=[];decryptedEvents=[];eventIds.clear();
-  lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleOffset=0;
+  lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   activeConversationKey=null;
   $('smsLayout').classList.remove('conversation-open');
 }
@@ -441,6 +465,98 @@ async function refreshVersionInfo(){
   el.textContent='SIM Hub v'+(info.version||'?')+' · '+(buildDate?(zh?'部署：':'Deployed: ')+buildDate:(zh?'服务启动：':'Started: ')+(launched||'—'));
   if($('deploymentInfoSettings'))$('deploymentInfoSettings').textContent=el.textContent;
 }
+
+async function loadPool(){
+  if(!vaultKey)return;
+  poolState=await api('/api/v1/pool');
+  renderPool();
+}
+function renderPool(){
+  const target=$('smsPoolMembers');if(!target)return;
+  if(!poolState){target.textContent='尚未加载设备同步状态';return;}
+  target.innerHTML='<p class="hint">仅已在 Android 主动开启的设备可加入。管理员必须解锁 Vault 并批准加密密钥分发。</p>'+
+    poolState.members.map(m=>{
+      const d=devices.find(x=>x.id===m.id);
+      const status=!m.requested?'待设备开启':m.approved?'已授权':'等待授权';
+      const action=m.requested&&!m.approved?'<button class="primary mini" data-pool-action="approve" data-id="'+escapeHtml(m.id)+'">授权加入</button>':
+        m.approved?'<button class="danger mini" data-pool-action="revoke" data-id="'+escapeHtml(m.id)+'">撤销共享</button>':'';
+      return '<div class="row between wrap pool-member"><span><strong>'+escapeHtml(d?.name||m.name||m.id)+'</strong> · '+
+        escapeHtml(status)+'</span>'+action+'</div>';
+    }).join('')+'<small class="hint">密钥版本：'+escapeHtml(String(poolState.epoch||0))+'</small>';
+}
+async function poolVaultEncrypt(raw,epoch){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt(
+    {name:'AES-GCM',iv,additionalData:enc.encode('simhub-pool-vault-v1|default|'+epoch)},vaultKey,raw));
+  return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
+}
+async function poolVaultDecrypt(envelope,epoch){
+  const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(envelope.iv),
+    additionalData:enc.encode('simhub-pool-vault-v1|default|'+epoch)},vaultKey,unb64u(envelope.ct));
+  return new Uint8Array(raw);
+}
+async function poolMemberEncrypt(deviceId,raw,epoch){
+  const node=await deviceCrypto(deviceId),iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,
+    additionalData:enc.encode('simhub-pool-member-v1|default|'+deviceId+'|'+epoch)},node.key,raw));
+  return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
+}
+async function poolNewKey(){
+  const raw=crypto.getRandomValues(new Uint8Array(32));
+  const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',raw));
+  return {raw,keyId:b64u(digest.slice(0,12))};
+}
+async function grantPoolDevice(deviceId){
+  if(!vaultKey)throw new Error('Vault locked');
+  await ensureStepUp();
+  await loadPool();
+  const state=poolState,m=state.members.find(m=>m.id===deviceId);
+  if(!m?.requested)throw new Error('请先在 Android 设备开启共享');
+  let raw,keyId,vaultEnvelope,epoch=state.epoch;
+  if(!epoch){
+    epoch=1;const k=await poolNewKey();raw=k.raw;keyId=k.keyId;
+    vaultEnvelope=await poolVaultEncrypt(raw,epoch);
+  }else{
+    raw=await poolVaultDecrypt(state.vaultEnvelope,epoch);
+    keyId=state.keyId;
+    const digest=b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)).slice(0,12));
+    if(digest!==keyId)throw new Error('共享密钥身份不匹配');
+  }
+  try{
+    const memberEnvelope=await poolMemberEncrypt(deviceId,raw,epoch);
+    const historyEnvelopes={};
+    for(const past of (state.keys||[]).filter(k=>k.epoch<epoch)){
+      const pastRaw=await poolVaultDecrypt(past.vaultEnvelope,past.epoch);
+      try{
+        const digest=b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',pastRaw)).slice(0,12));
+        if(digest!==past.keyId)throw new Error('历史池密钥身份不匹配');
+        historyEnvelopes[String(past.epoch)]=await poolMemberEncrypt(deviceId,pastRaw,past.epoch);
+      }finally{pastRaw.fill(0);}
+    }
+    await api('/api/v1/pool/authorize',{method:'POST',body:{deviceId,epoch,keyId,
+      vaultEnvelope,memberEnvelope,historyEnvelopes}});
+  }finally{raw.fill(0);}
+  await loadPool();
+}
+async function rotatePool(){
+  await loadPool();
+  if(!poolState?.epoch)return;
+  const key=await poolNewKey(),epoch=poolState.epoch+1;
+  try{
+    const members={};
+    for(const m of poolState.members.filter(m=>m.requested&&m.approved))
+      members[m.id]=await poolMemberEncrypt(m.id,key.raw,epoch);
+    const vaultEnvelope=await poolVaultEncrypt(key.raw,epoch);
+    await api('/api/v1/pool/rotate',{method:'POST',body:{keyId:key.keyId,vaultEnvelope,members}});
+  }finally{key.raw.fill(0);}
+  await loadPool();
+}
+async function revokePoolDevice(deviceId){
+  await ensureStepUp();
+  await api('/api/v1/pool/revoke',{method:'POST',body:{deviceId}});
+  try{await rotatePool();}catch(e){await loadPool();throw new Error('共享权限已撤销，但需要完成密钥轮换：'+e.message);}
+}
+
 function renderDevices(){
   const box=$('deviceList');
   if(!devices.length){box.innerHTML='<div class="empty card">'+escapeHtml(tr('no_devices'))+'</div>';return;}
@@ -493,7 +609,8 @@ function messageChannel(e){
 }
 function threadKey(e){
   const phone=messageAddress(e).replace(/[\s()-]/g,'');
-  return e.deviceId+'|'+messageChannel(e)+'|'+phone;
+  const revision=e.payload?.channelRevision||'historical';
+  return e.deviceId+'|'+messageChannel(e)+'|'+revision+'|'+phone;
 }
 function filteredEvents(){
   const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
@@ -513,13 +630,14 @@ function buildThreads(source){
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
 function renderInbox(){
-  const threads=buildThreads(filteredEvents()),show=threads.slice(visibleOffset,visibleOffset+30);
+  const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
+  const list=$('inboxList'),previousTop=list.scrollTop;
   $('emptyInbox').hidden=!!show.length;
-  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleOffset+30;
-  $('loadNewerBtn').hidden=visibleOffset===0;
+  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleCount;
+  $('loadNewerBtn').hidden=true;
   const otpCount=threads.reduce((n,t)=>n+t.messages.filter(e=>eventIsInbound(e)&&e.payload?.otp?.value).length,0);
   $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
-  $('inboxList').innerHTML=show.map(t=>{
+  $('inboxItems').innerHTML=show.map(t=>{
     const e=t.latest,p=e.payload||{},who=p.contactName||messageAddress(e)||tr('unknown');
     const body=e.decryptError?'['+tr('decrypt_failed')+']':p.body||'';
     return '<button type="button" class="message'+(activeConversationKey===t.key?' active':'')+
@@ -529,6 +647,7 @@ function renderInbox(){
       '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
       escapeHtml(deviceName(e.deviceId))+' · '+escapeHtml(messageChannelLabel(e))+'</small></span></button>';
   }).join('');
+  list.scrollTop=previousTop;
   renderConversation();
 }
 function updateReplyDevices(){
@@ -546,6 +665,17 @@ function updateReplyChannels(preferred){
   if([...el.options].some(x=>x.value===selected))el.value=selected;
   const selectedChannel=channels.find(ch=>String(ch.id)===el.value);
   $('replyChannelLabel').textContent=selectedChannel?(d.name+' · '+channelTitle(selectedChannel)):tr('choose_channel');
+}
+function messageTags(e){
+  const inbound=eventIsInbound(e),d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e),
+    historic=e.kind==='sms.history'&&!e.payload?.channelId,
+    channel=historic?null:nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id),
+    digits=String(e.payload?.simTail||channel?.phoneNumber||'').replace(/\D/g,''),
+    sim=historic?(getLocale()==='zh-CN'?'历史 SIM · 归属待确认':'Historical SIM · unverified'):
+      (e.payload?.simTag||channel?.alias||channel?.displayName||channel?.carrierName||'SIM')+(digits.length>=4?' · ••••'+digits.slice(-4):' · '+(getLocale()==='zh-CN'?'号码未知':'number unknown')),
+    status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent'));
+  return [fmtTime(e.occurredAt),status,deviceName(e.deviceId),sim].map((v,i)=>
+    '<span class="message-tag'+(historic&&i===3?' warning':'')+'">'+escapeHtml(v)+'</span>').join('');
 }
 function renderConversation(){
   if(!activeConversationKey){
@@ -581,7 +711,7 @@ function renderConversation(){
     const otp=p.otp?.value&&inbound?'<div class="otp"><code>'+escapeHtml(p.otp.value)+
       '</code><button class="ghost mini copy-otp" data-otp="'+escapeHtml(p.otp.value)+'" type="button">'+escapeHtml(tr('copy'))+'</button></div>':'';
     return '<div class="bubble'+(inbound?'':' outbound')+'"><p>'+escapeHtml(body)+
-      '</p>'+otp+'<small class="meta">'+fmtTime(e.occurredAt)+' · '+escapeHtml(status)+'</small></div>';
+      '</p>'+otp+'<div class="message-tags">'+messageTags(e)+'</div></div>';
   }).join('');
   pane.dataset.threadKey=activeConversationKey;
   if(previousKey!==activeConversationKey||nearBottom)pane.scrollTop=pane.scrollHeight;
@@ -590,12 +720,17 @@ function renderConversation(){
 function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
   if(!selected)return;
-  activeConversationKey=key;visibleOffset=0;
+  activeConversationKey=key;
   const last=selected.latest,number=messageAddress(last),did=last.deviceId,channel=messageChannel(last);
   updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
   $('replyTo').value=number;
   $('replyOptions').open=false;
-  const canReply=/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
+  const originalRevision=Number(last.payload?.channelRevision||0);
+  const currentChannel=nodeChannels(devices.find(x=>x.id===did)).find(ch=>String(ch.id)===channel);
+  const stale=originalRevision>0&&
+    (!currentChannel||Number(currentChannel.revision||currentChannel.channelRevision||1)!==originalRevision);
+  const confirmed=!!last.payload?.channelId&&originalRevision>0;
+  const canReply=confirmed&&!stale&&/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
   $('replySend').disabled=!canReply;
   if(!canReply){$('replyOptions').open=true;toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');}
   syncResponsiveConversation();
@@ -839,9 +974,9 @@ function wire(){
   $('lockBtn').onclick=lockVault;
   $('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast(tr('vault_locked'));
   document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
-  $('search').oninput=()=>{visibleOffset=0;renderInbox();};
-  $('deviceFilter').onchange=()=>{visibleOffset=0;renderInbox();};
-  $('kindFilter').onchange=()=>{visibleOffset=0;renderInbox();};
+  $('search').oninput=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
+  $('deviceFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
+  $('kindFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
   $('newSmsBtn').onclick=openNewMessage;
@@ -855,7 +990,22 @@ function wire(){
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
   $('conversationMessages').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
-  $('loadNewerBtn').onclick=()=>{visibleOffset=Math.max(0,visibleOffset-30);renderInbox();};
+  const inboxScroller=$('inboxList');
+  const maybeLoadMore=()=>{
+    if(!vaultKey||historyFetchInFlight||(!historyHasMore&&visibleCount>=buildThreads(filteredEvents()).length))return;
+    if(inboxScroller.scrollTop<lastAutoScroll+16)return;
+    if(inboxScroller.scrollTop+inboxScroller.clientHeight<inboxScroller.scrollHeight-240)return;
+    lastAutoScroll=inboxScroller.scrollTop;
+    loadOlder().catch(e=>toast(e.message));
+  };
+  inboxScroller.addEventListener('scroll',maybeLoadMore,{passive:true});
+  if('IntersectionObserver' in window){
+    loadObserver=new IntersectionObserver(entries=>{
+      if(entries[0]?.isIntersecting&&inboxScroller.scrollTop>0)maybeLoadMore();
+    },{root:inboxScroller,rootMargin:'0px 0px 240px 0px'});
+    loadObserver.observe($('loadSentinel'));
+  }
+  $('loadNewerBtn').onclick=()=>{$('inboxList').scrollTop=0;};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
   $('addDeviceBtn').onclick=()=>{switchView('settings');$('enrollCard').scrollIntoView({behavior:'smooth',block:'start'});$('enrollName').focus({preventScroll:true});};
   $('enrollBtn').onclick=async()=>{
@@ -875,6 +1025,10 @@ function wire(){
   $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
   $('deviceList').addEventListener('toggle',e=>{const details=e.target.closest('details[data-device]');if(!details)return;if(details.open)expandedDeviceDetails.add(details.dataset.device);else expandedDeviceDetails.delete(details.dataset.device);},true);
   $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
+  $('refreshPoolBtn').onclick=()=>loadPool().catch(e=>toast(e.message));
+  $('smsPoolMembers').onclick=e=>{const button=e.target.closest('[data-pool-action]');if(!button)return;
+    const task=button.dataset.poolAction==='approve'?grantPoolDevice(button.dataset.id):revokePoolDevice(button.dataset.id);
+    task.catch(err=>toast(err.message));};
   $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
   relocalizeDynamic();

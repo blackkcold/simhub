@@ -68,7 +68,7 @@ public final class MmsReceiver extends BroadcastReceiver {
             NotificationManager manager=c.getSystemService(NotificationManager.class);
             String channel="simhub_mms_alert";
             manager.createNotificationChannel(new NotificationChannel(channel,"Unsupported MMS received",NotificationManager.IMPORTANCE_DEFAULT));
-            PendingIntent open=PendingIntent.getActivity(c,2041,new Intent(c,MainActivity.class),
+            PendingIntent open=PendingIntent.getActivity(c,2041,new Intent(c,HubActivity.class),
                     PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
             Notification n=new Notification.Builder(c,channel).setSmallIcon(R.drawable.ic_simhub)
                     .setContentTitle("MMS received — action needed")

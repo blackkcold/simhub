@@ -11,6 +11,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ClipDescription
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -36,6 +39,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class PairingDisplay(val code:String,val fingerprint:String,val waiting:Boolean,val error:String="")
 /** Ephemeral ECDH key stays in process RAM across fold/unfold Activity recreation. */
@@ -53,15 +60,27 @@ interface HubController {
     fun setRealtime(value:Boolean)
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
-    fun advanced()
+    fun requestContacts()
+    fun resetEnrollment()
+    fun checkOta()
+    fun exportDiagnostics()
+    fun setDeveloperEnabled(value:Boolean)
+    fun viewLogs()
+    fun clearLogs()
+    fun refreshDiagnostics()
+    fun setLanguage(index:Int)
+    fun toggleSharing(value:Boolean)
+    fun setSimTag(channelId:String,revision:Long,label:String,number:String)
     fun openNetworkSettings()
     fun loadMoreSms()
     fun copyOtp(code:String)
 }
 class HubActivity: ComponentActivity(), HubController {
     private var snapshot by mutableStateOf<HubSnapshot?>(null)
+    private val tools=HubToolsState()
+    private var pendingDiagnosticFile:File?=null
     private var loading by mutableStateOf(true)
-    private var smsLimit=400
+    private var smsLimit=100
     private var incomingId by mutableStateOf(0)
     private var incomingRecipient by mutableStateOf("")
     private var incomingBody by mutableStateOf("")
@@ -70,6 +89,14 @@ class HubActivity: ComponentActivity(), HubController {
     private var pendingTask:Job?=null
     private val refreshHandler=Handler(Looper.getMainLooper())
     private val refreshAfterChange=Runnable { refresh() }
+    private val poolObserver=object:BroadcastReceiver(){
+        override fun onReceive(context:Context?,intent:Intent?){
+            if(intent?.action==SharedPoolClient.ACTION_CACHE_UPDATED){
+                refreshHandler.removeCallbacks(refreshAfterChange)
+                refreshHandler.postDelayed(refreshAfterChange,350)
+            }
+        }
+    }
     private val smsObserver=object:ContentObserver(refreshHandler){
         override fun onChange(selfChange:Boolean){
             refreshHandler.removeCallbacks(refreshAfterChange)
@@ -78,15 +105,27 @@ class HubActivity: ComponentActivity(), HubController {
     }
     private val smsRoleLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){refresh()}
     private val permissionsLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){refresh()}
+    private val contactsLauncher=registerForActivityResult(ActivityResultContracts.RequestPermission()){refresh()}
+    private val exportLauncher=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val source=pendingDiagnosticFile; pendingDiagnosticFile=null
+        if(uri!=null && source!=null)lifecycleScope.launch {
+            try{withContext(Dispatchers.IO){contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } } ?: throw IllegalStateException("No export stream")}}
+            catch(e:Exception){AppLogger.e(this@HubActivity,"Diagnostics","Export failed",e);toast(getString(R.string.diagnostic_export_failed))}
+            finally{source.delete()}
+        }
+    }
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
         UiLocale.apply(this)
+        tools.developer=DeveloperSettings.isEnabled(this)
+        tools.language=UiLocale.index(this)
+        tools.installedAt=try { SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date(packageManager.getPackageInfo(packageName,0).lastUpdateTime)) } catch(_:Exception){"—"}
         window.statusBarColor=android.graphics.Color.TRANSPARENT
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         handleComposeIntent(intent)
-        setContent { HubApp(snapshot,loading,pairing,fold,this,incomingId,incomingRecipient,incomingBody) }
+        setContent { HubApp(snapshot,loading,pairing,fold,this,tools,incomingId,incomingRecipient,incomingBody) }
         // ACTION_VIEW is delivered to onCreate for a cold-start browser QR link;
         // onNewIntent only handles an already running Activity.
         if(intent?.action==Intent.ACTION_VIEW &&
@@ -104,10 +143,14 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun onStart(){
         super.onStart()
+        val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
+        if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(poolObserver,poolFilter)
         try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
         catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
     }
     override fun onStop(){
+        try{unregisterReceiver(poolObserver)}catch(_:Exception){}
         try{contentResolver.unregisterContentObserver(smsObserver)}
         catch(_:Exception){}
         refreshHandler.removeCallbacks(refreshAfterChange)
@@ -138,6 +181,10 @@ class HubActivity: ComponentActivity(), HubController {
             try{
                 val next=withContext(Dispatchers.IO){HubRepository.snapshot(applicationContext,smsLimit)}
                 snapshot=next
+                val pool=SharedPoolClient(applicationContext)
+                tools.poolEnabled=pool.optedIn()
+                tools.poolApproved=pool.approved()
+                tools.poolStatus=pool.status()
             }catch(error:Exception){
                 AppLogger.e(this@HubActivity,"Dashboard","State refresh failed",error)
                 toast(getString(R.string.hub_refresh_error))
@@ -290,8 +337,106 @@ class HubActivity: ComponentActivity(), HubController {
             }
         }
     }
-    override fun loadMoreSms(){smsLimit=(smsLimit+400).coerceAtMost(10000);refresh()}
-    override fun advanced(){startActivity(Intent(this,MainActivity::class.java))}
+    override fun loadMoreSms(){
+        smsLimit=(smsLimit+50).coerceAtMost(2000)
+        lifecycleScope.launch{
+            try{withContext(Dispatchers.IO){SharedPoolClient(applicationContext).loadOlder()}}
+            catch(e:Exception){AppLogger.e(this@HubActivity,"SharedPool","History load failed",e)}
+            refresh()
+        }
+    }
+    override fun toggleSharing(value:Boolean){
+        lifecycleScope.launch{
+            try{
+                withContext(Dispatchers.IO){SharedPoolClient(applicationContext).setEnabled(value)}
+                refresh();toast(if(value)"已申请共享，请在 Web 管理后台授权" else "共享已关闭，本机共享缓存已清理")
+            }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e));refresh()}
+        }
+    }
+    override fun setSimTag(channelId:String,revision:Long,label:String,number:String){
+        lifecycleScope.launch{
+            try{
+                withContext(Dispatchers.IO){
+                    SimTagStore.set(applicationContext,channelId,revision,label,number)
+                    val profile=SimTagStore.get(applicationContext,channelId,revision)
+                    val payload=org.json.JSONObject().put("channelId",channelId).put("channelRevision",revision)
+                        .put("tag",profile.optString("tag","")).put("tail",profile.optString("tail",""))
+                    EventQueue.queue(applicationContext,"sim-profile-"+UUID.randomUUID(),"sim.profile",
+                        System.currentTimeMillis()/1000,-1,false,payload,org.json.JSONObject())
+                    SyncJobService.scheduleNow(applicationContext)
+                }
+                refresh();toast("SIM 标签已保存")
+            }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
+        }
+    }
+    override fun requestContacts(){
+        if(checkSelfPermission(Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED)
+            contactsLauncher.launch(Manifest.permission.READ_CONTACTS)
+        else toast(getString(R.string.permissions_granted))
+    }
+    override fun resetEnrollment(){
+        if(!AgentConfig(this).isEnrolled())return
+        AlertDialog.Builder(this).setTitle(R.string.reset_title).setMessage(R.string.reset_message)
+            .setNegativeButton(R.string.cancel,null)
+            .setPositiveButton(R.string.reset){_,_->
+                EnrollmentManager.requestReset(this);SyncJobService.scheduleNow(this);refresh()
+                toast(getString(R.string.enrollment_reset_pending))
+            }.show()
+    }
+    override fun checkOta(){
+        lifecycleScope.launch {
+            try{val info=withContext(Dispatchers.IO){ApiClient(applicationContext).ota()}
+                if(info.optBoolean("available")){
+                    tools.ota=getString(R.string.update_version,info.optString("versionName","?"),info.optString("notes",""))
+                    val link=info.optString("url","")
+                    AlertDialog.Builder(this@HubActivity).setTitle(R.string.update_title)
+                        .setMessage(tools.ota).setNegativeButton(R.string.close,null)
+                        .setPositiveButton(R.string.open_download){_,_->
+                            if(link.startsWith("https://"))
+                                startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(link)))
+                        }.show()
+                }else tools.ota=getString(R.string.update_none)
+            }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
+        }
+    }
+    override fun exportDiagnostics(){
+        lifecycleScope.launch {
+            try{val source=withContext(Dispatchers.IO){DiagnosticExporter.create(applicationContext)}
+                pendingDiagnosticFile=source
+                exportLauncher.launch("simhub-diagnostics-"+SimpleDateFormat("yyyyMMdd-HHmmss",Locale.US).format(Date())+".zip")
+            }catch(e:Exception){AppLogger.e(this@HubActivity,"Diagnostics","Export preparation failed",e)
+                toast(getString(R.string.diagnostic_export_failed))}
+        }
+    }
+    override fun setDeveloperEnabled(value:Boolean){
+        DeveloperSettings.setEnabled(this,value);tools.developer=value
+        AppLogger.i(this,"Developer",if(value)"Diagnostic logging enabled" else "Diagnostic logging disabled")
+        if(!value){tools.logs="";tools.diagnostics=""}else viewLogs()
+    }
+    override fun viewLogs(){if(!DeveloperSettings.isEnabled(this))return
+        tools.logs=AppLogger.recent(this,24000).ifBlank{getString(R.string.logs_empty)}
+    }
+    override fun clearLogs(){AppLogger.clear(this);tools.logs=getString(R.string.logs_empty)
+        toast(getString(R.string.logs_cleared))
+    }
+    override fun refreshDiagnostics(){
+        lifecycleScope.launch{
+            try{val json=withContext(Dispatchers.IO){
+                val state=StateCollector.collect(applicationContext)
+                if(AgentConfig(applicationContext).isEnrolled())ApiClient(applicationContext).putState()
+                state.toString(2)
+            }
+            tools.diagnostics=if(DeveloperSettings.isEnabled(this@HubActivity))json else ""
+            refresh()
+            }catch(e:Exception){AppLogger.e(this@HubActivity,"Diagnostics","State refresh failed",e)
+                toast(UiErrors.message(this@HubActivity,e))}
+        }
+    }
+    override fun setLanguage(index:Int){
+        val next=UiLocale.fromIndex(index)
+        if(next==UiLocale.get(this))return
+        UiLocale.set(this,next);UiLocale.apply(this);tools.language=index;recreate()
+    }
     override fun openNetworkSettings(){
         try{startActivity(Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS))}
         catch(_:Exception){toast(getString(R.string.generic_error))}

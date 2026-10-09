@@ -14,9 +14,25 @@ public final class EventQueue {
             AgentConfig cfg=new AgentConfig(c);
             if(!cfg.isEnrolled())return false;
             String sub=String.valueOf(subId);
+            if(kind.startsWith("sms.")){
+                payload.put("sourceDeviceName",cfg.deviceName());
+                String channelId=payload.optString("channelId","");
+                if(!channelId.isBlank()){
+                    JSONObject profile=SimTagStore.get(c,channelId,payload.optLong("channelRevision",1));
+                    if(!profile.optString("tag","").isBlank())payload.put("simTag",profile.optString("tag",""));
+                    if(!profile.optString("tail","").isBlank())payload.put("simTail",profile.optString("tail",""));
+                }
+            }
             JSONObject cipher=new CryptoBox(c).encryptEvent(payload,id,kind,occurredAt,sub,hasOtp);
             boolean ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
-            if(ok){if("sms.received".equals(kind))cfg.recordSmsReceived(occurredAt);if(!"sms.history".equals(kind))wake(c);}
+            if(ok){
+                if("sms.received".equals(kind)||"sms.history".equals(kind)||"sms.sent".equals(kind)||"sms.delivered".equals(kind)||"sim.profile".equals(kind)){
+                    String channel=payload.optString("channelId","");
+                    SharedPoolClient.stage(c,id,occurredAt,channel,payload);
+                }
+                if("sms.received".equals(kind))cfg.recordSmsReceived(occurredAt);
+                if(!"sms.history".equals(kind))wake(c);
+            }
             return ok;
         }catch(Exception ignored){new AgentConfig(c).recordQueueFailure();SyncJobService.scheduleNow(c);return false;}
     }

@@ -44,9 +44,10 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 | Capability | What it does |
 |---|---|
 | **SMS and OTP** | Multi-SIM receive/send, conversation replies, new messages, code detection and copy |
-| **Native Android UI** | Four Material 3 tabs, scalable vector icons, responsive foldable panes, local SMS conversations and per-SIM inline replies |
+| **Native Android UI** | One Material 3 adaptive interface with foldable panes, SIM tags, messaging, all advanced tools and local diagnostics |
 | **Devices and SIMs** | Android and Linux modem nodes; phone numbers, signal, charging, Wi-Fi and connectivity |
-| **History and diagnostics** | Latest 100 rescan, older 100 backfill, relay message pagination, encrypted health checks |
+| **Shared SMS (opt-in)** | Authorized Android devices decrypt a common encrypted pool; latest 100, incremental/older pagination and masked SIM provenance |
+| **History and diagnostics** | Latest 100 rescan, older 100 backfill, auto-loading Web inbox, device health and redacted diagnostics |
 | **Pairing** | Scan the controller QR from Android, or enter the Android eight-digit pairing code and verify the device fingerprint |
 | **Privacy and authentication** | Node-Key end-to-end encryption, username / TOTP / Passkeys, active Vault session recovery |
 | **Offline resilience** | Durable queues, retries, foreground relay and scheduled background recovery |
@@ -83,4 +84,4 @@ The relay cannot read SMS or Vault plaintext; Passkeys authenticate users but do
 
 ## Documentation
 
-[Quick deployment](docs/QUICKSTART.zh-CN.md) · [Installation](docs/INSTALLATION.md) · [Android setup](docs/ANDROID_SETUP.md) · [Security](docs/SECURITY_ARCHITECTURE.md) · [Architecture](docs/ARCHITECTURE.md) · [License](LICENSE)
+[Quick deployment](docs/QUICKSTART.zh-CN.md) · [Installation](docs/INSTALLATION.md) · [Android setup](docs/ANDROID_SETUP.md) · [Security](docs/SECURITY_ARCHITECTURE.md) · [Shared SMS](docs/SHARED_SMS.md) · [Architecture](docs/ARCHITECTURE.md) · [License](LICENSE)

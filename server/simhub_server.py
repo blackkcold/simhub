@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import passkeys
+import shared_pool
 from typing import Any
 
 APP_VERSION = "0.7.0"
@@ -382,7 +383,8 @@ def init_db() -> None:
         _migrate_v7(con)
         _migrate_v8(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=9")
+        shared_pool.init(con)
+        con.execute("PRAGMA user_version=10")
     run_maintenance()
 
 
@@ -773,7 +775,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def read_json(self) -> dict[str,Any] | None:
         path=self.route()[0]
-        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state|events/batch)$",path) else 65536
+        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state|events/batch|pool/messages)$",path) else 65536
         try:
             length=int(self.headers.get("Content-Length","0"))
         except ValueError:
@@ -836,6 +838,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             return method == "GET"
         if re.fullmatch(r"/api/v1/devices/[^/]+/(?:events(?:/batch)?|state|heartbeat|token/(?:prepare|commit))", path):
             return method == "POST"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/pool(?:/(?:request|messages))?",path): return method in {"GET","POST"}
         if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/ack", path):
             return method == "POST"
         return False
@@ -901,7 +904,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<9:
+                if version<10:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -934,6 +937,18 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.lookup_pairing(q); return
         if len(p)==5 and p[:3]==["api","v1","pairings"] and p[4]=="status":
             self.pairing_status(p[3]); return
+        if path=="/api/v1/pool":
+            if not self.require_admin():return
+            with open_db() as con: result=shared_pool.admin_status(con)
+            self.send_json(200,result);return
+        if len(p) in (5,6) and p[:3]==["api","v1","devices"] and p[4]=="pool":
+            if not self.require_device(p[3]):return
+            with open_db() as con:
+                try:
+                    result=shared_pool.node_status(con,p[3]) if len(p)==5 else shared_pool.get_messages(con,p[3],q)
+                except (ValueError,PermissionError) as err:
+                    self.send_error_json(403 if isinstance(err,PermissionError) else 400,"pool_access",str(err));return
+            self.send_json(200,result);return
         if path=="/api/v1/devices":
             if not self.require_admin(): return
             self.get_devices(); return
@@ -1014,6 +1029,38 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="reset":
             if not self.require_device(p[3]): return
             self.complete_device_reset(p[3]); return
+        if path in {"/api/v1/pool/authorize","/api/v1/pool/revoke","/api/v1/pool/rotate"}:
+            if not self.require_stepup():return
+            body=self.read_json()
+            if body is None:return
+            try:
+                with open_db() as con:
+                    if path.endswith("/authorize"): result=shared_pool.provision(con,body)
+                    elif path.endswith("/revoke"):result=shared_pool.revoke(con,str(body.get("deviceId","")))
+                    else:result=shared_pool.rotate(con,body)
+                audit("pool."+path.rsplit("/",1)[-1],str(body.get("deviceId","")), "ok",self.ip)
+                signal_stream();self.send_json(200,result)
+            except (ValueError,sqlite3.IntegrityError) as err:self.send_error_json(400,"invalid_pool_operation",str(err))
+            return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["pool","request"]:
+            if not self.require_device(p[3]):return
+            body=self.read_json()
+            if body is None:return
+            if type(body.get("enabled")) is not bool:
+                self.send_error_json(400,"invalid_request","enabled must be boolean");return
+            with open_db() as con: result=shared_pool.request(con,p[3],body["enabled"])
+            signal_stream();self.send_json(200,result);return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["pool","messages"]:
+            if not self.require_device(p[3]):return
+            body=self.read_json()
+            if body is None:return
+            try:
+                with open_db() as con: result=shared_pool.put_messages(con,p[3],body)
+                if result["inserted"]:signal_stream()
+                self.send_json(200,result)
+            except (ValueError,PermissionError) as err:
+                self.send_error_json(403 if isinstance(err,PermissionError) else 400,"pool_upload_failed",str(err))
+            return
         if path=="/api/v1/enrollments":
             if not self.require_stepup():return
             body=self.read_json()

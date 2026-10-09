@@ -44,9 +44,13 @@ ExecStart=/usr/bin/python3 $ROOT/scripts/simhub_updater.py --serve
 Restart=on-failure
 RestartSec=5
 UMask=0077
+# Keep the updater in the original user namespace so it can access the
+# rootless Docker socket with its host GID/ACL intact. On Ubuntu 24.04,
+# PrivateTmp=/ProtectSystem= implicitly create PrivateUsers= under systemd --user
+# and remap the Docker socket's group to nogroup (EACCES).
+# The process remains an unprivileged dedicated user. No Docker socket is
+# exposed to the relay, and the updater still enforces rootless/OCI signatures.
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 
@@ -57,7 +61,43 @@ chmod 600 "$UNIT"
 systemctl --user daemon-reload
 systemctl --user enable --now simhub-updater.service
 systemctl --user restart simhub-updater.service
-echo "Rootless updater installed for $(id -un)."
+# A successful systemctl restart is NOT proof that a Type=simple service remains
+# healthy or can access docker.sock. Verify the actual process and IPC.
+UPDATER_READY=0
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  PID="$(systemctl --user show --property=MainPID --value simhub-updater.service)"
+  if [[ "$PID" =~ ^[1-9][0-9]*$ ]] && [[ -r "/proc/$PID/ns/user" ]]; then
+    if [[ "$(readlink "/proc/$PID/ns/user")" != "$(readlink /proc/self/ns/user)" ]]; then
+      echo "Updater has an unexpected user namespace; remove conflicting systemd drop-ins." >&2
+      systemctl --user status --no-pager simhub-updater.service || true
+      exit 1
+    fi
+    if python3 - "$ROOT/.simhub-updater/control.sock" <<'PY'
+import json, socket, sys
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.settimeout(2)
+        s.connect(sys.argv[1])
+        s.sendall(b'{"action":"status"}\n')
+        result = json.loads(s.recv(32768).split(b"\n", 1)[0])
+    assert result.get("ok") is True and result.get("mode") == "rootless-verified"
+except (OSError, ValueError, AssertionError):
+    sys.exit(1)
+PY
+    then
+      UPDATER_READY=1
+      break
+    fi
+  fi
+  sleep 0.5
+done
+if [[ "$UPDATER_READY" != "1" ]]; then
+  echo "Updater did not become healthy or its local control socket is inaccessible." >&2
+  systemctl --user status --no-pager simhub-updater.service || true
+  echo "Inspect: journalctl --user -u simhub-updater.service -n 100 --no-pager" >&2
+  exit 1
+fi
+echo "Rootless updater installed and IPC connectivity verified for $(id -un)."
 echo "Run: systemctl --user status simhub-updater"
 echo "Important: disable OLD privileged updater: sudo systemctl disable --now simhub-updater.service"
 echo "Enable user linger for boot-time start if required."

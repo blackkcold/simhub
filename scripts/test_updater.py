@@ -17,6 +17,7 @@ IMAGE = "ghcr.io/blackkcold/simhub-relay@sha256:" + "a" * 64
 
 class UpdaterTests(unittest.TestCase):
     def test_version(self):
+        self.assertEqual(updater.parse_version("v0.11.1"), (0, 11, 1))
         self.assertEqual(updater.parse_version("v0.11.0"), (0, 11, 0))
         self.assertEqual(updater.parse_version("v0.11.0-rc1"), (0, 0, 0))
 
@@ -79,6 +80,32 @@ class UpdaterTests(unittest.TestCase):
                 "published_at": "now"}):
             with self.assertRaises(ValueError):
                 updater.latest()
+
+    def test_user_systemd_unit_does_not_create_user_namespace(self):
+        """PrivateTmp/ProtectSystem under systemd --user can remap Docker socket GIDs."""
+        installer = Path(__file__).with_name("install-updater.sh").read_text("utf-8")
+        self.assertIn('cat > "$UNIT" <<EOF', installer)
+        unit = installer.split('cat > "$UNIT" <<EOF', 1)[1].split("\nEOF", 1)[0]
+        for setting in ("PrivateTmp", "ProtectSystem", "PrivateUsers",
+                        "PrivateMounts", "PrivateDevices", "ProtectHome",
+                        "ReadOnlyPaths", "ReadWritePaths", "InaccessiblePaths",
+                        "BindPaths", "TemporaryFileSystem"):
+            self.assertNotRegex(unit, r"(?m)^" + setting + r"\s*=")
+        # Preserve non-namespace controls and the non-root Docker architecture.
+        self.assertIn("NoNewPrivileges=true", unit)
+        self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", unit)
+        self.assertIn("SystemCallArchitectures=native", unit)
+        self.assertIn("simhub_updater.py --serve", unit)
+
+    def test_installer_fails_closed_on_namespace_or_ipc_failure(self):
+        installer = Path(__file__).with_name("install-updater.sh").read_text("utf-8")
+        self.assertIn('readlink "/proc/$PID/ns/user"', installer)
+        self.assertIn('readlink /proc/self/ns/user', installer)
+        self.assertIn('s.connect(sys.argv[1])', installer)
+        self.assertIn('result.get("mode") == "rootless-verified"', installer)
+        self.assertIn('if [[ "$UPDATER_READY" != "1" ]]', installer)
+        self.assertNotIn("chmod 666", installer)
+        self.assertIn("if [[ \"$EUID\" -eq 0 ]]", installer)
 
     def test_ipc_control_restricts_actions(self):
         self.assertFalse(hasattr(updater, "extract"))

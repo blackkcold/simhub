@@ -1,3 +1,12 @@
+## v0.11.1 — Rootless systemd user service compatibility
+
+- Fix Ubuntu 24.04 rootless Docker `docker.sock` EACCES: remove `PrivateTmp=true` and `ProtectSystem=full` from the generated **user** service to prevent implicit user namespace/GID remapping.
+- Keep strict non-root/Rootless Docker enforcement, fixed IPC operations, credential/digest verification and signature checking unchanged.
+- Verify the actual launched updater shares the caller's user namespace and accepts a local status IPC request before the installer reports success.
+- Add static regression tests for namespace-triggering systemd options and installer fail-closed behavior; document manual bootstrap recovery for v0.11.0 hosts.
+
+**Important:** Hosts with the broken v0.11.0 service must pull the new installer and run `bash scripts/install-updater.sh` **as the dedicated rootless user**. The Web UI cannot repair a service that cannot reach Docker.
+
 ## v0.11.0 — Rootless signed OCI deployment
 
 - Remove the root-run Docker source build/update path and disable legacy updater activation from the Web UI.

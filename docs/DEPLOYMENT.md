@@ -55,6 +55,41 @@ python3 scripts/setup.py --upgrade --admin-domain admin.example.com --node-domai
 
 Add `--mode external` when applicable. This non-destructive upgrade applies to existing dual-host installs; earlier single-host deployments require an explicit DNS/proxy migration plan. After Relay/PWA is updated, install the [latest signed Android APK](https://github.com/blackkcold/simhub/releases/latest). Verify matching version and signing certificate before installation. For legacy releases, consult [migration guidance](UPGRADE_0.4_TO_0.5.md).
 
+## v0.11.1: Ubuntu 24.04 Rootless Docker socket EACCES fix
+
+**Confirmed regression in v0.11.0:** the generated `systemd --user` service included `PrivateTmp=true` and `ProtectSystem=full`. Either filesystem sandbox may implicitly activate `PrivateUsers` in an unprivileged user manager, changing the Docker socket's group ownership as seen by the updater (`nogroup`) and causing `connect: permission denied` despite the host rootless user being authorized.
+
+**Fix:** v0.11.1 removes only these namespace-triggering unit options. The updater remains a dedicated **non-root** service with `NoNewPrivileges=true`, restricted address families and syscall architectures, unchanged Unix socket ACL, signature verification, image Digest enforcement and fixed update operations. Do **not** make `docker.sock` world-accessible or add users to the host rootful Docker group.
+
+### Repair an already-broken v0.11.0 host
+
+Because the updater cannot contact Docker, the Web update button **cannot repair its own unit**. On the dedicated *rootless Docker user* account, update the checked-out deployment scripts and rerun the installer (without sudo):
+
+```bash
+cd /path/to/simhub
+git pull --ff-only
+bash scripts/install-updater.sh
+systemctl --user cat simhub-updater.service
+systemctl --user is-active simhub-updater.service
+journalctl --user -u simhub-updater.service -n 50 --no-pager
+```
+
+The installer now checks that the actual service PID shares the calling user's user namespace and that the local control socket returns `rootless-verified`. It reports failure instead of falsely reporting successful installation if the process crashes or the IPC socket cannot be reached. With the unit repaired, update to v0.11.1 through the normal management UI. Do not restart or reinitialize the Relay volume merely to repair this user service.
+
+If an older *system-wide* root updater remains enabled, disable it separately: `sudo systemctl disable --now simhub-updater.service`.
+
+Troubleshooting for overrides and inherited restrictions:
+
+```bash
+systemctl --user cat simhub-updater.service
+systemctl --user show simhub-updater.service -p PrivateTmp -p ProtectSystem -p PrivateUsers
+systemctl --user show simhub-updater.service -p MainPID
+docker info --format '{{json .SecurityOptions}}'
+stat -Lc '%U:%G %a %n' "$XDG_RUNTIME_DIR/docker.sock"
+```
+
+Do not add `PrivateTmp`, `ProtectSystem`, `PrivateUsers`, `ProtectHome`, or equivalent filesystem namespace directives to this user service without first verifying that `docker.sock` remains reachable with the actual user/GID mapping. Ubuntu 24.04 host integration testing is still required after installation; CI checks the unit text and static security invariants but does not emulate this host's user manager.
+
 ## v0.11.0: verified, rootless Docker updates
 
 **Security boundary:** The admin PWA only submits a fixed version request to a Unix socket. The updater is never root, must connect to a rootless Docker daemon and refuses unverified images. The service no longer runs Docker builds on the production host. A valid SHA-256 in an unsigned release manifest is *not* accepted as authorization: the server image must have a Cosign signature bound to the exact GitHub Actions release workflow identity.

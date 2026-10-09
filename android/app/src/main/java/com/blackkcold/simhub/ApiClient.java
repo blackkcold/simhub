@@ -71,12 +71,15 @@ public final class ApiClient {
         try{
             JSONObject status=request("GET","/api/v1/devices/"+cfg.deviceId()+"/lifecycle",null);
             if(status.optBoolean("resetRequired",false)){
-                cfg.markResetPending();performPendingReset();return true;
+                cfg.markResetPending();performPendingReset();
+                if(!cfg.resetPending()){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
+                return true;
             }
             return false;
         }catch(ApiFailure error){
             if(error.status==410){
                 EnrollmentManager.reset(c);
+                new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);
                 AppLogger.i(c,"Enrollment","Previously deleted node reset locally");
                 return true;
             }

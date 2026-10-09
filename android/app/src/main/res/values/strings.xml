@@ -41,6 +41,8 @@
     <string name="reset_title">Reset enrollment?</string>
     <string name="reset_message">Unpair this node from Relay and clear its encrypted server records. Offline resets remain pending until the server confirms. Android SMS messages are never deleted.</string>
     <string name="enrollment_reset_pending">Reset pending server confirmation. SMS sync has stopped.</string>
+    <string name="remote_reset_title">SIM Hub unpaired remotely</string>
+    <string name="remote_reset_done">Server removed this device. Pairing credentials and local relay data were cleared. Android SMS was not deleted.</string>
     <string name="build_details">Agent v%1$s · Installed/updated: %2$s</string>
     <string name="cancel">Cancel</string>
     <string name="reset">Reset</string>

@@ -18,6 +18,8 @@ public final class AgentConfig {
     public AgentConfig(Context c){prefs=c.getSharedPreferences(PREF,Context.MODE_PRIVATE);secrets=new SecretStore(c);}
     public boolean isEnrolled(){return !resetPending()&&!server().isEmpty()&&!deviceId().isEmpty()&&deviceToken()!=null&&(nodeKey()!=null||vaultKey()!=null);}
     public boolean resetPending(){return prefs.getBoolean("reset_pending",false);}
+    public boolean remoteResetNotified(){return prefs.getBoolean("remote_reset_notified",false);}
+    public void markRemoteResetNotified(){prefs.edit().putBoolean("remote_reset_notified",true).apply();}
     public void markResetPending(){prefs.edit().putBoolean("reset_pending",true).apply();resetSyncBackoff();}
     public String server(){return prefs.getString("server","");}
     public String deviceId(){return prefs.getString("device_id","");}
@@ -98,7 +100,7 @@ public final class AgentConfig {
     }
 
     private void setBaseEnrollment(String server,String deviceId,String deviceName,String token)throws Exception{
-        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").apply();
+        prefs.edit().remove("remote_reset_notified").putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
         localQueueKey();
     }

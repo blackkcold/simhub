@@ -386,7 +386,7 @@ function nodeChannels(d){
 }
 function channelTitle(ch){return (ch.phoneNumber?ch.phoneNumber+' · ':'')+(ch.alias||ch.displayName||ch.carrierName||ch.id);}
 function messageChannelLabel(e){
-  if(e.kind==='sms.history'&&!e.payload?.channelId)return '历史卡槽 '+(e.subscriptionId||'—')+'（号码归属未验证）';
+  if(e.kind==='sms.history'&&!e.payload?.channelId)return tr('historical_sim_unverified');
   const d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e);
   const channel=nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id);
   return channel?channelTitle(channel):id;
@@ -541,10 +541,13 @@ function updateReplyChannels(preferred){
   el.innerHTML='<option value="">'+escapeHtml(tr('sim_subscription'))+'</option>'+
     channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'">'+escapeHtml(channelTitle(ch))+'</option>').join('');
   if([...el.options].some(x=>x.value===selected))el.value=selected;
+  const selectedChannel=channels.find(ch=>String(ch.id)===el.value);
+  $('replyChannelLabel').textContent=selectedChannel?(d.name+' · '+channelTitle(selectedChannel)):tr('choose_channel');
 }
 function renderConversation(){
   if(!activeConversationKey){
     $('conversationTitle').textContent=tr('choose_conversation');
+    $('conversationMeta').textContent='';
     $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('choose_conversation_hint'))+'</p>';
     $('replyComposer').hidden=true;
     return;
@@ -552,6 +555,7 @@ function renderConversation(){
   $('replyComposer').hidden=false;
   if(activeConversationKey==='__new'){
     $('conversationTitle').textContent=tr('new_sms');
+    $('conversationMeta').textContent='';
     $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('new_sms_hint'))+'</p>';
     return;
   }
@@ -561,7 +565,12 @@ function renderConversation(){
     return;
   }
   const last=messages[messages.length-1];
-  $('conversationTitle').textContent=(last.payload?.contactName||messageAddress(last)||tr('unknown'))+' · '+deviceName(last.deviceId)+' · '+messageChannelLabel(last);
+  const pane=$('conversationMessages');
+  const previousKey=pane.dataset.threadKey;
+  const nearBottom=pane.scrollHeight-pane.scrollTop-pane.clientHeight<100;
+  const oldScroll=pane.scrollTop;
+  $('conversationTitle').textContent=last.payload?.contactName||messageAddress(last)||tr('unknown');
+  $('conversationMeta').textContent=deviceName(last.deviceId)+' · '+messageChannelLabel(last);
   $('conversationMessages').innerHTML=messages.map(e=>{
     const p=e.payload||{},inbound=eventIsInbound(e),
       status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent')),
@@ -571,6 +580,9 @@ function renderConversation(){
     return '<div class="bubble'+(inbound?'':' outbound')+'"><p>'+escapeHtml(body)+
       '</p>'+otp+'<small class="meta">'+fmtTime(e.occurredAt)+' · '+escapeHtml(status)+'</small></div>';
   }).join('');
+  pane.dataset.threadKey=activeConversationKey;
+  if(previousKey!==activeConversationKey||nearBottom)pane.scrollTop=pane.scrollHeight;
+  else pane.scrollTop=oldScroll;
 }
 function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
@@ -579,6 +591,7 @@ function openConversation(key){
   const last=selected.latest,number=messageAddress(last),did=last.deviceId,channel=messageChannel(last);
   updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
   $('replyTo').value=number;
+  $('replyOptions').open=false;
   const canReply=/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
   $('replySend').disabled=!canReply;
   if(!canReply)toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');
@@ -591,6 +604,7 @@ function openNewMessage(){
   $('replyDevice').value='';
   updateReplyChannels();
   $('replyTo').value='';$('replyBody').value='';$('replySend').disabled=false;
+  $('replyOptions').open=true;
   syncResponsiveConversation();
   renderInbox();$('replyTo').focus();
 }
@@ -785,7 +799,7 @@ function wire(){
   window.addEventListener('resize',syncResponsiveConversation,{passive:true});
   window.addEventListener('orientationchange',syncResponsiveConversation,{passive:true});
   $('replyDevice').onchange=()=>{updateReplyChannels();$('replySend').disabled=false;};
-  $('replySubscription').onchange=()=>{$('replySend').disabled=false;};
+  $('replySubscription').onchange=()=>{$('replySend').disabled=false;updateReplyChannels($('replySubscription').value);};
   $('replyBody').oninput=updateReplyCount;
   $('replyTo').oninput=()=>{$('replySend').disabled=false;};
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));

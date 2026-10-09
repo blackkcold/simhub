@@ -83,6 +83,40 @@ class SharedPoolTest(unittest.TestCase):
         self.assertEqual(len(shared_pool.node_status(self.db,"b")["keys"]),2)
         self.assertEqual(len(shared_pool.node_status(self.db,"a")["keys"]),0)
 
+    def test_offline_member_departure_pauses_new_uploads_until_rotation(self):
+        self.grant("a")
+        self.grant("b")
+        self.assertFalse(shared_pool.rotation_required(self.db))
+        shared_pool.member_departure(self.db,"a")
+        self.assertTrue(shared_pool.admin_status(self.db)["rotationRequired"])
+        self.assertFalse(shared_pool.enabled(self.db,"a"))
+        message={"originEventId":"first","occurredAt":1500,
+                 "channelId":"sim","epoch":1,"ciphertext":cipher()}
+        with self.assertRaises(PermissionError):
+            shared_pool.put_messages(self.db,"b",{"messages":[message]})
+        with self.assertRaises(ValueError):
+            shared_pool.provision(self.db,{"deviceId":"c","keyId":"safe-key-identifier",
+                                          "memberEnvelope":cipher()})
+        with self.assertRaises(ValueError):
+            shared_pool.rotate(self.db,{"expectedEpoch":0,"keyId":"new-safe-pool-key",
+                                        "vaultEnvelope":cipher(),"members":{"b":cipher()}})
+        shared_pool.rotate(self.db,{"expectedEpoch":1,"keyId":"new-safe-pool-key",
+                                    "vaultEnvelope":cipher(),"members":{"b":cipher()}})
+        self.assertFalse(shared_pool.rotation_required(self.db))
+        message["epoch"]=2
+        self.assertEqual(shared_pool.put_messages(self.db,"b",{"messages":[message]})["inserted"],1)
+
+    def test_node_opt_out_requests_rotation_only_when_previously_approved(self):
+        self.grant("a")
+        self.grant("b")
+        shared_pool.request(self.db,"c",True)
+        shared_pool.request(self.db,"c",False)
+        self.assertFalse(shared_pool.rotation_required(self.db))
+        shared_pool.request(self.db,"a",False)
+        self.assertTrue(shared_pool.rotation_required(self.db))
+        self.assertFalse(shared_pool.enabled(self.db,"a"))
+        self.assertTrue(shared_pool.node_status(self.db,"b")["rotationRequired"])
+
     def test_no_cross_node_message_forgery(self):
         self.grant("a")
         self.assertFalse(shared_pool.enabled(self.db,"c"))

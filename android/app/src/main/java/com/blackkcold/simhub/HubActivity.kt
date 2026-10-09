@@ -224,7 +224,7 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun copyOtp(code:String){
         val clip=ClipData.newPlainText("SIM Hub",code)
-        if(Build.VERSION.SDK_INT>=33)clip.description.extras=Bundle().apply{putBoolean(ClipDescription.EXTRA_IS_SENSITIVE,true)}
+        if(Build.VERSION.SDK_INT>=33)clip.description.extras=android.os.PersistableBundle().apply{putBoolean(ClipDescription.EXTRA_IS_SENSITIVE,true)}
         getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
         toast(getString(R.string.hub_code_copied))
     }

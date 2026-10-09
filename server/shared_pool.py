@@ -91,6 +91,9 @@ def admin_status(con):
         "epoch":key["epoch"] if key else 0,
         "keyId":key["key_id"] if key else "",
         "vaultEnvelope":json.loads(key["vault_envelope"]) if key else None,
+        "keys":[{"epoch":k["epoch"],"keyId":k["key_id"],
+                 "vaultEnvelope":json.loads(k["vault_envelope"])}
+                for k in con.execute("SELECT * FROM sms_pool_keys ORDER BY epoch DESC LIMIT 32")],
         "members":[dict(row) for row in members],
     }
 
@@ -134,6 +137,17 @@ def provision(con, body):
                 " VALUES(?,?,?) ON CONFLICT(device_id,epoch) DO UPDATE SET "
                 "wrapped_envelope=excluded.wrapped_envelope",
                 (device,key["epoch"],json_key(envelope)))
+    history=body.get("historyEnvelopes",{})
+    if not isinstance(history,dict):raise ValueError("Historical key envelopes must be an object")
+    allowed={str(k["epoch"]) for k in con.execute(
+        "SELECT epoch FROM sms_pool_keys WHERE epoch<? ORDER BY epoch DESC LIMIT 31",(key["epoch"],))}
+    if not set(history).issubset(allowed) or not all(valid_cipher(v) for v in history.values()):
+        raise ValueError("Invalid historical key envelopes")
+    for old_epoch,old_envelope in history.items():
+        con.execute("INSERT INTO sms_pool_member_keys(device_id,epoch,wrapped_envelope) "
+                    "VALUES(?,?,?) ON CONFLICT(device_id,epoch) DO UPDATE SET "
+                    "wrapped_envelope=excluded.wrapped_envelope",
+                    (device,int(old_epoch),json_key(old_envelope)))
     con.execute("UPDATE sms_pool_members SET approved=1,updated_at=? WHERE device_id=?",
                 (int(time.time()),device))
     return {"ok":True,"deviceId":device,"epoch":key["epoch"]}
@@ -195,6 +209,8 @@ def put_messages(con,device,body):
     if not isinstance(items,list) or not 1<=len(items)<=MAX_BATCH:
         raise ValueError("Expected 1 to 20 encrypted SMS")
     inserted=0;results=[];seen=set();now=int(time.time())
+    device_record=con.execute("SELECT sms_purged_before FROM devices WHERE id=?",(device,)).fetchone()
+    purged_before=device_record["sms_purged_before"] if device_record else 0
     for x in items:
         if not isinstance(x,dict):raise ValueError("Invalid message")
         event_id=x.get("originEventId")
@@ -209,6 +225,10 @@ def put_messages(con,device,body):
         occurred=x.get("occurredAt")
         if not isinstance(occurred,int) or occurred<=0 or occurred>now+300:
             raise ValueError("Invalid timestamp")
+        if occurred<=purged_before:
+            results.append({"originEventId":event_id,"accepted":True,
+                            "duplicate":False,"suppressed":True})
+            continue
         cur=con.execute("INSERT OR IGNORE INTO sms_pool_messages"
             "(device_id,origin_event_id,occurred_at,epoch,channel_id,ciphertext,created_at) "
             "VALUES(?,?,?,?,?,?,?)",

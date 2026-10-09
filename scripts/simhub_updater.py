@@ -233,6 +233,10 @@ def job(version):
                 or not re.fullmatch(r"[0-9a-f]{64}",checksum)
                 or not info["assets"].get(asset)):
                 raise ValueError("Invalid source manifest")
+            current_schema=int(compose("exec","-T","simhub","python3","-c",
+                "import sqlite3; c=sqlite3.connect('/data/simhub.db'); print(c.execute('PRAGMA user_version').fetchone()[0]); c.close()").strip())
+            if server.get("dbSchema")!=current_schema:
+                raise ValueError("Database schema-changing updates require a supervised migration")
             save("downloading")
             archive = temp / "source.zip"
             actual = download(info["assets"][asset],archive,MAX_SOURCE_SIZE)
@@ -325,7 +329,16 @@ def main():
             if state.get("phase") in {"queued","checking","downloading","building",
                                      "backup","switching","verifying","rolling_back"}:
                 # A restart cannot be misrepresented as a successful deployment.
-                save("interrupted",error="Updater interrupted; manual review required")
+                previous=state.get("previousTag","")
+                if state.get("phase") in {"switching","verifying","rolling_back"} and re.fullmatch(r"rollback-\\d+",previous):
+                    try:
+                        update_env(previous)
+                        compose("up","-d","--no-build","--force-recreate","simhub")
+                        save("rolled_back",error="Interrupted upgrade was rolled back on updater restart")
+                    except Exception as error:
+                        save("rollback_failed",error="Recovery failed: "+str(error)[:300])
+                else:
+                    save("interrupted",error="Updater interrupted before service switch")
         except (ValueError,OSError):
             save("failed",error="Unreadable status file")
     SOCKET.unlink(missing_ok=True)

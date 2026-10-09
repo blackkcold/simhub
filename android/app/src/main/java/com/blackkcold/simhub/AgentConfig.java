@@ -32,6 +32,13 @@ public final class AgentConfig {
     }
     public long nextSyncAllowedAt(){return prefs.getLong("next_sync_allowed_at",0L);}
     public void setNextSyncAllowedAt(long at){prefs.edit().putLong("next_sync_allowed_at",at).apply();}
+    public synchronized int incrementSyncBackoff(){
+        int failures=Math.min(9,prefs.getInt("sync_backoff_failures",0)+1);
+        prefs.edit().putInt("sync_backoff_failures",failures).apply();
+        return failures;
+    }
+    public int syncBackoffFailures(){return prefs.getInt("sync_backoff_failures",0);}
+    public void resetSyncBackoff(){prefs.edit().remove("sync_backoff_failures").remove("next_sync_allowed_at").apply();}
     public long historyDate(){
         if(prefs.contains("history_cursor_date")) return prefs.getLong("history_cursor_date",0L);
         long legacy=prefs.getLong("last_history_sync",0L);

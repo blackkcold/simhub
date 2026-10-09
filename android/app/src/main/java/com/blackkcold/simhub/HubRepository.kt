@@ -75,18 +75,33 @@ object HubRepository {
                 channelId=channel?.channelId.orEmpty(),simTag=tag.optString("tag",""),
                 simTail=tag.optString("tail",""),historicalUnverified=channel==null)
         }
-        val remote=try{SharedPoolClient(context).cached(limit).mapNotNull{row->
-            if(row.optString("deviceId")==cfg.deviceId())return@mapNotNull null
-            val body=row.optJSONObject("payload")?:return@mapNotNull null
-            val direction=body.optString("direction","in")
-            val address=if(direction=="out")body.optString("recipient","") else body.optString("sender","")
-            if(address.isBlank())return@mapNotNull null
-            HubSms(-row.optLong("seq"),address,body.optString("body",""),row.optLong("occurredAt")*1000,
-                if(direction=="out")Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX,-1,
-                row.optString("deviceId",""),body.optString("sourceDeviceName","Shared SIM"),
-                row.optString("channelId",""),body.optString("simTag",""),body.optString("simTail",""),
-                shared=true,historicalUnverified=row.optString("channelId","").isBlank())
-        }}catch(error:Exception){AppLogger.e(context,"SharedPool","Cannot read shared cache",error);emptyList()}
+        val remote=try{
+            val poolRows=SharedPoolClient(context).cached(limit)
+            val profiles=poolRows.filter{row->
+                row.optJSONObject("payload")?.has("channelRevision")==true &&
+                row.optJSONObject("payload")?.has("tag")==true
+            }.groupBy{row->row.optString("deviceId","")+"|"+row.optString("channelId","")}
+                .mapValues{(_,items)->items.maxByOrNull{it.optLong("occurredAt",0)}?.optJSONObject("payload")}
+            poolRows.mapNotNull{row->
+                if(row.optString("deviceId")==cfg.deviceId())return@mapNotNull null
+                val body=row.optJSONObject("payload")?:return@mapNotNull null
+                val direction=body.optString("direction","")
+                if(direction!="in"&&direction!="out")return@mapNotNull null
+                val address=if(direction=="out")body.optString("recipient","") else body.optString("sender","")
+                if(address.isBlank())return@mapNotNull null
+                val device=row.optString("deviceId","")
+                val channel=row.optString("channelId","")
+                val profile=profiles[device+"|"+channel]
+                HubSms(-row.optLong("seq"),address,body.optString("body",""),row.optLong("occurredAt")*1000,
+                    if(direction=="out")Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX,-1,
+                    device,body.optString("sourceDeviceName","Shared SIM"),
+                    channel,profile?.optString("tag","")?.ifBlank{body.optString("simTag","")}
+                        ?:body.optString("simTag",""),
+                    profile?.optString("tail","")?.ifBlank{body.optString("simTail","")}
+                        ?:body.optString("simTail",""),
+                    shared=true,historicalUnverified=channel.isBlank())
+            }
+        }catch(error:Exception){AppLogger.e(context,"SharedPool","Cannot read shared cache",error);emptyList()}
         val unified=(local+remote).sortedWith(compareByDescending<HubSms>{it.date}.thenByDescending{it.id}).take(limit)
         return HubSnapshot(
             cfg.isEnrolled(), cfg.deviceName(),cfg.server(),cfg.alwaysOn(),

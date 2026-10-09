@@ -45,7 +45,11 @@ CREATE TABLE IF NOT EXISTS devices(
   pending_wrapped_key_json TEXT NOT NULL DEFAULT '{}',
   token_issued_at INTEGER NOT NULL DEFAULT 0,
   pending_token_hash TEXT NOT NULL DEFAULT '',
-  pending_token_expires_at INTEGER NOT NULL DEFAULT 0
+  pending_token_expires_at INTEGER NOT NULL DEFAULT 0,
+  sms_purged_before INTEGER NOT NULL DEFAULT 0,
+  sms_epoch INTEGER NOT NULL DEFAULT 0,
+  reset_requested_at INTEGER NOT NULL DEFAULT 0,
+  reset_source TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS events(
@@ -164,3 +168,13 @@ CREATE TABLE IF NOT EXISTS device_key_history(
   FOREIGN KEY(device_id) REFERENCES devices(id)
 );
 CREATE INDEX IF NOT EXISTS idx_key_history_recent ON device_key_history(device_id,archived_at DESC);
+
+-- Expiring minimal acknowledgements for devices deleted while offline.
+CREATE TABLE IF NOT EXISTS device_reset_tombstones(
+  device_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY(device_id,token_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_reset_tombstones_expiry ON device_reset_tombstones(expires_at);

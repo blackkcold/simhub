@@ -153,3 +153,13 @@ The device state may contain `encryptedSimNumbers`: an `eventId`, `occurredAt`, 
 The Web Inbox's older-message pagination is a separate Controller-to-Relay read path; it never invokes Android SMS history scanning. Results from history commands indicate items **queued for upload**, not guaranteed server persistence or end-of-history truth.
 
 Administrator session authentication supports usernames, optional Passkeys and authenticated `/api/v1/auth/check` calls. The default session inactivity deadline is 8 hours and absolute lifetime 24 hours. Browser Vault recovery across refresh is entirely local and is permitted only after a valid server session check; a Passkey is not a substitute for the Vault recovery key.
+
+## Device lifecycle v0.5.3
+
+- `DELETE /api/v1/devices/{id}/sms` (step-up admin) deletes only the node's stored relay SMS ciphertext and pending SMS commands. The Android SMS Provider remains untouched.
+- The relay atomically advances `sms_purged_before` and `sms_epoch`. Replayed older events are acknowledged without being stored.
+- `POST /api/v1/devices/{id}/reset-request` (step-up admin) blocks business APIs and places the node in pending-reset status.
+- `GET /api/v1/devices/{id}/lifecycle` (device bearer) reports reset requests. `POST /api/v1/devices/{id}/reset` completes deletion, whether the node initiated or acknowledged the reset.
+- `DELETE /api/v1/devices/{id}` (step-up admin) force-deletes a permanently offline device. A minimal hashed-token tombstone responds HTTP 410 to previously paired nodes for 90 days.
+- Device deletion removes server events, commands, state, SIM/channel metadata, historical key envelopes and credentials. A minimal action audit remains subject to retention.
+- Device resets never modify phone/modem-resident SMS. Previously persisted backups and SQLite free pages need their own secure retention and disposal policy.

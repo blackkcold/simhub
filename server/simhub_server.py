@@ -29,7 +29,9 @@ from pathlib import Path
 import passkeys
 from typing import Any
 
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.5.3"
+SERVER_STARTED_AT = int(time.time())
+DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -341,6 +343,33 @@ def _migrate_v7(con: sqlite3.Connection) -> None:
     _add_column(con, "admin_sessions", "elevated_until", "INTEGER NOT NULL DEFAULT 0")
     con.execute("DELETE FROM admin_sessions WHERE admin_fingerprint=''")
 
+def _migrate_v8(con: sqlite3.Connection) -> None:
+    for name, ddl in (
+        ("sms_purged_before", "INTEGER NOT NULL DEFAULT 0"),
+        ("sms_epoch", "INTEGER NOT NULL DEFAULT 0"),
+        ("reset_requested_at", "INTEGER NOT NULL DEFAULT 0"),
+        ("reset_source", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        _add_column(con, "devices", name, ddl)
+
+
+def purge_device_record(con: sqlite3.Connection, device_id: str, ts: int) -> bool:
+    """Delete all business data while retaining only an expiring opaque reset receipt."""
+    row = con.execute("SELECT token_hash,pending_token_hash FROM devices WHERE id=?", (device_id,)).fetchone()
+    if row is None:
+        return False
+    for token_hash in (row["token_hash"], row["pending_token_hash"]):
+        if token_hash:
+            con.execute(
+                "INSERT OR IGNORE INTO device_reset_tombstones(device_id,token_hash,created_at,expires_at) VALUES(?,?,?,?)",
+                (device_id, token_hash, ts, ts + 90 * 86400),
+            )
+    for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history"):
+        con.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
+    con.execute("DELETE FROM devices WHERE id=?", (device_id,))
+    return True
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
@@ -351,13 +380,14 @@ def init_db() -> None:
         _migrate_v5(con)
         _migrate_v6(con)
         _migrate_v7(con)
+        _migrate_v8(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=8")
+        con.execute("PRAGMA user_version=9")
     run_maintenance()
 
 
 def run_maintenance() -> dict[str,int]:
-    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0,"pendingTokens":0}
+    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0,"pendingTokens":0,"resetTombstones":0}
     with open_db() as con:
         if EVENT_RETENTION_DAYS>0:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
@@ -367,6 +397,7 @@ def run_maintenance() -> dict[str,int]:
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
+        result["resetTombstones"]=con.execute("DELETE FROM device_reset_tombstones WHERE expires_at<?",(ts,)).rowcount
     return result
 
 
@@ -779,6 +810,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not row:
             audit("auth.device",device_id,"denied",self.ip)
             self.send_error_json(401,"unauthorized","Invalid or revoked device token"); return None
+        if row["reset_requested_at"] and not self.path.split("?",1)[0].endswith("/reset"):
+            self.send_error_json(409,"device_reset_pending","Only a reset acknowledgement is allowed"); return None
         return row
 
     def device_auth_from_headers(self) -> bool:
@@ -793,6 +826,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def is_device_route(self, method: str, path: str) -> bool:
         if method == "POST" and path == "/api/v1/enroll": return True
         if method == "GET" and path == "/api/v1/ota": return True
+        if re.fullmatch(r"/api/v1/devices/[^/]+/lifecycle", path): return method == "GET"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/reset", path): return method == "POST"
         if re.fullmatch(r"/api/v1/devices/[^/]+/commands/pending", path):
             return method == "GET"
         if re.fullmatch(r"/api/v1/devices/[^/]+/(?:events(?:/batch)?|state|heartbeat|token/(?:prepare|commit))", path):
@@ -862,7 +897,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<8:
+                if version<9:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -885,6 +920,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             with open_db() as con:
                 keys=passkeys.list_keys(con)
             self.send_json(200,{"username":ADMIN_USERNAME,"passkeys":keys}); return
+        if path=="/api/v1/version":
+            if not self.require_admin(): return
+            self.send_json(200,{"version":APP_VERSION,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None}); return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="lifecycle":
+            self.get_device_lifecycle(p[3]); return
         if path=="/api/v1/devices":
             if not self.require_admin(): return
             self.get_devices(); return
@@ -959,6 +999,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 con.execute("DELETE FROM admin_sessions")
             audit("auth.revoke_all","","ok",self.ip)
             self.send_json(200,{"ok":True},{"Set-Cookie":f"{SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"}); return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="reset-request":
+            if not self.require_stepup(): return
+            self.admin_request_reset(p[3]); return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="reset":
+            if not self.require_device(p[3]): return
+            self.complete_device_reset(p[3]); return
         if path=="/api/v1/enrollments":
             if not self.require_stepup():return
             body=self.read_json()
@@ -1012,6 +1058,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         path,p,q=self.route()
         if not self.preflight("DELETE", path): return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="sms":
+            if not self.require_stepup():return
+            self.purge_device_sms(p[3]); return
+        if len(p)==4 and p[:3]==["api","v1","devices"]:
+            if not self.require_stepup():return
+            self.force_delete_device(p[3]); return
         if path=="/api/v1/events":
             if not self.require_stepup():return
             try: before=int(q.get("before",["0"])[0])
@@ -1206,6 +1258,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         history_by_device:dict[str,list[sqlite3.Row]]={}
         with open_db() as con:
             history=con.execute("SELECT device_id,key_id,wrapped_key_json FROM device_key_history ORDER BY archived_at DESC").fetchall()
+            sms_counts={r["device_id"]:r["total"] for r in con.execute("SELECT device_id,COUNT(*) AS total FROM events WHERE kind LIKE 'sms.%' GROUP BY device_id")}
         for key in history:
             old=history_by_device.setdefault(key["device_id"],[])
             if len(old)<64: old.append(key)
@@ -1217,7 +1270,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,"tokenIssuedAt":r["token_issued_at"],
                 "wrappedKey":safe_json_loads(r["wrapped_key_json"],{}) if r["key_id"] else None,
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
-                "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),
+                "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and not r["reset_requested_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),
+                "resetRequestedAt":r["reset_requested_at"] or None,"resetSource":r["reset_source"],
+                "smsCount":sms_counts.get(r["id"],0),"smsPurgeAt":r["sms_purged_before"],"smsEpoch":r["sms_epoch"],
                 "state":safe_json_loads(r["state_json"],{}) if r["state_json"] else None,
                 "historicalWrappedKeys": [
                     {"keyId": k["key_id"], "wrappedKey": safe_json_loads(k["wrapped_key_json"], {})}
@@ -1257,6 +1312,69 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(404,"device_not_found","Device not found"); return
         audit("device.patch",device_id,"ok",self.ip); signal_stream()
         self.send_json(200,{"ok":True})
+
+    def purge_device_sms(self, device_id: str) -> None:
+        ts=now()
+        with open_db() as con:
+            row=con.execute("SELECT reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not row:
+                self.send_error_json(404,"device_not_found","Device not found"); return
+            if row["reset_requested_at"]:
+                self.send_error_json(409,"device_reset_pending","Device reset in progress"); return
+            deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind LIKE 'sms.%'",(device_id,)).rowcount
+            cancelled=con.execute("DELETE FROM commands WHERE device_id=? AND type LIKE 'sms.%'",(device_id,)).rowcount
+            con.execute("UPDATE devices SET sms_purged_before=MAX(sms_purged_before,?),sms_epoch=sms_epoch+1 WHERE id=?",(ts,device_id))
+        audit("device.sms.purge",device_id,"ok",self.ip);signal_stream()
+        self.send_json(200,{"ok":True,"deleted":deleted,"cancelledCommands":cancelled,"purgedBefore":ts})
+
+    def admin_request_reset(self, device_id: str) -> None:
+        ts=now()
+        with open_db() as con:
+            d=con.execute("SELECT reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not d:
+                self.send_error_json(404,"device_not_found","Device not found");return
+            if not d["reset_requested_at"]:
+                con.execute("UPDATE devices SET reset_requested_at=?,reset_source='admin' WHERE id=?",(ts,device_id))
+                con.execute("UPDATE commands SET state='rejected',ack_at=? WHERE device_id=? AND state IN ('queued','dispatched')",(ts,device_id))
+        audit("device.reset.request",device_id,"ok",self.ip);signal_stream()
+        push_tickle_async(device_id,"reset_requested")
+        self.send_json(202,{"ok":True,"status":"reset_pending"})
+
+    def get_device_lifecycle(self, device_id: str) -> None:
+        if not rate_allowed("device", device_id+":"+self.ip, 180):
+            self.send_error_json(429,"rate_limited","Device request rate exceeded");return
+        bearer=self.headers.get("Authorization","")
+        if not bearer.startswith("Device ") or not TOKEN_RE.fullmatch(bearer[7:]):
+            self.send_error_json(401,"unauthorized","Device token required");return
+        digest=sha256_text(bearer[7:])
+        with open_db() as con:
+            row=con.execute("SELECT token_hash,pending_token_hash,pending_token_expires_at,reset_requested_at,revoked_at FROM devices WHERE id=?",(device_id,)).fetchone()
+            dead=con.execute("SELECT 1 FROM device_reset_tombstones WHERE device_id=? AND token_hash=? AND expires_at>?",(device_id,digest,now())).fetchone()
+        if dead:
+            self.send_json(410,{"resetRequired":True,"status":"deleted"});return
+        if row and (hmac.compare_digest(row["token_hash"],digest) or
+                    (row["pending_token_hash"] and row["pending_token_expires_at"]>=now() and hmac.compare_digest(row["pending_token_hash"],digest))):
+            pending=bool(row["reset_requested_at"] or row["revoked_at"])
+            self.send_json(200,{"resetRequired":pending,"status":"reset_pending" if pending else "active"});return
+        self.send_error_json(401,"unauthorized","Device credentials not recognized")
+
+    def complete_device_reset(self, device_id: str) -> None:
+        ts=now()
+        with open_db() as con:
+            old=con.execute("SELECT reset_source FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not purge_device_record(con,device_id,ts):
+                self.send_error_json(404,"device_not_found","Device not found");return
+        origin="admin" if old and old["reset_source"]=="admin" else "device"
+        audit("device.reset.complete."+origin,device_id,"ok",self.ip);signal_stream()
+        self.send_json(200,{"ok":True,"status":"deleted"})
+
+    def force_delete_device(self, device_id: str) -> None:
+        ts=now()
+        with open_db() as con:
+            if not purge_device_record(con,device_id,ts):
+                self.send_error_json(404,"device_not_found","Device not found");return
+        audit("device.reset.force",device_id,"ok",self.ip);signal_stream()
+        self.send_json(200,{"ok":True,"status":"deleted","deviceMayBeOffline":True})
 
     def prepare_device_token(self,device_id:str) -> None:
         token=new_token(48);ts=now();expires=ts+3600
@@ -1299,6 +1417,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         metadata=sanitize_metadata(kind,body.get("metadata",{})); received=now()
         try:
             with open_db() as con:
+                threshold=con.execute("SELECT sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()["sms_purged_before"]
+                if kind.startswith("sms.") and occurred<=threshold:
+                    self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                 cur=con.execute(
                     "INSERT INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",
                     (event_id,device_id,kind,occurred,received,sub,1 if has_otp else 0,json.dumps(metadata,separators=(",",":")),json.dumps(cipher,separators=(",",":"))),
@@ -1339,8 +1460,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             prepared.append((eid,device_id,kind,occurred,received,sub,int(bool(item.get("hasOtp",False))),json.dumps(meta,separators=(",",":")),json.dumps(cipher,separators=(",",":"))))
         results=[];notifications=[]
         with open_db() as con:
-            d=con.execute("SELECT name FROM devices WHERE id=?",(device_id,)).fetchone()
+            d=con.execute("SELECT name,sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()
             for row in prepared:
+                if row[2].startswith("sms.") and row[3]<=d["sms_purged_before"]:
+                    results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                    continue
                 cur=con.execute("INSERT OR IGNORE INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",row)
                 duplicate=cur.rowcount==0
                 seq=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,row[0])).fetchone()["seq"]
@@ -1349,7 +1473,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
         for has_otp,occurred in notifications:
             notify_async("sms.received",device_id,d["name"] if d else "SIM Node",has_otp,occurred)
-        if any(not x["duplicate"] for x in results):signal_stream()
+        if any(not x.get("duplicate") and not x.get("suppressed") for x in results):signal_stream()
         self.send_json(200,{"accepted":True,"results":results})
 
     def get_events_by_time(self,q:dict[str,list[str]],limit:int,device:str,kind:str) -> None:
@@ -1476,8 +1600,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if exp<=ts or exp>ts+86400:
             self.send_error_json(400,"invalid_expiry","Command expiry must be in the next 24h"); return
         with open_db() as con:
-            d=con.execute("SELECT id,revoked_at FROM devices WHERE id=?",(device_id,)).fetchone()
-            if not d or d["revoked_at"]:
+            d=con.execute("SELECT id,revoked_at,reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not d or d["revoked_at"] or d["reset_requested_at"]:
                 self.send_error_json(404,"device_not_found","Active device not found"); return
             try:
                 cur=con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json) VALUES(?,?,?,?,?,?,?)",(cid,device_id,ctype,created,exp,idem,json.dumps(cipher,separators=(",",":"))))
@@ -1618,6 +1742,25 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.security_headers(); self.end_headers(); self.wfile.write(data)
 
 
+def load_deployment_timestamp() -> str:
+    """Pin the date this relay version first started against the persistent data volume."""
+    if DEPLOYED_AT:
+        return DEPLOYED_AT
+    path=DB_PATH.parent / "deployment.json"
+    try:
+        if path.exists():
+            cached=json.loads(path.read_text("utf-8"))
+            if cached.get("version")==APP_VERSION and isinstance(cached.get("deployedAt"),str):
+                return cached["deployedAt"]
+        value=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(SERVER_STARTED_AT))
+        temporary=path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"version":APP_VERSION,"deployedAt":value}),encoding="utf-8")
+        temporary.replace(path)
+        return value
+    except (OSError,ValueError,TypeError):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(SERVER_STARTED_AT))
+
+
 def main() -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]{2,64}", ADMIN_USERNAME):
         raise SystemExit("SIMHUB_ADMIN_USERNAME must contain 2-64 safe characters")
@@ -1634,6 +1777,8 @@ def main() -> None:
         except Exception as exc:
             raise SystemExit("SIMHUB_TOTP_SECRET must be valid Base32") from exc
     init_db()
+    global DEPLOYED_AT
+    DEPLOYED_AT=load_deployment_timestamp()
     threading.Thread(target=maintenance_loop,name="simhub-maintenance",daemon=True).start()
     if SEPARATE_SURFACES and (not MANAGEMENT_ORIGIN.startswith("https://") or not PUBLIC_BASE_URL.startswith("https://") or MANAGEMENT_ORIGIN == PUBLIC_BASE_URL):
         raise SystemExit("Separated origins require distinct HTTPS management and node URLs")

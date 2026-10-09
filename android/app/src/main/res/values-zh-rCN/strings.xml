@@ -39,7 +39,11 @@
     <string name="check_update">检查 Agent 更新</string>
     <string name="reset_enrollment">重置注册 / 配对其他 Vault</string>
     <string name="reset_title">确认重置注册？</string>
-    <string name="reset_message">此操作会清除待发送的中继数据与本地 SIM Hub 凭据，但不会删除 Android 系统中保存的短信。</string>
+    <string name="reset_message">将向服务器申请解绑，并清除服务器中该设备的加密业务数据；离线时等待服务器确认后完成重置。不会删除 Android 系统短信。</string>
+    <string name="enrollment_reset_pending">正在等待服务器确认解绑，短信同步已停止。</string>
+    <string name="remote_reset_title">SIM Hub 已由服务器解除配对</string>
+    <string name="remote_reset_done">服务器已删除此设备，已清理配对凭据和本地中继数据，Android 系统短信不受影响。</string>
+    <string name="build_details">Agent v%1$s · 安装/更新日期：%2$s</string>
     <string name="cancel">取消</string>
     <string name="reset">重置</string>
     <string name="enroll_first">请先完成节点注册</string>

@@ -16,7 +16,13 @@ public final class AgentConfig {
     private final SecretStore secrets;
 
     public AgentConfig(Context c){prefs=c.getSharedPreferences(PREF,Context.MODE_PRIVATE);secrets=new SecretStore(c);}
-    public boolean isEnrolled(){return !server().isEmpty()&&!deviceId().isEmpty()&&deviceToken()!=null&&(nodeKey()!=null||vaultKey()!=null);}
+    public boolean isEnrolled(){return !resetPending()&&!server().isEmpty()&&!deviceId().isEmpty()&&deviceToken()!=null&&(nodeKey()!=null||vaultKey()!=null);}
+    public boolean resetPending(){return prefs.getBoolean("reset_pending",false);}
+    public boolean remoteResetNotified(){return prefs.getBoolean("remote_reset_notified",false);}
+    public void markRemoteResetNotified(){prefs.edit().putBoolean("remote_reset_notified",true).apply();}
+    public boolean remoteResetPending(){return prefs.getBoolean("remote_reset_pending",false);}
+    public void markRemoteResetPending(){markResetPending();prefs.edit().putBoolean("remote_reset_pending",true).apply();}
+    public void markResetPending(){prefs.edit().putBoolean("reset_pending",true).apply();resetSyncBackoff();}
     public String server(){return prefs.getString("server","");}
     public String deviceId(){return prefs.getString("device_id","");}
     public String deviceName(){return prefs.getString("device_name","Android SIM Node");}
@@ -96,7 +102,7 @@ public final class AgentConfig {
     }
 
     private void setBaseEnrollment(String server,String deviceId,String deviceName,String token)throws Exception{
-        prefs.edit().putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").apply();
+        prefs.edit().remove("remote_reset_notified").putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
         localQueueKey();
     }
@@ -124,7 +130,7 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").putBoolean("always_on",false).apply();
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
         secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);
     }
 }

@@ -2,7 +2,7 @@
 
 ## Build
 
-The project is Java-only at runtime and has no AndroidX runtime dependency. It targets API 37.
+The background SIM/SMS/crypto Agent remains Java; the v0.7.0 Android interface uses Kotlin Jetpack Compose, AndroidX Material 3 and Jetpack WindowManager. The APK targets API 37.
 
 Requirements:
 
@@ -60,13 +60,16 @@ The controller addresses a stable `channelId` plus `channelRevision`. Android ma
 - Upgraded legacy 0.1.5 nodes can receive `node.rotate_key` after pending outbound SMS completes; the legacy Master Vault Key is then deleted from the node.
 
 
-## v0.3.0 UI, language and diagnostics
+## Native Android UI (v0.7.0)
 
-- The Android dashboard uses a single-column phone layout and a two-column `sw600dp` layout for unfolded foldables and tablets.
-- Light/dark appearance follows the Android system theme.
-- The app supports **Follow system**, **简体中文**, and **English** from the Settings section.
-- **Developer Mode** is off by default. When enabled it records redacted diagnostic events and exposes View/Clear/Export controls.
-- See [Developer diagnostics](DEVELOPER_DIAGNOSTICS.md) for the logging/redaction contract and support workflow.
+- The launch screen uses four accessible tabs: **Overview**, **Messages**, **SIM cards** and **Settings**, with a compact bottom bar or expanded side rail.
+- **Overview** summarizes Relay health, pending uploads, SIM service and the most recent local messages. An actionable permissions card appears when SMS capability is unavailable.
+- **Messages** reads Android's SMS Provider locally, supports recent conversation paging, sender/body search, OTP copy, and an inline composer with an explicit physical subscription selection. Submission is not proof of carrier delivery; MMS/RCS are not advertised as implemented.
+- **SIM cards** lists reported subscriptions and radio diagnostics. Network switching shortcuts open system settings instead of requesting unsupported privileged telephony actions.
+- **Settings** includes QR and short-code enrollment, SMS role/permission requests, foreground relay mode, manual history sync, and an **Advanced tools** entry for legacy diagnostics, language, OTA and recovery controls.
+- Expanded/folded windows use the current app window size and WindowManager hinge state. UI navigation and drafts are in ViewModel memory; ephemeral ECDH keys survive Activity recreation only within the current process, never in saved-state bundles.
+- Compose and AndroidX are now required at build and runtime; built-in AGP9 Kotlin + Compose compiler plugin 2.4.20, Compose BOM 2026.09.00, and WindowManager 1.5.1 are pinned.
+- Chinese/English string resources, system dark appearance and developer log redaction remain supported.
 
 ## v0.4.0–v0.5.0: UI and remote management
 

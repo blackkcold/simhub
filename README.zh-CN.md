@@ -33,6 +33,10 @@
 <tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="移动端短信会话界面示意" width="100%"></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="Android 设备节点界面示意" width="100%"></td></tr>
 </table>
 
+**Android 折叠屏展开态 · 双栏短信工作区**
+
+![折叠屏 Android 双栏短信界面示意](docs/assets/ui-android-fold.svg)
+
 <sub>均为依据当前 UI 绘制的模拟数据示意图，非真实短信或已登录设备截图。</sub>
 
 ## 核心功能
@@ -40,11 +44,14 @@
 | 能力 | 说明 |
 |---|---|
 | **短信与验证码** | 多 SIM 收发、会话直接回复、新建短信、OTP 识别与复制 |
+| **Android 原生界面** | 四 Tab（概览 / 短信 / SIM / 设置）、矢量图标与动效、折叠屏自适应单双栏、本机短信会话与快捷回复 |
 | **设备与 SIM** | Android / Linux 蜂窝 Modem 节点；SIM 号码、信号、充电、Wi-Fi 与在线状态 |
 | **历史与诊断** | 最近 100 条重扫、每批更早 100 条同步、已同步记录分页、加密设备健康检查 |
 | **设备配对** | 管理中心生成二维码扫码接入；Android 也可生成八位配对码，在管理中心核验设备指纹后授权 |
 | **隐私与登录** | Node Key 端到端加密、用户名 / TOTP / Passkey、Vault 活动会话刷新恢复 |
 | **离线恢复** | 本地队列、断网后重试、常驻中继、后台任务恢复 |
+
+Android 矢量图标原始 SVG 位于 [design/icons](design/icons)，APK 使用同路径的 Android VectorDrawable，并在 CI 中校验一致性。
 
 ## 工作原理
 

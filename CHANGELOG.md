@@ -1,3 +1,13 @@
+## v0.7.0 — Native Android UI and foldable adaptive experience
+
+- Replace the Android Agent's default single long setup screen with an adaptive native Material 3 four-tab dashboard (Overview, Messages, SIM cards and Settings), retaining the legacy advanced tools as a secondary destination.
+- Introduce scalable Android vector (SVG-path) icons, consistent color/typography, animated tab transitions and low-motion card feedback.
+- Add local Android SMS conversations with search, OTP copying via sensitive clipboard tagging, recent-history paging, replies and SIM-aware sending; messages continue to be read from Android SMS Provider without a duplicate plaintext message database.
+- Provide SIM state cards, a radio-detail page, clear device and permission alerts, simplified real-time mode and history synchronization controls.
+- Support folding and unfolding, split windows, compact bottom navigation, expanded side rail, book/tabletop postures and in-memory retention of ephemeral device pairing state during configuration changes.
+- Preserve Java Agent, Relay encryption, user data, device tokens and normal APK upgrade paths; test foldable navigation breakpoints.
+- Known limit: carrier MMS media handling remains incomplete; exact OEM background behavior and fold postures require device validation.
+
 ## v0.6.0 — Secure pairing and conversational inbox
 
 - Prioritize pending device commands and acknowledgements ahead of SMS history scans; separate transport health from Android SMS Provider permission failures.

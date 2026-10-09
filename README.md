@@ -33,6 +33,10 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 <tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="Mobile messaging interface preview" width="100%"></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="Android node interface preview" width="100%"></td></tr>
 </table>
 
+**Unfolded Android · Adaptive dual-pane SMS workspace**
+
+![Illustrative unfolded Android conversation view](docs/assets/ui-android-fold.svg)
+
 <sub>Illustrative UI mockups using synthetic data; not screenshots from a live account or real messages.</sub>
 
 ## Features
@@ -40,11 +44,14 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 | Capability | What it does |
 |---|---|
 | **SMS and OTP** | Multi-SIM receive/send, conversation replies, new messages, code detection and copy |
+| **Native Android UI** | Four Material 3 tabs, scalable vector icons, responsive foldable panes, local SMS conversations and per-SIM inline replies |
 | **Devices and SIMs** | Android and Linux modem nodes; phone numbers, signal, charging, Wi-Fi and connectivity |
 | **History and diagnostics** | Latest 100 rescan, older 100 backfill, relay message pagination, encrypted health checks |
 | **Pairing** | Scan the controller QR from Android, or enter the Android eight-digit pairing code and verify the device fingerprint |
 | **Privacy and authentication** | Node-Key end-to-end encryption, username / TOTP / Passkeys, active Vault session recovery |
 | **Offline resilience** | Durable queues, retries, foreground relay and scheduled background recovery |
+
+Editable SVG icon sources are in [design/icons](design/icons); the APK uses matching Android VectorDrawables with automated parity checks.
 
 ## How it works
 

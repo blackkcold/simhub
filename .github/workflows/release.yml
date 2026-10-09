@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.6.0.trigger'
+      - '.github/release/v0.7.0.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.6.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.7.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -75,6 +75,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
       - run: python3 scripts/test_docs.py
+      - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py
       - run: PYTHONPATH=server python3 server/test_migration.py
@@ -232,16 +233,16 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Secure two-way device enrollment, faster commands and conversational SMS UI.
+          Native Android multi-tab UI with foldable-screen adaptive layouts.
 
           ## Highlights
-          - Prioritize Android command fetch/ACK ahead of SMS history scans and surface permission failures separately from transport health;
-          - Bound the desktop SMS inbox and chat to independent scroll panes, with a compact reply composer and persistent mobile navigation;
-          - Prevent historical SMS from being attributed to a SIM before the identity was observed;
-          - Add self-hosted QR enrollment with native Android on-device scanning and explicit trusted-host confirmation;
-          - Add Android-initiated eight-digit pairing with one-time device secrets, ephemeral P-256 ECDH, admin step-up and independent Node Keys;
-          - Preserve device and browser encryption trust boundaries and recover interrupted pairing activation;
-          - Retain existing credentials, encrypted SMS, database compatibility and signed APK certificate.
+          - Introduce native Material 3 four-tab Overview / Messages / SIM / Settings navigation;
+          - Add scalable vector icons, subtle page and card animations and coherent light/dark surfaces;
+          - Adapt navigation and messaging panes to compact, expanded and fold-hinge window postures;
+          - Bring local SMS conversations, search, OTP copying and per-SIM inline composing into the Android Agent;
+          - Simplify SIM diagnostics, background relay controls, permissions and QR/short-code enrollment;
+          - Preserve existing encrypted device credentials, Java Agent, SMS Provider data and signing identity;
+          - Add foldable layout decision regression tests and document Android limitations.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF

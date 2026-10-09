@@ -279,7 +279,7 @@ jobs:
             "release/update-manifest.json"
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::error::Refusing to mutate an existing Release"
-            exit 1
+            echo "Release $TAG is already published; leaving immutable assets unchanged"
+            exit 0
           fi
           gh release create "$TAG" --target "$GITHUB_SHA" --title "SIM Hub v${VERSION}" --notes-file release/RELEASE_NOTES.md "${ASSETS[@]}"

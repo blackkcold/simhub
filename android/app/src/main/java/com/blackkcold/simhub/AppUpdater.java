@@ -95,9 +95,27 @@ public final class AppUpdater {
             !CERT.equals(digest(current[0].toByteArray())))
             throw new SecurityException("APK signing certificate does not match SIM Hub release");
     }
-    public static void downloadAndInstall(Activity activity,JSONObject metadata,Progress callback){
-        Context app=activity.getApplicationContext();
-        IO.execute(()->{
+    /** JobScheduler invokes this on its existing worker thread, not the UI thread. */
+    public static void checkInBackground(Context context){
+        Context c=context.getApplicationContext();
+        if(!shouldCheck(c)||!new AgentConfig(c).isEnrolled())return;
+        try{
+            JSONObject info=new ApiClient(c).ota();
+            prefs(c).edit().putLong("lastCheck",System.currentTimeMillis()).apply();
+            int code=info.optInt("versionCode",0);
+            if(!info.optBoolean("available")||code<=BuildConfig.VERSION_CODE||code==ignored(c))return;
+            if(prefs(c).getBoolean("autoDownload",false))
+                downloadInternal(c,info,msg->AppLogger.i(c,"AppUpdater",msg));
+        }catch(Exception error){
+            AppLogger.e(c,"AppUpdater","Background update check unavailable",error);
+        }
+    }
+    public static void downloadAndInstall(Context context,JSONObject metadata,Progress callback){
+        Context app=context.getApplicationContext();
+        IO.execute(()->downloadInternal(context,metadata,callback));
+    }
+    private static void downloadInternal(Context context,JSONObject metadata,Progress callback){
+        Context app=context.getApplicationContext();
             File file=null;
             try{
                 int code=metadata.getInt("versionCode");
@@ -114,7 +132,7 @@ public final class AppUpdater {
                     MAIN.post(()->{
                         Intent grant=new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                             Uri.parse("package:"+app.getPackageName()));
-                        activity.startActivity(grant);
+                        if(context instanceof Activity) ((Activity)context).startActivity(grant);
                     });
                     return;
                 }
@@ -146,7 +164,6 @@ public final class AppUpdater {
                 // Session has already copied the APK into PackageInstaller staging.
                 if(file!=null)file.delete();
             }
-        });
     }
     static boolean pmCanInstall(Context c){
         return Build.VERSION.SDK_INT<26 || c.getPackageManager().canRequestPackageInstalls();

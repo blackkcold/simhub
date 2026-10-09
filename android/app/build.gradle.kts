@@ -13,8 +13,8 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
-        versionCode = 14
-        versionName = "0.5.1"
+        versionCode = 15
+        versionName = "0.5.2"
     }
     buildFeatures { buildConfig = true }
     signingConfigs {

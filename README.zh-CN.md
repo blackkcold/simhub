@@ -33,6 +33,10 @@
 <tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="移动端短信会话界面示意" width="100%"></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="Android 设备节点界面示意" width="100%"></td></tr>
 </table>
 
+**Android 折叠屏展开态 · 双栏短信工作区**
+
+![折叠屏 Android 双栏短信界面示意](docs/assets/ui-android-fold.svg)
+
 <sub>均为依据当前 UI 绘制的模拟数据示意图，非真实短信或已登录设备截图。</sub>
 
 ## 核心功能

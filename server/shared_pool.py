@@ -224,20 +224,42 @@ def get_messages(con,device,query):
         limit=max(1,min(int(query.get("limit",["50"])[0]),MAX_PAGE))
         before=max(0,int(query.get("before",["0"])[0]))
         since=max(0,int(query.get("since",["0"])[0]))
+        before_time=max(0,int(query.get("beforeTime",["0"])[0]))
+        before_seq=max(0,int(query.get("beforeSeq",["0"])[0]))
     except (TypeError,ValueError):raise ValueError("Invalid cursor")
-    if before and since:raise ValueError("Select before or since")
+    if bool(before_time)!=bool(before_seq) or (since and (before or before_time)):
+        raise ValueError("Invalid conflicting pagination cursor")
     if since:
-        rows=con.execute("SELECT * FROM sms_pool_messages WHERE seq>? ORDER BY seq ASC LIMIT ?",
-                         (since,limit+1)).fetchall()
+        rows=con.execute(
+            "SELECT * FROM sms_pool_messages WHERE seq>? ORDER BY seq ASC LIMIT ?",
+            (since,limit+1)).fetchall()
+    elif before_time:
+        rows=con.execute(
+            "SELECT * FROM sms_pool_messages WHERE occurred_at<? OR "
+            "(occurred_at=? AND seq<?) ORDER BY occurred_at DESC,seq DESC LIMIT ?",
+            (before_time,before_time,before_seq,limit+1)).fetchall()
+    elif before:
+        # Backward-compatibility cursor for clients prior to date-keyset pagination.
+        anchor=con.execute("SELECT occurred_at,seq FROM sms_pool_messages WHERE seq=?",(before,)).fetchone()
+        if anchor:
+            rows=con.execute(
+                "SELECT * FROM sms_pool_messages WHERE occurred_at<? OR "
+                "(occurred_at=? AND seq<?) ORDER BY occurred_at DESC,seq DESC LIMIT ?",
+                (anchor["occurred_at"],anchor["occurred_at"],anchor["seq"],limit+1)).fetchall()
+        else:rows=[]
     else:
-        rows=con.execute("SELECT * FROM sms_pool_messages WHERE seq<? ORDER BY seq DESC LIMIT ?",
-                         (before if before else 9223372036854775807,limit+1)).fetchall()
+        rows=con.execute(
+            "SELECT * FROM sms_pool_messages ORDER BY occurred_at DESC,seq DESC LIMIT ?",
+            (limit+1,)).fetchall()
     has_more=len(rows)>limit
     rows=rows[:limit]
     items=[{"seq":r["seq"],"deviceId":r["device_id"],"originEventId":r["origin_event_id"],
         "occurredAt":r["occurred_at"],"epoch":r["epoch"],"channelId":r["channel_id"],
         "ciphertext":json.loads(r["ciphertext"])} for r in rows]
+    last=items[-1] if items else None
     return {"messages":items,"hasMore":has_more,
-            "nextBefore":items[-1]["seq"] if items and not since else None,
+            "nextBeforeTime":last["occurredAt"] if last and not since else None,
+            "nextBeforeSeq":last["seq"] if last and not since else None,
+            "nextBefore":last["seq"] if last and not since else None,
             "nextSince":items[-1]["seq"] if items and since else since,
             "epoch":current_key(con)["epoch"] if current_key(con) else 0}

@@ -74,6 +74,8 @@ jobs:
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_updates
+      - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
@@ -86,7 +88,7 @@ jobs:
       - run: node web/test_crypto_vector.mjs
       - run: node web/test_bootstrap_vector.mjs
       - run: python3 -m py_compile server/simhub_server.py server/passkeys.py scripts/setup.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
-      - run: bash -n modem_agent/install.sh
+      - run: bash -n modem_agent/install.sh scripts/install-updater.sh
 
   sign:
     needs: validate

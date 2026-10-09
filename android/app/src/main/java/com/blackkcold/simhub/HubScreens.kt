@@ -128,15 +128,15 @@ private fun SimDetails(item:JSONObject,index:Int,controller:HubController,modifi
         if(channelId.isNotBlank()){
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(value=tag,onValueChange={if(it.length<=40)tag=it},
-                label={Text("SIM 标签（例如：主力号码）")},singleLine=true,
+                label={Text(hubLabel("SIM 标签（例如：主力号码）","SIM label (e.g. primary line)"))},singleLine=true,
                 modifier=Modifier.fillMaxWidth())
             Spacer(Modifier.height(6.dp))
             OutlinedTextField(value=number,onValueChange={if(it.length<=24)number=it},
-                label={Text("SIM 号码或尾号（仅存最后 4 位）")},singleLine=true,
+                label={Text(hubLabel("SIM 号码或尾号（仅存最后 4 位）","SIM number or last four digits (only 4 saved)"))},singleLine=true,
                 modifier=Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
             OutlinedButton(onClick={controller.setSimTag(channelId,revision,tag,number)},
-                modifier=Modifier.fillMaxWidth()){Text("保存 SIM 标签")}
+                modifier=Modifier.fillMaxWidth()){Text(hubLabel("保存 SIM 标签","Save SIM label"))}
         }
         InfoRow(stringResource(R.string.hub_connected_server),item.optString("carrierName","—"))
         InfoRow(stringResource(R.string.hub_network),item.optString("networkType","—"))

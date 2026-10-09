@@ -1506,10 +1506,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if row["reset_requested_at"]:
                 self.send_error_json(409,"device_reset_pending","Device reset in progress"); return
             deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind LIKE 'sms.%'",(device_id,)).rowcount
+            shared_deleted=con.execute("DELETE FROM sms_pool_messages WHERE device_id=?",(device_id,)).rowcount
             cancelled=con.execute("DELETE FROM commands WHERE device_id=? AND type LIKE 'sms.%'",(device_id,)).rowcount
             con.execute("UPDATE devices SET sms_purged_before=MAX(sms_purged_before,?),sms_epoch=sms_epoch+1 WHERE id=?",(ts,device_id))
         audit("device.sms.purge",device_id,"ok",self.ip);signal_stream()
-        self.send_json(200,{"ok":True,"deleted":deleted,"cancelledCommands":cancelled,"purgedBefore":ts})
+        self.send_json(200,{"ok":True,"deleted":deleted,"sharedDeleted":shared_deleted,"cancelledCommands":cancelled,"purgedBefore":ts})
 
     def admin_request_reset(self, device_id: str) -> None:
         ts=now()

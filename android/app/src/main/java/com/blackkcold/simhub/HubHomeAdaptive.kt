@@ -26,26 +26,26 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
     ){
         item{
             HubCard {
-                Text("设备与 Relay",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
+                Text(hubLabel("设备与 Relay","Device & Relay"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
                 val now=System.currentTimeMillis()/1000
                 val ttl=if(state?.realtime==true)180L else 3600L
                 val online=state?.enrolled==true&&state.smsRole&&state.smsRead&&
                     state.transportError.isBlank()&&state.lastSync>0&&now>=state.lastSync&&
                     now-state.lastSync<=ttl
-                StatePill(if(online)"Relay 已连接" else "需要检查",online)
+                StatePill(if(online)hubLabel("Relay 已连接","Relay connected") else hubLabel("需要检查","Needs attention"),online)
                 Spacer(Modifier.height(8.dp))
-                Text(state?.device.orEmpty().ifBlank{"未连接设备"},
+                Text(state?.device.orEmpty().ifBlank{hubLabel("未连接设备","No device connected")},
                     style=MaterialTheme.typography.bodyMedium)
-                InfoRow("最后同步",state?.lastSync?.takeIf{it>0}?.let{
+                InfoRow(hubLabel("最后同步","Last sync"),state?.lastSync?.takeIf{it>0}?.let{
                     DateFormat.getDateTimeInstance().format(Date(it*1000))
                 }?:"—")
-                InfoRow("待处理事件",(state?.pending?:0).toString())
+                InfoRow(hubLabel("待处理事件","Pending events"),(state?.pending?:0).toString())
                 if(state?.transportError?.isNotBlank()==true)
                     Text(state.transportError,style=MaterialTheme.typography.bodySmall,
                         color=MaterialTheme.colorScheme.error)
                 OutlinedButton(onClick=controller::refresh,modifier=Modifier.fillMaxWidth()){
-                    Text("刷新设备状态")
+                    Text(hubLabel("刷新设备状态","Refresh device status"))
                 }
             }
         }
@@ -53,11 +53,11 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
             HubCard {
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,
                     verticalAlignment=Alignment.CenterVertically){
-                    Text("SIM 卡",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
-                    TextButton(onClick={ui.tab=2}){Text("全部")}
+                    Text(hubLabel("SIM 卡","SIM cards"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
+                    TextButton(onClick={ui.tab=2}){Text(hubLabel("全部","View all"))}
                 }
                 val sims=state?.state?.optJSONArray("subscriptions")
-                if(sims==null||sims.length()==0)Text("没有检测到 SIM")
+                if(sims==null||sims.length()==0)Text(hubLabel("没有检测到 SIM","No SIM detected"))
                 else for(index in 0 until minOf(sims.length(),4)){
                     val s=sims.optJSONObject(index)?:continue
                     val online=s.optString("serviceState")=="IN_SERVICE"
@@ -71,7 +71,7 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
                                 style=MaterialTheme.typography.bodySmall,
                                 color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        StatePill(if(online)"正常" else "不可用",online)
+                        StatePill(if(online)hubLabel("正常","Operational") else hubLabel("不可用","Unavailable"),online)
                     }
                 }
             }
@@ -80,11 +80,11 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
             HubCard {
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,
                     verticalAlignment=Alignment.CenterVertically){
-                    Text("最近短信",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
-                    TextButton(onClick={ui.tab=1}){Text("全部")}
+                    Text(hubLabel("最近短信","Recent SMS"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
+                    TextButton(onClick={ui.tab=1}){Text(hubLabel("全部","View all"))}
                 }
                 val recent=state?.sms.orEmpty().take(5)
-                if(recent.isEmpty())Text("暂无短信")
+                if(recent.isEmpty())Text(hubLabel("暂无短信","No messages"))
                 else recent.forEachIndexed{index,sms->
                     if(index>0)HorizontalDivider(Modifier.padding(vertical=7.dp))
                     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(3.dp)){
@@ -92,7 +92,7 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
                         Text(sms.text,style=MaterialTheme.typography.bodySmall,
                             color=MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines=1,overflow=TextOverflow.Ellipsis)
-                        Text(listOf(sms.sourceDeviceName,sms.simTag,sms.simTail.takeIf{it.isNotEmpty()}?.let{"尾号 "+it} ?: "")
+                        Text(listOf(sms.sourceDeviceName,sms.simTag,sms.simTail.takeIf{it.isNotEmpty()}?.let{hubLabel("尾号 ","Ending ")+it} ?: "")
                             .filter{it.isNotBlank()}.joinToString(" · "),
                             style=MaterialTheme.typography.labelSmall,
                             color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
@@ -102,22 +102,22 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
         }
         item{
             HubCard {
-                Text("快速操作",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
+                Text(hubLabel("快速操作","Quick actions"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp),
                     modifier=Modifier.fillMaxWidth()){
                     OutlinedButton(onClick={ui.tab=3},modifier=Modifier.weight(1f)){
-                        Text("设置")
+                        Text(hubLabel("设置","Settings"))
                     }
                     OutlinedButton(onClick={controller.syncHistory(false)},
                         enabled=state?.enrolled==true,modifier=Modifier.weight(1f)){
-                        Text("同步短信")
+                        Text(hubLabel("同步短信","Sync SMS"))
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 if(state?.smsRead!=true||state?.smsRole!=true){
                     Button(onClick=controller::requestAccess,modifier=Modifier.fillMaxWidth()){
-                        Text("检查短信权限")
+                        Text(hubLabel("检查短信权限","Check SMS permissions"))
                     }
                 }
             }

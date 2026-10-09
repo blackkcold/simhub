@@ -41,14 +41,16 @@ interface HubController {
     fun startPairing(server:String)
     fun setRealtime(value:Boolean)
     fun syncHistory(older:Boolean)
-    fun sendSms(subId:Int,to:String,body:String)
+    fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
     fun advanced()
     fun openNetworkSettings()
+    fun loadMoreSms()
     fun copyOtp(code:String)
 }
 class HubActivity: ComponentActivity(), HubController {
     private var snapshot by mutableStateOf<HubSnapshot?>(null)
     private var loading by mutableStateOf(true)
+    private var smsLimit=400
     private var pairing by mutableStateOf<PairingDisplay?>(null)
     private var fold by mutableStateOf<FoldingFeature?>(null)
     private var pendingTask:Job?=null
@@ -78,7 +80,7 @@ class HubActivity: ComponentActivity(), HubController {
     override fun refresh(){
         lifecycleScope.launch {
             try{
-                val next=withContext(Dispatchers.IO){HubRepository.snapshot(applicationContext)}
+                val next=withContext(Dispatchers.IO){HubRepository.snapshot(applicationContext,smsLimit)}
                 snapshot=next
             }catch(error:Exception){
                 AppLogger.e(this@HubActivity,"Dashboard","State refresh failed",error)
@@ -196,20 +198,21 @@ class HubActivity: ComponentActivity(), HubController {
             }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
         }
     }
-    override fun sendSms(subId:Int,to:String,body:String){
+    override fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit){
         if(subId<0 || to.isBlank() || body.isBlank()){
             toast(getString(R.string.hub_compose_required));return
         }
         lifecycleScope.launch {
             try{
                 withContext(Dispatchers.IO){SmsSender.send(applicationContext,"local-"+UUID.randomUUID(),subId,to.trim(),body)}
-                toast(getString(R.string.hub_sms_submitted));refresh()
+                onSuccess();toast(getString(R.string.hub_sms_submitted));refresh()
             }catch(e:Exception){
                 AppLogger.e(this@HubActivity,"Compose","SMS submit failed",e)
                 toast(UiErrors.message(this@HubActivity,e))
             }
         }
     }
+    override fun loadMoreSms(){smsLimit=(smsLimit+400).coerceAtMost(10000);refresh()}
     override fun advanced(){startActivity(Intent(this,MainActivity::class.java))}
     override fun openNetworkSettings(){
         try{startActivity(Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS))}
@@ -219,7 +222,7 @@ class HubActivity: ComponentActivity(), HubController {
         val clip=ClipData.newPlainText("SIM Hub",code)
         if(Build.VERSION.SDK_INT>=33)clip.description.extras=Bundle().apply{putBoolean(ClipDescription.EXTRA_IS_SENSITIVE,true)}
         getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
-        toast(getString(R.string.otp_copied))
+        toast(getString(R.string.hub_code_copied))
     }
     private fun toast(msg:String){Toast.makeText(this,msg,Toast.LENGTH_SHORT).show()}
 }

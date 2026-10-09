@@ -263,6 +263,16 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.req('POST',f"/api/v1/devices/{d['deviceId']}/commands/{cid}/ack",{'state':'submitted','result':{}},device_token=d['deviceToken'],admin=False)[0],200)
         with sqlite3.connect(self.db) as con: state=con.execute('SELECT state FROM commands WHERE id=?',(cid,)).fetchone()[0]
         self.assertEqual(state,'sent')
+        ack=f"/api/v1/devices/{d['deviceId']}/commands/{cid}/ack"
+        token=d["deviceToken"]
+        self.assertEqual(self.req('POST',ack,{'state':'delivered','result':{'status':'delivered'}},device_token=token,admin=False)[0],200)
+        self.assertEqual(self.req('POST',ack,{'state':'failed','result':{'reason':'late_retry'}},device_token=token,admin=False)[0],200)
+        self.assertEqual(self.req('POST',ack,{'state':'delivered','result':{'reason':'should_not_overwrite'}},device_token=token,admin=False)[0],200)
+        with sqlite3.connect(self.db) as con:
+            result=con.execute("SELECT state,result_json FROM commands WHERE id=?",(cid,)).fetchone()
+        self.assertEqual(result[0],'delivered')
+        self.assertEqual(json.loads(result[1])['status'],'delivered')
+
 
     def test_two_phase_device_token_rotation(self):
         d=self.enroll('Rotate');did=d['deviceId'];old=d['deviceToken']

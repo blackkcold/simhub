@@ -1415,6 +1415,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         metadata=sanitize_metadata(kind,body.get("metadata",{})); received=now()
         try:
             with open_db() as con:
+                threshold=con.execute("SELECT sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()["sms_purged_before"]
+                if kind.startswith("sms.") and occurred<=threshold:
+                    self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                 cur=con.execute(
                     "INSERT INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",
                     (event_id,device_id,kind,occurred,received,sub,1 if has_otp else 0,json.dumps(metadata,separators=(",",":")),json.dumps(cipher,separators=(",",":"))),
@@ -1455,8 +1458,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             prepared.append((eid,device_id,kind,occurred,received,sub,int(bool(item.get("hasOtp",False))),json.dumps(meta,separators=(",",":")),json.dumps(cipher,separators=(",",":"))))
         results=[];notifications=[]
         with open_db() as con:
-            d=con.execute("SELECT name FROM devices WHERE id=?",(device_id,)).fetchone()
+            d=con.execute("SELECT name,sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()
             for row in prepared:
+                if row[2].startswith("sms.") and row[3]<=d["sms_purged_before"]:
+                    results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                    continue
                 cur=con.execute("INSERT OR IGNORE INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",row)
                 duplicate=cur.rowcount==0
                 seq=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,row[0])).fetchone()["seq"]
@@ -1465,7 +1471,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
         for has_otp,occurred in notifications:
             notify_async("sms.received",device_id,d["name"] if d else "SIM Node",has_otp,occurred)
-        if any(not x["duplicate"] for x in results):signal_stream()
+        if any(not x.get("duplicate") and not x.get("suppressed") for x in results):signal_stream()
         self.send_json(200,{"accepted":True,"results":results})
 
     def get_events_by_time(self,q:dict[str,list[str]],limit:int,device:str,kind:str) -> None:

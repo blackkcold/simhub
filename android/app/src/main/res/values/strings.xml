@@ -98,4 +98,13 @@
     <string name="enrollment_confirm_title">Confirm SIM Hub pairing</string>
     <string name="enrollment_confirm_message">Pair this phone with %1$s? Only continue if you recognize and control this HTTPS relay. Your device will accept encrypted remote SMS commands from this server.</string>
     <string name="enrollment_confirm_action">Pair device</string>
+    <string name="scan_pair_qr">Scan controller QR code</string>
+    <string name="reverse_pair_help">Or enter your Relay HTTPS address to generate an eight-digit code. Verify the device fingerprint and approve in the controller.</string>
+    <string name="start_pair_code">Generate pairing code</string>
+    <string name="pair_code_label">Pair code: %1$s (valid for 5 minutes)</string>
+    <string name="pair_fingerprint">Fingerprint: %1$s · Awaiting controller approval</string>
+    <string name="pair_waiting">Awaiting controller approval…</string>
+    <string name="pair_done">Device pairing completed</string>
+    <string name="pair_failed">Pairing incomplete: %1$s</string>
+    <string name="pair_confirm_server">Request pairing with %1$s? Continue only if this is your own Relay.</string>
 </resources>

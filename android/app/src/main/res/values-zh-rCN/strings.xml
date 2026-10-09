@@ -98,4 +98,13 @@
     <string name="enrollment_confirm_title">确认 SIM Hub 设备配对</string>
     <string name="enrollment_confirm_message">是否将这台手机配对至 %1$s？请确认这是你控制的 HTTPS 中继服务器；配对后设备将接受来自该服务器的加密短信指令。</string>
     <string name="enrollment_confirm_action">确认配对</string>
+    <string name="scan_pair_qr">扫描管理中心二维码</string>
+    <string name="reverse_pair_help">也可以由手机主动发起：输入 Relay HTTPS 地址，生成八位配对码，在管理中心核对指纹后授权。</string>
+    <string name="start_pair_code">生成配对码</string>
+    <string name="pair_code_label">配对码：%1$s（5 分钟内有效）</string>
+    <string name="pair_fingerprint">设备指纹：%1$s · 等待管理中心授权</string>
+    <string name="pair_waiting">等待管理中心授权…</string>
+    <string name="pair_done">设备已成功配对</string>
+    <string name="pair_failed">配对未完成：%1$s</string>
+    <string name="pair_confirm_server">允许向 %1$s 发起设备配对？请确认这是你自己的 Relay。</string>
 </resources>

@@ -23,14 +23,22 @@ import java.io.FileInputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.concurrent.Executors;
+import android.os.Handler;
+import android.os.Looper;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 public final class MainActivity extends Activity {
     private static final int REQ_SMS_ROLE=2101,REQ_CORE=2201,REQ_CONTACTS=2202,REQ_EXPORT_DIAGNOSTICS=2301;
     private EditText enrollLink;private TextView status,detail,simSummary;private Switch developerSwitch;private LinearLayout developerTools;private Spinner languageSpinner;
     private final java.util.concurrent.ExecutorService exec=Executors.newSingleThreadExecutor();private File pendingDiagnosticFile;
+    private final Handler pairHandler=new Handler(Looper.getMainLooper());
+    private volatile PairingManager.Session pairingSession;
     @Override protected void onCreate(Bundle b){super.onCreate(b);UiLocale.apply(this);setContentView(R.layout.activity_main);enrollLink=findViewById(R.id.enrollLink);status=findViewById(R.id.status);detail=findViewById(R.id.detail);simSummary=findViewById(R.id.simSummary);developerSwitch=findViewById(R.id.developerSwitch);developerTools=findViewById(R.id.developerTools);languageSpinner=findViewById(R.id.languageSpinner);wire();wireLanguage();wireDeveloper();renderBuildInfo();handleIntent(getIntent());refreshLocal();AppLogger.i(this,"MainActivity","UI started");}
     @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);handleIntent(i);}
     private void wire(){
+        findViewById(R.id.scanPairButton).setOnClickListener(v->{new IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt(getString(R.string.scan_pair_qr)).setBeepEnabled(false).setOrientationLocked(false).initiateScan();});
+        findViewById(R.id.startPairCodeButton).setOnClickListener(v->startCodePairing());
         findViewById(R.id.enrollButton).setOnClickListener(v->doEnroll());findViewById(R.id.smsRoleButton).setOnClickListener(v->requestSmsRole());findViewById(R.id.permissionButton).setOnClickListener(v->requestCorePermissions());findViewById(R.id.contactButton).setOnClickListener(v->requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},REQ_CONTACTS));
         findViewById(R.id.mobileDataSettingsButton).setOnClickListener(v->{try{startActivity(new Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS));}catch(Exception e){toast(R.string.generic_error);}});
         findViewById(R.id.startRelayButton).setOnClickListener(v->{if(!new AgentConfig(this).isEnrolled()){toast(R.string.enroll_first);return;}AppLogger.i(this,"Relay","User requested always-on relay start");RelayForegroundService.start(this);refreshLocal();});
@@ -91,6 +99,65 @@ public final class MainActivity extends Activity {
             }finally{enrolling.set(false);runOnUiThread(()->button.setEnabled(true));}
         });
     }
+    private void startCodePairing(){
+        AgentConfig cfg=new AgentConfig(this);
+        if(cfg.isEnrolled()||cfg.resetPending()){toast(R.string.err_already_enrolled);return;}
+        final String server=((EditText)findViewById(R.id.pairingServer)).getText().toString().trim();
+        final Uri address=Uri.parse(server);
+        if(!"https".equalsIgnoreCase(address.getScheme())||address.getHost()==null){toast(R.string.err_https_required);return;}
+        new AlertDialog.Builder(this).setTitle(R.string.enrollment_confirm_title)
+          .setMessage(getString(R.string.pair_confirm_server,address.getHost()))
+          .setNegativeButton(R.string.cancel,null)
+          .setPositiveButton(R.string.start_pair_code,(dialog,which)->{
+              final View button=findViewById(R.id.startPairCodeButton);button.setEnabled(false);
+              pairHandler.removeCallbacksAndMessages(null);pairingSession=null;
+              exec.execute(()->{
+                  try{
+                      PairingManager.Session session=PairingManager.start(this,server);
+                      runOnUiThread(()->{
+                          pairingSession=session;
+                          ((TextView)findViewById(R.id.pairCodeText)).setText(getString(R.string.pair_code_label,session.code.substring(0,4)+" "+session.code.substring(4)));
+                          ((TextView)findViewById(R.id.pairFingerprintText)).setText(getString(R.string.pair_fingerprint,session.fingerprint));
+                          pairHandler.postDelayed(()->pollPairing(session),2000);
+                      });
+                  }catch(Exception error){
+                      AppLogger.e(this,"Pairing","Unable to create pairing request",error);
+                      runOnUiThread(()->toast(getString(R.string.pair_failed,UiErrors.message(this,error))));
+                  }finally{runOnUiThread(()->button.setEnabled(true));}
+              });
+          }).show();
+    }
+    private void pollPairing(PairingManager.Session session){
+        if(isFinishing()||isDestroyed()||pairingSession!=session)return;
+        exec.execute(()->{
+            try{
+                boolean complete=PairingManager.poll(this,session);
+                runOnUiThread(()->{
+                    if(pairingSession!=session||isFinishing()||isDestroyed())return;
+                    if(complete){
+                        pairingSession=null;
+                        ((TextView)findViewById(R.id.pairCodeText)).setText(R.string.pair_done);
+                        ((TextView)findViewById(R.id.pairFingerprintText)).setText("");
+                        toast(R.string.enrollment_complete);refreshLocal();
+                    }else pairHandler.postDelayed(()->pollPairing(session),3000);
+                });
+            }catch(Exception error){
+                AppLogger.e(this,"Pairing","Pairing status or activation failed",error);
+                runOnUiThread(()->{
+                    if(pairingSession!=session||isFinishing()||isDestroyed())return;
+                    if(error instanceof ApiClient.ApiFailure failure&&failure.status==410){
+                        pairingSession=null;
+                        ((TextView)findViewById(R.id.pairFingerprintText)).setText(getString(R.string.pair_failed,"Expired"));
+                    }else if(new AgentConfig(this).isEnrolled()){
+                        pairingSession=null;SyncJobService.scheduleNow(this);refreshLocal();
+                    }else{
+                        ((TextView)findViewById(R.id.pairFingerprintText)).setText(R.string.pair_waiting);
+                        pairHandler.postDelayed(()->pollPairing(session),5000);
+                    }
+                });
+            }
+        });
+    }
     private void requestSmsRole(){RoleManager rm=getSystemService(RoleManager.class);if(rm.isRoleAvailable(RoleManager.ROLE_SMS)&&!rm.isRoleHeld(RoleManager.ROLE_SMS))startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_SMS),REQ_SMS_ROLE);else toast(R.string.sms_role_already);}
     private void requestCorePermissions(){ArrayList<String> p=new ArrayList<>();for(String x:new String[]{Manifest.permission.RECEIVE_SMS,Manifest.permission.SEND_SMS,Manifest.permission.READ_SMS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS})if(checkSelfPermission(x)!=PackageManager.PERMISSION_GRANTED)p.add(x);if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)p.add(Manifest.permission.POST_NOTIFICATIONS);if(p.isEmpty())toast(R.string.permissions_granted);else requestPermissions(p.toArray(new String[0]),REQ_CORE);}
     private void refreshLocal(){
@@ -125,9 +192,11 @@ public final class MainActivity extends Activity {
     };}
     private void showOta(JSONObject o){if(!o.optBoolean("available")){toast(R.string.update_none);return;}String msg=getString(R.string.update_version,o.optString("versionName","?"),o.optString("notes",""));new AlertDialog.Builder(this).setTitle(R.string.update_title).setMessage(msg).setNegativeButton(R.string.close,null).setPositiveButton(R.string.open_download,(d,w)->{String url=o.optString("url","");if(url.startsWith("https://"))startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}).show();}
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);AppLogger.i(this,"Permissions","Permission result request="+requestCode);refreshLocal();}
-    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){super.onActivityResult(requestCode,resultCode,data);if(requestCode==REQ_SMS_ROLE){AppLogger.i(this,"Permissions","Default SMS role flow completed result="+resultCode);refreshLocal();return;}if(requestCode==REQ_EXPORT_DIAGNOSTICS&&resultCode==RESULT_OK&&data!=null&&data.getData()!=null&&pendingDiagnosticFile!=null){Uri uri=data.getData();File source=pendingDiagnosticFile;exec.execute(()->{try(FileInputStream in=new FileInputStream(source);OutputStream out=getContentResolver().openOutputStream(uri,"w")){if(out==null)throw new IllegalStateException("No output stream");byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);AppLogger.i(this,"Diagnostics","Diagnostic package exported");runOnUiThread(()->toast(R.string.diagnostic_export_done));}catch(Exception e){AppLogger.e(this,"Diagnostics","Diagnostic package export failed",e);runOnUiThread(()->toast(R.string.diagnostic_export_failed));}finally{source.delete();pendingDiagnosticFile=null;}});}}
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){super.onActivityResult(requestCode,resultCode,data);
+        IntentResult scanned=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);
+        if(scanned!=null){if(scanned.getContents()!=null){enrollLink.setText(scanned.getContents());doEnroll();}return;}if(requestCode==REQ_SMS_ROLE){AppLogger.i(this,"Permissions","Default SMS role flow completed result="+resultCode);refreshLocal();return;}if(requestCode==REQ_EXPORT_DIAGNOSTICS&&resultCode==RESULT_OK&&data!=null&&data.getData()!=null&&pendingDiagnosticFile!=null){Uri uri=data.getData();File source=pendingDiagnosticFile;exec.execute(()->{try(FileInputStream in=new FileInputStream(source);OutputStream out=getContentResolver().openOutputStream(uri,"w")){if(out==null)throw new IllegalStateException("No output stream");byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);AppLogger.i(this,"Diagnostics","Diagnostic package exported");runOnUiThread(()->toast(R.string.diagnostic_export_done));}catch(Exception e){AppLogger.e(this,"Diagnostics","Diagnostic package export failed",e);runOnUiThread(()->toast(R.string.diagnostic_export_failed));}finally{source.delete();pendingDiagnosticFile=null;}});}}
     private void toast(int resId){toast(getString(resId));}
     private void toast(String s){Toast.makeText(this,s==null||s.isBlank()?getString(R.string.generic_error):s,Toast.LENGTH_LONG).show();}
     @Override protected void onResume(){super.onResume();refreshLocal();}
-    @Override protected void onDestroy(){exec.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){pairHandler.removeCallbacksAndMessages(null);pairingSession=null;exec.shutdownNow();super.onDestroy();}
 }

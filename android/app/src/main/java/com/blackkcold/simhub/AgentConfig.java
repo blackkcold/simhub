@@ -16,6 +16,15 @@ public final class AgentConfig {
     private final SecretStore secrets;
 
     public AgentConfig(Context c){prefs=c.getSharedPreferences(PREF,Context.MODE_PRIVATE);secrets=new SecretStore(c);}
+    public String pendingPairId(){return prefs.getString("pending_pair_id","");}
+    public String pendingPairToken(){try{return secrets.getString("pending_pair_token");}catch(Exception e){return null;}}
+    public String pendingPairProof(){try{return secrets.getString("pending_pair_proof");}catch(Exception e){return null;}}
+    public void stagePairCompletion(String id,String token,String proof)throws Exception{
+        secrets.putString("pending_pair_token",token);
+        secrets.putString("pending_pair_proof",proof);
+        if(!prefs.edit().putString("pending_pair_id",id).commit())throw new IllegalStateException("Unable to commit pairing journal");
+    }
+    public void clearPairCompletion(){prefs.edit().remove("pending_pair_id").apply();secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");}
     public boolean isEnrolled(){return !resetPending()&&!server().isEmpty()&&!deviceId().isEmpty()&&deviceToken()!=null&&(nodeKey()!=null||vaultKey()!=null);}
     public boolean resetPending(){return prefs.getBoolean("reset_pending",false);}
     public boolean remoteResetNotified(){return prefs.getBoolean("remote_reset_notified",false);}
@@ -62,6 +71,9 @@ public final class AgentConfig {
     public long queueFailures(){return prefs.getLong("queue_failures",0);}
     public long lastQueueFailureAt(){return prefs.getLong("last_queue_failure_at",0);}
     public void recordSmsReceived(long at){prefs.edit().putLong("last_sms_received_at",at).apply();}
+    public void recordSmsProviderError(String reason){prefs.edit().putString("sms_provider_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
+    public void clearSmsProviderError(){prefs.edit().remove("sms_provider_error").apply();}
+    public String smsProviderError(){return prefs.getString("sms_provider_error","");}
     public void recordSyncSuccess(){prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
     public void recordSyncError(String reason){prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
     public long lastSmsReceivedAt(){return prefs.getLong("last_sms_received_at",0);}
@@ -130,7 +142,7 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
-        secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("sms_provider_error").remove("pending_pair_id").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
+        secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");
     }
 }

@@ -38,6 +38,8 @@ try {
       await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"networkidle"});
       assert.equal(await page.locator("#username").count(),1);
       assert.equal(await page.locator("#passkeyLoginBtn").count(),1);
+      assert.equal(await page.evaluate(()=>typeof window.QRCode),"function","Offline QR renderer must load");
+      assert.equal(await page.locator("#approvePairCode").count(),1);
       await page.evaluate(()=>document.querySelector("#stepupDialog").showModal());
       const positions=await page.evaluate(()=>{
         const d=document.querySelector("#stepupDialog").getBoundingClientRect();
@@ -127,8 +129,12 @@ try {
     });
     assert.ok(layout.docWidth<=width+1,`Horizontal page overflow at ${width}: ${JSON.stringify(layout)}`);
     assert.ok(layout.message.right<=layout.list.right+1,`Message overlaps another column at ${width}`);
+    if(width>900){
+      const listOverflow=await page.locator("#inboxList").evaluate(el=>({scroll:el.scrollHeight,client:el.clientHeight,overflow:getComputedStyle(el).overflowY}));
+      assert.ok(listOverflow.scroll>listOverflow.client&&listOverflow.overflow==="auto",`Inbox must scroll independently at ${width}: ${JSON.stringify(listOverflow)}`);
+    }
     assert.equal(layout.previewStyle,"block",`SMS preview must ellipsize as a block at ${width}`);
-    if(width>1180){
+    if(width>900){
       assert.ok(layout.list.right+5<=layout.panel.x,`Desktop SMS columns overlap at ${width}`);
     }else if(width>760){
       assert.ok(layout.panel.y>=layout.list.bottom-1,`Tablet columns must stack at ${width}`);

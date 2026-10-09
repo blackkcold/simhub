@@ -243,6 +243,9 @@ function purgeSensitiveUI(){
   const link=$('openEnroll');if(link){link.removeAttribute('href');link.hidden=true;}
   expandedDeviceDetails.clear();
   const enroll=$('enrollResult');if(enroll)enroll.hidden=true;
+  if($('enrollQr'))$('enrollQr').replaceChildren();
+  if($('pairCodeInput'))$('pairCodeInput').value='';
+  if($('pairCodeStatus'))$('pairCodeStatus').textContent='';
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
@@ -386,7 +389,7 @@ function nodeChannels(d){
 }
 function channelTitle(ch){return (ch.phoneNumber?ch.phoneNumber+' · ':'')+(ch.alias||ch.displayName||ch.carrierName||ch.id);}
 function messageChannelLabel(e){
-  if(e.kind==='sms.history'&&!e.payload?.channelId)return '历史卡槽 '+(e.subscriptionId||'—')+'（号码归属未验证）';
+  if(e.kind==='sms.history'&&!e.payload?.channelId)return tr('historical_sim_unverified');
   const d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e);
   const channel=nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id);
   return channel?channelTitle(channel):id;
@@ -458,7 +461,7 @@ function renderDevices(){
       '<button class="danger mini" data-action="force-delete" data-id="'+escapeHtml(d.id)+'">'+(zh?'强制删除':'Force delete')+'</button>';
     return '<article class="card device device-card"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+' · '+escapeHtml(d.smsCount??0)+' SMS</p></div><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(stateText)+'</span></div>'+
       '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':escapeHtml(s.batteryPct)+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':escapeHtml(s.pendingEvents))+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+
-      '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.charging===true?'充电中':s.charging===false?'未充电':'—')+'</b><span>充电状态</span></div><div class="stat"><b>'+escapeHtml(s.network==='WIFI'?'已连接 Wi-Fi':s.network==='CELLULAR'?'使用移动数据':s.network||'—')+'</b><span>联网状态</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+'</b><span>蜂窝数据接管</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
+      '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.charging===true?'充电中':s.charging===false?'未充电':'—')+'</b><span>充电状态</span></div><div class="stat"><b>'+escapeHtml(s.network==='WIFI'?'已连接 Wi-Fi':s.network==='CELLULAR'?'使用移动数据':s.network||'—')+'</b><span>联网状态</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+escapeHtml(s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+'</b><span>蜂窝数据接管</span></div></div>'+ '<div class="device-stats"><div class="stat"><b>'+fmtTime(s.lastSyncSuccessAt)+'</b><span>'+escapeHtml(tr('last_sync'))+'</span></div><div class="stat"><b>'+fmtTime(s.lastSmsReceivedAt)+'</b><span>'+escapeHtml(tr('last_sms'))+'</span></div><div class="stat"><b>'+escapeHtml(s.lastSyncError||s.smsProviderError||s.stateCollectionError||tr('none'))+'</b><span>'+escapeHtml(tr('sync_error'))+'</span></div></div>'+
       '<p class="hint device-retry-status">'+(s.nextSyncAllowedAt&&s.nextSyncAllowedAt>Math.floor(Date.now()/1000)?(getLocale()==='zh-CN'?'网络重试：':'Next retry: ')+fmtTime(s.nextSyncAllowedAt)+' · '+(getLocale()==='zh-CN'?'失败次数 ':'Failures ')+escapeHtml(s.syncBackoffFailures||0):'')+'</p>'+
       '<div class="sim-list">'+(subs.map(x=>'<div class="sim"><strong>'+escapeHtml(x.displayName||x.carrierName||x.id||'SIM')+'</strong><small>'+escapeHtml(x.phoneNumber||tr('phone_unknown'))+' · '+escapeHtml(x.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+(x.signalLevel==null?'—':escapeHtml(x.signalLevel))+'</small><button class="ghost mini" data-action="edit-sim" data-id="'+escapeHtml(d.id)+'" data-channel="'+escapeHtml(x.id)+'" title="号码仅在当前浏览器加密保存">'+escapeHtml(tr('set_sim_phone'))+'</button></div>').join('')||'<small>'+escapeHtml(tr('no_subscriptions'))+'</small>')+'</div><details class="device-actions" data-device="'+escapeHtml(d.id)+'"'+(expandedDeviceDetails.has(d.id)?' open':'')+'><summary>'+(getLocale()==='zh-CN'?'更多操作 · 同步 / 诊断 / 安全':'More actions · Sync / Diagnostics / Security')+'</summary><div class="row wrap">'+actions+'</div></details></article>';
   }).join('');
@@ -541,10 +544,13 @@ function updateReplyChannels(preferred){
   el.innerHTML='<option value="">'+escapeHtml(tr('sim_subscription'))+'</option>'+
     channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'">'+escapeHtml(channelTitle(ch))+'</option>').join('');
   if([...el.options].some(x=>x.value===selected))el.value=selected;
+  const selectedChannel=channels.find(ch=>String(ch.id)===el.value);
+  $('replyChannelLabel').textContent=selectedChannel?(d.name+' · '+channelTitle(selectedChannel)):tr('choose_channel');
 }
 function renderConversation(){
   if(!activeConversationKey){
     $('conversationTitle').textContent=tr('choose_conversation');
+    $('conversationMeta').textContent='';
     $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('choose_conversation_hint'))+'</p>';
     $('replyComposer').hidden=true;
     return;
@@ -552,6 +558,7 @@ function renderConversation(){
   $('replyComposer').hidden=false;
   if(activeConversationKey==='__new'){
     $('conversationTitle').textContent=tr('new_sms');
+    $('conversationMeta').textContent='';
     $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('new_sms_hint'))+'</p>';
     return;
   }
@@ -561,7 +568,12 @@ function renderConversation(){
     return;
   }
   const last=messages[messages.length-1];
-  $('conversationTitle').textContent=(last.payload?.contactName||messageAddress(last)||tr('unknown'))+' · '+deviceName(last.deviceId)+' · '+messageChannelLabel(last);
+  const pane=$('conversationMessages');
+  const previousKey=pane.dataset.threadKey;
+  const nearBottom=pane.scrollHeight-pane.scrollTop-pane.clientHeight<100;
+  const oldScroll=pane.scrollTop;
+  $('conversationTitle').textContent=last.payload?.contactName||messageAddress(last)||tr('unknown');
+  $('conversationMeta').textContent=deviceName(last.deviceId)+' · '+messageChannelLabel(last);
   $('conversationMessages').innerHTML=messages.map(e=>{
     const p=e.payload||{},inbound=eventIsInbound(e),
       status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent')),
@@ -571,6 +583,9 @@ function renderConversation(){
     return '<div class="bubble'+(inbound?'':' outbound')+'"><p>'+escapeHtml(body)+
       '</p>'+otp+'<small class="meta">'+fmtTime(e.occurredAt)+' · '+escapeHtml(status)+'</small></div>';
   }).join('');
+  pane.dataset.threadKey=activeConversationKey;
+  if(previousKey!==activeConversationKey||nearBottom)pane.scrollTop=pane.scrollHeight;
+  else pane.scrollTop=oldScroll;
 }
 function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
@@ -579,9 +594,10 @@ function openConversation(key){
   const last=selected.latest,number=messageAddress(last),did=last.deviceId,channel=messageChannel(last);
   updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
   $('replyTo').value=number;
+  $('replyOptions').open=false;
   const canReply=/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
   $('replySend').disabled=!canReply;
-  if(!canReply)toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');
+  if(!canReply){$('replyOptions').open=true;toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');}
   syncResponsiveConversation();
   renderInbox();
 }
@@ -591,6 +607,7 @@ function openNewMessage(){
   $('replyDevice').value='';
   updateReplyChannels();
   $('replyTo').value='';$('replyBody').value='';$('replySend').disabled=false;
+  $('replyOptions').open=true;
   syncResponsiveConversation();
   renderInbox();$('replyTo').focus();
 }
@@ -649,9 +666,56 @@ async function createEnrollment(){
       $('openEnroll').removeAttribute('href');$('openEnroll').hidden=true;
     }
     $('enrollLink').value=value;$('enrollResult').hidden=false;
+    const qr=$('enrollQr');qr.replaceChildren();
+    if(type==='android'&&typeof QRCode!=='undefined')new QRCode(qr,{text:value,width:248,height:248,correctLevel:QRCode.CorrectLevel.L});
     toast(tr(type==='modem'?'enroll_modem_done':'enroll_android_done'));
   }finally{
     nodeRaw.fill(0);bootstrapRaw.fill(0);
+  }
+}
+async function sha256Hex(text){
+  const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(text)));
+  return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function approveDevicePairCode(){
+  if(!vaultRaw||!vaultKey)throw Error('请先解锁 Vault');
+  const code=$('pairCodeInput').value.trim();
+  if(!/^\d{8}$/.test(code))throw Error('请输入完整的八位配对码');
+  const epoch=securityEpoch;
+  const item=await api('/api/v1/pairings/lookup?code='+encodeURIComponent(code));
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
+  const fingerprint=(await sha256Hex(item.publicKey)).slice(0,12).toUpperCase();
+  $('pairCodeStatus').textContent='待配对设备 '+item.name+' · '+item.model+' · 指纹 '+fingerprint;
+  if(!confirm('确认 Android 手机上显示的设备指纹为 '+fingerprint+'，且设备名称为 '+item.name+'？\n仅在已核对实体设备时继续。'))return;
+  await ensureStepUp();
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
+  const nodeRaw=crypto.getRandomValues(new Uint8Array(32));
+  const tokenBytes=crypto.getRandomValues(new Uint8Array(48));
+  const deviceToken=b64u(tokenBytes);
+  let shared;
+  try{
+    const keyId=await keyIdForRaw(nodeRaw);
+    const wrappedKey=await wrapNodeKey(nodeRaw,keyId);
+    const peer=await crypto.subtle.importKey('spki',unb64u(item.publicKey),{name:'ECDH',namedCurve:'P-256'},false,[]);
+    const ephemeral=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+    shared=new Uint8Array(await crypto.subtle.deriveBits({name:'ECDH',public:peer},ephemeral.privateKey,256));
+    const base=await crypto.subtle.importKey('raw',shared,'HKDF',false,['deriveKey']);
+    const key=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:enc.encode('simhub-pair-v1|'+item.requestId),info:enc.encode('node-key')},base,{name:'AES-GCM',length:256},false,['encrypt']);
+    const iv=crypto.getRandomValues(new Uint8Array(12));
+    const plaintext=enc.encode(JSON.stringify({nodeKey:b64u(nodeRaw),deviceToken}));
+    const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-pair-v1|'+item.requestId+'|'+keyId)},key,plaintext));
+    const spki=b64u(new Uint8Array(await crypto.subtle.exportKey('spki',ephemeral.publicKey)));
+    await api('/api/v1/pairings/'+encodeURIComponent(item.requestId)+'/approve',{method:'POST',body:{
+      code,keyId,wrappedKey,
+      envelope:{v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct),publicKey:spki},
+      deviceTokenHash:await sha256Hex(deviceToken),
+      completeProofHash:await sha256Hex('simhub-pair-complete-v1|'+item.requestId+'|'+deviceToken)
+    }});
+    $('pairCodeStatus').textContent='已授权 '+item.name+'。等待 Android 完成加密确认。';
+    $('pairCodeInput').value='';
+    await fullRefresh();
+  }finally{
+    nodeRaw.fill(0);tokenBytes.fill(0);if(shared)shared.fill(0);
   }
 }
 async function rotateDeviceKey(deviceId){await ensureStepUp();const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
@@ -785,7 +849,7 @@ function wire(){
   window.addEventListener('resize',syncResponsiveConversation,{passive:true});
   window.addEventListener('orientationchange',syncResponsiveConversation,{passive:true});
   $('replyDevice').onchange=()=>{updateReplyChannels();$('replySend').disabled=false;};
-  $('replySubscription').onchange=()=>{$('replySend').disabled=false;};
+  $('replySubscription').onchange=()=>{$('replySend').disabled=false;updateReplyChannels($('replySubscription').value);};
   $('replyBody').oninput=updateReplyCount;
   $('replyTo').oninput=()=>{$('replySend').disabled=false;};
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
@@ -801,6 +865,7 @@ function wire(){
     finally{enrolling=false;btn.disabled=false;btn.removeAttribute('aria-busy');}
   };
   $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
+  $('approvePairCode').onclick=async()=>{const b=$('approvePairCode');if(b.disabled)return;b.disabled=true;try{await approveDevicePairCode();}catch(e){$('pairCodeStatus').textContent=e.message;toast(e.message);}finally{b.disabled=false;}};
   $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};

@@ -4,6 +4,8 @@ import android.content.Context;
 import android.database.Cursor;
 import android.provider.BaseColumns;
 import android.provider.Telephony;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -33,6 +35,8 @@ public final class SmsHistorySync {
                 .put(direction.equals("in")?"sender":"recipient",row.address==null?"":row.address)
                 .put("body",row.body==null?"":row.body).put("occurredAt",row.date/1000)
                 .put("subscriptionId",row.sub).put("providerType",row.type).put("providerId",row.id);
+        ChannelIdentity.Channel channel=ChannelIdentity.forHistoricalSubscription(c,row.sub,row.date);
+        if(channel!=null)payload.put("channelId",channel.channelId).put("channelRevision",channel.revision);
         if(contact!=null)payload.put("contactName",contact);
         if(otp.detected&&direction.equals("in"))
             payload.put("otp",new JSONObject().put("value",otp.value).put("confidence",otp.confidence));
@@ -44,7 +48,17 @@ public final class SmsHistorySync {
      * First use imports the most recent 100, not the oldest 5,000.
      * Later invocations consume new messages in ascending (date,id) order.
      */
+    private static boolean canRead(Context c){
+        if(c.checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED)return true;
+        new AgentConfig(c).recordSmsProviderError("READ_SMS_PERMISSION_MISSING");return false;
+    }
+    private static void scanFailed(Context c,Exception error,String operation){
+        String reason=error instanceof SecurityException?"SMS_PROVIDER_SECURITY_EXCEPTION":error.getClass().getSimpleName();
+        new AgentConfig(c).recordSmsProviderError(reason);
+        AppLogger.e(c,"SmsSync",operation+" failed",error);
+    }
     public static synchronized int sync(Context c,int requested) {
+        if(!canRead(c))return -1;
         AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
         int limit=Math.max(1,Math.min(requested,PAGE));
         boolean initial=!cfg.historyInitialized();
@@ -68,12 +82,13 @@ public final class SmsHistorySync {
                 cfg.setHistoryInitialized(true);
             }
             if(count>0)AppLogger.i(c,"SmsSync","Incremental history queued="+count+" initial="+initial);
-        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","History scan failed",error);}
-        return count;
+        }catch(Exception error){scanFailed(c,error,"History scan");return -1;}
+        cfg.clearSmsProviderError();return count;
     }
 
     /** Explicitly rescan the newest N SMS; stable provider event IDs prevent duplicates. */
     public static synchronized int syncRecent(Context c,int requested){
+        if(!canRead(c))return -1;
         AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
         int limit=Math.max(1,Math.min(PAGE,requested)),count=0;
         try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,
@@ -85,13 +100,15 @@ public final class SmsHistorySync {
                 if(!enqueue(c,row)){cfg.recordSyncError("History queue full");return -1;}
                 count++;
             }
+            cfg.clearSmsProviderError();
             if(count>0)AppLogger.i(c,"SmsSync","Recent history rescan queued="+count);
-        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Recent history failed",error);return -1;}
+        }catch(Exception error){scanFailed(c,error,"Recent history");return -1;}
         return count;
     }
 
     /** Explicit older history, descending in batches; marker only advances after durable queueing. */
     public static synchronized int syncOlder(Context c,int requested) {
+        if(!canRead(c))return -1;
         AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
         if(!cfg.historyInitialized())sync(c,PAGE);
         if(!cfg.historyInitialized())return -1;
@@ -109,8 +126,9 @@ public final class SmsHistorySync {
                 cfg.setHistoryBackfillCursor(row.date,row.id);
                 if(row.type!=Telephony.Sms.MESSAGE_TYPE_DRAFT)count++;
             }
+            cfg.clearSmsProviderError();
             if(count>0)AppLogger.i(c,"SmsSync","Older history queued="+count);
-        }catch(Exception error){cfg.recordSyncError(error.getClass().getSimpleName());AppLogger.e(c,"SmsSync","Older history failed",error);return -1;}
+        }catch(Exception error){scanFailed(c,error,"Older history");return -1;}
         return count;
     }
 

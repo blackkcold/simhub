@@ -42,6 +42,7 @@
 | **短信与验证码** | 多 SIM 收发、会话直接回复、新建短信、OTP 识别与复制 |
 | **设备与 SIM** | Android / Linux 蜂窝 Modem 节点；SIM 号码、信号、充电、Wi-Fi 与在线状态 |
 | **历史与诊断** | 最近 100 条重扫、每批更早 100 条同步、已同步记录分页、加密设备健康检查 |
+| **设备配对** | 管理中心生成二维码扫码接入；Android 也可生成八位配对码，在管理中心核验设备指纹后授权 |
 | **隐私与登录** | Node Key 端到端加密、用户名 / TOTP / Passkey、Vault 活动会话刷新恢复 |
 | **离线恢复** | 本地队列、断网后重试、常驻中继、后台任务恢复 |
 
@@ -67,7 +68,7 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 向导检查 DNS / Docker / 端口，生成管理员 Token、TOTP、私有 `.env`，部署 Relay 与 Caddy HTTPS；**DNS 记录需自行在域名服务商处设置**。已有 Nginx / Caddy / Traefik 时，给命令增加 `--mode external` 并自行配置双域名 HTTPS 反代。
 
-然后打开管理域名，登录并创建/导入本地 Vault；下载正式签名 APK，在 Android 手机完成注册、短信权限和**默认短信应用**设置。
+然后打开管理域名，登录并创建/导入本地 Vault；下载正式签名 APK，通过扫码或 Android 发码完成配对、短信权限和**默认短信应用**设置。
 
 ## 使用边界
 

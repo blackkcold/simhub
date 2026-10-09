@@ -31,7 +31,11 @@ public final class ChannelIdentity {
         if(id==null||id.isBlank()){id=UUID.randomUUID().toString();rev=1;}
         else if(!previous.isEmpty()&&!previous.equals(current))rev=Math.max(1,rev+1);
         else if(rev<=0)rev=1;
-        if(!p.edit().putString(prefix+"id",id).putLong(prefix+"revision",rev).putString(prefix+"fingerprint",current).commit())throw new IllegalStateException("SIM identity revision not durable");
+        // A legacy provider row can only be attributed to a SIM after the same
+        // identity/revision had been observed. Older history remains unverified.
+        long firstSeen=p.getLong(prefix+"first_seen",0L);
+        if(firstSeen<=0||!previous.equals(current))firstSeen=System.currentTimeMillis();
+        if(!p.edit().putString(prefix+"id",id).putLong(prefix+"revision",rev).putString(prefix+"fingerprint",current).putLong(prefix+"first_seen",firstSeen).commit())throw new IllegalStateException("SIM identity revision not durable");
         return new Channel(id,rev,s.getSubscriptionId(),s.getSimSlotIndex());
     }
 
@@ -59,6 +63,24 @@ public final class ChannelIdentity {
         return null;
     }
 
+    public static Channel forHistoricalSubscription(Context c,int subscriptionId,long occurredAtMillis){
+        if(subscriptionId<0||occurredAtMillis<=0)return null;
+        try{
+            SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);
+            List<SubscriptionInfo> list=sm.getActiveSubscriptionInfoList();
+            if(list==null)return null;
+            SharedPreferences p=c.getSharedPreferences(PREF,Context.MODE_PRIVATE);
+            for(SubscriptionInfo s:list){
+                if(s.getSubscriptionId()!=subscriptionId)continue;
+                Channel ch=describe(c,s);
+                long firstSeen=p.getLong("channel."+anchor(s)+".first_seen",0L);
+                // Allow 2 seconds for provider and system timestamp ordering only.
+                if(firstSeen>0&&occurredAtMillis+2000>=firstSeen)return ch;
+            }
+        }catch(SecurityException e){AppLogger.w(c,"ChannelIdentity","Historical identity permission denied");}
+        catch(Exception e){AppLogger.w(c,"ChannelIdentity","Historical SIM identity unavailable");}
+        return null;
+    }
     private static String anchor(SubscriptionInfo s){
         int slot=s.getSimSlotIndex();
         if(slot>=0)return "slot-"+slot;

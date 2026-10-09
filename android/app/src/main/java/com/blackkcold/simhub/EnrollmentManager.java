@@ -8,7 +8,7 @@ import java.util.Arrays;
 
 public final class EnrollmentManager {
     public static void enroll(Context c,String link)throws Exception{
-        AgentConfig existing=new AgentConfig(c);if(existing.isEnrolled())throw new IllegalStateException("This node is already enrolled. Reset enrollment before pairing it to another vault or relay.");
+        AgentConfig existing=new AgentConfig(c);if(existing.isEnrolled()||existing.resetPending())throw new IllegalStateException("This node is already enrolled. Reset enrollment before pairing it to another vault or relay.");
         AppLogger.i(c,"Enrollment","Validating enrollment package");
         Uri u=Uri.parse(link);if(!"simhub".equalsIgnoreCase(u.getScheme())||!"enroll".equalsIgnoreCase(u.getHost()))throw new IllegalArgumentException("Invalid enrollment link");
         String server=u.getQueryParameter("server"),token=u.getQueryParameter("token"),name=u.getQueryParameter("name"),versionText=u.getQueryParameter("v");if(server==null||token==null)throw new IllegalArgumentException("Enrollment link missing fields");
@@ -21,6 +21,14 @@ public final class EnrollmentManager {
             else{String keyText=u.getQueryParameter("key"),keyId=u.getQueryParameter("keyId");if(keyText==null)throw new SecurityException("Legacy enrollment key missing");key=CryptoBox.ub64(keyText);if(key.length!=32)throw new SecurityException("Enrollment key length invalid");if(version>=3&&keyId!=null&&!keyId.isBlank()){String computed=CryptoBox.keyId(key);if(!computed.equals(keyId))throw new SecurityException("Node key id mismatch");existing.setNodeEnrollment(server.replaceAll("/+$",""),r.getString("deviceId"),name,r.getString("deviceToken"),keyId,key);}else existing.setLegacyEnrollment(server.replaceAll("/+$",""),r.getString("deviceId"),name,r.getString("deviceToken"),key);}
         }finally{if(key!=null)Arrays.fill(key,(byte)0);if(bootstrap!=null)Arrays.fill(bootstrap,(byte)0);}
         SyncJobService.schedule(c);SyncJobService.scheduleNow(c);AppLogger.i(c,"Enrollment","Node enrollment stored successfully version="+version);
+    }
+    public static void requestReset(Context c){
+        AgentConfig cfg=new AgentConfig(c);
+        if(!cfg.isEnrolled()&&!cfg.resetPending()){reset(c);return;}
+        cfg.markResetPending();
+        RelayForegroundService.stop(c);
+        SyncJobService.scheduleNow(c);
+        AppLogger.i(c,"Enrollment","Reset requested; awaiting relay confirmation");
     }
     public static void reset(Context c){RelayForegroundService.stop(c);LocalStore.get(c).resetForReenrollment();new AgentConfig(c).clearEnrollment();AppLogger.i(c,"Enrollment","Node enrollment cleared");}
     private EnrollmentManager(){}

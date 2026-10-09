@@ -26,7 +26,7 @@ public final class EventQueue {
             JSONObject cipher=new CryptoBox(c).encryptEvent(payload,id,kind,occurredAt,sub,hasOtp);
             boolean ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
             if(ok){
-                if("sms.received".equals(kind)||"sms.history".equals(kind)||"sms.sent".equals(kind)||"sms.delivered".equals(kind)){
+                if("sms.received".equals(kind)||"sms.history".equals(kind)||"sms.sent".equals(kind)||"sms.delivered".equals(kind)||"sim.profile".equals(kind)){
                     String channel=payload.optString("channelId","");
                     SharedPoolClient.stage(c,id,occurredAt,channel,payload);
                 }

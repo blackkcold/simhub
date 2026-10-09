@@ -49,16 +49,31 @@ public final class SharedPoolClient {
 
     public synchronized void setEnabled(boolean value)throws Exception{
         if(!config.isEnrolled())throw new SecurityException("Pairing required");
-        client().request("POST",path()+"/request",new JSONObject().put("enabled",value));
-        prefs.edit().putBoolean("requested",value).putBoolean("approved",false)
-            .putLong("last_download",0).putLong("oldest_download",0)
-            .remove("oldest_download_time").remove("older_has_more").remove("initial_staged").apply();
         if(!value){
+            // Privacy-first: stop local sharing immediately, even if Relay is offline.
+            if(!prefs.edit().putBoolean("requested",false).putBoolean("approved",false)
+                .putBoolean("pending_disable",true).putLong("last_download",0)
+                .putLong("oldest_download",0).remove("oldest_download_time")
+                .remove("older_has_more").remove("initial_staged").commit())
+                throw new IllegalStateException("Unable to persist sharing disable");
             store.clear();
             SecretStore secret=new SecretStore(context);
             for(int epoch:epochs())secret.remove("pool-key-"+epoch);
-            prefs.edit().remove("key_epochs").apply();
+            prefs.edit().remove("key_epochs").remove("current_epoch").apply();
+            try{
+                client().request("POST",path()+"/request",new JSONObject().put("enabled",false));
+                prefs.edit().putBoolean("pending_disable",false).apply();
+            }catch(Exception error){
+                AppLogger.e(context,"SharedPool","Remote disable deferred until network resumes",error);
+            }
+            SyncJobService.scheduleNow(context);
+            return;
         }
+        client().request("POST",path()+"/request",new JSONObject().put("enabled",true));
+        prefs.edit().putBoolean("requested",true).putBoolean("approved",false)
+            .putBoolean("pending_disable",false).putLong("last_download",0)
+            .putLong("oldest_download",0).remove("oldest_download_time")
+            .remove("older_has_more").remove("initial_staged").apply();
         SyncJobService.scheduleNow(context);
     }
 
@@ -124,7 +139,12 @@ public final class SharedPoolClient {
     }
 
     public synchronized void sync()throws Exception{
-        if(!optedIn()||!config.isEnrolled())return;
+        if(!config.isEnrolled())return;
+        if(prefs.getBoolean("pending_disable",false)){
+            client().request("POST",path()+"/request",new JSONObject().put("enabled",false));
+            prefs.edit().putBoolean("pending_disable",false).apply();
+        }
+        if(!optedIn())return;
         JSONObject status=client().request("GET",path(),null);
         if(!status.optBoolean("requested",false)){
             // Server-side opt-out wins; do not silently re-enable.

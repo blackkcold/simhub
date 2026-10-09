@@ -1753,6 +1753,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_json(201,{"accepted":True,"commandId":cid,"serverSequence":seq,"state":"queued"})
 
     def get_pending_commands(self,device_id:str,q:dict[str,list[str]]) -> None:
+        # A bounded long-poll lets an active foreground Android relay wake on
+        # new commands without 5-second HTTP polling or a permanent WebSocket.
+        try: wait=max(0,min(int(q.get("wait",["0"])[0]),15))
+        except ValueError: wait=0
+        if wait:
+            with open_db() as con:
+                pending=con.execute("SELECT 1 FROM commands WHERE device_id=? AND state IN ('queued','dispatched') AND expires_at>? LIMIT 1",(device_id,now())).fetchone()
+            if not pending:
+                with _stream_condition:
+                    initial=_stream_epoch
+                    _stream_condition.wait_for(lambda:_stream_epoch!=initial,timeout=wait)
         ts=now()
         try: limit=max(1,min(int(q.get("limit",["50"])[0]),200))
         except ValueError: limit=50

@@ -25,6 +25,6 @@ public final class SyncJobService extends JobService {
             c.getSystemService(JobScheduler.class).schedule(job);
         }catch(Exception e){AppLogger.e(c,"SyncJob","Delayed scheduling failed",e);}
     }
-    @Override public boolean onStartJob(JobParameters p){AppLogger.i(this,"SyncJob","Job started id="+p.getJobId());Future<?> future=AgentExecutors.sync().submit(()->{try{ACTIVE_JOB.set(p.getJobId());new ApiClient(getApplicationContext()).syncCycle();}finally{ACTIVE_JOB.remove();RUNNING.remove(p.getJobId());jobFinished(p,false);}});Future<?> previous=RUNNING.put(p.getJobId(),future);if(previous!=null&&!previous.isDone())previous.cancel(true);return true;}
+    @Override public boolean onStartJob(JobParameters p){AppLogger.i(this,"SyncJob","Job started id="+p.getJobId());Future<?> future=AgentExecutors.sync().submit(()->{try{ACTIVE_JOB.set(p.getJobId());new ApiClient(getApplicationContext()).syncCycle();}finally{try{AppUpdater.checkInBackground(getApplicationContext());}catch(Exception error){AppLogger.e(this,"SyncJob","Update check failed",error);}ACTIVE_JOB.remove();RUNNING.remove(p.getJobId());jobFinished(p,false);}});Future<?> previous=RUNNING.put(p.getJobId(),future);if(previous!=null&&!previous.isDone())previous.cancel(true);return true;}
     @Override public boolean onStopJob(JobParameters p){Future<?> future=RUNNING.remove(p.getJobId());if(future!=null)future.cancel(true);AppLogger.w(this,"SyncJob","Job interrupted id="+p.getJobId());return true;}
 }

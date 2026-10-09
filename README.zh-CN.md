@@ -39,6 +39,10 @@
 
 <sub>均为依据当前 UI 绘制的模拟数据示意图，非真实短信或已登录设备截图。</sub>
 
+## 在线更新（v0.9.1）
+
+Web「设置 → 系统版本」支持 GitHub Release 检测、忽略及一键 Docker 源码构建更新。首次需在**宿主机**执行 `sudo bash scripts/install-updater.sh`，Web 容器不接触 Docker Socket；升级前备份 SQLite，健康检查失败恢复上一镜像。Android「设置 → 高级工具」支持检查更新、忽略版本、自动下载与通过系统确认安装签名 APK。参见 [部署](docs/DEPLOYMENT.md) 与 [Android](docs/ANDROID_SETUP.md) 指南。
+
 ## 核心功能
 
 | 能力 | 说明 |

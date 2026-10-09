@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.9.0.trigger'
+      - '.github/release/v0.9.1.trigger'
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.9.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.9.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -74,6 +74,8 @@ jobs:
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_updates
+      - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
@@ -86,7 +88,7 @@ jobs:
       - run: node web/test_crypto_vector.mjs
       - run: node web/test_bootstrap_vector.mjs
       - run: python3 -m py_compile server/simhub_server.py server/passkeys.py scripts/setup.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
-      - run: bash -n modem_agent/install.sh
+      - run: bash -n modem_agent/install.sh scripts/install-updater.sh
 
   sign:
     needs: validate
@@ -185,30 +187,22 @@ jobs:
           name: signed-apk
           path: release
 
-      - name: Reconcile release tag after successful signing
+      - name: Create immutable release tag after successful signing
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
-          git fetch origin "refs/tags/$TAG:refs/tags/$TAG" --force 2>/dev/null || true
+          git fetch origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
           EXISTING=$(git rev-parse -q --verify "$TAG^{commit}" 2>/dev/null || true)
           if [[ -n "$EXISTING" && "$EXISTING" != "$GITHUB_SHA" ]]; then
-            echo "Replacing $TAG from $EXISTING with final release commit $GITHUB_SHA"
-            if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release delete "$TAG" --yes --cleanup-tag
-            else
-              git push origin ":refs/tags/$TAG" || true
-            fi
-            git tag -d "$TAG" >/dev/null 2>&1 || true
-            EXISTING=""
+            echo "::error::Release tag already exists at a different commit; refusing replacement"
+            exit 1
           fi
           if [[ -z "$EXISTING" ]]; then
             git tag "$TAG" "$GITHUB_SHA"
             git push origin "refs/tags/$TAG"
           fi
-
       - name: Assemble release assets
         shell: bash
         env:
@@ -221,7 +215,36 @@ jobs:
           cp docs/*.md release/docs/
           cp modem_agent/README.md release/docs/MODEM_AGENT.md
           (cd release/docs && zip -q -r "../simhub-v${VERSION}-docs.zip" .)
-          sha256sum             "release/simhub-agent-v${VERSION}-release.apk"             "release/simhub-v${VERSION}-source.zip"             "release/simhub-v${VERSION}-docs.zip"             > release/SHA256SUMS.txt
+          sha256sum "release/simhub-agent-v${VERSION}-release.apk" \
+            "release/simhub-v${VERSION}-source.zip" \
+            "release/simhub-v${VERSION}-docs.zip" > release/SHA256SUMS.txt
+          VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9]*\)/\1/p' android/app/build.gradle.kts | head -1)"
+          export VERSION VERSION_CODE
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          version=os.environ["VERSION"]
+          root=pathlib.Path("release")
+          def digest(filename):
+              return hashlib.sha256((root/filename).read_bytes()).hexdigest()
+          apk=f"simhub-agent-v{version}-release.apk"
+          source=f"simhub-v{version}-source.zip"
+          import re
+          schema=re.search(r"PRAGMA user_version=([0-9]+)",pathlib.Path("server/simhub_server.py").read_text())
+          if not schema:raise SystemExit("Missing relay database schema declaration")
+          db_schema=int(schema.group(1))
+          data={
+              "schemaVersion":1,"release":version,"channel":"stable",
+              "notes":"Verified service and Android update support",
+              "server":{"version":version,"asset":source,"sha256":digest(source),"dbSchema":db_schema},
+              "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
+                         "asset":apk,"sha256":digest(apk),
+                         "packageName":"com.blackkcold.simhub"},
+              "minimumCompatibleServer":"0.9.0",
+              "minimumCompatibleAndroid":"0.9.0"
+          }
+          (root/"update-manifest.json").write_text(json.dumps(data,indent=2)+chr(10),encoding="utf-8")
+          PY
+
 
       - name: Publish GitHub Release
         env:
@@ -234,15 +257,20 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Self-hosted encrypted SMS sharing, reliable Web pagination and a single adaptive Android workspace.
+          SIM Hub now supports end-to-end safe update flows for Docker relay and Android.
 
           ## Highlights
-          - Add explicit Android SMS-pool opt-in and Vault-admin approval, Node-Key-wrapped AES-256-GCM pool keys, revocation, rotation and encrypted offline caches;
-          - Fix Web inbox card shrinkage and independent scrolling, introduce automatic older-message pagination;
-          - Show per-message date, direction, device and masked SIM source details with honest historical attribution;
-          - Consolidate diagnostics, developer logs, export, OTA, language, permissions and reset into the sole Compose settings surface;
-          - Adapt dashboard, SIM and SMS flows across portrait, landscape and foldable windows without the duplicate legacy Activity;
-          - Validate database migration, authorization, encryption metadata, Android release build and UI regressions before signing.
+          - Add GitHub stable Release discovery and a machine-readable checksum-pinned update manifest.
+          - Add an independent restricted host updater for Docker source builds, SQLite backup, readiness verification and image rollback.
+          - Provide Web settings with update checks, ignored versions, installation stages, and step-up protected deployment.
+          - Add Android daily background checks, opt-in automatic APK download, certificate and SHA-256 verification and PackageInstaller handoff.
+          - Retain existing SIM identities, credentials, ciphertext and app data across normal upgrades.
+          - Add archive validation, update policy tests and clear one-time host bootstrap documentation.
+
+          ## Host activation
+          After upgrading to this release, run \`sudo bash scripts/install-updater.sh\`
+          on the Docker host to enable one-click future upgrades from Web settings.
+          Android may still ask for system installation permission or confirmation.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF
@@ -253,10 +281,10 @@ jobs:
             "release/simhub-v${VERSION}-docs.zip"
             "release/signing-report.txt"
             "release/SHA256SUMS.txt"
+            "release/update-manifest.json"
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "SIM Hub v${VERSION}" --notes-file release/RELEASE_NOTES.md
-            gh release upload "$TAG" "${ASSETS[@]}" --clobber
-          else
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "SIM Hub v${VERSION}" --notes-file release/RELEASE_NOTES.md "${ASSETS[@]}"
+            echo "Release $TAG is already published; leaving immutable assets unchanged"
+            exit 0
           fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "SIM Hub v${VERSION}" --notes-file release/RELEASE_NOTES.md "${ASSETS[@]}"

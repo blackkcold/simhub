@@ -63,6 +63,8 @@ interface HubController {
     fun requestContacts()
     fun resetEnrollment()
     fun checkOta()
+    fun setAutoCheckUpdates(value:Boolean)
+    fun setAutoDownloadUpdates(value:Boolean)
     fun exportDiagnostics()
     fun setDeveloperEnabled(value:Boolean)
     fun viewLogs()
@@ -120,6 +122,8 @@ class HubActivity: ComponentActivity(), HubController {
         UiLocale.apply(this)
         tools.developer=DeveloperSettings.isEnabled(this)
         tools.language=UiLocale.index(this)
+        tools.autoCheckUpdates=AppUpdater.prefs(this).getBoolean("autoCheck",true)
+        tools.autoDownloadUpdates=AppUpdater.prefs(this).getBoolean("autoDownload",false)
         tools.installedAt=try { SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date(packageManager.getPackageInfo(packageName,0).lastUpdateTime)) } catch(_:Exception){"—"}
         window.statusBarColor=android.graphics.Color.TRANSPARENT
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
@@ -148,6 +152,18 @@ class HubActivity: ComponentActivity(), HubController {
         else registerReceiver(poolObserver,poolFilter)
         try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
         catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
+        if(AgentConfig(this).isEnrolled()&&AppUpdater.shouldCheck(this)){
+            AppUpdater.check(applicationContext,false){info,error->
+                if(error==null && info!=null && info.optBoolean("available")){
+                    val version=info.optString("versionName")
+                    tools.ota="发现新版本 v"+version
+                    if(tools.autoDownloadUpdates &&
+                        info.optInt("versionCode")!=AppUpdater.ignored(this@HubActivity)){
+                        AppUpdater.downloadAndInstall(this@HubActivity,info){message->tools.ota=message}
+                    }
+                }
+            }
+        }
     }
     override fun onStop(){
         try{unregisterReceiver(poolObserver)}catch(_:Exception){}
@@ -383,20 +399,40 @@ class HubActivity: ComponentActivity(), HubController {
                 toast(getString(R.string.enrollment_reset_pending))
             }.show()
     }
+    override fun setAutoCheckUpdates(value:Boolean){
+        tools.autoCheckUpdates=value
+        AppUpdater.prefs(this).edit().putBoolean("autoCheck",value).apply()
+    }
+    override fun setAutoDownloadUpdates(value:Boolean){
+        tools.autoDownloadUpdates=value
+        AppUpdater.prefs(this).edit().putBoolean("autoDownload",value).apply()
+    }
     override fun checkOta(){
-        lifecycleScope.launch {
-            try{val info=withContext(Dispatchers.IO){ApiClient(applicationContext).ota()}
-                if(info.optBoolean("available")){
-                    tools.ota=getString(R.string.update_version,info.optString("versionName","?"),info.optString("notes",""))
-                    val link=info.optString("url","")
-                    AlertDialog.Builder(this@HubActivity).setTitle(R.string.update_title)
-                        .setMessage(tools.ota).setNegativeButton(R.string.close,null)
-                        .setPositiveButton(R.string.open_download){_,_->
-                            if(link.startsWith("https://"))
-                                startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(link)))
-                        }.show()
-                }else tools.ota=getString(R.string.update_none)
-            }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
+        if(!AgentConfig(this).isEnrolled()){
+            toast("请先配对 SIM Hub 服务器");return
+        }
+        tools.ota="正在检查新版本…"
+        AppUpdater.check(applicationContext,true){info,error->
+            if(error!=null){tools.ota="检查失败："+error;return@check}
+            if(info==null||!info.optBoolean("available")){
+                tools.ota=getString(R.string.update_none);return@check
+            }
+            val code=info.optInt("versionCode")
+            val version=info.optString("versionName","?")
+            val note=info.optString("notes","")
+            tools.ota="新版本 v"+version+" · "+note
+            val ignored=AppUpdater.ignored(this@HubActivity)==code
+            AlertDialog.Builder(this@HubActivity)
+                .setTitle(R.string.update_title)
+                .setMessage(tools.ota+(if(ignored)"\n此版本已忽略，可重新安装。" else ""))
+                .setNeutralButton(R.string.close,null)
+                .setNegativeButton(if(ignored)"取消忽略" else "忽略此版本"){_,_->
+                    AppUpdater.ignore(this@HubActivity,if(ignored)-1 else code)
+                    tools.ota=if(ignored)"已恢复此版本提醒" else "已忽略 v"+version
+                }
+                .setPositiveButton("下载并安装"){_,_->
+                    AppUpdater.downloadAndInstall(this@HubActivity,info){message->tools.ota=message}
+                }.show()
         }
     }
     override fun exportDiagnostics(){

@@ -1,5 +1,6 @@
 services:
   simhub:
+    image: simhub-relay:${SIMHUB_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: server/Dockerfile
@@ -16,6 +17,7 @@ services:
       - /tmp:rw,nosuid,nodev,size=16m
     volumes:
       - simhub-data:/data
+      - ./.simhub-updater:/run/simhub-updater:ro
     ports:
       - "127.0.0.1:8787:8787"
     healthcheck:

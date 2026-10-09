@@ -1,3 +1,15 @@
+## v0.9.1 — Relay and Android signed updates
+
+- Add a restricted host-side Docker updater: GitHub Release source verification, online SQLite backup, tagged-image build, live readiness check and previous-image rollback.
+- Keep Docker daemon control entirely outside the read-only non-root Relay; require explicit one-time host service installation.
+- Add step-up protected update actions, durable status, latest-release checks and ignored-version preferences in Web settings.
+- Add Android in-app OTA download, SHA-256 and release-certificate validation, Android PackageInstaller handoff and system confirmation notifications.
+- Add persisted periodic Android update checks, opt-in automatic download/installation and per-release ignores.
+- Publish a machine-readable stable update manifest and reject GitHub Release/tag replacement in the release pipeline.
+- Expand automated metadata, archive and update security regression tests.
+
+**Deployment:** existing Docker hosts require one-time `sudo bash scripts/install-updater.sh` after upgrading the service. Restore a database snapshot only under a deliberate recovery procedure; rollback of incompatible schema migrations is not automatic.
+
 ## v0.9.0 — Reliability and encrypted sharing hardening
 
 - Persist pool-key rotation requirements after any member opt-out, administrator revocation, reset, or deletion. Quarantine new shared uploads until a Vault-authorized epoch rotation completes; preserve existing ciphertext and E2EE boundaries.

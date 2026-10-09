@@ -55,6 +55,45 @@ python3 scripts/setup.py --upgrade --admin-domain admin.example.com --node-domai
 
 Add `--mode external` when applicable. This non-destructive upgrade applies to existing dual-host installs; earlier single-host deployments require an explicit DNS/proxy migration plan. After Relay/PWA is updated, install the [latest signed Android APK](https://github.com/blackkcold/simhub/releases/latest). Verify matching version and signing certificate before installation. For legacy releases, consult [migration guidance](UPGRADE_0.4_TO_0.5.md).
 
+## v0.9.1: GitHub Release self-update (Docker compatible)
+
+The Relay remains read-only and non-root, without a Docker daemon socket.
+An independent, host-only `simhub-updater.service` executes the narrowly
+specified actions after verifying the official stable GitHub Release's
+`update-manifest.json` and source ZIP SHA-256.
+
+**One-time host enrollment after the 0.9.1 deployment:**
+
+```bash
+sudo bash scripts/install-updater.sh
+docker compose up -d --no-build --force-recreate simhub
+```
+
+The service is provisioned at the original deployment checkout. It communicates
+with Relay through `.simhub-updater/control.sock` mounted *read-only at the
+directory level* inside the container. Relay **never** receives the Docker
+socket or shell-command privileges. This is not usable on hosts without a
+privileged updater service; the UI explains the enrollment requirement.
+
+In the Web admin **Settings → System version** you can:
+- Check the newest stable GitHub Release and see the current version;
+- Ignore a version until the next stable release or restore reminders;
+- Complete recent admin step-up and start a one-click source rebuild/update;
+- See durable update stages and recent errors.
+
+The agent accepts only the newest stable tag, builds the verified source in a
+temporary directory, performs an online SQLite backup and preserves `.env`,
+the named Docker volume, node identity, TLS routing and the prior image.
+It then recreates only `simhub`, checks `/readyz` and the expected version,
+and returns to the previous image automatically on failed verification.
+Database migrations are **not** automatically reversed: do not deploy a release
+that changes the SQLite schema without an explicit migration/recovery plan.
+Backups reside in `.simhub-updater/backups/` with restricted access.
+
+Self-update cannot be bootstrapped solely from within a secure Docker
+container. If the service is missing, continue to use the documented manual
+`git pull --ff-only` / `setup.py --upgrade` path.
+
 ## 3. Backups
 
 The default Compose file stores relay state in the Docker named volume `simhub-data`. SQLite runs in WAL mode. For a consistent backup, run `./scripts/backup.sh`, which uses SQLite's online backup API through the running container. You can also stop the service and archive the volume. If you replace the named volume with a Linux bind mount, ensure UID/GID `65534:65534` can write the directory because the relay intentionally runs as an unprivileged user.

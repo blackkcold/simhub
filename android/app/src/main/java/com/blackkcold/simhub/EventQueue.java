@@ -14,6 +14,15 @@ public final class EventQueue {
             AgentConfig cfg=new AgentConfig(c);
             if(!cfg.isEnrolled())return false;
             String sub=String.valueOf(subId);
+            if(kind.startsWith("sms.")){
+                payload.put("sourceDeviceName",cfg.deviceName());
+                String channelId=payload.optString("channelId","");
+                if(!channelId.isBlank()){
+                    JSONObject profile=SimTagStore.get(c,channelId,payload.optLong("channelRevision",1));
+                    if(!profile.optString("tag","").isBlank())payload.put("simTag",profile.optString("tag",""));
+                    if(!profile.optString("tail","").isBlank())payload.put("simTail",profile.optString("tail",""));
+                }
+            }
             JSONObject cipher=new CryptoBox(c).encryptEvent(payload,id,kind,occurredAt,sub,hasOtp);
             boolean ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
             if(ok){

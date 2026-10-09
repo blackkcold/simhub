@@ -157,7 +157,16 @@ public final class SharedPoolClient {
         boolean wasApproved=approved();
         boolean isApproved=status.optBoolean("approved",false);
         prefs.edit().putBoolean("approved",isApproved).apply();
-        if(!isApproved)return;
+        if(!isApproved){
+            // Remote revocation is authoritative: wipe other-device cache and
+            // pool keys immediately; publishing stays suspended until reapproval.
+            store.clear();
+            SecretStore secret=new SecretStore(context);
+            for(int oldEpoch:epochs())secret.remove("pool-key-"+oldEpoch);
+            prefs.edit().remove("key_epochs").remove("current_epoch")
+                .putLong("last_download",0).putLong("oldest_download",0).apply();
+            return;
+        }
         JSONArray keys=status.optJSONArray("keys");
         int current=status.optInt("epoch",0);
         if(keys==null||keys.length()==0||current<=0)return;

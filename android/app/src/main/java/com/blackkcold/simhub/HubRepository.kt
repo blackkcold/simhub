@@ -13,7 +13,8 @@ data class HubSms(
     val subscription: Int,
     val sourceDeviceId:String="",val sourceDeviceName:String="",
     val channelId:String="",val simTag:String="",val simTail:String="",
-    val shared:Boolean=false,val historicalUnverified:Boolean=false
+    val shared:Boolean=false,val historicalUnverified:Boolean=false,
+    val channelRevision:Long=0
 )
 data class HubThread(
     val key: String, val address: String, val subscription: Int,
@@ -35,12 +36,13 @@ data class HubSnapshot(
     val sms: List<HubSms>,
     val localDeviceId:String=""
 ) {
-    val threads: List<HubThread> get() = sms.groupBy { keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId) }
+    val threads: List<HubThread> get() = sms.groupBy { keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision) }
         .map { (key, items) -> HubThread(key,items.first().from,items.first().subscription,items.first(),items.size) }
         .sortedByDescending { it.latest.date }
     companion object {
-        fun keyFor(address:String,subscription:Int,deviceId:String="",channelId:String="") =
-            deviceId+"|"+(if(channelId.isNotBlank())channelId else subscription.toString())+"|"+address.lowercase()
+        fun keyFor(address:String,subscription:Int,deviceId:String="",channelId:String="",revision:Long=0) =
+            deviceId+"|"+(if(channelId.isNotBlank())channelId else subscription.toString())+
+                "|"+revision+"|"+address.lowercase()
     }
 }
 object HubRepository {
@@ -73,14 +75,16 @@ object HubRepository {
             val tag=channel?.let{SimTagStore.get(context,it.channelId,it.revision)}?:JSONObject()
             sms.copy(sourceDeviceId=cfg.deviceId(),sourceDeviceName=cfg.deviceName(),
                 channelId=channel?.channelId.orEmpty(),simTag=tag.optString("tag",""),
-                simTail=tag.optString("tail",""),historicalUnverified=channel==null)
+                simTail=tag.optString("tail",""),historicalUnverified=channel==null,
+                channelRevision=channel?.revision?:0)
         }
         val remote=try{
             val poolRows=SharedPoolClient(context).cached(limit)
             val profiles=poolRows.filter{row->
                 row.optJSONObject("payload")?.has("channelRevision")==true &&
                 row.optJSONObject("payload")?.has("tag")==true
-            }.groupBy{row->row.optString("deviceId","")+"|"+row.optString("channelId","")}
+            }.groupBy{row->row.optString("deviceId","")+"|"+row.optString("channelId","")+"|"+
+                row.optJSONObject("payload")?.optLong("channelRevision",0)}
                 .mapValues{(_,items)->items.maxByOrNull{it.optLong("occurredAt",0)}?.optJSONObject("payload")}
             poolRows.mapNotNull{row->
                 if(row.optString("deviceId")==cfg.deviceId())return@mapNotNull null
@@ -91,7 +95,8 @@ object HubRepository {
                 if(address.isBlank())return@mapNotNull null
                 val device=row.optString("deviceId","")
                 val channel=row.optString("channelId","")
-                val profile=profiles[device+"|"+channel]
+                val revision=body.optLong("channelRevision",0)
+                val profile=if(revision>0)profiles[device+"|"+channel+"|"+revision] else null
                 HubSms(-row.optLong("seq"),address,body.optString("body",""),row.optLong("occurredAt")*1000,
                     if(direction=="out")Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX,-1,
                     device,body.optString("sourceDeviceName","Shared SIM"),
@@ -99,7 +104,7 @@ object HubRepository {
                         ?:body.optString("simTag",""),
                     profile?.optString("tail","")?.ifBlank{body.optString("simTail","")}
                         ?:body.optString("simTail",""),
-                    shared=true,historicalUnverified=channel.isBlank())
+                    shared=true,historicalUnverified=channel.isBlank(),channelRevision=revision)
             }
         }catch(error:Exception){AppLogger.e(context,"SharedPool","Cannot read shared cache",error);emptyList()}
         val unified=(local+remote).sortedWith(compareByDescending<HubSms>{it.date}.thenByDescending{it.id}).take(limit)

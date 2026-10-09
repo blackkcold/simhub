@@ -62,7 +62,8 @@ def check() -> list[str]:
         "docs/assets/ui-desktop.svg": ("短信", "会话", "SIM 1", "新建短信", "发送短信", "DEMO"),
         "docs/assets/ui-devices.svg": ("设备", "充电中", "Wi-Fi", "同步最近 100 条", "同步更早 100 条", "诊断", "DEMO"),
         "docs/assets/ui-mobile.svg": ("示例联系人", "输入短信内容", "SIM 1", "DEMO"),
-        "docs/assets/ui-android.svg": ("SIM 状态", "系统配置", "同步最近 100 条", "DEMO"),
+        "docs/assets/ui-android.svg": ("运行正常", "本机 SIM 卡", "最近短信", "概览"),
+        "docs/assets/ui-android-fold.svg": ("短信会话", "10010", "输入短信", "SIM 2"),
     }
     for rel, expected_labels in previews.items():
         try:
@@ -91,4 +92,4 @@ if __name__ == "__main__":
         print("DOC ERROR:", error, file=sys.stderr)
     if errors:
         raise SystemExit(1)
-    print(f"PASS: {len(DOCS)} docs, links, compact README and {4} parseable UI previews")
+    print(f"PASS: {len(DOCS)} docs, links, compact README and 5 parseable UI previews")

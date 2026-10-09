@@ -521,7 +521,7 @@ async function refreshVersionInfo(){
   nodeBaseUrl=info.nodeBaseUrl||(!info.separateSurfaces?location.origin:'');
   $('nodeEndpointValue').value=nodeBaseUrl;
   $('copyNodeEndpoint').disabled=!nodeBaseUrl;
-  $('nodeAddressHint').textContent=nodeBaseUrl?'使用服务器配置的设备节点地址（不是管理后台地址）':'未配置可用于设备连接的地址；请检查 SIMHUB_PUBLIC_BASE_URL。';
+  $('nodeAddressHint').textContent=nodeBaseUrl?tr('ux_node_valid'):tr('ux_node_missing');
 }
 
 async function loadPool(){
@@ -619,24 +619,23 @@ async function revokePoolDevice(deviceId){
 
 
 function deviceButtons(d) {
-  const zh=getLocale()==='zh-CN';
   const action=(key,label,danger=false)=>'<button class="'+(danger?'danger':'ghost')+' mini" type="button" data-action="'+key+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(label)+'</button>';
   return '<div class="detail-actions">'+
-    '<div class="action-group"><h4>同步与诊断</h4><div class="row wrap">'+
+    '<div class="action-group"><h4>'+escapeHtml(tr('ux_sms_actions'))+'</h4><div class="row wrap">'+
     action('refresh',tr('action_refresh'))+
     (d.nodeType==='android'?action('sync-recent',tr('sync_recent_100'))+action('sync-older',tr('sync_older_100')):'')+
     action('diagnostics',tr('action_diagnostics'))+
     (d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.5.0')?action('network',tr('mobile_fallback')):'')+
-    '</div></div><details class="action-group destructive-group"><summary>安全与数据管理</summary><div class="row wrap">'+
+    '</div></div><details class="action-group destructive-group"><summary>'+escapeHtml(tr('ux_security_actions'))+'</summary><div class="row wrap">'+
     (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?action('rotate-key',tr('action_rotate')):'')+
-    action('purge-sms',zh?'清理服务器短信':'Clear relay SMS')+
+    action('purge-sms',tr('ux_clear_relay'))+
     (!d.revoked? action('revoke',tr('action_revoke'),true):'')+
-    (!d.resetRequestedAt&&!d.revoked?action('reset-device',zh?'双端解除配对':'Unpair both ends',true):'')+
-    action('force-delete',zh?'强制删除':'Force delete',true)+
+    (!d.resetRequestedAt&&!d.revoked?action('reset-device',tr('ux_unpair'),true):'')+
+    action('force-delete',tr('ux_force_delete'),true)+
     '</div></details></div>';
 }
 function deviceStatusText(d) {
-  return d.resetRequestedAt?'等待设备重置':d.revoked?tr('revoked'):d.online?tr('online'):tr('offline');
+  return d.resetRequestedAt?tr('ux_reset_pending'):d.revoked?tr('revoked'):d.online?tr('online'):tr('offline');
 }
 function renderDeviceDetail(id) {
   const d=devices.find(x=>x.id===id);
@@ -648,19 +647,19 @@ function renderDeviceDetail(id) {
   const content=$('deviceDetailContent');
   const previousScroll=content.scrollTop;
   content.innerHTML='<div class="detail-intro"><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(deviceStatusText(d))+'</span><span>'+escapeHtml(d.model||d.nodeType||'Android')+' · v'+escapeHtml(d.appVersion||'—')+'</span></div>'+
-    '<section class="detail-section"><h3>设备概览</h3><div class="detail-stats">'+
+    '<section class="detail-section"><h3>'+escapeHtml(tr('ux_overview'))+'</h3><div class="detail-stats">'+
     stat('SMS 状态',s.smsOperational===true?tr('sms_ready'):s.smsOperational===false?tr('sms_unavailable'):tr('sms_unverified'))+
     stat(tr('battery'),s.batteryPct==null?'—':s.batteryPct+'%')+
     stat(tr('network'),s.network||'—')+
     stat(tr('pending'),s.pendingEvents)+
-    stat('充电状态',s.charging===true?'充电中':s.charging===false?'未充电':'—')+
-    stat('蜂窝数据接管',s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+
+    stat(tr('charging_state'),s.charging===true?tr('charging_now'):s.charging===false?tr('not_charging'):'—')+
+    stat(tr('ux_fallback_state'),s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+
     stat(tr('last_sync'),fmtTime(s.lastSyncSuccessAt))+
     stat(tr('last_sms'),fmtTime(s.lastSmsReceivedAt))+
-    stat('短信数量',d.smsCount??0)+
+    stat(tr('ux_sms_count'),d.smsCount??0)+
     '</div></section>'+
-    '<section class="detail-section"><h3>SIM / 通道</h3><div class="sim-detail-list">'+(simRows||'<p class="hint">'+escapeHtml(tr('no_subscriptions'))+'</p>')+'</div></section>'+
-    ((s.lastSyncError||s.smsProviderError||s.stateCollectionError)?'<section class="detail-section"><h3>同步告警</h3><p class="warn detail-error">'+escapeHtml(s.lastSyncError||s.smsProviderError||s.stateCollectionError)+'</p></section>':'')+
+    '<section class="detail-section"><h3>'+escapeHtml(tr('ux_channels'))+'</h3><div class="sim-detail-list">'+(simRows||'<p class="hint">'+escapeHtml(tr('no_subscriptions'))+'</p>')+'</div></section>'+
+    ((s.lastSyncError||s.smsProviderError||s.stateCollectionError)?'<section class="detail-section"><h3>'+escapeHtml(tr('ux_sync_warning'))+'</h3><p class="warn detail-error">'+escapeHtml(s.lastSyncError||s.smsProviderError||s.stateCollectionError)+'</p></section>':'')+
     deviceButtons(d);
   content.scrollTop=previousScroll;
   return true;
@@ -672,17 +671,17 @@ function openDeviceDetail(id) {
 }
 function renderDevices() {
   const box=$('deviceList'),online=devices.filter(d=>d.online).length;
-  $('deviceSummary').textContent=devices.length?'共 '+devices.length+' 台设备 · '+online+' 台在线 · 点击卡片查看 SIM、同步及安全选项':'设备与 SIM 卡统一在此管理。';
+  $('deviceSummary').textContent=devices.length?tr('ux_device_count',{total:devices.length,online:online}):tr('ux_device_intro');
   if(!devices.length){
-    box.innerHTML='<div class="empty card"><p>'+escapeHtml(tr('no_devices'))+'</p><p class="hint">使用右上角添加设备，支持扫码链接或节点地址 + 8 位配对码。</p></div>';
+    box.innerHTML='<div class="empty card"><p>'+escapeHtml(tr('no_devices'))+'</p><p class="hint">'+escapeHtml(tr('ux_no_device_help'))+'</p></div>';
   }else{
     box.innerHTML=devices.map(d=>{
       const s=d.state||{},subs=nodeChannels(d),status=deviceStatusText(d);
       const chips=subs.slice(0,3).map(ch=>'<span class="sim-chip">'+escapeHtml(ch.displayName||ch.carrierName||ch.phoneNumber||'SIM')+'</span>').join('');
       return '<article class="card device-card"><button class="device-open" type="button" data-device-open="'+escapeHtml(d.id)+'" aria-label="查看 '+escapeHtml(d.name)+' 详情">'+
         '<span class="device-head"><span class="device-identity"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></svg></span><span class="device-titles"><strong>'+escapeHtml(d.name)+'</strong><small>'+escapeHtml(d.model||d.nodeType||'SIM 节点')+' · '+escapeHtml(d.smsCount??0)+' SMS</small></span></span><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(status)+'</span></span>'+
-        '<span class="device-chips">'+(chips||'<span class="sim-chip">暂无 SIM / 通道</span>')+'</span>'+
-        '<span class="device-card-footer"><span>'+escapeHtml(s.batteryPct==null?'电量 —':s.batteryPct+'%')+' · '+escapeHtml(s.network||'网络未知')+'</span><span>详情 ›</span></span>'+
+        '<span class="device-chips">'+(chips||'<span class="sim-chip">'+escapeHtml(tr('ux_not_reported'))+'</span>')+'</span>'+
+        '<span class="device-card-footer"><span>'+escapeHtml(s.batteryPct==null?'电量 —':s.batteryPct+'%')+' · '+escapeHtml(s.network||tr('ux_unknown_network'))+'</span><span>详情 ›</span></span>'+
         '</button></article>';
     }).join('');
   }
@@ -934,7 +933,7 @@ async function sha256Hex(text){
 }
 
 function setSettingsCategory(category,open=true) {
-  const titles={security:'账户与安全',notifications:'通知',system:'系统与更新'};
+  const titles={security:tr('ux_account_security'),notifications:tr('notifications'),system:tr('ux_system_updates')};
   const root=document.querySelector('.settings-shell');
   if(!root||!titles[category])return;
   root.dataset.category=category;
@@ -962,11 +961,11 @@ function updateEnrollUI() {
     el.disabled=el.dataset.enrollModeChoice==='code'&&$('enrollType').value!=='android';
   });
   $('enrollBack').hidden=enrollStep===1;
-  $('enrollNext').textContent=enrollStep===1?'下一步':enrollStep===2?'继续':'完成';
+  $('enrollNext').textContent=enrollStep===1?tr('ux_next'):enrollStep===2?tr('ux_continue'):tr('ux_finish');
   $('enrollNext').hidden=enrollStep===2&&enrollMode==='code';
 }
 function setEnrollMode(mode) {
-  if(mode==='code'&&$('enrollType').value!=='android'){toast('配对码方式仅支持 Android 节点');return;}
+  if(mode==='code'&&$('enrollType').value!=='android'){toast(tr('ux_invalid_method'));return;}
   enrollMode=mode;updateEnrollUI();
 }
 function showEnrollStep(step) {
@@ -990,11 +989,11 @@ async function openEnrollDialog() {
 }
 async function advanceEnroll() {
   if(enrollStep===1){
-    if(enrollMode==='code'&&$('enrollType').value!=='android')throw Error('配对码只支持 Android 节点');
+    if(enrollMode==='code'&&$('enrollType').value!=='android')throw Error(tr('ux_invalid_method'));
     showEnrollStep(2);return;
   }
   if(enrollStep===2){
-    if(enrollMode==='package'&&$('enrollResult').hidden)throw Error('请先生成注册包，再在目标设备完成连接');
+    if(enrollMode==='package'&&$('enrollResult').hidden)throw Error(tr('ux_missing_package'));
     showEnrollStep(3);return;
   }
   closeEnrollDialog();await fullRefresh();
@@ -1003,11 +1002,11 @@ async function refreshEnrolledDeviceStatus() {
   await fullRefresh();
   const connected=devices.filter(d=>!enrollStartingDevices.has(d.id));
   if(connected.length){
-    $('enrollFinishTitle').textContent='已检测到新设备';
-    $('enrollFinishText').textContent=connected.map(d=>d.name).join('、')+' 已完成注册。请在设备列表确认在线与短信权限状态。';
+    $('enrollFinishTitle').textContent=tr('ux_new_device');
+    $('enrollFinishText').textContent=tr('ux_new_device_note',{names:connected.map(d=>d.name).join(', ')});
   }else{
-    $('enrollFinishTitle').textContent='等待设备完成连接';
-    $('enrollFinishText').textContent=enrollMode==='code'?'授权已提交；请在 Android 端完成确认，再点击刷新。':'注册包已生成；请在 Android / Modem 端导入后点击刷新。';
+    $('enrollFinishTitle').textContent=tr('ux_pending_title');
+    $('enrollFinishText').textContent=tr(enrollMode==='code'?'ux_pending_code':'ux_pending_package');
   }
 }
 
@@ -1159,6 +1158,9 @@ function relocalizeDynamic(){
   renderDeviceSelectors();
   renderDevices();
   renderInbox();
+  updateEnrollUI();
+  const category=document.querySelector('.settings-shell')?.dataset.category||'security';
+  setSettingsCategory(category,document.querySelector('.settings-shell')?.classList.contains('has-selection'));
   updateCharCount();
 }
 
@@ -1216,7 +1218,7 @@ function wire(){
   $('enrollRefreshDevices').onclick=()=>refreshEnrolledDeviceStatus().catch(e=>toast(e.message));
   $('enrollType').onchange=()=>{if($('enrollType').value!=='android'&&enrollMode==='code')enrollMode='package';updateEnrollUI();};
   document.querySelectorAll('[data-enroll-mode-choice]').forEach(b=>b.onclick=()=>setEnrollMode(b.dataset.enrollModeChoice));
-  $('copyNodeEndpoint').onclick=()=>{if(nodeBaseUrl)copy(nodeBaseUrl,'节点地址已复制').catch(e=>toast(e.message));};
+  $('copyNodeEndpoint').onclick=()=>{if(nodeBaseUrl)copy(nodeBaseUrl,tr('ux_address_copied')).catch(e=>toast(e.message));};
   $('deviceDetailClose').onclick=()=>$('deviceDetailDialog').close();
   $('settingsBack').onclick=()=>document.querySelector('.settings-shell').classList.remove('has-selection');
   document.querySelectorAll('[data-settings-link]').forEach(b=>b.onclick=()=>setSettingsCategory(b.dataset.settingsLink,true));

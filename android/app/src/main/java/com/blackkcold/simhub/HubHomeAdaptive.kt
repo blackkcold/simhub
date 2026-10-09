@@ -116,7 +116,7 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                if(state?.smsRead!=true||state.smsRole.not()){
+                if(state?.smsRead!=true||state?.smsRole!=true){
                     Button(onClick=controller::requestAccess,modifier=Modifier.fillMaxWidth()){
                         Text("检查短信权限")
                     }

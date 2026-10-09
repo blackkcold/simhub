@@ -83,8 +83,8 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
         BoxWithConstraints(Modifier.fillMaxSize()){
             val expanded=maxWidth>=840.dp
             val phoneHeight=maxHeight<540.dp
-            val rail=expanded && !phoneHeight
             val foldVertical=fold!=null && fold.orientation==FoldingFeature.Orientation.VERTICAL && fold.isSeparating
+            val rail=HubLayoutPolicy.navigationRail(maxWidth.value.toInt(),maxHeight.value.toInt(),foldVertical)
             Scaffold(
                 containerColor=MaterialTheme.colorScheme.background,
                 contentWindowInsets=WindowInsets.safeDrawing,

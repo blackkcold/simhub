@@ -145,7 +145,7 @@ class HubActivity: ComponentActivity(), HubController {
         super.onStart()
         val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
         if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
-        else @Suppress("DEPRECATION") registerReceiver(poolObserver,poolFilter)
+        else registerReceiver(poolObserver,poolFilter)
         try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
         catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
     }

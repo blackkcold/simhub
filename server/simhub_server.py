@@ -30,7 +30,7 @@ import passkeys
 import shared_pool
 from typing import Any
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")

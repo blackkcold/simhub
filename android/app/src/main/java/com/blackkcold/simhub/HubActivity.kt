@@ -87,6 +87,13 @@ class HubActivity: ComponentActivity(), HubController {
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         handleComposeIntent(intent)
         setContent { HubApp(snapshot,loading,pairing,fold,this,incomingId,incomingRecipient,incomingBody) }
+        // ACTION_VIEW is delivered to onCreate for a cold-start browser QR link;
+        // onNewIntent only handles an already running Activity.
+        if(intent?.action==Intent.ACTION_VIEW &&
+            intent.data?.scheme.equals("simhub",ignoreCase=true) &&
+            intent.data?.host.equals("enroll",ignoreCase=true)) {
+            enrollLink(intent.data.toString())
+        }
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 WindowInfoTracker.getOrCreate(this@HubActivity).windowLayoutInfo(this@HubActivity)

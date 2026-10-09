@@ -46,11 +46,20 @@ object HubRepository {
         val read=context.checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED
         val send=context.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED
         val state=StateCollector.collect(context)
+        // SMS permission or OEM provider failure must not take down the SIM,
+        // connection-health and enrollment screens.
+        val messages=if(!read) emptyList() else try {
+            readMessages(context,limit)
+        } catch (error:Exception) {
+            cfg.recordSmsProviderError(if(error is SecurityException)
+                "SMS_PROVIDER_SECURITY_EXCEPTION" else "SMS_PROVIDER_QUERY_FAILED")
+            emptyList()
+        }
         return HubSnapshot(
             cfg.isEnrolled(), cfg.deviceName(),cfg.server(),cfg.alwaysOn(),
             LocalStore.get(context).pendingEventCount(),cfg.lastSyncSuccessAt(),
             cfg.lastSyncError(),cfg.smsProviderError(),smsRole,read,send,state,
-            if(read) readMessages(context,limit) else emptyList()
+            messages
         )
     }
     fun readMessages(context: Context,limit:Int): List<HubSms> {

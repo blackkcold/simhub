@@ -194,4 +194,10 @@
     <string name="hub_fold_mode">自适应屏幕布局</string>
     <string name="hub_connected_server">服务器</string>
     <string name="hub_code_copied">已复制到剪贴板</string>
+
+    <string name="hub_sms_sent_not_delivered">已发送 · 未确认送达</string>
+    <string name="hub_sms_sending">发送中…</string>
+    <string name="hub_sms_queued">待发送</string>
+    <string name="hub_sms_failed">发送失败</string>
+    <string name="hub_sms_draft">草稿</string>
 </resources>

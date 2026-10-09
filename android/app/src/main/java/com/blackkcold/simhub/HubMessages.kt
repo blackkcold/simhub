@@ -180,7 +180,8 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
     var newTo by remember(key){ mutableStateOf(if(new)ui.newRecipient else thread?.address.orEmpty()) }
     val draft=ui.drafts[key].orEmpty()
     val isRemote=thread?.latest?.shared==true
-    val canSend=!isRemote&&state?.smsSend==true&&state.smsRole&&
+    val canSend=!isRemote&&(new||thread?.latest?.historicalUnverified==false)&&
+        state?.smsSend==true&&state.smsRole&&
         subscriptions.any{it.first==selectedSim}
     val listState=rememberLazyListState()
     LaunchedEffect(key){if(history.isNotEmpty())listState.scrollToItem(history.lastIndex)}

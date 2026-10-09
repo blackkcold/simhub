@@ -66,7 +66,10 @@ public final class ApiClient {
                 AppLogger.e(c,"ApiClient","Non-critical local SMS synchronization failed",error);
             }
             try{new SharedPoolClient(c).sync();}
-            catch(Exception poolError){AppLogger.e(c,"SharedPool","Non-critical shared SMS sync failed",poolError);}
+            catch(Exception poolError){
+                AppLogger.e(c,"SharedPool","Non-critical shared SMS sync failed",poolError);
+                new SharedPoolClient(c).scheduleRetry(poolError);
+            }
             putState();heartbeat();cfg.recordSyncSuccess();cfg.resetSyncBackoff();
             if(scanned>=30||store.pendingEventCount()>0)SyncJobService.scheduleAfter(c,5000);
             if(pendingBefore>0)AppLogger.i(c,"ApiClient","Sync cycle completed pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());

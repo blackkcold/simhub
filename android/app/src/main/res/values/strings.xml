@@ -208,4 +208,7 @@
     <string name="hub_sent">Sent</string>
     <string name="hub_received">Received</string>
     <string name="hub_unknown_sim">SIM number unknown</string>
+    <string name="hub_sharing_requested">Sharing requested. Approve this device in Web settings.</string>
+    <string name="hub_sharing_disabled">Sharing stopped; local shared cache cleared.</string>
+    <string name="hub_sim_tag_saved">SIM label saved</string>
 </resources>

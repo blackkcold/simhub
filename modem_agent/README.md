@@ -102,3 +102,7 @@ sudo systemctl enable --now simhub-modem@dongle-a
 ```
 
 Use a distinct alias and serial port for each modem. For ModemManager, use an instance-specific `SIMHUB_MODEM_ID` (a stable mmcli modem identifier when available), and enroll with `--adapter modemmanager`. Never let two service instances manage the same physical modem storage or AT port. A multi-device autodiscovery wizard is not yet implemented; explicit device bindings are intentional to avoid wrong-SIM sends.
+
+## Two-way enrollment reset
+
+Run `simhub_modem_agent.py --config /var/lib/simhub-modem/config.json reset` to queue an authenticated Relay unpair. Offline requests are retried during regular polling. Once confirmed, the agent removes its local config/event queue and exits; systemd does not restart it after a clean reset. SMS stored in modem hardware is unaffected. Server-initiated unpairing requires Modem Agent v0.3.2 or later.

@@ -14,6 +14,7 @@ let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
 let olderCursor=null,historyHasMore=true,visibleCount=40,activeConversationKey=null,diagnosticsDeviceId=null;
 let historyFetchInFlight=null,loadObserver=null,lastAutoScroll=-1;
+let poolState=null;
 const expandedDeviceDetails=new Set();
 const eventIds=new Set();
 let securityEpoch=0;
@@ -260,7 +261,7 @@ function lockVault(broadcast=true){
   purgeSensitiveUI();
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
   vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
-  devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
+  poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
   initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
   clearTimeout(refreshTimer);refreshTimer=null;
@@ -377,7 +378,7 @@ let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
   const epoch=securityEpoch;
-  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
+  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
@@ -447,6 +448,89 @@ async function refreshVersionInfo(){
   el.textContent='SIM Hub v'+(info.version||'?')+' · '+(buildDate?(zh?'部署：':'Deployed: ')+buildDate:(zh?'服务启动：':'Started: ')+(launched||'—'));
   if($('deploymentInfoSettings'))$('deploymentInfoSettings').textContent=el.textContent;
 }
+
+async function loadPool(){
+  if(!vaultKey)return;
+  poolState=await api('/api/v1/pool');
+  renderPool();
+}
+function renderPool(){
+  const target=$('smsPoolMembers');if(!target)return;
+  if(!poolState){target.textContent='尚未加载设备同步状态';return;}
+  target.innerHTML='<p class="hint">仅已在 Android 主动开启的设备可加入。管理员必须解锁 Vault 并批准加密密钥分发。</p>'+
+    poolState.members.map(m=>{
+      const d=devices.find(x=>x.id===m.id);
+      const status=!m.requested?'待设备开启':m.approved?'已授权':'等待授权';
+      const action=m.requested&&!m.approved?'<button class="primary mini" data-pool-action="approve" data-id="'+escapeHtml(m.id)+'">授权加入</button>':
+        m.approved?'<button class="danger mini" data-pool-action="revoke" data-id="'+escapeHtml(m.id)+'">撤销共享</button>':'';
+      return '<div class="row between wrap pool-member"><span><strong>'+escapeHtml(d?.name||m.name||m.id)+'</strong> · '+
+        escapeHtml(status)+'</span>'+action+'</div>';
+    }).join('')+'<small class="hint">密钥版本：'+escapeHtml(String(poolState.epoch||0))+'</small>';
+}
+async function poolVaultEncrypt(raw,epoch){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt(
+    {name:'AES-GCM',iv,additionalData:enc.encode('simhub-pool-vault-v1|default|'+epoch)},vaultKey,raw));
+  return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
+}
+async function poolVaultDecrypt(envelope,epoch){
+  const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(envelope.iv),
+    additionalData:enc.encode('simhub-pool-vault-v1|default|'+epoch)},vaultKey,unb64u(envelope.ct));
+  return new Uint8Array(raw);
+}
+async function poolMemberEncrypt(deviceId,raw,epoch){
+  const node=await deviceCrypto(deviceId),iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,
+    additionalData:enc.encode('simhub-pool-member-v1|default|'+deviceId+'|'+epoch)},node.key,raw));
+  return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
+}
+async function poolNewKey(){
+  const raw=crypto.getRandomValues(new Uint8Array(32));
+  const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',raw));
+  return {raw,keyId:b64u(digest.slice(0,12))};
+}
+async function grantPoolDevice(deviceId){
+  if(!vaultKey)throw new Error('Vault locked');
+  await ensureStepUp();
+  await loadPool();
+  const state=poolState,m=state.members.find(m=>m.id===deviceId);
+  if(!m?.requested)throw new Error('请先在 Android 设备开启共享');
+  let raw,keyId,vaultEnvelope,epoch=state.epoch;
+  if(!epoch){
+    epoch=1;const k=await poolNewKey();raw=k.raw;keyId=k.keyId;
+    vaultEnvelope=await poolVaultEncrypt(raw,epoch);
+  }else{
+    raw=await poolVaultDecrypt(state.vaultEnvelope,epoch);
+    keyId=state.keyId;
+    const digest=b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)).slice(0,12));
+    if(digest!==keyId)throw new Error('共享密钥身份不匹配');
+  }
+  try{
+    const memberEnvelope=await poolMemberEncrypt(deviceId,raw,epoch);
+    await api('/api/v1/pool/authorize',{method:'POST',body:{deviceId,epoch,keyId,
+      vaultEnvelope,memberEnvelope}});
+  }finally{raw.fill(0);}
+  await loadPool();
+}
+async function rotatePool(){
+  await loadPool();
+  if(!poolState?.epoch)return;
+  const key=await poolNewKey(),epoch=poolState.epoch+1;
+  try{
+    const members={};
+    for(const m of poolState.members.filter(m=>m.requested&&m.approved))
+      members[m.id]=await poolMemberEncrypt(m.id,key.raw,epoch);
+    const vaultEnvelope=await poolVaultEncrypt(key.raw,epoch);
+    await api('/api/v1/pool/rotate',{method:'POST',body:{keyId:key.keyId,vaultEnvelope,members}});
+  }finally{key.raw.fill(0);}
+  await loadPool();
+}
+async function revokePoolDevice(deviceId){
+  await ensureStepUp();
+  await api('/api/v1/pool/revoke',{method:'POST',body:{deviceId}});
+  try{await rotatePool();}catch(e){await loadPool();throw new Error('共享权限已撤销，但需要完成密钥轮换：'+e.message);}
+}
+
 function renderDevices(){
   const box=$('deviceList');
   if(!devices.length){box.innerHTML='<div class="empty card">'+escapeHtml(tr('no_devices'))+'</div>';return;}
@@ -909,6 +993,10 @@ function wire(){
   $('deviceList').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
   $('deviceList').addEventListener('toggle',e=>{const details=e.target.closest('details[data-device]');if(!details)return;if(details.open)expandedDeviceDetails.add(details.dataset.device);else expandedDeviceDetails.delete(details.dataset.device);},true);
   $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
+  $('refreshPoolBtn').onclick=()=>loadPool().catch(e=>toast(e.message));
+  $('smsPoolMembers').onclick=e=>{const button=e.target.closest('[data-pool-action]');if(!button)return;
+    const task=button.dataset.poolAction==='approve'?grantPoolDevice(button.dataset.id):revokePoolDevice(button.dataset.id);
+    task.catch(err=>toast(err.message));};
   $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
   relocalizeDynamic();

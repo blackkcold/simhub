@@ -35,14 +35,20 @@ fun HubMessages(state:HubSnapshot?,ui:HubViewModel,controller:HubController,
     val horizontal=fold!=null&&fold.isSeparating&&fold.orientation==FoldingFeature.Orientation.HORIZONTAL
     if(large) {
         Row(Modifier.fillMaxSize().padding(12.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)){
-            SmsConversationList(threads,state,ui,controller,Modifier.weight(.37f).fillMaxHeight())
+            SmsConversationList(threads,state,ui,controller,Modifier.weight(if(verticalHinge).5f else .37f).fillMaxHeight())
             if(verticalHinge) Spacer(Modifier.width(12.dp))
-            SmsConversationDetail(state,ui,controller,Modifier.weight(.63f).fillMaxHeight())
+            SmsConversationDetail(state,ui,controller,Modifier.weight(if(verticalHinge).5f else .63f).fillMaxHeight())
         }
-    }else if(horizontal && ui.thread!=null){
-        // In tabletop posture the hinge divides reading content and the composer.
-        Column(Modifier.fillMaxSize().padding(12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-            SmsConversationDetail(state,ui,controller,Modifier.weight(1f).fillMaxWidth())
+    }else if(horizontal){
+        // Tabletop mode: list above the horizontal hinge; conversation below.
+        BoxWithConstraints(Modifier.fillMaxSize()){
+            if(HubLayoutPolicy.tabletopPane(maxHeight.value.toInt(),true)){
+                Column(Modifier.fillMaxSize().padding(12.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
+                    SmsConversationList(threads,state,ui,controller,Modifier.weight(.42f).fillMaxWidth())
+                    SmsConversationDetail(state,ui,controller,Modifier.weight(.58f).fillMaxWidth())
+                }
+            }else if(ui.thread==null)SmsConversationList(threads,state,ui,controller,Modifier.fillMaxSize())
+            else SmsConversationDetail(state,ui,controller,Modifier.fillMaxSize())
         }
     }else{
         if(ui.thread==null)SmsConversationList(threads,state,ui,controller,Modifier.fillMaxSize())

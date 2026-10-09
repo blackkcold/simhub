@@ -40,6 +40,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 | Capability | What it does |
 |---|---|
 | **SMS and OTP** | Multi-SIM receive/send, conversation replies, new messages, code detection and copy |
+| **Native Android UI** | Four Material 3 tabs, scalable vector icons, responsive foldable panes, local SMS conversations and per-SIM inline replies |
 | **Devices and SIMs** | Android and Linux modem nodes; phone numbers, signal, charging, Wi-Fi and connectivity |
 | **History and diagnostics** | Latest 100 rescan, older 100 backfill, relay message pagination, encrypted health checks |
 | **Pairing** | Scan the controller QR from Android, or enter the Android eight-digit pairing code and verify the device fingerprint |

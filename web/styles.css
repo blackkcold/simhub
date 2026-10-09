@@ -152,7 +152,6 @@ input,select,textarea{min-height:44px}
 .command-label{font-weight:650;min-width:0;overflow-wrap:anywhere}
 .command-label small{display:block;color:var(--muted);font-weight:450;font-size:12px;margin-top:4px}
 .command-status{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
-@media(max-width:600px){
 .deployment-info { display:block; padding-top:8px; font-size:11px; color:var(--text-secondary, #94a3b8); overflow-wrap:anywhere; }
 @media(max-width:760px){.deployment-info{display:none}}
 

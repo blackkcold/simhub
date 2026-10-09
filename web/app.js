@@ -234,7 +234,7 @@ function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textCon
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent']){
+  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
@@ -680,7 +680,7 @@ function renderDevices() {
       const s=d.state||{},subs=nodeChannels(d),status=deviceStatusText(d);
       const chips=subs.slice(0,3).map(ch=>'<span class="sim-chip">'+escapeHtml(ch.displayName||ch.carrierName||ch.phoneNumber||'SIM')+'</span>').join('');
       return '<article class="card device-card"><button class="device-open" type="button" data-device-open="'+escapeHtml(d.id)+'" aria-label="查看 '+escapeHtml(d.name)+' 详情">'+
-        '<span class="device-head"><span class="device-identity"><span class="device-icon" aria-hidden="true">▣</span><span class="device-titles"><strong>'+escapeHtml(d.name)+'</strong><small>'+escapeHtml(d.model||d.nodeType||'SIM 节点')+' · '+escapeHtml(d.smsCount??0)+' SMS</small></span></span><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(status)+'</span></span>'+
+        '<span class="device-head"><span class="device-identity"><span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></svg></span><span class="device-titles"><strong>'+escapeHtml(d.name)+'</strong><small>'+escapeHtml(d.model||d.nodeType||'SIM 节点')+' · '+escapeHtml(d.smsCount??0)+' SMS</small></span></span><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(status)+'</span></span>'+
         '<span class="device-chips">'+(chips||'<span class="sim-chip">暂无 SIM / 通道</span>')+'</span>'+
         '<span class="device-card-footer"><span>'+escapeHtml(s.batteryPct==null?'电量 —':s.batteryPct+'%')+' · '+escapeHtml(s.network||'网络未知')+'</span><span>详情 ›</span></span>'+
         '</button></article>';
@@ -1237,7 +1237,6 @@ function wire(){
   $('diagnosticsRefresh').onclick=()=>refreshDiagnostics().catch(e=>toast(e.message));
   $('deviceList').onclick=e=>{const b=e.target.closest('[data-device-open]');if(b)openDeviceDetail(b.dataset.deviceOpen);};
   $('deviceDetailContent').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
-  $('deviceList').addEventListener('toggle',e=>{const details=e.target.closest('details[data-device]');if(!details)return;if(details.open)expandedDeviceDetails.add(details.dataset.device);else expandedDeviceDetails.delete(details.dataset.device);},true);
   $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
   $('refreshPoolBtn').onclick=()=>loadPool().catch(e=>toast(e.message));
   $('checkUpdateBtn').onclick=()=>refreshUpdateInfo().catch(e=>toast(e.message));

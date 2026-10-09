@@ -19,6 +19,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import com.google.zxing.integration.android.IntentIntegrator
@@ -64,9 +66,11 @@ class HubActivity: ComponentActivity(), HubController {
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
         setContent { HubApp(snapshot,loading,pairing,fold,this) }
         lifecycleScope.launch {
-            WindowInfoTracker.getOrCreate(this@HubActivity).windowLayoutInfo(this@HubActivity)
-                .collectLatest { info -> fold=info.displayFeatures.filterIsInstance<FoldingFeature>()
-                    .firstOrNull { it.isSeparating } }
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                WindowInfoTracker.getOrCreate(this@HubActivity).windowLayoutInfo(this@HubActivity)
+                    .collectLatest { info -> fold=info.displayFeatures.filterIsInstance<FoldingFeature>()
+                        .firstOrNull { it.isSeparating } }
+            }
         }
         refresh()
     }

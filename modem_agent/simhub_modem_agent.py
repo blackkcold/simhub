@@ -36,7 +36,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import serial
 from serial.tools import list_ports
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/config.json"))
 DEFAULT_DB = Path(os.getenv("SIMHUB_MODEM_DB", "/var/lib/simhub-modem/agent.db"))
 POLL_SECONDS = max(3, int(os.getenv("SIMHUB_MODEM_POLL_SECONDS", "10")))
@@ -992,9 +992,14 @@ def build_adapter(name: str) -> ModemAdapter:
         return MmcliAdapter()
 
 
+class NodeResetComplete(Exception):
+    """The current node has been removed from Relay and local credentials destroyed."""
+
+
 class Agent:
     def __init__(self, config_path: Path, db_path: Path) -> None:
         self.config_path = config_path
+        self.db_path = db_path
         self.config = load_json(config_path)
         self.store = Store(db_path)
         self.node_key = ub64u(str(self.config["nodeKey"]))
@@ -1332,7 +1337,43 @@ class Agent:
             {"appVersion": VERSION, "osVersion": sys.platform},
         )
 
+    def _finish_reset(self) -> None:
+        try:
+            self.relay.request("POST", f"/api/v1/devices/{self.config['deviceId']}/reset", {})
+        except RuntimeError as exc:
+            if "relay HTTP 410:" not in str(exc):
+                raise
+        self.store.db.close()
+        self.config_path.unlink(missing_ok=True)
+        for path in (self.db_path, Path(str(self.db_path)+"-wal"), Path(str(self.db_path)+"-shm")):
+            path.unlink(missing_ok=True)
+        print("SIM Hub modem enrollment reset; SMS stored on the modem was not erased",flush=True)
+        raise NodeResetComplete()
+
+    def _check_reset(self) -> None:
+        current=load_json(self.config_path)
+        if current.get("resetPending"):
+            self.config["resetPending"]=True
+            self._finish_reset()
+        try:
+            state=self.relay.request("GET",f"/api/v1/devices/{self.config['deviceId']}/lifecycle")
+        except RuntimeError as exc:
+            if "relay HTTP 410:" in str(exc):
+                self.store.db.close()
+                self.config_path.unlink(missing_ok=True)
+                for path in (self.db_path,Path(str(self.db_path)+"-wal"),Path(str(self.db_path)+"-shm")):
+                    path.unlink(missing_ok=True)
+                raise NodeResetComplete() from None
+            if "relay HTTP 404:" in str(exc):
+                return  # Rolling upgrade against an older Relay
+            raise
+        if state.get("resetRequired"):
+            self.config["resetPending"]=True
+            atomic_write_json(self.config_path,self.config)
+            self._finish_reset()
+
     def cycle(self) -> None:
+        self._check_reset()
         self.rotate_device_token()
         self.store.prune()
         self.store.recover_interrupted_claims()
@@ -1352,7 +1393,7 @@ class Agent:
             try:
                 self.cycle()
                 backoff = POLL_SECONDS
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt,NodeResetComplete):
                 return
             except Exception as exc:
                 print(f"simhub-modem: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
@@ -1419,13 +1460,22 @@ def main() -> None:
     e.add_argument("--adapter", choices=["auto", "dji-at", "dji4g", "modemmanager", "mmcli"], default="auto")
     sub.add_parser("run")
     sub.add_parser("once")
+    sub.add_parser("reset",help="Request bidirectional unpair; completed once Relay acknowledges")
     args = p.parse_args()
     if args.command == "enroll":
         enroll(args)
         return
+    if args.command == "reset":
+        path=Path(args.config)
+        config=load_json(path)
+        config["resetPending"]=True
+        atomic_write_json(path,config)
+        print("Reset queued. The next agent polling cycle will confirm with Relay.")
+        return
     agent = Agent(Path(args.config), Path(args.db))
     if args.command == "once":
-        agent.cycle()
+        try: agent.cycle()
+        except NodeResetComplete: return
     else:
         agent.run()
 

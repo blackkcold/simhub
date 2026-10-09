@@ -705,7 +705,7 @@ async function handleDeviceAction(btn){
     return;
   }
   if(action==='reset-device'){
-    if(!versionAtLeast(d.appVersion,'0.5.3')){
+    if(!versionAtLeast(d.appVersion,d.nodeType==='modem'?'0.3.2':'0.5.3')){
       toast(zh?'请先升级设备端至 v0.5.3；离线或无法升级的设备可强制删除':'Upgrade Agent to v0.5.3 before bidirectional unpair; force delete is available');
       return;
     }

@@ -53,6 +53,19 @@ public final class SharedPoolClient {
     }
     public boolean optedIn(){return prefs.getBoolean("requested",false);}
     public boolean approved(){return optedIn()&&prefs.getBoolean("approved",false);}
+    public int pendingUploadCount(){return store.pendingCount();}
+    public void scheduleRetry(Exception error){
+        int attempts=Math.min(7,prefs.getInt("retry_attempts",0)+1);
+        long delay=Math.min(15*60*1000L,15000L*(1L<<Math.min(5,attempts-1)));
+        if(error instanceof ApiClient.ApiFailure failure && failure.status==429)
+            delay=Math.max(delay,Math.max(10,failure.retryAfter)*1000L);
+        if(error instanceof SecurityException)delay=Math.max(delay,5*60*1000L);
+        long jitter=java.util.concurrent.ThreadLocalRandom.current().nextLong(1000,5000);
+        long wait=Math.min(15*60*1000L,delay+jitter);
+        prefs.edit().putInt("retry_attempts",attempts)
+            .putLong("next_retry",System.currentTimeMillis()+wait).apply();
+        SyncJobService.scheduleAfter(context,wait);
+    }
     public String status(){
         if(!config.isEnrolled())return "未配对";
         if(!optedIn())return "未开启";
@@ -154,6 +167,7 @@ public final class SharedPoolClient {
 
     public synchronized void sync()throws Exception{
         if(!config.isEnrolled())return;
+        if(prefs.getLong("next_retry",0)>System.currentTimeMillis())return;
         if(prefs.getBoolean("pending_disable",false)){
             client().request("POST",path()+"/request",new JSONObject().put("enabled",false));
             prefs.edit().putBoolean("pending_disable",false).apply();
@@ -204,8 +218,11 @@ public final class SharedPoolClient {
             SmsHistorySync.syncRecent(context,100);
             prefs.edit().putBoolean("initial_staged",true).apply();
         }
-        upload(current);
+        // An administrative revocation freezes new ciphertext until the Vault
+        // completes a new epoch. Existing historical ciphertext remains readable.
+        if(!status.optBoolean("rotationRequired",false))upload(current);
         download();
+        prefs.edit().remove("retry_attempts").remove("next_retry").apply();
     }
 
     private void upload(int epoch)throws Exception{
@@ -232,6 +249,7 @@ public final class SharedPoolClient {
             }
         }
         Arrays.fill(key,(byte)0);
+        if(store.pendingCount()>0)SyncJobService.scheduleAfter(context,5000);
     }
 
     private void download()throws Exception{
@@ -331,6 +349,11 @@ public final class SharedPoolClient {
             final String id,channel;final long occurred;final JSONObject localCipher;
             Pending(String id,String channel,long occurred,JSONObject cipher){
                 this.id=id;this.channel=channel;this.occurred=occurred;localCipher=cipher;
+            }
+        }
+        synchronized int pendingCount(){
+            try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM staged",null)){
+                return c.moveToFirst()?c.getInt(0):0;
             }
         }
         synchronized List<Pending> pending(int limit)throws Exception{

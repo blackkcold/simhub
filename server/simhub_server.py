@@ -1859,7 +1859,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if state==current:
                 self.send_json(200,{"ok":True,"duplicate":True});return
             if state not in successors.get(current,set()):
-                self.send_error_json(409,"invalid_transition","Command state transition rejected");return
+                self.send_json(200,{"ok":True,"ignored":True,"currentState":current});return
             updated=con.execute(
                 "UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=? AND state=?",
                 (state,now(),json.dumps(result,separators=(",",":")),command_id,device_id,current)).rowcount

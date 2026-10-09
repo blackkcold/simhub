@@ -141,7 +141,7 @@ class ApiTest(unittest.TestCase):
             device_token="Z"*48,admin=False)[0],401)
         with sqlite3.connect(self.db) as con:
             self.assertEqual(con.execute("SELECT COUNT(*) FROM devices WHERE id=?",(did,)).fetchone()[0],0)
-            self.assertGreaterEqual(con.execute("SELECT COUNT(*) FROM audit WHERE action='device.reset.complete' AND target=?",(did,)).fetchone()[0],1)
+            self.assertGreaterEqual(con.execute("SELECT COUNT(*) FROM audit WHERE action='device.reset.complete.admin' AND target=?",(did,)).fetchone()[0],1)
 
     def test_force_delete_cleans_device_dependencies_and_reports_reset(self):
         node=self.enroll("Lost Modem");did=node["deviceId"];token=node["deviceToken"]

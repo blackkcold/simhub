@@ -389,9 +389,15 @@ function nodeChannels(d){
   if(!d||!d.state)return[];
   const channels=Array.isArray(d.state.channels)&&d.state.channels.length?d.state.channels:(d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));
   const phones=d.state._phoneNumbers||[];
+  const profiles=decryptedEvents.filter(e=>e.deviceId===d.id&&e.kind==='sim.profile'&&e.payload)
+    .sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
   return channels.map(ch=>{
     const found=phones.find(n=>String(n.channelId)===String(ch.id));
-    return {...ch,phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||'').trim()};
+    const profile=profiles.find(e=>String(e.payload.channelId)===String(ch.id)&&
+      Number(e.payload.channelRevision||1)===Number(ch.revision||ch.channelRevision||1))?.payload;
+    return {...ch,alias:profile?.tag||ch.alias,
+      phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||
+        (profile?.tail?'••••'+profile.tail:'')).trim()};
   });
 }
 function channelTitle(ch){return (ch.phoneNumber?ch.phoneNumber+' · ':'')+(ch.alias||ch.displayName||ch.carrierName||ch.id);}
@@ -643,9 +649,9 @@ function messageTags(e){
   const inbound=eventIsInbound(e),d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e),
     historic=e.kind==='sms.history'&&!e.payload?.channelId,
     channel=historic?null:nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id),
-    digits=String(channel?.phoneNumber||'').replace(/\D/g,''),
+    digits=String(e.payload?.simTail||channel?.phoneNumber||'').replace(/\D/g,''),
     sim=historic?(getLocale()==='zh-CN'?'历史 SIM · 归属待确认':'Historical SIM · unverified'):
-      (channel?.alias||channel?.displayName||channel?.carrierName||'SIM')+(digits.length>=4?' · ••••'+digits.slice(-4):' · '+(getLocale()==='zh-CN'?'号码未知':'number unknown')),
+      (e.payload?.simTag||channel?.alias||channel?.displayName||channel?.carrierName||'SIM')+(digits.length>=4?' · ••••'+digits.slice(-4):' · '+(getLocale()==='zh-CN'?'号码未知':'number unknown')),
     status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent'));
   return [fmtTime(e.occurredAt),status,deviceName(e.deviceId),sim].map((v,i)=>
     '<span class="message-tag'+(historic&&i===3?' warning':'')+'">'+escapeHtml(v)+'</span>').join('');

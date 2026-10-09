@@ -257,15 +257,20 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Self-hosted encrypted SMS sharing, reliable Web pagination and a single adaptive Android workspace.
+          SIM Hub now supports end-to-end safe update flows for Docker relay and Android.
 
           ## Highlights
-          - Add explicit Android SMS-pool opt-in and Vault-admin approval, Node-Key-wrapped AES-256-GCM pool keys, revocation, rotation and encrypted offline caches;
-          - Fix Web inbox card shrinkage and independent scrolling, introduce automatic older-message pagination;
-          - Show per-message date, direction, device and masked SIM source details with honest historical attribution;
-          - Consolidate diagnostics, developer logs, export, OTA, language, permissions and reset into the sole Compose settings surface;
-          - Adapt dashboard, SIM and SMS flows across portrait, landscape and foldable windows without the duplicate legacy Activity;
-          - Validate database migration, authorization, encryption metadata, Android release build and UI regressions before signing.
+          - Add GitHub stable Release discovery and a machine-readable checksum-pinned update manifest.
+          - Add an independent restricted host updater for Docker source builds, SQLite backup, readiness verification and image rollback.
+          - Provide Web settings with update checks, ignored versions, installation stages, and step-up protected deployment.
+          - Add Android daily background checks, opt-in automatic APK download, certificate and SHA-256 verification and PackageInstaller handoff.
+          - Retain existing SIM identities, credentials, ciphertext and app data across normal upgrades.
+          - Add archive validation, update policy tests and clear one-time host bootstrap documentation.
+
+          ## Host activation
+          After upgrading to this release, run \`sudo bash scripts/install-updater.sh\`
+          on the Docker host to enable one-click future upgrades from Web settings.
+          Android may still ask for system installation permission or confirmation.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF

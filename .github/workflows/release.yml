@@ -232,14 +232,15 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Responsive SMS inbox layout, floating mobile navigation and safer long-text handling.
+          Vault redaction, safer pairing, reliable SMS history and device status improvements.
 
           ## Highlights
-          - Fix long SMS, sender numbers and SIM metadata overflowing their message cards and overlapping the conversation panel;
-          - Responsive desktop/two-column, tablet/stacked and mobile/single-conversation layouts;
-          - Persistent floating mobile navigation with safe-area spacing, scroll stability and a non-overlapping reply editor;
-          - Browser regression coverage across 13 screen sizes and PWA cache refresh;
-          - Existing encrypted messages, Node Keys, sessions and device enrollments are preserved.
+          - Purge decrypted SMS, one-time enrollment credentials, SIM numbers, drafts and diagnostics from the browser DOM on Vault lock; synchronize locking between tabs;
+          - Require explicit Android relay-domain confirmation and prevent interceptable custom-scheme credential dispatch;
+          - Persist encrypted SMS upload receipts on Android, expose scanned vs newly queued counts, and display recent device-command results;
+          - Preserve Vault-wrapped retired Node Keys for existing encrypted SMS after future rotations, without exposing plaintext to Relay;
+          - Segment authentication/API/static rate budgets and expand CodeQL coverage to Android Java;
+          - Preserve existing encrypted data, sessions, device enrollments and signing identity.
 
           Full details are in CHANGELOG.md and the documentation bundle.
           EOF

@@ -48,3 +48,18 @@ Do not assume Gen1 compatibility. First establish whether the host exposes a usa
 - Every SMS present in Android Provider/modem storage eventually appears in the relay after connectivity returns.
 - Relay never logs SMS body, OTP, destination number, Node Key or Master Vault Key.
 - A compromised/test Node Key cannot decrypt another node's events.
+
+## Security and reliability acceptance (current)
+
+- **Vault lock:** after viewing SMS, SIM phone numbers, diagnostic results, an enrollment package and a draft, explicitly lock the Vault and inspect the page's DOM and form values. The old plaintext, pairing bootstrap, recovery field, pending dialogs and tab-resume snapshot must be absent. Unlock again to confirm fresh encrypted loading.
+- **Two tabs:** unlock the same Vault in two active tabs; locking one should lock the other, not just hide the panel. A page refresh after locking must never restore the previous decrypted screen.
+- **Pairing:** copy the single-use enrollment link into **SIM Hub Agent itself**. Do not open credential-bearing custom-scheme links through a general app chooser. Android must show the selected HTTPS relay hostname and require affirmative confirmation. Token and bootstrap are one-use; clear clipboard/history copies after use where practical.
+- **Session boundaries:** refresh while active and signed in; check 8-hour inactivity and 24-hour absolute expiry separately. Passkey authentication must not bypass local Vault decryption on a new browser.
+- **Network retry:** bring down the relay or simulate 429/503. The Android node should expose the next retry time and increase delay with jitter, rather than polling every 20 seconds while offline. Restore service and ensure events eventually upload without duplicate sends.
+- **History:** scan the same latest 100 twice. The second scan should report zero newly queued items after successful delivery; older-backfill progress must survive a reboot. Provider reconciliation must not send outgoing SMS again.
+- **Key rotation:** on a test node with old encrypted events, complete two independent Node-Key rotations. The Relay must retain only Vault-wrapped retired keys and the Controller must still decrypt previous messages. A stale Channel revision must fail closed.
+- **Device operations:** verify the Devices panel shows queued, dispatched, executed, failed, rejected, expired and delivered statuses without exposing recipients, bodies or OTP in any Relay API response.
+- **Recovery:** create a consistent Relay database backup, record the recovery-key custody, then restore into an isolated environment and confirm encrypted messages remain readable with the owner-provided Vault recovery key.
+- **Supply chain:** require CodeQL coverage for Python, JavaScript/TypeScript and Android Java plus signed APK provenance before release.
+
+Physical SIM, cellular modem, screen-off/Doze and vendor ROM behavior **cannot be certified by CI alone**; run the device matrix above before treating an installation as production-grade.

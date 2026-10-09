@@ -1361,9 +1361,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def complete_device_reset(self, device_id: str) -> None:
         ts=now()
         with open_db() as con:
+            old=con.execute("SELECT reset_source FROM devices WHERE id=?",(device_id,)).fetchone()
             if not purge_device_record(con,device_id,ts):
                 self.send_error_json(404,"device_not_found","Device not found");return
-        audit("device.reset.complete",device_id,"ok",self.ip);signal_stream()
+        origin="admin" if old and old["reset_source"]=="admin" else "device"
+        audit("device.reset.complete."+origin,device_id,"ok",self.ip);signal_stream()
         self.send_json(200,{"ok":True,"status":"deleted"})
 
     def force_delete_device(self, device_id: str) -> None:

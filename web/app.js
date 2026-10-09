@@ -66,7 +66,7 @@ async function restoreTabVault(){
     if(raw.byteLength!==32)throw new Error('Invalid vault key length');
     await importVault(raw);
     lastActivity=saved.lastActivity;try{const restored=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE));restored.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(restored));}catch{}armAutoLock();
-    await loadPhoneOverrides();showUnlocked();await fullRefresh();startRealtime();
+    await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
     return true;
   }catch(e){clearTabVault();if(vaultKey)lockVault();return false;}
 }
@@ -246,6 +246,7 @@ function purgeSensitiveUI(){
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
+  const lifecycle=$('lifecycleHistory');if(lifecycle)lifecycle.replaceChildren();
   const badge=$('otpBadge');if(badge){badge.textContent='';badge.hidden=true;}
 }
 function lockVault(broadcast=true){
@@ -327,11 +328,11 @@ async function ingestEvents(batch,notify=true){
 }
 async function loadEvents(){
   if(!vaultKey)return;
-  const epoch=securityEpoch;
+  const epoch=securityEpoch, dataGeneration=eventDataGeneration;
   if(!initialEventsLoaded){
-    const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||!vaultKey)return;
+    const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&limit=30');if(epoch!==securityEpoch||!vaultKey)return;
+    const first=await api('/api/v1/events?order=occurred&limit=30');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
@@ -340,7 +341,7 @@ async function loadEvents(){
   }
   let changed=false,loops=0;
   while(loops++<3){
-    const r=await api('/api/v1/events?since='+lastSeq+'&limit=100');if(epoch!==securityEpoch||!vaultKey)return;
+    const r=await api('/api/v1/events?since='+lastSeq+'&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     const batch=r.events||[];
     if(!batch.length)break;
     changed=await ingestEvents(batch)||changed;
@@ -350,12 +351,12 @@ async function loadEvents(){
 }
 async function loadOlder(){
   if(!vaultKey)return;
-  const epoch=securityEpoch;
+  const epoch=securityEpoch, dataGeneration=eventDataGeneration;
   const count=buildThreads(filteredEvents()).length;
   if(visibleOffset+30<count){visibleOffset+=30;renderInbox();return;}
   if(!historyHasMore||!olderCursor)return;
   const r=await api('/api/v1/events?order=occurred&limit=30&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
-  if(epoch!==securityEpoch||!vaultKey)return;
+  if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
   olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
   historyHasMore=!!r.hasMore;
   await ingestEvents(r.events||[],false);
@@ -453,7 +454,7 @@ function renderDevices(){
     const zh=getLocale()==='zh-CN';
     const actions=(d.resetRequestedAt?'':buttons)+
       '<button class="ghost mini" data-action="purge-sms" data-id="'+escapeHtml(d.id)+'">'+(zh?'清理服务器短信':'Clear relay SMS')+'</button>'+
-      (d.resetRequestedAt?'':('<button class="danger mini" data-action="reset-device" data-id="'+escapeHtml(d.id)+'">'+(zh?'双端解除配对':'Unpair both ends')+'</button>'))+
+      (d.resetRequestedAt||d.revoked?'':('<button class="danger mini" data-action="reset-device" data-id="'+escapeHtml(d.id)+'">'+(zh?'双端解除配对':'Unpair both ends')+'</button>'))+
       '<button class="danger mini" data-action="force-delete" data-id="'+escapeHtml(d.id)+'">'+(zh?'强制删除':'Force delete')+'</button>';
     return '<article class="card device device-card"><div class="device-head"><div><h3>'+escapeHtml(d.name)+'</h3><p>'+escapeHtml(d.model||'Android')+' · '+escapeHtml(d.appVersion||'')+' · '+escapeHtml(d.smsCount??0)+' SMS</p></div><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(stateText)+'</span></div>'+
       '<div class="device-stats"><div class="stat"><b>'+escapeHtml(tr(healthKey))+'</b><span>SMS</span></div><div class="stat"><b>'+(s.batteryPct==null?'—':escapeHtml(s.batteryPct)+'%')+'</b><span>'+escapeHtml(tr('battery'))+'</span></div><div class="stat"><b>'+escapeHtml(s.network||'—')+'</b><span>'+escapeHtml(tr('network'))+'</span></div><div class="stat"><b>'+(s.pendingEvents==null?'—':escapeHtml(s.pendingEvents))+'</b><span>'+escapeHtml(tr('pending'))+'</span></div></div>'+

@@ -1198,6 +1198,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         ts=now()
         with open_db() as con:
             rows=con.execute("SELECT d.*,s.state_json,s.updated_at AS state_updated_at FROM devices d LEFT JOIN device_state s ON s.device_id=d.id ORDER BY d.created_at DESC").fetchall()
+        # No plaintext keys or key material are stored server-side. Read-only
+        # Vault-wrapped envelopes permit offline decryption of pre-rotation SMS.
+        history_by_device:dict[str,list[sqlite3.Row]]={}
+        with open_db() as con:
+            history=con.execute("SELECT device_id,key_id,wrapped_key_json FROM device_key_history ORDER BY archived_at DESC").fetchall()
+        for key in history:
+            old=history_by_device.setdefault(key["device_id"],[])
+            if len(old)<64: old.append(key)
         out=[]
         for r in rows:
             last=r["last_seen_at"] or 0
@@ -1208,6 +1216,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
                 "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),
                 "state":safe_json_loads(r["state_json"],{}) if r["state_json"] else None,
+                "historicalWrappedKeys": [
+                    {"keyId": k["key_id"], "wrappedKey": safe_json_loads(k["wrapped_key_json"], {})}
+                    for k in history_by_device.get(r["id"], [])
+                ],
             })
         self.send_json(200,{"devices":out,"offlineAfterSeconds":OFFLINE_AFTER})
 
@@ -1394,6 +1406,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
             con.execute("INSERT INTO device_state(device_id,state_json,updated_at) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET state_json=excluded.state_json,updated_at=excluded.updated_at",(device_id,raw,ts))
             row=con.execute("SELECT pending_key_id,pending_wrapped_key_json FROM devices WHERE id=?",(device_id,)).fetchone()
             if row and active_key and row["pending_key_id"]==active_key:
+                current=con.execute("SELECT key_id,wrapped_key_json FROM devices WHERE id=?",(device_id,)).fetchone()
+                if current and current["key_id"] and current["key_id"]!=active_key and validate_cipher(safe_json_loads(current["wrapped_key_json"],{})):
+                    con.execute("INSERT OR IGNORE INTO device_key_history(device_id,key_id,wrapped_key_json,archived_at) VALUES(?,?,?,?)",
+                                (device_id,current["key_id"],current["wrapped_key_json"],ts))
                 con.execute(
                     "UPDATE devices SET last_seen_at=?,node_type=?,capabilities_json=?,key_id=pending_key_id,wrapped_key_json=pending_wrapped_key_json,pending_key_id='',pending_wrapped_key_json='{}' WHERE id=?",
                     (ts,node_type,json.dumps(capabilities,separators=(",",":")),device_id),

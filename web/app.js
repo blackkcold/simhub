@@ -468,7 +468,7 @@ async function refreshUpdateInfo(){
   try{result=await api('/api/v1/update');}catch(error){el.textContent=error.message;return;}
   const phase=result.phase||'idle', latest=result.latest||null;
   const states={queued:'排队中',checking:'检查版本',downloading:'下载中',
-    building:'构建镜像',backup:'备份数据',switching:'切换容器',
+    verifying_image:'验证签名并拉取镜像',backup:'备份数据',switching:'切换容器',
     verifying:'正在验证',complete:'更新成功',rolling_back:'自动回滚中',
     rolled_back:'已回滚',failed:'更新失败',rollback_failed:'回滚失败',
     interrupted:'更新中断',idle:'就绪'};
@@ -479,16 +479,16 @@ async function refreshUpdateInfo(){
       (zh?' · 最新 v':' · Latest v')+version+' · '+status+
       (ignored?(zh?'（已忽略）':' (ignored)'):'')+
       (result.error?' · '+result.error:'');
-  $('applyUpdateBtn').hidden=!result.agent||!result.available||ignored||
-    ['queued','checking','downloading','building','backup','switching','verifying','rolling_back'].includes(phase);
+  $('applyUpdateBtn').hidden=!result.agent||result.mode!=='rootless-verified'||!result.available||ignored||
+    ['queued','checking','downloading','building','verifying_image','backup','switching','verifying','rolling_back'].includes(phase);
   $('ignoreUpdateBtn').hidden=!latest||!result.available;
   $('ignoreUpdateBtn').textContent=ignored?(zh?'恢复提醒':'Restore reminders'):(zh?'忽略此版本':'Ignore this version');
-  $('updateAgentHelp').textContent=result.agent?'':(zh?
-    '自动部署未启用：需在宿主机执行 sudo bash scripts/install-updater.sh 并重新创建 simhub 容器。':
-    'Host updater unavailable. Run sudo bash scripts/install-updater.sh and recreate the simhub container.');
+  $('updateAgentHelp').textContent=(result.agent&&result.mode==='rootless-verified')?'':(zh?
+    '安全更新未启用：请迁移到 Rootless Docker，以普通用户运行 scripts/install-updater.sh；不支持旧版 root 更新器。':
+    'Verified updater unavailable. Configure rootless Docker and run scripts/install-updater.sh without sudo; legacy root updater is disabled.');
   if(result.releaseError)$('updateAgentHelp').textContent+=' · '+result.releaseError;
   clearTimeout(updatePolling);
-  if(['queued','checking','downloading','building','backup','switching','verifying','rolling_back'].includes(phase))
+  if(['queued','checking','downloading','building','verifying_image','backup','switching','verifying','rolling_back'].includes(phase))
     updatePolling=setTimeout(()=>refreshUpdateInfo().catch(e=>toast(e.message)),3500);
 }
 async function applyServerUpdate(){

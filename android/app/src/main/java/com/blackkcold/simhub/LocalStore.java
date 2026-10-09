@@ -68,6 +68,10 @@ public final class LocalStore extends SQLiteOpenHelper {
         try{
             ContentValues v=new ContentValues();v.put("id",id);v.put("uploaded_at",System.currentTimeMillis()/1000);
             db.insertWithOnConflict("uploaded_event_ids",null,v,SQLiteDatabase.CONFLICT_IGNORE);
+            // Provider receipts are useful for months, not indefinitely. The
+            // indexed prune bounds offline journal growth on long-running nodes.
+            long cutoff=System.currentTimeMillis()/1000-365L*86400;
+            db.delete("uploaded_event_ids","uploaded_at<?",new String[]{Long.toString(cutoff)});
             db.delete("events","id=?",new String[]{id});
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}

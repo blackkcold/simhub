@@ -246,3 +246,26 @@ main{padding:16px 14px calc(102px + env(safe-area-inset-bottom))}
   .toolbar{grid-template-columns:minmax(0,1fr)}
   .toolbar #search{grid-column:auto}
 }
+
+/* Reduce device-card action density; keep status primary and advanced actions discoverable. */
+.device-actions{margin-top:15px;border-top:1px solid var(--line);padding-top:11px;min-width:0}
+.device-actions summary{cursor:pointer;color:var(--muted);font-size:13px;font-weight:650;list-style-position:inside;padding:7px 0;user-select:none}
+.device-actions summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+.device-actions>div{margin-top:11px}
+.device-stats .stat{min-width:0;overflow:hidden}
+.device-stats .stat b{overflow-wrap:anywhere;font-size:14px;line-height:1.35}
+.sim{min-width:0;flex-wrap:wrap;align-items:center}
+.sim small{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.command-activity{margin-top:16px;max-width:100%;min-width:0}
+.command-activity h2{font-size:16px;margin:0}
+.command-activity>.row{margin-bottom:11px;flex-wrap:wrap}
+.command-item{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:10px;padding:10px 0;border-top:1px solid var(--line);align-items:center}
+.command-label{font-weight:650;min-width:0;overflow-wrap:anywhere}
+.command-label small{display:block;color:var(--muted);font-weight:450;font-size:12px;margin-top:4px}
+.command-status{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+@media(max-width:600px){
+  .command-item{grid-template-columns:minmax(0,1fr)}
+  .command-status{padding-left:0}
+  .device-actions .row{gap:7px}
+  .device-actions .mini{min-height:40px}
+}

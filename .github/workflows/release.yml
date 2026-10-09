@@ -228,10 +228,14 @@ jobs:
               return hashlib.sha256((root/filename).read_bytes()).hexdigest()
           apk=f"simhub-agent-v{version}-release.apk"
           source=f"simhub-v{version}-source.zip"
+          import re
+          schema=re.search(r"PRAGMA user_version=(\\d+)",pathlib.Path("server/simhub_server.py").read_text())
+          if not schema:raise SystemExit("Missing relay database schema declaration")
+          db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
               "notes":"Verified service and Android update support",
-              "server":{"version":version,"asset":source,"sha256":digest(source)},
+              "server":{"version":version,"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
                          "packageName":"com.blackkcold.simhub"},

@@ -33,6 +33,10 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 <tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="Mobile messaging interface preview" width="100%"></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="Android node interface preview" width="100%"></td></tr>
 </table>
 
+**Unfolded Android · Adaptive dual-pane SMS workspace**
+
+![Illustrative unfolded Android conversation view](docs/assets/ui-android-fold.svg)
+
 <sub>Illustrative UI mockups using synthetic data; not screenshots from a live account or real messages.</sub>
 
 ## Features

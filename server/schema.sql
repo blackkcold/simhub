@@ -178,3 +178,26 @@ CREATE TABLE IF NOT EXISTS device_reset_tombstones(
   PRIMARY KEY(device_id,token_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_reset_tombstones_expiry ON device_reset_tombstones(expires_at);
+
+-- Device-initiated pairing: only opaque, time-limited proofs are stored.
+CREATE TABLE IF NOT EXISTS pairing_requests(
+  id TEXT PRIMARY KEY,
+  code_hash TEXT NOT NULL UNIQUE,
+  poll_token_hash TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  os_version TEXT NOT NULL DEFAULT '',
+  app_version TEXT NOT NULL DEFAULT '',
+  device_public_key TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  device_id TEXT NOT NULL,
+  device_token_hash TEXT NOT NULL DEFAULT '',
+  key_id TEXT NOT NULL DEFAULT '',
+  wrapped_key_json TEXT NOT NULL DEFAULT '{}',
+  envelope_json TEXT NOT NULL DEFAULT '{}',
+  complete_proof_hash TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_pairing_requests_expiry ON pairing_requests(expires_at);

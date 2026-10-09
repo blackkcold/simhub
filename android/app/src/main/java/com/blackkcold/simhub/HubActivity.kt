@@ -371,9 +371,16 @@ class HubActivity: ComponentActivity(), HubController {
     override fun checkOta(){
         lifecycleScope.launch {
             try{val info=withContext(Dispatchers.IO){ApiClient(applicationContext).ota()}
-                tools.ota=if(info.optBoolean("available"))
-                    "发现版本 "+info.optString("versionName","?")+" · 请从已签名的官方 Release 更新"
-                else getString(R.string.update_none)
+                if(info.optBoolean("available")){
+                    tools.ota=getString(R.string.update_version,info.optString("versionName","?"),info.optString("notes",""))
+                    val link=info.optString("url","")
+                    AlertDialog.Builder(this@HubActivity).setTitle(R.string.update_title)
+                        .setMessage(tools.ota).setNegativeButton(R.string.close,null)
+                        .setPositiveButton(R.string.open_download){_,_->
+                            if(link.startsWith("https://"))
+                                startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(link)))
+                        }.show()
+                }else tools.ota=getString(R.string.update_none)
             }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
         }
     }

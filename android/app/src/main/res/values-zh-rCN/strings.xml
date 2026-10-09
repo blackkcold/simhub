@@ -193,4 +193,5 @@
     <string name="hub_no_service">无蜂窝网络服务</string>
     <string name="hub_fold_mode">自适应屏幕布局</string>
     <string name="hub_connected_server">服务器</string>
+    <string name="hub_code_copied">已复制到剪贴板</string>
 </resources>

@@ -76,7 +76,7 @@ private fun SimSummary(item:JSONObject,index:Int,selected:Boolean,onClick:()->Un
                 Column(Modifier.weight(1f)){
                     Text(item.optString("carrierName","SIM"),fontWeight=FontWeight.SemiBold,
                         style=MaterialTheme.typography.titleMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    Text("${item.optString("displayName","SIM")} · SIM $slot",
+                    Text((item.optString("localSimTag","").takeIf{it.isNotBlank()}?.plus(" · ") ?: "")+"${item.optString("displayName","SIM")} · SIM $slot",
                         color=MaterialTheme.colorScheme.onSurfaceVariant,
                         style=MaterialTheme.typography.bodySmall)
                 }
@@ -100,7 +100,28 @@ private fun SimDetails(item:JSONObject,index:Int,controller:HubController,modifi
                 fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium)
         }
         HorizontalDivider(Modifier.padding(vertical=10.dp))
+        val channelId=item.optString("channelId","")
+        val revision=item.optLong("channelRevision",1)
+        var tag by remember(channelId,revision,item.optString("localSimTag","")){
+            mutableStateOf(item.optString("localSimTag",""))
+        }
+        var number by remember(channelId,revision,item.optString("localSimTail","")){
+            mutableStateOf(item.optString("localSimTail",""))
+        }
         InfoRow(stringResource(R.string.hub_sim_overview),item.optString("displayName","SIM"))
+        if(channelId.isNotBlank()){
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value=tag,onValueChange={if(it.length<=40)tag=it},
+                label={Text("SIM 标签（例如：主力号码）")},singleLine=true,
+                modifier=Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value=number,onValueChange={if(it.length<=24)number=it},
+                label={Text("SIM 号码或尾号（仅存最后 4 位）")},singleLine=true,
+                modifier=Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick={controller.setSimTag(channelId,revision,tag,number)},
+                modifier=Modifier.fillMaxWidth()){Text("保存 SIM 标签")}
+        }
         InfoRow(stringResource(R.string.hub_connected_server),item.optString("carrierName","—"))
         InfoRow(stringResource(R.string.hub_network),item.optString("networkType","—"))
         InfoRow(stringResource(R.string.hub_service),item.optString("serviceState","—"))

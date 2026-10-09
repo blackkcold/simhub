@@ -172,6 +172,14 @@ public final class ApiClient {
         }
         if(sent>0)AppLogger.i(c,"ApiClient","Uploaded encrypted events count="+sent);
     }
+    public boolean waitForCommands()throws Exception{
+        if(!cfg.isEnrolled()||cfg.resetPending())return false;
+        requireHttps(cfg.server());
+        JSONObject r=raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50&wait=15",
+            "GET",null,"Device "+cfg.deviceToken(),cfg.deviceId(),22000);
+        JSONArray commands=r.optJSONArray("commands");
+        return commands!=null&&commands.length()>0;
+    }
     public void flushCommandAcks()throws Exception{int sent=0;for(JSONObject a:LocalStore.get(c).pendingCommandAcks(100)){String id=a.getString("commandId"),state=a.getString("state");request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+id+"/ack",new JSONObject().put("state",state).put("result",a.optJSONObject("result")==null?new JSONObject():a.optJSONObject("result")));LocalStore.get(c).markCommandAckSent(id,state);sent++;}if(sent>0)AppLogger.i(c,"ApiClient","Uploaded command acknowledgements count="+sent);}
     public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
     public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}
@@ -180,7 +188,10 @@ public final class ApiClient {
     private JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
     private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
     private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId)throws Exception{
-        HttpURLConnection con=(HttpURLConnection)new URL(url).openConnection();con.setRequestMethod(method);con.setConnectTimeout(8000);con.setReadTimeout(12000);con.setUseCaches(false);con.setRequestProperty("Accept","application/json");if(auth!=null)con.setRequestProperty("Authorization",auth);if(deviceId!=null)con.setRequestProperty("X-SimHub-Device-Id",deviceId);if(body!=null){con.setDoOutput(true);con.setRequestProperty("Content-Type","application/json");con.getOutputStream().write(body.toString().getBytes(StandardCharsets.UTF_8));}int code=con.getResponseCode();InputStream in=code>=400?con.getErrorStream():con.getInputStream();String text=read(in);String retryAfterHeader=con.getHeaderField("Retry-After");con.disconnect();JSONObject out=text.isBlank()?new JSONObject():new JSONObject(text);if(code<200||code>=300){
+        return raw(url,method,body,auth,deviceId,12000);
+    }
+    private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId,int readTimeout)throws Exception{
+        HttpURLConnection con=(HttpURLConnection)new URL(url).openConnection();con.setRequestMethod(method);con.setConnectTimeout(8000);con.setReadTimeout(readTimeout);con.setUseCaches(false);con.setRequestProperty("Accept","application/json");if(auth!=null)con.setRequestProperty("Authorization",auth);if(deviceId!=null)con.setRequestProperty("X-SimHub-Device-Id",deviceId);if(body!=null){con.setDoOutput(true);con.setRequestProperty("Content-Type","application/json");con.getOutputStream().write(body.toString().getBytes(StandardCharsets.UTF_8));}int code=con.getResponseCode();InputStream in=code>=400?con.getErrorStream():con.getInputStream();String text=read(in);String retryAfterHeader=con.getHeaderField("Retry-After");con.disconnect();JSONObject out=text.isBlank()?new JSONObject():new JSONObject(text);if(code<200||code>=300){
             int retry=60;
             try{retry=Integer.parseInt(retryAfterHeader);}catch(Exception ignored){}
             throw new ApiFailure(code,out.optString("error","http_error"),out.optString("message","HTTP "+code),Math.max(1,Math.min(600,retry)));

@@ -13,8 +13,8 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
-        versionCode = 16
-        versionName = "0.5.3"
+        versionCode = 17
+        versionName = "0.6.0"
     }
     buildFeatures { buildConfig = true }
     signingConfigs {
@@ -39,5 +39,6 @@ android {
 
 
 dependencies {
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     testImplementation("junit:junit:4.13.2")
 }

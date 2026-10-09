@@ -330,7 +330,7 @@ def main():
                                      "backup","switching","verifying","rolling_back"}:
                 # A restart cannot be misrepresented as a successful deployment.
                 previous=state.get("previousTag","")
-                if state.get("phase") in {"switching","verifying","rolling_back"} and re.fullmatch(r"rollback-\\d+",previous):
+                if state.get("phase") in {"switching","verifying","rolling_back"} and re.fullmatch(r"rollback-[0-9]+",previous):
                     try:
                         update_env(previous)
                         compose("up","-d","--no-build","--force-recreate","simhub")

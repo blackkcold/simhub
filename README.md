@@ -47,6 +47,8 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 | **Privacy and authentication** | Node-Key end-to-end encryption, username / TOTP / Passkeys, active Vault session recovery |
 | **Offline resilience** | Durable queues, retries, foreground relay and scheduled background recovery |
 
+Editable SVG icon sources are in [design/icons](design/icons); the APK uses matching Android VectorDrawables with automated parity checks.
+
 ## How it works
 
 ```mermaid

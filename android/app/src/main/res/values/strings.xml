@@ -194,4 +194,10 @@
     <string name="hub_fold_mode">Adaptive screen layout</string>
     <string name="hub_connected_server">Server</string>
     <string name="hub_code_copied">Copied to clipboard</string>
+
+    <string name="hub_sms_sent_not_delivered">Sent · delivery unconfirmed</string>
+    <string name="hub_sms_sending">Sending…</string>
+    <string name="hub_sms_queued">Queued</string>
+    <string name="hub_sms_failed">Failed to send</string>
+    <string name="hub_sms_draft">Draft</string>
 </resources>

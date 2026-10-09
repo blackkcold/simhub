@@ -98,6 +98,70 @@ class ApiTest(unittest.TestCase):
         status,_,_=self.req('POST','/api/v1/enrollments',{},headers={'Content-Type':'text/plain'})
         self.assertEqual(status,415)
 
+    def test_scoped_sms_purge_and_replay_suppression(self):
+        first=self.enroll("Wipe A");other=self.enroll("Keep B")
+        earlier=int(time.time())-100
+        for node in (first,other):
+            ev={"eventId":"purge-"+node["deviceId"],"kind":"sms.received",
+                "occurredAt":earlier,"subscriptionId":"1","ciphertext":self.cipher(2)}
+            self.assertEqual(self.req("POST",f'/api/v1/devices/{node["deviceId"]}/events',ev,
+                device_token=node["deviceToken"],admin=False)[0],201)
+        did=first["deviceId"];token=first["deviceToken"]
+        status,detail,_=self.req("DELETE",f"/api/v1/devices/{did}/sms")
+        self.assertEqual(status,200);self.assertEqual(detail["deleted"],1)
+        self.assertEqual(self.req("GET",f"/api/v1/devices/{did}/lifecycle",device_token=token,admin=False)[0],200)
+        replay={"eventId":"old-replayed","kind":"sms.received",
+            "occurredAt":earlier,"subscriptionId":"1","ciphertext":self.cipher(2)}
+        st,reply,_=self.req("POST",f"/api/v1/devices/{did}/events",replay,device_token=token,admin=False)
+        self.assertEqual(st,200);self.assertTrue(reply["suppressed"])
+        st,reply,_=self.req("POST",f"/api/v1/devices/{did}/events/batch",
+            {"events":[dict(replay,eventId="old-batch")]},device_token=token,admin=False)
+        self.assertEqual(st,200);self.assertTrue(reply["results"][0]["suppressed"])
+        with sqlite3.connect(self.db) as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM events WHERE device_id=?",(did,)).fetchone()[0],0)
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM events WHERE device_id=?",(other["deviceId"],)).fetchone()[0],1)
+        st,listing,_=self.req("GET","/api/v1/devices")
+        item=next(x for x in listing["devices"] if x["id"]==did)
+        self.assertEqual(item["smsCount"],0);self.assertGreater(item["smsEpoch"],0)
+
+    def test_bidirectional_reset_and_tombstone(self):
+        node=self.enroll("Reset A");did=node["deviceId"];token=node["deviceToken"]
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/reset-request",{})[0],202)
+        st,body,_=self.req("GET",f"/api/v1/devices/{did}/lifecycle",device_token=token,admin=False)
+        self.assertEqual(st,200);self.assertTrue(body["resetRequired"])
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/heartbeat",{},
+            device_token=token,admin=False)[0],409)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/reset",{},
+            device_token=token,admin=False)[0],200)
+        st,body,_=self.req("GET",f"/api/v1/devices/{did}/lifecycle",device_token=token,admin=False)
+        self.assertEqual(st,410);self.assertTrue(body["resetRequired"])
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/heartbeat",{},
+            device_token=token,admin=False)[0],401)
+        self.assertEqual(self.req("GET",f"/api/v1/devices/{did}/lifecycle",
+            device_token="Z"*48,admin=False)[0],401)
+        with sqlite3.connect(self.db) as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM devices WHERE id=?",(did,)).fetchone()[0],0)
+            self.assertGreaterEqual(con.execute("SELECT COUNT(*) FROM audit WHERE action='device.reset.complete' AND target=?",(did,)).fetchone()[0],1)
+
+    def test_force_delete_cleans_device_dependencies_and_reports_reset(self):
+        node=self.enroll("Lost Modem");did=node["deviceId"];token=node["deviceToken"]
+        ev={"eventId":"force-"+did,"kind":"sms.received","occurredAt":int(time.time()),
+            "subscriptionId":"1","ciphertext":self.cipher(2)}
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/events",ev,
+            device_token=token,admin=False)[0],201)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/state",
+            {"nodeType":"modem","channels":[{"id":"ch1","localId":"modem0","revision":1}]},
+            device_token=token,admin=False)[0],200)
+        st,result,_=self.req("DELETE",f"/api/v1/devices/{did}")
+        self.assertEqual(st,200);self.assertTrue(result["deviceMayBeOffline"])
+        with sqlite3.connect(self.db) as con:
+            for table in ("devices","events","device_state","commands","subscriptions","channels","device_key_history"):
+                self.assertEqual(con.execute(f"SELECT COUNT(*) FROM {table} WHERE "+("id=?" if table=="devices" else "device_id=?"),(did,)).fetchone()[0],0)
+        self.assertEqual(self.req("GET",f"/api/v1/devices/{did}/lifecycle",
+            device_token=token,admin=False)[0],410)
+        self.assertEqual(self.req("DELETE",f"/api/v1/devices/{did}")[0],404)
+        self.assertEqual(self.req("GET","/api/v1/version")[0],200)
+
     def test_end_to_end(self):
         d=self.enroll();did=d['deviceId'];dt=d['deviceToken']
         ev={'eventId':'evt-1-'+did,'kind':'sms.received','occurredAt':int(time.time()),'subscriptionId':'1','hasOtp':True,'metadata':{'sender':'must-strip','parts':1},'ciphertext':self.cipher()}

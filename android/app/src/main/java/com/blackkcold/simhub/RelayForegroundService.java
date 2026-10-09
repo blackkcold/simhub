@@ -12,12 +12,29 @@ import java.util.concurrent.TimeUnit;
 
 public final class RelayForegroundService extends Service {
     private final ScheduledExecutorService exec=Executors.newSingleThreadScheduledExecutor();
+    private final java.util.concurrent.ExecutorService wakeExecutor=Executors.newSingleThreadExecutor();
     public static void start(Context c){new AgentConfig(c).setAlwaysOn(true);AppLogger.i(c,"RelayService","Always-on relay enabled");resume(c);}
     public static void resume(Context c){Intent i=new Intent(c,RelayForegroundService.class);if(Build.VERSION.SDK_INT>=26)c.startForegroundService(i);else c.startService(i);}
     public static void stop(Context c){new AgentConfig(c).setAlwaysOn(false);AppLogger.i(c,"RelayService","Always-on relay disabled");c.stopService(new Intent(c,RelayForegroundService.class));}
     public static void kick(Context c){SyncJobService.scheduleNow(c);}
-    @Override public void onCreate(){super.onCreate();NotificationHelper.ensureChannels(this);if(Build.VERSION.SDK_INT>=34)startForeground(4101,NotificationHelper.relay(this),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);else startForeground(4101,NotificationHelper.relay(this));AppLogger.i(this,"RelayService","Foreground relay service started");exec.scheduleWithFixedDelay(()->new ApiClient(this).syncCycle(),0,20,TimeUnit.SECONDS);}
+    @Override public void onCreate(){super.onCreate();NotificationHelper.ensureChannels(this);if(Build.VERSION.SDK_INT>=34)startForeground(4101,NotificationHelper.relay(this),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);else startForeground(4101,NotificationHelper.relay(this));AppLogger.i(this,"RelayService","Foreground relay service started");exec.scheduleWithFixedDelay(()->new ApiClient(this).syncCycle(),0,20,TimeUnit.SECONDS);
+        wakeExecutor.execute(()->{
+            int failures=0;
+            while(!Thread.currentThread().isInterrupted()&&new AgentConfig(this).alwaysOn()){
+                try{
+                    boolean pending=new ApiClient(this).waitForCommands();failures=0;
+                    if(pending)new ApiClient(this).syncCycle();
+                    if(pending)TimeUnit.MILLISECONDS.sleep(700);
+                }catch(InterruptedException e){Thread.currentThread().interrupt();break;}
+                catch(Exception error){
+                    AppLogger.e(this,"RelayService","Command wake-up interrupted",error);
+                    failures=Math.min(failures+1,5);
+                    try{TimeUnit.SECONDS.sleep(Math.min(60,5L<<Math.min(failures-1,4)));}
+                    catch(InterruptedException e){Thread.currentThread().interrupt();break;}
+                }
+            }
+        });}
     @Override public int onStartCommand(Intent intent,int flags,int startId){return START_STICKY;}
-    @Override public void onDestroy(){AppLogger.i(this,"RelayService","Foreground relay service stopped");exec.shutdownNow();super.onDestroy();}
+    @Override public void onDestroy(){AppLogger.i(this,"RelayService","Foreground relay service stopped");exec.shutdownNow();wakeExecutor.shutdownNow();super.onDestroy();}
     @Override public IBinder onBind(Intent intent){return null;}
 }

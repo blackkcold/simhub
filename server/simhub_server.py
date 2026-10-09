@@ -396,6 +396,7 @@ def run_maintenance() -> dict[str,int]:
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
+        con.execute("DELETE FROM pairing_requests WHERE expires_at<?",(ts-86400,))
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
         result["resetTombstones"]=con.execute("DELETE FROM device_reset_tombstones WHERE expires_at<?",(ts,)).rowcount
     return result
@@ -825,6 +826,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def is_device_route(self, method: str, path: str) -> bool:
         if method == "POST" and path == "/api/v1/enroll": return True
+        if method == "POST" and path == "/api/v1/pairings/start": return True
+        if re.fullmatch(r"/api/v1/pairings/[^/]+/status",path): return method=="GET"
+        if re.fullmatch(r"/api/v1/pairings/[^/]+/complete",path): return method=="POST"
         if method == "GET" and path == "/api/v1/ota": return True
         if re.fullmatch(r"/api/v1/devices/[^/]+/lifecycle", path): return method == "GET"
         if re.fullmatch(r"/api/v1/devices/[^/]+/reset", path): return method == "POST"
@@ -925,6 +929,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_json(200,{"version":APP_VERSION,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None}); return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="lifecycle":
             self.get_device_lifecycle(p[3]); return
+        if path=="/api/v1/pairings/lookup":
+            if not self.require_admin(): return
+            self.lookup_pairing(q); return
+        if len(p)==5 and p[:3]==["api","v1","pairings"] and p[4]=="status":
+            self.pairing_status(p[3]); return
         if path=="/api/v1/devices":
             if not self.require_admin(): return
             self.get_devices(); return
@@ -1014,6 +1023,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             self.enroll_device(body); return
+        if path=="/api/v1/pairings/start":
+            body=self.read_json()
+            if body is None:return
+            self.start_pairing(body); return
+        if len(p)==5 and p[:3]==["api","v1","pairings"] and p[4]=="approve":
+            if not self.require_stepup():return
+            body=self.read_json()
+            if body is None:return
+            self.approve_pairing(p[3],body); return
+        if len(p)==5 and p[:3]==["api","v1","pairings"] and p[4]=="complete":
+            body=self.read_json()
+            if body is None:return
+            self.complete_pairing(p[3],body); return
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["events","batch"]:
             if not self.require_device(p[3]):return
             body=self.read_json()
@@ -1180,6 +1202,121 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 audit("auth.passkey.login","","denied",self.ip)
             log.exception("passkey_operation_failed")
             self.send_error_json(400,"invalid_passkey","WebAuthn verification failed")
+
+
+    def pairing_authorized(self, pair_id:str) -> sqlite3.Row | None:
+        if not rate_allowed("pair_poll",pair_id+":"+self.ip,120):
+            self.send_error_json(429,"rate_limited","Pairing poll limit exceeded"); return None
+        auth=self.headers.get("Authorization","")
+        if not auth.startswith("Pair ") or len(auth)<32:
+            self.send_error_json(401,"unauthorized","Pairing bearer required"); return None
+        with open_db() as con:
+            r=con.execute("SELECT * FROM pairing_requests WHERE id=?",(pair_id,)).fetchone()
+        if not r or not hmac.compare_digest(r["poll_token_hash"],sha256_text(auth[5:])):
+            self.send_error_json(401,"unauthorized","Pairing token invalid"); return None
+        return r
+
+    def start_pairing(self,body:dict[str,Any]) -> None:
+        if not rate_allowed("pair_start",self.ip,10):
+            self.send_error_json(429,"rate_limited","Pairing request limit exceeded");return
+        pub=str(body.get("publicKey",""))
+        if not re.fullmatch(r"[A-Za-z0-9_-]{90,240}",pub):
+            self.send_error_json(400,"invalid_public_key","Valid P-256 SPKI public key required");return
+        try:
+            decoded=base64.urlsafe_b64decode(pub+"="*((4-len(pub)%4)%4))
+            # ASN.1 SubjectPublicKeyInfo P-256 prefix; never accept arbitrary curves.
+            if len(decoded)!=91 or not decoded.startswith(bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d03010703420004")):
+                raise ValueError()
+        except Exception:
+            self.send_error_json(400,"invalid_public_key","Expected P-256 public key");return
+        request_id=str(uuid.uuid4()); token=new_token(32); ts=now()
+        name=str(body.get("name") or "Android SIM Node")[:80]
+        model=str(body.get("model") or "Android")[:120]
+        os_version=str(body.get("osVersion") or "")[:40]
+        app_version=str(body.get("appVersion") or "")[:40]
+        with open_db() as con:
+            for _ in range(16):
+                code=f"{secrets.randbelow(100000000):08d}"
+                try:
+                    con.execute(
+                        """INSERT INTO pairing_requests(id,code_hash,poll_token_hash,name,model,os_version,app_version,device_public_key,created_at,expires_at,device_id)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                        (request_id,sha256_text(code),sha256_text(token),name,model,os_version,app_version,pub,ts,ts+300,str(uuid.uuid4())))
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            else:
+                self.send_error_json(503,"pairing_unavailable","Unable to allocate pairing code");return
+        self.send_json(201,{"requestId":request_id,"pollToken":token,"code":code,"expiresAt":ts+300})
+
+    def lookup_pairing(self,q:dict[str,list[str]]) -> None:
+        if not rate_allowed("pair_lookup",self.ip,12):
+            self.send_error_json(429,"rate_limited","Pairing lookup limit exceeded");return
+        code=str(q.get("code",[""])[0])
+        if not re.fullmatch(r"\d{8}",code):
+            self.send_error_json(400,"invalid_code","Eight digits required");return
+        with open_db() as con:
+            r=con.execute("SELECT id,name,model,device_public_key,expires_at,state FROM pairing_requests WHERE code_hash=?",(sha256_text(code),)).fetchone()
+        if not r or r["expires_at"]<=now() or r["state"]!="pending":
+            self.send_error_json(404,"pairing_not_found","Code invalid, expired or used");return
+        self.send_json(200,{"requestId":r["id"],"name":r["name"],"model":r["model"],"publicKey":r["device_public_key"],"expiresAt":r["expires_at"]})
+
+    def pairing_status(self,pair_id:str) -> None:
+        r=self.pairing_authorized(pair_id)
+        if r is None:return
+        if r["expires_at"]<=now():
+            self.send_error_json(410,"pairing_expired","Pairing request expired");return
+        out={"status":r["state"]}
+        if r["state"] in {"approved","completed"}:
+            out.update({"deviceId":r["device_id"],"keyId":r["key_id"],"envelope":safe_json_loads(r["envelope_json"],{})})
+        self.send_json(200,out)
+
+    def approve_pairing(self,pair_id:str,body:dict[str,Any]) -> None:
+        code=str(body.get("code",""))
+        if not re.fullmatch(r"\d{8}",code):
+            self.send_error_json(400,"invalid_code","Eight-digit code required");return
+        try: key_id, wrapped=normalize_wrapped_key(body.get("keyId",""),body.get("wrappedKey",{}))
+        except ValueError:
+            self.send_error_json(400,"invalid_wrapped_key","Valid wrapped Node Key required");return
+        envelope=body.get("envelope",{})
+        public_key=str(envelope.get("publicKey","")) if isinstance(envelope,dict) else ""
+        token_hash=str(body.get("deviceTokenHash",""))
+        proof_hash=str(body.get("completeProofHash",""))
+        if not key_id or not validate_cipher(envelope) or not re.fullmatch(r"[A-Za-z0-9_-]{90,240}",public_key) or not all(re.fullmatch(r"[0-9a-f]{64}",v) for v in (token_hash,proof_hash)):
+            self.send_error_json(400,"invalid_pairing","Encrypted pairing or proof is invalid");return
+        ts=now()
+        with open_db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            row=con.execute("SELECT * FROM pairing_requests WHERE id=?",(pair_id,)).fetchone()
+            if not row or row["state"]!="pending" or row["expires_at"]<=ts or not hmac.compare_digest(row["code_hash"],sha256_text(code)):
+                self.send_error_json(409,"pairing_unavailable","Pairing code invalid or already used");return
+            con.execute("""UPDATE pairing_requests SET state='approved',key_id=?,wrapped_key_json=?,envelope_json=?,device_token_hash=?,complete_proof_hash=? WHERE id=? AND state='pending'""",
+                        (key_id,json.dumps(wrapped,separators=(",",":")),json.dumps(envelope,separators=(",",":")),token_hash,proof_hash,pair_id))
+        audit("pairing.approve",pair_id,"ok",self.ip)
+        self.send_json(200,{"ok":True,"deviceId":row["device_id"]})
+
+    def complete_pairing(self,pair_id:str,body:dict[str,Any]) -> None:
+        row=self.pairing_authorized(pair_id)
+        if row is None:return
+        if row["expires_at"]<=now():
+            self.send_error_json(410,"pairing_expired","Pairing request expired");return
+        proof=str(body.get("proof",""))
+        if not re.fullmatch(r"[0-9a-f]{64}",proof) or not hmac.compare_digest(row["complete_proof_hash"],proof):
+            self.send_error_json(403,"invalid_proof","Pairing completion proof incorrect");return
+        ts=now()
+        with open_db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            current=con.execute("SELECT * FROM pairing_requests WHERE id=?",(pair_id,)).fetchone()
+            if not current or current["state"] not in {"approved","completed"} or current["expires_at"]<=ts:
+                self.send_error_json(409,"pairing_unavailable","Pairing expired or not approved");return
+            if current["state"]=="approved":
+                con.execute("""INSERT INTO devices(id,token_hash,name,group_name,model,os_version,app_version,created_at,last_seen_at,node_type,capabilities_json,key_id,wrapped_key_json,token_issued_at)
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            (current["device_id"],current["device_token_hash"],current["name"],"",current["model"],current["os_version"],current["app_version"],ts,ts,"android",
+                             json.dumps(["sms.receive","sms.send","sms.history","signal.basic","dual-sim"]),current["key_id"],current["wrapped_key_json"],ts))
+                con.execute("UPDATE pairing_requests SET state='completed' WHERE id=?",(pair_id,))
+        audit("pairing.complete",pair_id,"ok",self.ip);signal_stream()
+        self.send_json(200,{"ok":True,"deviceId":row["device_id"]})
 
     def create_enrollment(self,body:dict[str,Any]) -> None:
         eid=str(uuid.uuid4()); token=new_token(); ts=now()

@@ -163,3 +163,27 @@ Administrator session authentication supports usernames, optional Passkeys and a
 - `DELETE /api/v1/devices/{id}` (step-up admin) force-deletes a permanently offline device. A minimal hashed-token tombstone responds HTTP 410 to previously paired nodes for 90 days.
 - Device deletion removes server events, commands, state, SIM/channel metadata, historical key envelopes and credentials. A minimal action audit remains subject to retention.
 - Device resets never modify phone/modem-resident SMS. Previously persisted backups and SQLite free pages need their own secure retention and disposal policy.
+
+## v0.6 — Two-way enrollment and command wake-up
+
+### Controller QR → Android
+
+The controller renders its existing v4, single-use Bootstrap enrollment package as a QR code **locally** (no image conversion service). The Android Agent scans the QR using an on-device ZXing scanner. It still requires explicit trusted HTTPS-host confirmation before consuming the one-time token. The Master Vault Key is never encoded in the QR; the QR package itself is sensitive until consumed or expired.
+
+### Android short code → Controller
+
+1. Unpaired Android generates an ephemeral P-256 ECDH private/public key pair and requests `POST /api/v1/pairings/start` on the HTTPS device origin. The Relay stores only the public key, a hashed random polling bearer, an eight-digit pairing-code hash and five-minute expiry.
+2. Android displays the eight-digit code and a 12-hex-character fingerprint of SHA-256(base64url-encoded SPKI). It polls authenticated `GET /api/v1/pairings/{id}/status`.
+3. The unlocked Controller looks up the code via the management origin (authenticated and rate limited), compares the device fingerprint out of band, performs admin step-up, generates a fresh 256-bit Node Key and device token, and locally wraps the Node Key with its Master Vault Key.
+4. Controller generates a fresh ephemeral P-256 ECDH key pair, derives an AES-256-GCM key using HKDF-SHA256 (salt `simhub-pair-v1|{id}`, info `node-key`), and encrypts JSON containing `nodeKey` and `deviceToken`. AAD is `simhub-pair-v1|{id}|{keyId}`.
+5. Controller posts the ciphertext, its ephemeral public key, the Vault-wrapped Node Key and SHA-256 authentication/activation proofs to `POST /api/v1/pairings/{id}/approve`. Relay **never receives either plaintext secret**.
+6. Android obtains and decrypts the envelope, verifies Node Key ID, commits Node Key/device token to Android Keystore-backed storage, journals the pairing completion proof and posts `POST /api/v1/pairings/{id}/complete` with its pairing bearer.
+7. Relay atomically activates the matching device only if the pairing is approved, unexpired and the completion proof matches. Retrying completion is idempotent. The Android Agent retries a pending completion after restart/network failures.
+
+Code lookup is not authorization. Short codes never unlock the Vault, approve a device, disclose ciphertext to unauthenticated clients, or replace the administrator's second factor. Expired requests are rejected; cleanup removes obsolete requests.
+
+### Low-latency command control
+
+User-enabled Android foreground mode waits on authenticated `GET /api/v1/devices/{id}/commands/pending?wait=15`. The Relay only blocks while no command is pending and wakes on a server change signal. Periodic sync and JobScheduler remain recovery paths. Command ACK and fetch precede bulk SMS history work. `queued`, `dispatched` and terminal states are distinct; `dispatched` means selected for HTTP delivery, **not** proof of execution.
+
+Android SMS Provider failures are surfaced in `smsProviderError` independently of transport `lastSyncError`. Historical provider rows gain a stable Channel ID only after the same SIM identity/revision was observed by the Agent; earlier history remains unverified.

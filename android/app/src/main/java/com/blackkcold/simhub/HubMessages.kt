@@ -252,7 +252,7 @@ private fun SmsBubble(sms:HubSms,controller:HubController){
             Text(sms.text,style=MaterialTheme.typography.bodyMedium)
             if(!sent&&otp.detected&&otp.value!=null){
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick={controller.copyOtp(otp.value)},
+                TextButton(onClick={otp.value?.let(controller::copyOtp)},
                     contentPadding=PaddingValues(0.dp)){
                     Text(stringResource(R.string.hub_copy_code)+" · "+otp.value)
                 }

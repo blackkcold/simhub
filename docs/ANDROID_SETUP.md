@@ -103,3 +103,27 @@ Both methods require the usual SMS role and SIM permissions after enrollment. If
 ## Optional SMS sharing (v0.8)
 
 Open **Settings → Shared SMS**, enable explicit opt-in, then in the logged-in Web controller open **Devices → Shared pool** and approve that device while the local Vault is unlocked. The relay stores only ciphertext and individually wrapped Pool Keys. This is independent of SMS Provider storage and remote sending permissions. Pool sharing is disabled by default; the current implementation uses the owner's single default pool. Read [Shared SMS security and sync](SHARED_SMS.md) before approving a device.
+
+## v0.9.1 signed in-app updates
+
+Open **Settings → Advanced tools & diagnostics → Check for updates** to
+compare Android `versionCode` with the relay's GitHub Release manifest.
+A signed update is downloaded into private cache, limited to 80 MiB, checked
+against the released SHA-256 and the pinned **SIM Hub signing certificate**,
+then submitted to Android PackageInstaller. The system may require you to
+authorize installs from this app and confirm each update; OEM policy can
+prevent silent installation. Android 12+ can waive confirmation only if
+PackageInstaller's documented prerequisites are met.
+
+- **Automatically check updates** is enabled by default and checked about
+  once per day during persisted sync jobs; network availability is required.
+- **Automatically download & install** is disabled by default. When enabled,
+  the app installs eligible releases and handles OS user-action requests by
+  notification, without clearing enrollment or app data.
+- **Ignore this version** persists the versionCode locally. A newer release
+  becomes eligible again. Manual checks can restore the ignored release.
+- APK update requires the official `com.blackkcold.simhub` package and its
+  original release signing key. Debug builds and unrelated APKs cannot replace
+  the signed production package.
+- Update metadata is served by the connected Relay. Upgrade Relay first.
+

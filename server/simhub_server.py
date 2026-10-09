@@ -115,6 +115,8 @@ _rate_entries: dict[tuple[str,str], list[int]] = {}
 _rate_gc_at = 0
 _sse_lock = threading.Lock()
 _sse_clients: dict[str,int] = {}
+_db_busy_lock = threading.Lock()
+_db_busy_errors = 0
 
 def rate_allowed(bucket: str, key: str, max_requests: int, window: int = 60) -> bool:
     """Bounded memory limiter; deny new keys when saturated."""
@@ -142,6 +144,9 @@ class BoundedHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     def __init__(self, address, handler):
         self._slots = threading.BoundedSemaphore(MAX_HTTP_CONNECTIONS)
+        self._stats_lock = threading.Lock()
+        self.active_connections = 0
+        self.rejected_connections = 0
         super().__init__(address, handler)
     def get_request(self):
         sock, addr = super().get_request()
@@ -149,17 +154,25 @@ class BoundedHTTPServer(ThreadingHTTPServer):
         return sock, addr
     def process_request(self, request, client_address):
         if not self._slots.acquire(blocking=False):
+            with self._stats_lock:
+                self.rejected_connections += 1
             request.close()
             return
+        with self._stats_lock:
+            self.active_connections += 1
         try:
             super().process_request(request, client_address)
         except Exception:
+            with self._stats_lock:
+                self.active_connections -= 1
             self._slots.release()
             raise
     def process_request_thread(self, request, client_address):
         try:
             super().process_request_thread(request, client_address)
         finally:
+            with self._stats_lock:
+                self.active_connections -= 1
             self._slots.release()
 
 
@@ -230,7 +243,12 @@ def open_db():
     try:
         yield con
         con.commit()
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc,sqlite3.OperationalError) and (
+                "locked" in str(exc).lower() or "busy" in str(exc).lower()):
+            global _db_busy_errors
+            with _db_busy_lock:
+                _db_busy_errors += 1
         con.rollback()
         raise
     finally:
@@ -1889,7 +1907,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
             pending=con.execute("SELECT COUNT(*) c FROM commands WHERE state IN ('queued','dispatched')").fetchone()["c"]
             events24=con.execute("SELECT COUNT(*) c FROM events WHERE received_at>=?",(ts-86400,)).fetchone()["c"]
             oldest=con.execute("SELECT MIN(created_at) v FROM commands WHERE state IN ('queued','dispatched')").fetchone()["v"]
-        self.send_json(200,{"devices":devices,"onlineDevices":online,"pendingCommands":pending,"events24h":events24,"oldestPendingCommandSeconds":(ts-oldest) if oldest else 0})
+            pool_rotation_required=shared_pool.rotation_required(con)
+        with self.server._stats_lock:
+            active=self.server.active_connections
+            rejected=self.server.rejected_connections
+        with _db_busy_lock:
+            busy=_db_busy_errors
+        self.send_json(200,{"devices":devices,"onlineDevices":online,"pendingCommands":pending,
+            "events24h":events24,"oldestPendingCommandSeconds":(ts-oldest) if oldest else 0,
+            "httpConnectionsActive":active,"httpConnectionsLimit":MAX_HTTP_CONNECTIONS,
+            "httpConnectionsRejected":rejected,"sqliteBusyErrors":busy,
+            "poolRotationRequired":pool_rotation_required})
 
     def stream_events(self) -> None:
         global _stream_epoch

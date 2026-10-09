@@ -413,10 +413,12 @@ function nodeChannels(d){
 }
 function channelTitle(ch){return (ch.phoneNumber?ch.phoneNumber+' · ':'')+(ch.alias||ch.displayName||ch.carrierName||ch.id);}
 function messageChannelLabel(e){
-  if(e.kind==='sms.history'&&!e.payload?.channelId)return tr('historical_sim_unverified');
-  const d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e);
-  const channel=nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id);
-  return channel?channelTitle(channel):id;
+  const p=e.payload||{},revision=Number(p.channelRevision||0);
+  if(!p.channelId||!revision)return tr('historical_sim_unverified');
+  const d=devices.find(x=>x.id===e.deviceId);
+  const channel=nodeChannels(d).find(ch=>String(ch.id)===String(p.channelId)&&
+    Number(ch.revision||ch.channelRevision||1)===revision);
+  return channel?channelTitle(channel):(p.simTag||p.channelId)+' · '+(getLocale()==='zh-CN'?'历史版本':'historical revision');
 }
 function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(channelTitle(ch))+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">'+escapeHtml(tr('no_active_channel'))+'</option>';}
 function renderCommandActivity(commands){
@@ -475,6 +477,7 @@ function renderPool(){
   const target=$('smsPoolMembers');if(!target)return;
   if(!poolState){target.textContent='尚未加载设备同步状态';return;}
   target.innerHTML='<p class="hint">仅已在 Android 主动开启的设备可加入。管理员必须解锁 Vault 并批准加密密钥分发。</p>'+
+    (poolState.rotationRequired?'<p role="alert" class="hint">已撤销成员访问，但新密钥尚未分发。共享上传已安全暂停。<button class="primary mini" data-pool-action="rotate">完成待处理密钥轮换</button></p>':'')+
     poolState.members.map(m=>{
       const d=devices.find(x=>x.id===m.id);
       const status=!m.requested?'待设备开启':m.approved?'已授权':'等待授权';
@@ -539,6 +542,7 @@ async function grantPoolDevice(deviceId){
   await loadPool();
 }
 async function rotatePool(){
+  await ensureStepUp();
   await loadPool();
   if(!poolState?.epoch)return;
   const key=await poolNewKey(),epoch=poolState.epoch+1;
@@ -547,7 +551,7 @@ async function rotatePool(){
     for(const m of poolState.members.filter(m=>m.requested&&m.approved))
       members[m.id]=await poolMemberEncrypt(m.id,key.raw,epoch);
     const vaultEnvelope=await poolVaultEncrypt(key.raw,epoch);
-    await api('/api/v1/pool/rotate',{method:'POST',body:{keyId:key.keyId,vaultEnvelope,members}});
+    await api('/api/v1/pool/rotate',{method:'POST',body:{keyId:key.keyId,expectedEpoch:poolState.epoch,vaultEnvelope,members}});
   }finally{key.raw.fill(0);}
   await loadPool();
 }
@@ -602,10 +606,10 @@ function messageAddress(e){
   return String((eventIsInbound(e)?p.sender:p.recipient)||p.sender||p.recipient||'').trim();
 }
 function messageChannel(e){
-  const p=e.payload||{},id=String(p.channelId||e.subscriptionId||'');
-  const d=devices.find(x=>x.id===e.deviceId);
-  const channel=nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id);
-  return channel?String(channel.id):id;
+  const p=e.payload||{},id=String(p.channelId||''),revision=Number(p.channelRevision||0);
+  // Android subscription IDs may be recycled after a SIM change.
+  if(!id||!revision)return 'unverified:'+String(e.subscriptionId||'');
+  return id;
 }
 function threadKey(e){
   const phone=messageAddress(e).replace(/[\s()-]/g,'');
@@ -668,8 +672,10 @@ function updateReplyChannels(preferred){
 }
 function messageTags(e){
   const inbound=eventIsInbound(e),d=devices.find(x=>x.id===e.deviceId),id=messageChannel(e),
-    historic=e.kind==='sms.history'&&!e.payload?.channelId,
-    channel=historic?null:nodeChannels(d).find(ch=>String(ch.id)===id||String(ch.localId)===id),
+    revision=Number(e.payload?.channelRevision||0),
+    historic=!e.payload?.channelId||!revision,
+    channel=historic?null:nodeChannels(d).find(ch=>String(ch.id)===id&&
+      Number(ch.revision||ch.channelRevision||1)===revision),
     digits=String(e.payload?.simTail||channel?.phoneNumber||'').replace(/\D/g,''),
     sim=historic?(getLocale()==='zh-CN'?'历史 SIM · 归属待确认':'Historical SIM · unverified'):
       (e.payload?.simTag||channel?.alias||channel?.displayName||channel?.carrierName||'SIM')+(digits.length>=4?' · ••••'+digits.slice(-4):' · '+(getLocale()==='zh-CN'?'号码未知':'number unknown')),
@@ -717,6 +723,17 @@ function renderConversation(){
   if(previousKey!==activeConversationKey||nearBottom)pane.scrollTop=pane.scrollHeight;
   else pane.scrollTop=oldScroll;
 }
+function replyEligible(){
+  const device=$('replyDevice').value,channel=$('replySubscription').value,dest=$('replyTo').value.trim();
+  if(!device||!channel||!/^\+?[0-9 ()-]{3,40}$/.test(dest))return false;
+  if(activeConversationKey==='__new')return true;
+  const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(t=>t.key===activeConversationKey);
+  const p=selected?.latest?.payload||{},revision=Number(p.channelRevision||0);
+  if(!revision||!p.channelId||selected.latest.deviceId!==device||String(p.channelId)!==channel)return false;
+  const current=nodeChannels(devices.find(d=>d.id===device)).find(ch=>String(ch.id)===channel);
+  return !!current&&Number(current.revision||current.channelRevision||1)===revision;
+}
+function refreshReplyEligibility(){$('replySend').disabled=!replyEligible();}
 function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
   if(!selected)return;
@@ -730,8 +747,8 @@ function openConversation(key){
   const stale=originalRevision>0&&
     (!currentChannel||Number(currentChannel.revision||currentChannel.channelRevision||1)!==originalRevision);
   const confirmed=!!last.payload?.channelId&&originalRevision>0;
-  const canReply=confirmed&&!stale&&/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
-  $('replySend').disabled=!canReply;
+  const canReply=confirmed&&!stale&&replyEligible();
+  refreshReplyEligibility();
   if(!canReply){$('replyOptions').open=true;toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');}
   syncResponsiveConversation();
   renderInbox();
@@ -741,7 +758,7 @@ function openNewMessage(){
   updateReplyDevices();
   $('replyDevice').value='';
   updateReplyChannels();
-  $('replyTo').value='';$('replyBody').value='';$('replySend').disabled=false;
+  $('replyTo').value='';$('replyBody').value='';refreshReplyEligibility();
   $('replyOptions').open=true;
   syncResponsiveConversation();
   renderInbox();$('replyTo').focus();
@@ -760,7 +777,7 @@ async function sendConversationReply(){
   const btn=$('replySend');
   if(btn.disabled)return;
   const dest=$('replyTo').value.trim(),device=$('replyDevice').value,channel=$('replySubscription').value;
-  if(!device||!channel)throw new Error('请选择可用设备和 SIM 通道');
+  if(!replyEligible())throw new Error('历史短信来源或当前 SIM 版本无法验证；请新建短信并显式选择通道');
   const sendDevice=$('sendDevice'),sendSub=$('sendSubscription');
   sendDevice.value=device;updateSubscriptionSelector();sendSub.value=channel;
   if(sendSub.value!==channel)throw new Error('该 SIM 通道已失效，重新选择后再发送');
@@ -983,10 +1000,10 @@ function wire(){
   $('backConversation').onclick=()=>{activeConversationKey=null;syncResponsiveConversation();renderInbox();$('search').focus({preventScroll:true});};
   window.addEventListener('resize',syncResponsiveConversation,{passive:true});
   window.addEventListener('orientationchange',syncResponsiveConversation,{passive:true});
-  $('replyDevice').onchange=()=>{updateReplyChannels();$('replySend').disabled=false;};
-  $('replySubscription').onchange=()=>{$('replySend').disabled=false;updateReplyChannels($('replySubscription').value);};
+  $('replyDevice').onchange=()=>{updateReplyChannels();refreshReplyEligibility();};
+  $('replySubscription').onchange=()=>{updateReplyChannels($('replySubscription').value);refreshReplyEligibility();};
   $('replyBody').oninput=updateReplyCount;
-  $('replyTo').oninput=()=>{$('replySend').disabled=false;};
+  $('replyTo').oninput=refreshReplyEligibility;
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
   $('conversationMessages').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
@@ -1027,7 +1044,8 @@ function wire(){
   $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
   $('refreshPoolBtn').onclick=()=>loadPool().catch(e=>toast(e.message));
   $('smsPoolMembers').onclick=e=>{const button=e.target.closest('[data-pool-action]');if(!button)return;
-    const task=button.dataset.poolAction==='approve'?grantPoolDevice(button.dataset.id):revokePoolDevice(button.dataset.id);
+    const task=button.dataset.poolAction==='rotate'?rotatePool():
+      button.dataset.poolAction==='approve'?grantPoolDevice(button.dataset.id):revokePoolDevice(button.dataset.id);
     task.catch(err=>toast(err.message));};
   $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});

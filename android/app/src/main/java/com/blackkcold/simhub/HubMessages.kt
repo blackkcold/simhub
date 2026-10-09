@@ -78,7 +78,7 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
             FilterChip(selected=ui.otpOnly,onClick={ui.otpOnly=true},
                 label={Text(stringResource(R.string.hub_codes))})
         }
-        if(state?.smsRead!=true){
+        if(state?.smsRead!=true&&threads.isEmpty()){
             HubCard(Modifier.fillMaxWidth()){
                 Text(stringResource(R.string.hub_sms_permissions))
                 Spacer(Modifier.height(10.dp))
@@ -127,8 +127,8 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                                 color=MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines=1,overflow=TextOverflow.Ellipsis)
                             Text(listOfNotNull(thread.latest.sourceDeviceName.takeIf{it.isNotBlank()},
-                                thread.latest.simTag.takeIf{it.isNotBlank()} ?: (if(thread.latest.historicalUnverified)"历史 SIM 待确认" else "SIM ${thread.subscription}"),
-                                thread.latest.simTail.takeIf{it.isNotBlank()}?.let{"尾号 $it"}).joinToString(" · "),
+                                thread.latest.simTag.takeIf{it.isNotBlank()} ?: (if(thread.latest.historicalUnverified)stringResource(R.string.hub_historical_sim) else stringResource(R.string.hub_sim_slot,thread.subscription)),
+                                thread.latest.simTail.takeIf{it.isNotBlank()}?.let{stringResource(R.string.hub_sim_tail,it)}).joinToString(" · "),
                                 color=MaterialTheme.colorScheme.onSurfaceVariant,
                                 style=MaterialTheme.typography.labelSmall)
                         }
@@ -136,8 +136,8 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                     Spacer(Modifier.height(5.dp))
                 }
                 item{
-                    if((state?.sms?.size?:0)>=2000){
-                        Text("已达到本机加密缓存上限（2000 条），新短信继续增量同步",
+                    if((state?.visibleWindow?:0)>=2000){
+                        Text(stringResource(R.string.hub_cache_limit),
                             style=MaterialTheme.typography.labelSmall,
                             color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }else{
@@ -251,7 +251,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
                 HubIcon(R.drawable.ic_hub_send,Modifier.size(22.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_send))
             }
         }
-        if(!canSend)Text(if(isRemote)"共享设备短信：当前只读，不能使用本机 SIM 冒充原始号码回复" else stringResource(R.string.hub_read_only),
+        if(!canSend)Text(if(isRemote)stringResource(R.string.hub_shared_readonly) else stringResource(R.string.hub_read_only),
             style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
     }
 }
@@ -292,12 +292,12 @@ private fun SmsBubble(sms:HubSms,controller:HubController){
                     }
                 }
                 Tag(DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(Date(sms.date)))
-                Tag(if(sent)"发送" else "接收")
+                Tag(stringResource(if(sent)R.string.hub_sent else R.string.hub_received))
                 if(sendStatus!=null)Tag(stringResource(sendStatus))
                 if(sms.sourceDeviceName.isNotBlank())Tag(sms.sourceDeviceName)
                 if(sms.simTag.isNotBlank())Tag(sms.simTag)
-                if(sms.simTail.isNotBlank())Tag("SIM 尾号 "+sms.simTail)
-                else Tag(if(sms.historicalUnverified)"历史 SIM · 归属待确认" else "SIM 号码未知")
+                if(sms.simTail.isNotBlank())Tag(stringResource(R.string.hub_sim_tail,sms.simTail))
+                else Tag(stringResource(if(sms.historicalUnverified)R.string.hub_historical_sim else R.string.hub_unknown_sim))
             }
         }
     }

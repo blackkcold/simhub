@@ -1,3 +1,16 @@
+## v0.9.0 — Reliability and encrypted sharing hardening
+
+- Persist pool-key rotation requirements after any member opt-out, administrator revocation, reset, or deletion. Quarantine new shared uploads until a Vault-authorized epoch rotation completes; preserve existing ciphertext and E2EE boundaries.
+- Make terminal command ACKs immutable and repeated/stale ACKs idempotent; close the command long-poll lost-notification window.
+- Retry interrupted shared pool uploads with persistent exponential backoff and continue draining 20-message batches across background jobs.
+- Keep independently bounded Android local and remote message windows, and reject historical SIM attribution without a verified Channel ID plus Revision.
+- Require revision-bound Web history labels and validated reply routing, with an explicit recoverable key-rotation pending action.
+- Expand bilingual Compose messaging, dashboard, SIM and settings coverage while retaining one adaptive Activity.
+- Add HTTP connection occupancy/rejection, SQLite busy error and pool-rotation metrics for capacity analysis.
+- Bump the Relay/Android release version and SQLite schema marker to v11. Existing records remain encrypted and available across migration.
+
+**Deployment:** relay upgrade, schema migration and key rotation require backup, production version verification and physical-device validation. Vault-backed key rotation cannot complete unattended when the Vault is unavailable.
+
 ## v0.8.0 — Encrypted SMS sharing and unified adaptive Android
 
 - Repair Web inbox card compression and scrolling; preserve a separate conversation scroll area and load history incrementally as the list approaches the end.

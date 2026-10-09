@@ -44,43 +44,43 @@ private fun ToolSection(title:String, modifier:Modifier=Modifier,content:@Compos
 @Composable
 private fun PairedNodeCard(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                             controller:HubController,modifier:Modifier){
-    ToolSection("设备配对与连接",modifier){
+    ToolSection(hubLabel("设备配对与连接","Device pairing & connection"),modifier){
         if(state?.enrolled==true){
-            StatePill("已配对",true)
+            StatePill(hubLabel("已配对","Paired"),true)
             Spacer(Modifier.height(10.dp))
             Text(state.device,fontWeight=FontWeight.Medium)
             Text(state.server,color=MaterialTheme.colorScheme.onSurfaceVariant,
                 style=MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(10.dp))
             OutlinedButton(onClick=controller::resetEnrollment,modifier=Modifier.fillMaxWidth()){
-                Text("解除配对并同步重置")
+                Text(hubLabel("解除配对并同步重置","Unpair and reset"))
             }
         }else{
-            Text("扫描管理后台生成的配对二维码，或使用短码连接。",
+            Text(hubLabel("扫描管理后台生成的配对二维码，或使用短码连接。","Scan the management QR code or pair using a short code."),
                 color=MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
             Button(onClick=controller::scan,modifier=Modifier.fillMaxWidth()){
-                Text("扫描二维码")
+                Text(hubLabel("扫描二维码","Scan QR code"))
             }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(value=ui.enrollmentLink,onValueChange={ui.enrollmentLink=it},
-                label={Text("配对链接")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                label={Text(hubLabel("配对链接","Pairing link"))},singleLine=true,modifier=Modifier.fillMaxWidth())
             OutlinedButton(onClick={controller.enrollLink(ui.enrollmentLink)},
                 enabled=ui.enrollmentLink.startsWith("simhub://enroll"),
-                modifier=Modifier.fillMaxWidth()){Text("确认配对")}
+                modifier=Modifier.fillMaxWidth()){Text(hubLabel("确认配对","Confirm pairing"))}
             HorizontalDivider(Modifier.padding(vertical=12.dp))
             OutlinedTextField(value=ui.serverUrl,onValueChange={ui.serverUrl=it},
-                label={Text("Relay HTTPS 地址")},singleLine=true,
+                label={Text(hubLabel("Relay HTTPS 地址","Relay HTTPS address"))},singleLine=true,
                 keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Uri),
                 modifier=Modifier.fillMaxWidth())
             OutlinedButton(onClick={controller.startPairing(ui.serverUrl)},
                 enabled=ui.serverUrl.startsWith("https://"),
-                modifier=Modifier.fillMaxWidth()){Text("生成配对短码")}
+                modifier=Modifier.fillMaxWidth()){Text(hubLabel("生成配对短码","Generate pairing code"))}
             if(pairing!=null){
                 Spacer(Modifier.height(10.dp))
                 Text(pairing.code.chunked(4).joinToString(" "),fontSize=26.sp,fontWeight=FontWeight.Bold)
-                Text("指纹 · "+pairing.fingerprint,style=MaterialTheme.typography.labelSmall)
-                Text(if(pairing.waiting)"等待管理员确认" else pairing.error.ifBlank{"配对完成"},
+                Text(hubLabel("指纹 · ","Fingerprint · ")+pairing.fingerprint,style=MaterialTheme.typography.labelSmall)
+                Text(if(pairing.waiting)hubLabel("等待管理员确认","Awaiting admin approval") else pairing.error.ifBlank{hubLabel("配对完成","Pairing complete")},
                     style=MaterialTheme.typography.bodySmall)
                 if(pairing.waiting)LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=9.dp))
             }
@@ -90,31 +90,31 @@ private fun PairedNodeCard(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubView
 
 @Composable
 private fun PermissionsCard(state:HubSnapshot?,controller:HubController,modifier:Modifier){
-    ToolSection("短信与系统权限",modifier){
-        InfoRow("默认短信应用",if(state?.smsRole==true)"已授权" else "未授权")
-        InfoRow("读取短信",if(state?.smsRead==true)"已授权" else "未授权")
-        InfoRow("发送短信",if(state?.smsSend==true)"已授权" else "未授权")
+    ToolSection(hubLabel("短信与系统权限","SMS & system permissions"),modifier){
+        InfoRow(hubLabel("默认短信应用","Default SMS app"),if(state?.smsRole==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
+        InfoRow(hubLabel("读取短信","Read SMS"),if(state?.smsRead==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
+        InfoRow(hubLabel("发送短信","Send SMS"),if(state?.smsSend==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
         OutlinedButton(onClick=controller::requestSmsRole,modifier=Modifier.fillMaxWidth()){
-            Text("设置默认短信应用")
+            Text(hubLabel("设置默认短信应用","Set default SMS app"))
         }
         Spacer(Modifier.height(7.dp))
         OutlinedButton(onClick=controller::requestAccess,modifier=Modifier.fillMaxWidth()){
-            Text("授予必要权限")
+            Text(hubLabel("授予必要权限","Grant required permissions"))
         }
         Spacer(Modifier.height(7.dp))
         OutlinedButton(onClick=controller::requestContacts,modifier=Modifier.fillMaxWidth()){
-            Text("授权读取联系人（可选）")
+            Text(hubLabel("授权读取联系人（可选）","Allow contacts (optional)"))
         }
     }
 }
 
 @Composable
 private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,modifier:Modifier){
-    ToolSection("运行与短信同步",modifier){
+    ToolSection(hubLabel("运行与短信同步","Runtime & synchronization"),modifier){
         Row(verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
-                Text("低延迟前台连接",fontWeight=FontWeight.Medium)
-                Text("开启后保持 Relay 控制命令监听；系统可能限制后台运行。",
+                Text(hubLabel("低延迟前台连接","Low-latency foreground relay"),fontWeight=FontWeight.Medium)
+                Text(hubLabel("开启后保持 Relay 控制命令监听；系统可能限制后台运行。","Keeps command listening active; Android may limit background runtime."),
                     style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked=state?.realtime==true,onCheckedChange=controller::setRealtime,
@@ -123,12 +123,12 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,modifie
         HorizontalDivider(Modifier.padding(vertical=12.dp))
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
             OutlinedButton(onClick={controller.syncHistory(false)},enabled=state?.enrolled==true,
-                modifier=Modifier.weight(1f)){Text("最近 100 条",maxLines=1)}
+                modifier=Modifier.weight(1f)){Text(hubLabel("最近 100 条","Latest 100"),maxLines=1)}
             OutlinedButton(onClick={controller.syncHistory(true)},enabled=state?.enrolled==true,
-                modifier=Modifier.weight(1f)){Text("更早 100 条",maxLines=1)}
+                modifier=Modifier.weight(1f)){Text(hubLabel("更早 100 条","Previous 100"),maxLines=1)}
         }
-        InfoRow("待上传事件",(state?.pending?:0).toString())
-        InfoRow("最近同步",state?.lastSync?.takeIf{it>0}?.let{
+        InfoRow(hubLabel("待上传事件","Queued events"),(state?.pending?:0).toString())
+        InfoRow(hubLabel("最近同步","Last sync"),state?.lastSync?.takeIf{it>0}?.let{
             java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it*1000))
         }?:"—")
         if(state?.transportError?.isNotBlank()==true)
@@ -136,18 +136,18 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,modifie
         if(state?.providerError?.isNotBlank()==true)
             Text("SMS Provider: "+state.providerError,color=MaterialTheme.colorScheme.error)
         OutlinedButton(onClick=controller::refreshDiagnostics,modifier=Modifier.fillMaxWidth()){
-            Text("采集并同步设备状态")
+            Text(hubLabel("采集并同步设备状态","Collect and sync status"))
         }
     }
 }
 
 @Composable
 private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubController,modifier:Modifier){
-    ToolSection("共享短信池",modifier){
+    ToolSection(hubLabel("共享短信池","Shared SMS pool"),modifier){
         Row(verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
-                Text("允许同一管理池设备共享短信",fontWeight=FontWeight.Medium)
-                Text("默认关闭。开启后需 Web 管理员授权；通信始终使用端到端加密。",
+                Text(hubLabel("允许同一管理池设备共享短信","Share SMS with approved devices"),fontWeight=FontWeight.Medium)
+                Text(hubLabel("默认关闭。开启后需 Web 管理员授权；通信始终使用端到端加密。","Off by default. Requires Web admin approval and end-to-end encryption."),
                     style=MaterialTheme.typography.bodySmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -155,8 +155,13 @@ private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubCon
                 enabled=state?.enrolled==true)
         }
         Spacer(Modifier.height(8.dp))
-        StatePill(tools.poolStatus,tools.poolApproved)
-        Text("首次上传最近 100 条；更多历史按需加载。关闭后清除本机共享缓存，不删除原始短信。",
+        StatePill(
+            if(state?.enrolled!=true)hubLabel("未配对","Not paired")
+            else if(!tools.poolEnabled)hubLabel("未开启","Disabled")
+            else if(tools.poolApproved)hubLabel("已授权 · 端到端加密","Approved · end-to-end encrypted")
+            else hubLabel("等待 Web 管理员授权","Awaiting Web admin approval"),
+            tools.poolApproved)
+        Text(hubLabel("首次上传最近 100 条；更多历史按需加载。关闭后清除本机共享缓存，不删除原始短信。","Uploads the latest 100 on first grant; load older history on demand. Turning off clears the cache, not original SMS."),
             style=MaterialTheme.typography.labelSmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -164,11 +169,11 @@ private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubCon
 
 @Composable
 private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:HubController,modifier:Modifier){
-    ToolSection("高级工具与诊断",modifier){
+    ToolSection(hubLabel("高级工具与诊断","Advanced tools & diagnostics"),modifier){
         Row(verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
-                Text("开发者模式",fontWeight=FontWeight.Medium)
-                Text("启用脱敏日志采集与问题排查",
+                Text(hubLabel("开发者模式","Developer mode"),fontWeight=FontWeight.Medium)
+                Text(hubLabel("启用脱敏日志采集与问题排查","Capture redacted logs for troubleshooting"),
                     style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked=tools.developer,onCheckedChange=controller::setDeveloperEnabled)
@@ -176,10 +181,10 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
         HorizontalDivider(Modifier.padding(vertical=12.dp))
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
             OutlinedButton(onClick=controller::checkOta,modifier=Modifier.weight(1f)){
-                Text("检查更新")
+                Text(hubLabel("检查更新","Check for updates"))
             }
             OutlinedButton(onClick=controller::exportDiagnostics,modifier=Modifier.weight(1f)){
-                Text("导出诊断 ZIP")
+                Text(hubLabel("导出诊断 ZIP","Export diagnostic ZIP"))
             }
         }
         if(tools.ota.isNotBlank()){
@@ -189,8 +194,8 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
         if(tools.developer){
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
-                OutlinedButton(onClick=controller::viewLogs,modifier=Modifier.weight(1f)){Text("查看日志")}
-                OutlinedButton(onClick=controller::clearLogs,modifier=Modifier.weight(1f)){Text("清理日志")}
+                OutlinedButton(onClick=controller::viewLogs,modifier=Modifier.weight(1f)){Text(hubLabel("查看日志","View logs"))}
+                OutlinedButton(onClick=controller::clearLogs,modifier=Modifier.weight(1f)){Text(hubLabel("清理日志","Clear logs"))}
             }
             if(tools.logs.isNotBlank()){
                 Spacer(Modifier.height(8.dp))
@@ -199,7 +204,7 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
                         .verticalScroll(rememberScrollState()))
             }
             OutlinedButton(onClick=controller::refreshDiagnostics,modifier=Modifier.fillMaxWidth()){
-                Text("查看设备状态 JSON")
+                Text(hubLabel("查看设备状态 JSON","Show device state JSON"))
             }
             if(tools.diagnostics.isNotBlank()){
                 Text(tools.diagnostics,style=MaterialTheme.typography.bodySmall,
@@ -212,16 +217,16 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
 
 @Composable
 private fun PreferencesCard(tools:HubToolsState,controller:HubController,modifier:Modifier){
-    ToolSection("应用与系统",modifier){
-        Text("显示语言",style=MaterialTheme.typography.labelMedium)
+    ToolSection(hubLabel("应用与系统","App & system"),modifier){
+        Text(hubLabel("显示语言","Language"),style=MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(6.dp))
         var optionsOpen by remember { mutableStateOf(false) }
         Box {
             OutlinedButton(onClick={optionsOpen=true},modifier=Modifier.fillMaxWidth()){
-                Text(listOf("跟随系统","简体中文","English").getOrElse(tools.language){"跟随系统"})
+                Text(listOf(hubLabel("跟随系统","System default"),hubLabel("简体中文","Simplified Chinese"),"English").getOrElse(tools.language){hubLabel("跟随系统","System default")})
             }
             DropdownMenu(expanded=optionsOpen,onDismissRequest={optionsOpen=false}){
-                listOf("跟随系统","简体中文","English").forEachIndexed { index,label->
+                listOf(hubLabel("跟随系统","System default"),hubLabel("简体中文","Simplified Chinese"),"English").forEachIndexed { index,label->
                     DropdownMenuItem(text={Text(label)},onClick={
                         optionsOpen=false;controller.setLanguage(index)
                     })
@@ -230,12 +235,12 @@ private fun PreferencesCard(tools:HubToolsState,controller:HubController,modifie
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick=controller::openNetworkSettings,modifier=Modifier.fillMaxWidth()){
-            Text("打开系统移动网络设置")
+            Text(hubLabel("打开系统移动网络设置","Open mobile network settings"))
         }
         HorizontalDivider(Modifier.padding(vertical=12.dp))
-        InfoRow("版本号",BuildConfig.VERSION_NAME)
-        InfoRow("安装 / 更新日期",tools.installedAt.ifBlank{"—"})
-        InfoRow("构建版本",BuildConfig.VERSION_CODE.toString())
+        InfoRow(hubLabel("版本号","Version"),BuildConfig.VERSION_NAME)
+        InfoRow(hubLabel("安装 / 更新日期","Installed / updated"),tools.installedAt.ifBlank{"—"})
+        InfoRow(hubLabel("构建版本","Build"),BuildConfig.VERSION_CODE.toString())
     }
 }
 

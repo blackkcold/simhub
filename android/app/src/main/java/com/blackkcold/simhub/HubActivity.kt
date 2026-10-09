@@ -349,7 +349,7 @@ class HubActivity: ComponentActivity(), HubController {
         lifecycleScope.launch{
             try{
                 withContext(Dispatchers.IO){SharedPoolClient(applicationContext).setEnabled(value)}
-                refresh();toast(if(value)"已申请共享，请在 Web 管理后台授权" else "共享已关闭，本机共享缓存已清理")
+                refresh();toast(getString(if(value)R.string.hub_sharing_requested else R.string.hub_sharing_disabled))
             }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e));refresh()}
         }
     }
@@ -365,7 +365,7 @@ class HubActivity: ComponentActivity(), HubController {
                         System.currentTimeMillis()/1000,-1,false,payload,org.json.JSONObject())
                     SyncJobService.scheduleNow(applicationContext)
                 }
-                refresh();toast("SIM 标签已保存")
+                refresh();toast(getString(R.string.hub_sim_tag_saved))
             }catch(e:Exception){toast(UiErrors.message(this@HubActivity,e))}
         }
     }

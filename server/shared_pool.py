@@ -22,6 +22,12 @@ def init(con: sqlite3.Connection) -> None:
         vault_envelope TEXT NOT NULL,
         created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS sms_pool_security (
+        pool_id TEXT PRIMARY KEY,
+        rotation_required INTEGER NOT NULL DEFAULT 0,
+        requested_at INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT OR IGNORE INTO sms_pool_security(pool_id) VALUES('default');
     CREATE TABLE IF NOT EXISTS sms_pool_members (
         device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
         requested INTEGER NOT NULL DEFAULT 0,
@@ -70,6 +76,28 @@ def member(con, device):
         (device,)).fetchone()
 
 
+def rotation_required(con) -> bool:
+    row=con.execute("SELECT rotation_required FROM sms_pool_security WHERE pool_id=?",(POOL,)).fetchone()
+    return bool(row and row[0])
+
+
+def require_rotation(con):
+    if current_key(con):
+        con.execute("UPDATE sms_pool_security SET rotation_required=1,requested_at=? WHERE pool_id=?",
+                    (int(time.time()),POOL))
+
+
+def member_departure(con,device):
+    """Invalidate membership inside an enclosing device lifecycle transaction."""
+    row=con.execute("SELECT approved FROM sms_pool_members WHERE device_id=?",(device,)).fetchone()
+    if row and row[0]:
+        require_rotation(con)
+    con.execute("UPDATE sms_pool_members SET approved=0,requested=0,updated_at=? WHERE device_id=?",
+                (int(time.time()),device))
+    con.execute("DELETE FROM sms_pool_member_keys WHERE device_id=?",(device,))
+    return bool(row and row[0])
+
+
 def enabled(con,device) -> bool:
     row=member(con,device)
     return bool(row and row["requested"] and row["approved"])
@@ -88,6 +116,7 @@ def admin_status(con):
         "ORDER BY d.created_at DESC").fetchall()
     return {
         "poolId":POOL,
+        "rotationRequired":rotation_required(con),
         "epoch":key["epoch"] if key else 0,
         "keyId":key["key_id"] if key else "",
         "vaultEnvelope":json.loads(key["vault_envelope"]) if key else None,
@@ -100,13 +129,16 @@ def admin_status(con):
 
 def request(con,device,on):
     ts=int(time.time())
+    previous=enabled(con,device)
     con.execute(
         "INSERT INTO sms_pool_members(device_id,requested,approved,updated_at) "
         "VALUES(?,?,0,?) ON CONFLICT(device_id) DO UPDATE SET "
         "requested=excluded.requested,approved=CASE WHEN excluded.requested=0 "
         "THEN 0 ELSE sms_pool_members.approved END,updated_at=excluded.updated_at",
         (device,1 if on else 0,ts))
-    if not on:con.execute("DELETE FROM sms_pool_member_keys WHERE device_id=?",(device,))
+    if not on:
+        con.execute("DELETE FROM sms_pool_member_keys WHERE device_id=?",(device,))
+        if previous:require_rotation(con)
     return {"ok":True,"requested":bool(on),"approved":bool(on and enabled(con,device))}
 
 
@@ -117,6 +149,8 @@ def provision(con, body):
     row=member(con,device)
     if not row or not row["requested"]:
         raise ValueError("Node must first opt in to sharing")
+    if rotation_required(con):
+        raise ValueError("Pool Key rotation required before new grants")
     envelope=body.get("memberEnvelope")
     if not valid_cipher(envelope):
         raise ValueError("Valid per-node wrapped Pool Key required")
@@ -155,15 +189,15 @@ def provision(con, body):
 
 def revoke(con,device):
     if not member(con,device):raise ValueError("Unknown member")
-    con.execute("UPDATE sms_pool_members SET approved=0,requested=0,updated_at=? WHERE device_id=?",
-                (int(time.time()),device))
-    con.execute("DELETE FROM sms_pool_member_keys WHERE device_id=?",(device,))
-    return {"ok":True,"revoked":device,"rotationRequired":True}
+    member_departure(con,device)
+    return {"ok":True,"revoked":device,"rotationRequired":rotation_required(con)}
 
 
 def rotate(con,body):
     old=current_key(con)
     if not old:raise ValueError("Pool not initialized")
+    if "expectedEpoch" in body and body["expectedEpoch"]!=old["epoch"]:
+        raise ValueError("Pool epoch advanced, reload before rotating")
     key_id=body.get("keyId")
     vault=body.get("vaultEnvelope")
     envelopes=body.get("members")
@@ -183,6 +217,7 @@ def rotate(con,body):
     for did,enc in envelopes.items():
         con.execute("INSERT INTO sms_pool_member_keys VALUES(?,?,?)",
                     (did,epoch,json_key(enc)))
+    con.execute("UPDATE sms_pool_security SET rotation_required=0,requested_at=0 WHERE pool_id=?",(POOL,))
     return {"ok":True,"epoch":epoch}
 
 
@@ -198,12 +233,14 @@ def node_status(con,device):
                 "WHERE m.device_id=? ORDER BY k.epoch DESC LIMIT 32",(device,)):
             keys.append({"epoch":k["epoch"],"keyId":k["key_id"],"wrappedKey":json.loads(k["wrapped_envelope"])})
     return {"poolId":POOL,"requested":bool(row and row["requested"]),
-            "approved":on,"epoch":key["epoch"] if key else 0,
+            "approved":on,"rotationRequired":rotation_required(con),
+            "epoch":key["epoch"] if key else 0,
             "keys":keys}
 
 
 def put_messages(con,device,body):
     if not enabled(con,device):raise PermissionError("Pool access is not enabled")
+    if rotation_required(con):raise PermissionError("Pool Key rotation required before new uploads")
     key=current_key(con)
     items=body.get("messages")
     if not isinstance(items,list) or not 1<=len(items)<=MAX_BATCH:

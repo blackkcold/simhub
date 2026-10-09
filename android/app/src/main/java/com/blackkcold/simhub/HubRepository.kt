@@ -34,7 +34,8 @@ data class HubSnapshot(
     val smsSend: Boolean,
     val state: JSONObject,
     val sms: List<HubSms>,
-    val localDeviceId:String=""
+    val localDeviceId:String="",
+    val visibleWindow:Int=100
 ) {
     val threads: List<HubThread> get() = sms.groupBy { keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision) }
         .map { (key, items) -> HubThread(key,items.first().from,items.first().subscription,items.first(),items.size) }
@@ -104,15 +105,16 @@ object HubRepository {
                         ?:body.optString("simTag",""),
                     profile?.optString("tail","")?.ifBlank{body.optString("simTail","")}
                         ?:body.optString("simTail",""),
-                    shared=true,historicalUnverified=channel.isBlank(),channelRevision=revision)
+                    shared=true,historicalUnverified=channel.isBlank()||revision<=0,channelRevision=revision)
             }
         }catch(error:Exception){AppLogger.e(context,"SharedPool","Cannot read shared cache",error);emptyList()}
-        val unified=(local+remote).sortedWith(compareByDescending<HubSms>{it.date}.thenByDescending{it.id}).take(limit)
+        // Keep independent per-source windows: a busy local inbox must not hide shared SMS.
+        val unified=(local+remote).sortedWith(compareByDescending<HubSms>{it.date}.thenByDescending{it.id})
         return HubSnapshot(
             cfg.isEnrolled(), cfg.deviceName(),cfg.server(),cfg.alwaysOn(),
             LocalStore.get(context).pendingEventCount(),cfg.lastSyncSuccessAt(),
             cfg.lastSyncError(),cfg.smsProviderError(),smsRole,read,send,state,
-            unified,cfg.deviceId()
+            unified,cfg.deviceId(),limit
         )
     }
     fun readMessages(context: Context,limit:Int): List<HubSms> {

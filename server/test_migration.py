@@ -50,8 +50,9 @@ class MigrationTest(unittest.TestCase):
             finally:
                 srv.DB_PATH=old
             with sqlite3.connect(db) as con:
-                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],10)
+                self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],11)
                 self.assertEqual(con.execute("SELECT COUNT(*) FROM events").fetchone()[0],1)
+                self.assertEqual(con.execute("SELECT rotation_required FROM sms_pool_security WHERE pool_id='default'").fetchone()[0],0)
                 device_cols={r[1] for r in con.execute("PRAGMA table_info(devices)")}
                 token_cols={r[1] for r in con.execute("PRAGMA table_info(enrollment_tokens)")}
                 self.assertTrue({"node_type","capabilities_json","key_id","wrapped_key_json","pending_key_id","pending_wrapped_key_json","token_issued_at","pending_token_hash","pending_token_expires_at"} <= device_cols)

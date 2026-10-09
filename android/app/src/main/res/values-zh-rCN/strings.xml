@@ -200,4 +200,13 @@
     <string name="hub_sms_queued">待发送</string>
     <string name="hub_sms_failed">发送失败</string>
     <string name="hub_sms_draft">草稿</string>
+    <string name="hub_historical_sim">历史 SIM · 归属待确认</string>
+    <string name="hub_sim_slot">SIM %1$d</string>
+    <string name="hub_sim_tail">SIM 尾号 %1$s</string>
+    <string name="hub_cache_limit">已达到单来源加密缓存窗口（2,000 条），新短信继续增量同步。</string>
+    <string name="hub_shared_readonly">共享设备短信只读，不能通过本机 SIM 冒充原始号码回复。</string>
+    <string name="hub_unknown_sim">SIM 号码未知</string>
+    <string name="hub_sharing_requested">已申请共享，请在 Web 管理后台授权</string>
+    <string name="hub_sharing_disabled">共享已关闭，本机共享缓存已清理</string>
+    <string name="hub_sim_tag_saved">SIM 标签已保存</string>
 </resources>

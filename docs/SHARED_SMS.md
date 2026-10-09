@@ -18,7 +18,7 @@ The admin creates a different independently wrapped Pool Key after a revocation.
 - First grant: scan up to the most recent **100** local SMS and cache the **100** newest encrypted SMS from the pool. All local SMS stay in the system SMS Provider; other devices' SMS are **never inserted** into the provider.
 - Android queue events locally under its Keystore-protected local queue key; use batches of **20** encrypted events per upstream call.
 - Subsequent pool reads use the relay's monotonic sequence cursor (`since`), while historical pagination uses timestamp + sequence keyset pagination (`beforeTime` and `beforeSeq`). This distinction prevents losing older messages arriving late.
-- UI history requests fetch **50** ciphertext events at a time. Cache defaults to **500** encrypted records; historical Provider scan is independently limited to **100** per request.
+- UI history requests fetch **50** ciphertext events at a time. Cache is bounded to **2,000** encrypted records; historical Provider scan is independently limited to **100** per request.
 - Upload/replay deduplication identity: `originDeviceId + originEventId`. Source-device encrypted originals remain distinct.
 - Low-latency command and ACK processing runs **before** optional pool traffic. Pool transport failures must not stop ordinary Relay functions.
 - Local opt-out is immediate, even if the network is down; remote opt-out is journaled for retry. Server may still temporarily hold ciphertext created before revocation until the remote request completes.

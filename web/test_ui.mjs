@@ -107,7 +107,7 @@ try {
       document.getElementById("appContent").hidden=false;
       document.getElementById("newSmsBtn").hidden=false;
       const text="【模拟通知】 "+("这是一条包含超长号码和短信正文的测试消息 1234567890 ".repeat(16));
-      document.getElementById("inboxList").innerHTML=Array.from({length:26},(_,i)=>
+      document.getElementById("inboxItems").innerHTML=Array.from({length:26},(_,i)=>
         '<button type="button" class="message"><span class="avatar">9</span>'+
         '<span class="message-body"><span class="message-title"><strong>'+
         '10682635927538612345678901234567890'+i+'</strong><small class="meta">2026-10-08 17:55</small></span>'+
@@ -124,7 +124,7 @@ try {
       const rect=id=>{const r=document.querySelector(id).getBoundingClientRect();return {x:r.left,y:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};};
       const doc=document.documentElement;
       return {docWidth:doc.scrollWidth,viewport:window.innerWidth,
-        list:rect(".sms-sidebar"),message:rect("#inboxList .message"),
+        list:rect(".sms-sidebar"),message:rect("#inboxItems .message"),
         panel:rect("#conversationPanel"),previewStyle:getComputedStyle(document.querySelector(".message-preview")).display};
     });
     assert.ok(layout.docWidth<=width+1,`Horizontal page overflow at ${width}: ${JSON.stringify(layout)}`);
@@ -132,6 +132,11 @@ try {
     if(width>900){
       const listOverflow=await page.locator("#inboxList").evaluate(el=>({scroll:el.scrollHeight,client:el.clientHeight,overflow:getComputedStyle(el).overflowY}));
       assert.ok(listOverflow.scroll>listOverflow.client&&listOverflow.overflow==="auto",`Inbox must scroll independently at ${width}: ${JSON.stringify(listOverflow)}`);
+      const cardSize=await page.locator('#inboxItems .message').first().evaluate(el=>({height:el.getBoundingClientRect().height,flex:getComputedStyle(el).flexShrink}));
+      assert.ok(cardSize.height>=76 && Number(cardSize.flex)===0,`Inbox cards must not shrink at ${width}: ${JSON.stringify(cardSize)}`);
+      await page.locator('#inboxList').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+      const actualScroll=await page.locator('#inboxList').evaluate(el=>el.scrollTop);
+      assert.ok(actualScroll>0,`Inbox scrollTop must advance at ${width}`);
     }
     assert.equal(layout.previewStyle,"block",`SMS preview must ellipsize as a block at ${width}`);
     if(width>900){

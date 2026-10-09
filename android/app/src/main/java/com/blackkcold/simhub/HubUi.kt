@@ -72,8 +72,15 @@ private val navText=listOf(R.string.hub_home,R.string.hub_sms,R.string.hub_sim,R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:FoldingFeature?,controller:HubController){
+fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:FoldingFeature?,
+           controller:HubController,incomingId:Int=0,incomingRecipient:String="",incomingBody:String=""){
     val ui:HubViewModel=viewModel()
+    LaunchedEffect(incomingId){
+        if(incomingId>0){
+            ui.tab=1;ui.thread="__new__";ui.newRecipient=incomingRecipient
+            ui.drafts["__new__"]=incomingBody
+        }
+    }
     BackHandler(enabled=ui.tab!=0 || ui.thread!=null || ui.simDetail>=0){
         if(ui.tab==1 && ui.thread!=null)ui.thread=null
         else if(ui.tab==2 && ui.simDetail>=0)ui.simDetail=-1

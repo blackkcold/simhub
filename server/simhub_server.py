@@ -29,7 +29,9 @@ from pathlib import Path
 import passkeys
 from typing import Any
 
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.5.3"
+SERVER_STARTED_AT = int(time.time())
+DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
@@ -341,6 +343,33 @@ def _migrate_v7(con: sqlite3.Connection) -> None:
     _add_column(con, "admin_sessions", "elevated_until", "INTEGER NOT NULL DEFAULT 0")
     con.execute("DELETE FROM admin_sessions WHERE admin_fingerprint=''")
 
+def _migrate_v8(con: sqlite3.Connection) -> None:
+    for name, ddl in (
+        ("sms_purged_before", "INTEGER NOT NULL DEFAULT 0"),
+        ("sms_epoch", "INTEGER NOT NULL DEFAULT 0"),
+        ("reset_requested_at", "INTEGER NOT NULL DEFAULT 0"),
+        ("reset_source", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        _add_column(con, "devices", name, ddl)
+
+
+def purge_device_record(con: sqlite3.Connection, device_id: str, ts: int) -> bool:
+    """Delete all business data while retaining only an expiring opaque reset receipt."""
+    row = con.execute("SELECT token_hash,pending_token_hash FROM devices WHERE id=?", (device_id,)).fetchone()
+    if row is None:
+        return False
+    for token_hash in (row["token_hash"], row["pending_token_hash"]):
+        if token_hash:
+            con.execute(
+                "INSERT OR IGNORE INTO device_reset_tombstones(device_id,token_hash,created_at,expires_at) VALUES(?,?,?,?)",
+                (device_id, token_hash, ts, ts + 90 * 86400),
+            )
+    for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history"):
+        con.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
+    con.execute("DELETE FROM devices WHERE id=?", (device_id,))
+    return True
+
+
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open_db() as con:
@@ -351,13 +380,14 @@ def init_db() -> None:
         _migrate_v5(con)
         _migrate_v6(con)
         _migrate_v7(con)
+        _migrate_v8(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
-        con.execute("PRAGMA user_version=8")
+        con.execute("PRAGMA user_version=9")
     run_maintenance()
 
 
 def run_maintenance() -> dict[str,int]:
-    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0,"pendingTokens":0}
+    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0,"pendingTokens":0,"resetTombstones":0}
     with open_db() as con:
         if EVENT_RETENTION_DAYS>0:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
@@ -367,6 +397,7 @@ def run_maintenance() -> dict[str,int]:
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
+        result["resetTombstones"]=con.execute("DELETE FROM device_reset_tombstones WHERE expires_at<?",(ts,)).rowcount
     return result
 
 
@@ -862,7 +893,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<8:
+                if version<9:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:

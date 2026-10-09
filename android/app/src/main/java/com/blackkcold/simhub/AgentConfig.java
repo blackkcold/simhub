@@ -20,6 +20,8 @@ public final class AgentConfig {
     public boolean resetPending(){return prefs.getBoolean("reset_pending",false);}
     public boolean remoteResetNotified(){return prefs.getBoolean("remote_reset_notified",false);}
     public void markRemoteResetNotified(){prefs.edit().putBoolean("remote_reset_notified",true).apply();}
+    public boolean remoteResetPending(){return prefs.getBoolean("remote_reset_pending",false);}
+    public void markRemoteResetPending(){markResetPending();prefs.edit().putBoolean("remote_reset_pending",true).apply();}
     public void markResetPending(){prefs.edit().putBoolean("reset_pending",true).apply();resetSyncBackoff();}
     public String server(){return prefs.getString("server","");}
     public String deviceId(){return prefs.getString("device_id","");}
@@ -128,7 +130,7 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").putBoolean("always_on",false).apply();
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
         secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);
     }
 }

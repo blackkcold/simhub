@@ -71,9 +71,7 @@ public final class ApiClient {
         try{
             JSONObject status=request("GET","/api/v1/devices/"+cfg.deviceId()+"/lifecycle",null);
             if(status.optBoolean("resetRequired",false)){
-                cfg.markResetPending();performPendingReset();
-                if(!cfg.resetPending()){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
-                return true;
+                cfg.markRemoteResetPending();performPendingReset();return true;
             }
             return false;
         }catch(ApiFailure error){
@@ -91,16 +89,19 @@ public final class ApiClient {
     private void performPendingReset(){
         long delay=cfg.nextSyncAllowedAt()-System.currentTimeMillis();
         if(delay>0){SyncJobService.scheduleAfter(c,delay);return;}
+        boolean notifyRemote=cfg.remoteResetPending();
         try{
             requireHttps(cfg.server());
             raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/reset","POST",new JSONObject(),
                 "Device "+cfg.deviceToken(),cfg.deviceId());
             EnrollmentManager.reset(c);
             cfg.resetSyncBackoff();
+            if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
             AppLogger.i(c,"Enrollment","Server confirmed reset; local data cleared");
         }catch(ApiFailure failure){
             if(failure.status==410){
                 EnrollmentManager.reset(c);
+                if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
                 AppLogger.i(c,"Enrollment","Server already deleted device; local data cleared");
                 return;
             }

@@ -319,3 +319,12 @@ main{padding:16px 14px calc(102px + env(safe-area-inset-bottom))}
   .reply-composer{max-height:48%;overflow-y:auto;flex:0 0 auto}
   .reply-composer textarea{min-height:46px}
 }
+
+.enrollment-qr{display:flex;align-items:center;justify-content:center;margin:12px 0;min-height:0}
+.enrollment-qr:empty{display:none}
+.enrollment-qr canvas,.enrollment-qr img{max-width:100%;border:12px solid #fff;border-radius:12px}
+.pair-code-card{border-top:1px solid var(--line);margin-top:22px;padding-top:16px}
+.pair-code-card h3{font-size:16px;margin:0}
+.pair-code-card .row input{width:min(190px,100%);font-variant-numeric:tabular-nums;letter-spacing:0.12em}
+.pair-code-card .row button{min-height:44px}
+#pairCodeStatus{overflow-wrap:anywhere;font-size:12px}

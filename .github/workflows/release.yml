@@ -2,12 +2,10 @@ name: Publish signed release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
     branches:
       - main
     paths:
-      - '.github/release/v0.10.0.trigger'
+      - '.github/release/v0.11.0.trigger'
 
 permissions:
   contents: read
@@ -38,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.10.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.11.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -89,6 +87,47 @@ jobs:
       - run: node web/test_bootstrap_vector.mjs
       - run: python3 -m py_compile server/simhub_server.py server/passkeys.py scripts/setup.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
       - run: bash -n modem_agent/install.sh scripts/install-updater.sh
+
+  build-image:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push prebuilt relay image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          push: true
+          tags: ghcr.io/blackkcold/simhub-relay:v${{ needs.validate.outputs.version }}
+          provenance: true
+          platforms: linux/amd64,linux/arm64
+      - uses: sigstore/cosign-installer@v3.9.0
+      - name: Sign and verify immutable OCI digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/blackkcold/simhub-relay@$IMAGE_DIGEST"
+          cosign sign --yes "$IMAGE"
+          cosign verify \
+            --certificate-identity="https://github.com/blackkcold/simhub/.github/workflows/release.yml@refs/heads/main" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            "$IMAGE"
 
   sign:
     needs: validate
@@ -174,7 +213,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [validate, sign]
+    needs: [validate, sign, build-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -207,8 +246,10 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          IMAGE_DIGEST: ${{ needs.build-image.outputs.digest }}
         run: |
           set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
           mkdir -p release/docs
           git archive --format=zip --output="release/simhub-v${VERSION}-source.zip" HEAD
           cp README.md README.zh-CN.md CHANGELOG.md SECURITY.md THREAT_MODEL.md THIRD_PARTY_NOTICES.md LICENSE release/docs/
@@ -235,7 +276,7 @@ jobs:
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
               "notes":"Verified service and Android update support",
-              "server":{"version":version,"asset":source,"sha256":digest(source),"dbSchema":db_schema},
+              "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
                          "packageName":"com.blackkcold.simhub"},
@@ -261,14 +302,14 @@ jobs:
 
           ## Highlights
           - Add GitHub stable Release discovery and a machine-readable checksum-pinned update manifest.
-          - Add an independent restricted host updater for Docker source builds, SQLite backup, readiness verification and image rollback.
+          - Publish a Sigstore keyless signed OCI image to GHCR; deploy through a non-root rootless-only updater with SQLite backup, digest verification and rollback.
           - Provide Web settings with update checks, ignored versions, installation stages, and step-up protected deployment.
           - Add Android daily background checks, opt-in automatic APK download, certificate and SHA-256 verification and PackageInstaller handoff.
           - Retain existing SIM identities, credentials, ciphertext and app data across normal upgrades.
           - Add archive validation, update policy tests and clear one-time host bootstrap documentation.
 
           ## Host activation
-          After upgrading to this release, run \`sudo bash scripts/install-updater.sh\`
+          After migrating the Docker engine to rootless mode, run \`bash scripts/install-updater.sh\`
           on the Docker host to enable one-click future upgrades from Web settings.
           Android may still ask for system installation permission or confirmation.
 

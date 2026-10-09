@@ -54,9 +54,23 @@ public final class MainActivity extends Activity {
     private void handleIntent(Intent i){if(i!=null&&Intent.ACTION_VIEW.equals(i.getAction())&&i.getData()!=null&&"simhub".equals(i.getData().getScheme())){enrollLink.setText(i.getData().toString());AppLogger.i(this,"Enrollment","Enrollment link opened");}}
     private final java.util.concurrent.atomic.AtomicBoolean enrolling=new java.util.concurrent.atomic.AtomicBoolean(false);
     private void doEnroll(){
-        if(!enrolling.compareAndSet(false,true))return;
         String link=enrollLink.getText().toString().trim();
-        if(link.isEmpty()){enrolling.set(false);toast(R.string.enrollment_link_first);return;}
+        if(link.isEmpty()){toast(R.string.enrollment_link_first);return;}
+        try{
+            Uri u=Uri.parse(link);
+            if(!"simhub".equalsIgnoreCase(u.getScheme())||!"enroll".equalsIgnoreCase(u.getHost()))throw new IllegalArgumentException("Invalid pairing package");
+            java.net.URI target=java.net.URI.create(u.getQueryParameter("server"));
+            if(!"https".equalsIgnoreCase(target.getScheme())||target.getHost()==null)throw new SecurityException("HTTPS required");
+            // Explicit human verification: never auto-enroll a link delivered by
+            // another Android app or an unverified custom-Scheme intent.
+            new AlertDialog.Builder(this).setTitle(R.string.enrollment_confirm_title)
+                .setMessage(getString(R.string.enrollment_confirm_message,target.getHost()))
+                .setNegativeButton(R.string.cancel,null)
+                .setPositiveButton(R.string.enrollment_confirm_action,(dialog,which)->startEnrollment(link)).show();
+        }catch(Exception error){toast(R.string.err_invalid_enrollment);}
+    }
+    private void startEnrollment(String link){
+        if(!enrolling.compareAndSet(false,true))return;
         final View button=findViewById(R.id.enrollButton);button.setEnabled(false);
         AppLogger.i(this,"Enrollment","Enrollment started");
         exec.execute(()->{

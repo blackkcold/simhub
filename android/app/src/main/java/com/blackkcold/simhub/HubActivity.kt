@@ -167,7 +167,7 @@ class HubActivity: ComponentActivity(), HubController {
                                 return@launch
                             }
                         }
-                        pairing=PairingDisplay(session.code,session.fingerprint,false,getString(R.string.hub_pair_expired))
+                        pairing=PairingDisplay(session.code,session.fingerprint,false,getString(R.string.hub_pair_timeout))
                     }catch(e:Exception){
                         AppLogger.e(this@HubActivity,"Pairing","Code pairing failed",e)
                         pairing=PairingDisplay("","",false,UiErrors.message(this@HubActivity,e))

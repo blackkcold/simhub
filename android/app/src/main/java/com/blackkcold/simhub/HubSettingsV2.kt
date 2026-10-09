@@ -155,7 +155,12 @@ private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubCon
                 enabled=state?.enrolled==true)
         }
         Spacer(Modifier.height(8.dp))
-        StatePill(tools.poolStatus,tools.poolApproved)
+        StatePill(
+            if(state?.enrolled!=true)hubLabel("未配对","Not paired")
+            else if(!tools.poolEnabled)hubLabel("未开启","Disabled")
+            else if(tools.poolApproved)hubLabel("已授权 · 端到端加密","Approved · end-to-end encrypted")
+            else hubLabel("等待 Web 管理员授权","Awaiting Web admin approval"),
+            tools.poolApproved)
         Text(hubLabel("首次上传最近 100 条；更多历史按需加载。关闭后清除本机共享缓存，不删除原始短信。","Uploads the latest 100 on first grant; load older history on demand. Turning off clears the cache, not original SMS."),
             style=MaterialTheme.typography.labelSmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)

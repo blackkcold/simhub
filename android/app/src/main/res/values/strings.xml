@@ -205,8 +205,6 @@
     <string name="hub_sim_tail">SIM ending %1$s</string>
     <string name="hub_cache_limit">Encrypted cache window reached (2,000 per source). New SMS continue syncing.</string>
     <string name="hub_shared_readonly">Shared SMS is read-only; reply from its original SIM is not available on this device.</string>
-    <string name="hub_sent">Sent</string>
-    <string name="hub_received">Received</string>
     <string name="hub_unknown_sim">SIM number unknown</string>
     <string name="hub_sharing_requested">Sharing requested. Approve this device in Web settings.</string>
     <string name="hub_sharing_disabled">Sharing stopped; local shared cache cleared.</string>

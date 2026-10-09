@@ -86,3 +86,12 @@ Android normally routes data to its **system-selected default mobile-data SIM** 
 4. Verify the phone can access the network after switching Wi-Fi off. The OS, not SIM Hub, performs the actual data routing. The feature is a **monitoring/policy validation aid**, not a privileged automatic SIM switch.
 
 See [Compatibility](COMPATIBILITY.md) and [v0.4–v0.5 migration](UPGRADE_0.4_TO_0.5.md).
+
+
+## Device pairing
+
+**Scan from controller:** Sign in and unlock the Web Vault, select **Add device → Android**, generate the enrollment package, then in the Android Agent tap **Scan controller QR code**. Confirm the HTTPS Relay hostname and finish registration.
+
+**Android-initiated:** On an unpaired Android Agent, enter the **HTTPS device-origin URL** (not the admin hostname if separated), tap **Generate pairing code**, and note the eight-digit code and device fingerprint. In the unlocked Web controller, open **Add device → Pair with Android code**, enter the code, verify the **fingerprint displayed on both devices** and approve with administrator step-up. Android completes the pairing automatically while the request remains valid (five minutes).
+
+Both methods require the usual SMS role and SIM permissions after enrollment. If the device was previously paired, unpair it first. A QR code is a one-time credential and should not be shared or saved publicly; a short code alone never grants access.

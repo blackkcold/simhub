@@ -577,7 +577,9 @@ async function createEnrollment(){
       $('openEnroll').hidden=true;
     }else{
       value='simhub://enroll?v=4&server='+encodeURIComponent(server)+'&token='+encodeURIComponent(r.token)+'&bootstrap='+encodeURIComponent(bootstrap)+'&name='+encodeURIComponent(name);
-      $('openEnroll').href=value;$('openEnroll').hidden=false;
+      // Never hand bootstrap credentials to another app through a custom-Scheme
+      // intent chooser: copy and paste the one-time package INSIDE the Agent.
+      $('openEnroll').removeAttribute('href');$('openEnroll').hidden=true;
     }
     $('enrollLink').value=value;$('enrollResult').hidden=false;
     toast(tr(type==='modem'?'enroll_modem_done':'enroll_android_done'));

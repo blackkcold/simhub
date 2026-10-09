@@ -729,7 +729,8 @@ function openConversation(key){
   const currentChannel=nodeChannels(devices.find(x=>x.id===did)).find(ch=>String(ch.id)===channel);
   const stale=originalRevision>0&&
     (!currentChannel||Number(currentChannel.revision||currentChannel.channelRevision||1)!==originalRevision);
-  const canReply=!stale&&/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
+  const confirmed=!!last.payload?.channelId&&originalRevision>0;
+  const canReply=confirmed&&!stale&&/^\+?[0-9 ()-]{3,40}$/.test(number)&&!!$('replySubscription').value;
   $('replySend').disabled=!canReply;
   if(!canReply){$('replyOptions').open=true;toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');}
   syncResponsiveConversation();

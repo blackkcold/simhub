@@ -39,6 +39,18 @@ public final class SharedPoolClient {
         prefs=this.context.getSharedPreferences(PREF,Context.MODE_PRIVATE);
         store=new Store(this.context);
     }
+    /** Called on both local and remote enrollment reset. Never contacts the Relay. */
+    public static void clearLocalForReset(Context c){
+        SharedPoolClient client=new SharedPoolClient(c);
+        client.store.clear();
+        SecretStore secret=new SecretStore(c);
+        for(int epoch:client.epochs()){
+            try{secret.remove("pool-key-"+epoch);}
+            catch(Exception e){AppLogger.e(c,"SharedPool","Pool Key cleanup failed during reset",e);}
+        }
+        if(!client.prefs.edit().clear().commit())
+            throw new IllegalStateException("Unable to clear local pool settings");
+    }
     public boolean optedIn(){return prefs.getBoolean("requested",false);}
     public boolean approved(){return optedIn()&&prefs.getBoolean("approved",false);}
     public String status(){

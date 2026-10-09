@@ -205,7 +205,9 @@ try {
     document.getElementById("diagnosticsDialog").showModal();
     document.getElementById("diagnosticsOutput").textContent="PRIVATE_DIAG_TEST_MARKER";
   });
-  await p.locator("#lockBtn").click({force:true});
+  // Programmatic click models the idle-expiry path even while a modal is open:
+  // a pointer click cannot reach controls behind an active <dialog>.
+  await p.evaluate(()=>document.getElementById("lockBtn").click());
   const leak=await p.evaluate(()=>{
     const ids=['inboxList','deviceList','conversationMessages','diagnosticsOutput','enrollLink','sendBody','replyBody','recoveryKey'];
     return {fields:ids.map(id=>{const el=document.getElementById(id);return {id,content:el.value??el.textContent??'',html:el.innerHTML}}),

@@ -41,7 +41,7 @@
 
 ## 在线更新
 
-Web「设置 → 系统版本」支持 GitHub Release 检测、忽略及一键 Docker 源码构建更新。首次需在**宿主机**执行 `sudo bash scripts/install-updater.sh`，Web 容器不接触 Docker Socket；升级前备份 SQLite，健康检查失败恢复上一镜像。Android「设置 → 高级工具」支持检查更新、忽略版本、自动下载与通过系统确认安装签名 APK。参见 [部署](docs/DEPLOYMENT.md) 与 [Android](docs/ANDROID_SETUP.md) 指南。
+Web「设置 → 系统版本」支持 GitHub Release 检测、忽略及一键部署**经 Sigstore 签名验证、Digest 固定的 GHCR 镜像**。须先迁移至 **Rootless Docker**，安装可信 Cosign，并由专用非 root 用户执行 `bash scripts/install-updater.sh`。旧 root 更新服务须停用。Web 容器不接触 Docker Socket；升级前备份 SQLite，健康检查失败回滚上一镜像。详情见[迁移说明](docs/DEPLOYMENT.md)。Android「设置 → 高级工具」支持检查更新、忽略版本、自动下载与通过系统确认安装签名 APK。参见 [部署](docs/DEPLOYMENT.md) 与 [Android](docs/ANDROID_SETUP.md) 指南。
 
 ## 核心功能
 

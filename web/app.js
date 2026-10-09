@@ -680,13 +680,13 @@ async function sha256Hex(text){
 async function approveDevicePairCode(){
   if(!vaultRaw||!vaultKey)throw Error('请先解锁 Vault');
   const code=$('pairCodeInput').value.trim();
-  if(!/^\\d{8}$/.test(code))throw Error('请输入完整的八位配对码');
+  if(!/^\d{8}$/.test(code))throw Error('请输入完整的八位配对码');
   const epoch=securityEpoch;
   const item=await api('/api/v1/pairings/lookup?code='+encodeURIComponent(code));
   if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
   const fingerprint=(await sha256Hex(item.publicKey)).slice(0,12).toUpperCase();
   $('pairCodeStatus').textContent='待配对设备 '+item.name+' · '+item.model+' · 指纹 '+fingerprint;
-  if(!confirm('确认 Android 手机上显示的设备指纹为 '+fingerprint+'，且设备名称为 '+item.name+'？\\n仅在已核对实体设备时继续。'))return;
+  if(!confirm('确认 Android 手机上显示的设备指纹为 '+fingerprint+'，且设备名称为 '+item.name+'？\n仅在已核对实体设备时继续。'))return;
   await ensureStepUp();
   if(epoch!==securityEpoch||!vaultKey)throw Error('Vault 已锁定');
   const nodeRaw=crypto.getRandomValues(new Uint8Array(32));

@@ -80,6 +80,31 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
             FilterChip(selected=ui.otpOnly,onClick={ui.otpOnly=true},
                 label={Text(stringResource(R.string.hub_codes))})
         }
+        val sourceOptions=state?.sms.orEmpty().distinctBy { HubSnapshot.simSourceKey(it) }
+        var simMenu by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick={simMenu=true}){
+                HubIcon(R.drawable.ic_hub_sim,Modifier.size(17.dp))
+                Spacer(Modifier.width(6.dp))
+                val selected=sourceOptions.find { HubSnapshot.simSourceKey(it)==ui.simFilter }
+                Text(selected?.let { it.simTag.ifBlank {
+                    if(it.simTail.isNotBlank())"••••"+it.simTail else "SIM "+it.subscription
+                } } ?: stringResource(R.string.hub_all))
+            }
+            DropdownMenu(expanded=simMenu,onDismissRequest={simMenu=false}){
+                DropdownMenuItem(text={Text(stringResource(R.string.hub_all))},
+                    onClick={ui.simFilter="";simMenu=false})
+                sourceOptions.forEach { sms ->
+                    DropdownMenuItem(text={Text(listOfNotNull(
+                        sms.sourceDeviceName.takeIf { it.isNotBlank() },
+                        sms.simTag.takeIf { it.isNotBlank() } ?: "SIM "+sms.subscription,
+                        sms.simTail.takeIf { it.isNotBlank() }?.let { "••••"+it }
+                    ).joinToString(" · "))},onClick={
+                        ui.simFilter=HubSnapshot.simSourceKey(sms);simMenu=false
+                    })
+                }
+            }
+        }
         if(state?.smsRead!=true&&threads.isEmpty()){
             HubCard(Modifier.fillMaxWidth()){
                 Text(stringResource(R.string.hub_sms_permissions))

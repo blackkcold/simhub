@@ -31,6 +31,7 @@ data class HubSnapshot(
     val providerError: String,
     val smsRole: Boolean,
     val smsRead: Boolean,
+    val smsReceive: Boolean,
     val smsSend: Boolean,
     val state: JSONObject,
     val sms: List<HubSms>,
@@ -52,6 +53,7 @@ object HubRepository {
         val role=context.getSystemService(RoleManager::class.java)
         val smsRole=role?.isRoleHeld(RoleManager.ROLE_SMS)==true
         val read=context.checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED
+        val receive=context.checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED
         val send=context.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED
         val state=StateCollector.collect(context)
         state.optJSONArray("subscriptions")?.let{arr->
@@ -113,7 +115,7 @@ object HubRepository {
         return HubSnapshot(
             cfg.isEnrolled(), cfg.deviceName(),cfg.server(),cfg.alwaysOn(),
             LocalStore.get(context).pendingEventCount(),cfg.lastSyncSuccessAt(),
-            cfg.lastSyncError(),cfg.smsProviderError(),smsRole,read,send,state,
+            cfg.lastSyncError(),cfg.smsProviderError(),smsRole,read,receive,send,state,
             unified,cfg.deviceId(),limit
         )
     }

@@ -75,6 +75,17 @@ fun HubCompatibilityScreen(
             CompatibilityValue(hubLabel("最近补扫","Last reconciliation"),
                 compatibilityTime(status?.optLong("lastReconcileAt",0) ?: 0L)+
                     " · "+(status?.optInt("lastReconcileCount",0)?:0))
+            CompatibilityValue(hubLabel("最近短信数据库变化","Last SMS provider change"),
+                compatibilityTime(status?.optLong("lastSmsProviderChangeAt",0) ?: 0L))
+            CompatibilityValue(hubLabel("待上传 / 已确认事件","Queued / acknowledged events"),
+                "${status?.optInt("pendingEncryptedEvents",0)?:0} / ${status?.optInt("uploadedEventReceipts",0)?:0}")
+            CompatibilityValue(hubLabel("最近上传成功","Last successful upload"),
+                compatibilityTime(status?.optLong("lastEventUploadAt",0) ?: 0L)+
+                    " · "+(status?.optInt("lastEventUploadCount",0)?:0))
+            if(status?.optString("lastUploadError","")?.isNotBlank()==true)
+                Text("Upload: "+status.optString("lastUploadError"),color=MaterialTheme.colorScheme.error)
+            if(status?.optString("lastEventQueueError","")?.isNotBlank()==true)
+                Text("Queue: "+status.optString("lastEventQueueError"),color=MaterialTheme.colorScheme.error)
             CompatibilityValue(hubLabel("最近 Relay 同步","Last Relay sync"),
                 compatibilityTime(status?.optLong("lastRelaySyncAt",0) ?: 0L))
             if(status?.optString("lastRelaySyncError","")?.isNotBlank()==true)

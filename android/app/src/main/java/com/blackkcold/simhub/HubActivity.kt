@@ -454,29 +454,31 @@ class HubActivity: ComponentActivity(), HubController {
                 toast(getString(R.string.enrollment_reset_pending))
             }.show()
     }
+    private fun actionLabel(zh:String,en:String):String =
+        if(resources.configuration.locales.get(0)?.language=="zh") zh else en
     override fun retryReset(){
         if(!AgentConfig(this).resetPending())return
         EnrollmentManager.retryReset(this)
         refresh()
-        toast(hubLabel("已重新提交解绑状态校验","Retrying reset confirmation"))
+        toast(actionLabel("已重新提交解绑状态校验","Retrying reset confirmation"))
     }
     override fun forceLocalReset(){
         if(!AgentConfig(this).resetPending())return
         AlertDialog.Builder(this)
-            .setTitle(hubLabel("仅清除此手机的 SIM Hub 配对","Clear SIM Hub pairing on this phone only"))
-            .setMessage(hubLabel(
+            .setTitle(actionLabel("仅清除此手机的 SIM Hub 配对","Clear SIM Hub pairing on this phone only"))
+            .setMessage(actionLabel(
                 "无法保证服务器已撤销旧设备权限。继续将删除此应用内本地密钥、事件队列及配对记录（不会删除系统短信）。若服务器仍有旧设备，请在管理后台撤销或删除。",
                 "The Relay may still retain the old device and its access. This removes local SIM Hub keys, queued events and enrollment only; system SMS are unaffected. Remove the old device from the Relay separately."
             ))
             .setNegativeButton(R.string.cancel,null)
-            .setPositiveButton(hubLabel("确认本机重置","Confirm local reset")){_,_->
+            .setPositiveButton(actionLabel("确认本机重置","Confirm local reset")){_,_->
                 lifecycleScope.launch {
                     try{
                         withContext(Dispatchers.IO){
                             EnrollmentManager.forceLocalReset(applicationContext)
                         }
                         refresh()
-                        toast(hubLabel("本地配对已清除，可以重新配对","Local pairing cleared; ready to pair"))
+                        toast(actionLabel("本地配对已清除，可以重新配对","Local pairing cleared; ready to pair"))
                     }catch(e:Exception){
                         AppLogger.e(this@HubActivity,"Enrollment","Local recovery reset failed",e)
                         toast(UiErrors.message(this@HubActivity,e))

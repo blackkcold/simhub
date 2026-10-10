@@ -235,8 +235,10 @@ class HubActivity: ComponentActivity(), HubController {
             try{RelayForegroundService.resume(this)}
             catch(error:Exception){AppLogger.e(this,"Relay","Foreground recovery blocked",error)}
         }
-        try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
-        catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
+        if(localNodeEnabled()) {
+            try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
+            catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
+        }
         if(AppUpdater.shouldCheck(this)){
             AppUpdater.check(applicationContext,false){info,error->
                 if(error==null && info!=null && info.optBoolean("available")){
@@ -257,8 +259,12 @@ class HubActivity: ComponentActivity(), HubController {
         refreshHandler.removeCallbacks(refreshAfterChange)
         super.onStop()
     }
+    private fun localNodeEnabled():Boolean =
+        AgentConfig(this).isEnrolled() || HubModes.role(this) in setOf("node","both")
+
     override fun onResume(){
-        super.onResume();refresh()
+        super.onResume()
+        if(localNodeEnabled())refresh() else loading=false
         if(tools.compatibilityOpen)refreshCompatibility()
         val active=ActivePairing.session
         if(active!=null && pendingTask==null)pollSession(active)

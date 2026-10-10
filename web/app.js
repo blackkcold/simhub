@@ -358,7 +358,7 @@ function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textCon
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','gateRecoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary']){
+  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','gateRecoveryKey','newAdminPassword','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
@@ -384,7 +384,7 @@ function purgeSensitiveUI(){
   if($('enrollQr'))$('enrollQr').replaceChildren();
   if($('pairCodeInput'))$('pairCodeInput').value='';
   if($('pairCodeStatus'))$('pairCodeStatus').textContent='';
-  for(const id of ['enrollDialog','deviceDetailDialog']){const d=$(id);if(d?.open)d.close();}
+  for(const id of ['enrollDialog','deviceDetailDialog','loginOtpDialog']){const d=$(id);if(d?.open)d.close();}
   nodeBaseUrl='';enrollStartingDevices.clear();
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}

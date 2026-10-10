@@ -375,7 +375,7 @@ private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubCon
 
 /** Shown only on Android 16+ or after an explicit developer override. */
 @Composable
-private fun RemoteOtaCard(tools:HubToolsState,controller:HubController,modifier:Modifier){
+private fun RemoteOtaCard(state:HubSnapshot?,tools:HubToolsState,controller:HubController,modifier:Modifier){
     val native=android.os.Build.VERSION.SDK_INT>=36
     if(!native && !tools.forceRemoteOta)return
     ToolSection(hubLabel("远程应用更新","Remote app updates"),modifier){
@@ -404,6 +404,25 @@ private fun RemoteOtaCard(tools:HubToolsState,controller:HubController,modifier:
         StatePill(
             if(native)hubLabel("Android 16+ · 平台门槛通过","Android 16+ · platform eligible")
             else hubLabel("开发者强制测试 · 非原生适配","Developer test override · not natively eligible"),native)
+        val otaState=state?.state
+        val installGranted=otaState?.optBoolean("remoteOtaInstallPermission",false)==true
+        if(!installGranted){
+            Spacer(Modifier.height(10.dp))
+            Text(hubLabel("尚未获得系统安装来源授权；服务器暂不能发起安装。",
+                "Install-source access has not been granted; remote installation is unavailable."),
+                style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+            OutlinedButton(onClick=controller::openInstallSourceSettings,modifier=Modifier.fillMaxWidth()){
+                Text(hubLabel("打开系统安装权限设置","Open system install permissions"))
+            }
+        }
+        val phase=otaState?.optString("remoteOtaStage","idle").orEmpty()
+        if(phase.isNotBlank() && phase!="idle"){
+            Spacer(Modifier.height(9.dp))
+            InfoRow(hubLabel("远程更新任务状态","Remote update task"),phase)
+            val reason=otaState?.optString("remoteOtaError","").orEmpty()
+            if(reason.isNotBlank())Text(reason,style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.error)
+        }
         Spacer(Modifier.height(8.dp))
         Text(hubLabel("服务端可下发更新命令，但无法保证免确认安装或后台弹出界面。安装成功后仅尝试自动恢复原有中继服务。",
             "The server may request updates; silent installation and foreground UI launches are not guaranteed. Relay recovery is best effort."),
@@ -564,7 +583,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
                     RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
                     SharingCard(state,tools,controller,Modifier.fillMaxWidth())
-                    RemoteOtaCard(tools,controller,Modifier.fillMaxWidth())
+                    RemoteOtaCard(state,tools,controller,Modifier.fillMaxWidth())
                     DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 }
             }

@@ -78,6 +78,7 @@ interface HubController {
     fun setAutoDownloadUpdates(value:Boolean)
     fun setRemoteOtaAllowed(value:Boolean)
     fun setRemoteOtaWifiOnly(value:Boolean)
+    fun openInstallSourceSettings()
     fun setDeveloperRemoteOtaOverride(value:Boolean)
     fun exportDiagnostics()
     fun setDeveloperEnabled(value:Boolean)
@@ -560,6 +561,10 @@ class HubActivity: ComponentActivity(), HubController {
     override fun setAutoDownloadUpdates(value:Boolean){
         tools.autoDownloadUpdates=value
         AppUpdater.prefs(this).edit().putBoolean("autoDownload",value).apply()
+    }
+    override fun openInstallSourceSettings(){
+        try{startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+packageName)))}
+        catch(error:Exception){toast(UiErrors.message(this,error))}
     }
     override fun setRemoteOtaWifiOnly(value:Boolean){
         RemoteOta.setWifiOnly(this,value)

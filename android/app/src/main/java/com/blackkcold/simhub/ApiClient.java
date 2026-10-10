@@ -176,10 +176,12 @@ public final class ApiClient {
             return;
         }
         if(!SYNC_BUSY.compareAndSet(false,true)){
-            // A foreground command check must not be silently skipped while
-            // SMS upload holds the lease; retry promptly and persist a fallback.
+            // Never report a manual remote check as successful when no server
+            // request actually occurred. Persist a scheduled retry and surface
+            // the contention to diagnostics and the foreground transport.
             SyncJobService.scheduleAfter(c,3000);
-            return;
+            cfg.recordCommandFetchError("command_sync_busy");
+            throw new IOException("Command check busy; retry scheduled");
         }
         boolean pending=false;
         try{

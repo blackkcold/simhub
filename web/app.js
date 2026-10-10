@@ -684,6 +684,7 @@ async function revokePoolDevice(deviceId){
 
 
 function deviceButtons(d) {
+  const action=(key,label,danger=false)=>'<button class="'+(danger?'danger':'ghost')+' mini" type="button" data-action="'+key+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(label)+'</button>';
   const ota=d.state||{},sdk=Number(ota.sdk||0);
   const otaVisible=d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.13.3')&&
     ota.remoteOtaSupported===true&&(sdk>=36 || ota.remoteOtaDeveloperOverride===true);
@@ -704,14 +705,14 @@ function deviceButtons(d) {
          ?(zh?'请先在安卓设备设置中允许远程应用更新':'Enable remote updates on the Android device first')
          :(zh?'请先在安卓设备上授权安装未知来源应用':'Grant the Android install-sources permission first'))+
     '</p>')+'</div>':'';
-  const action=(key,label,danger=false)=>'<button class="'+(danger?'danger':'ghost')+' mini" type="button" data-action="'+key+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(label)+'</button>';
+
   return '<div class="detail-actions">'+
     '<div class="action-group"><h4>'+escapeHtml(tr('ux_sms_actions'))+'</h4><div class="row wrap">'+
     action('refresh',tr('action_refresh'))+
     (d.nodeType==='android'?action('sync-recent',tr('sync_recent_100'))+action('sync-older',tr('sync_older_100')):'')+
     action('diagnostics',tr('action_diagnostics'))+
     (d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.5.0')?action('network',tr('mobile_fallback')):'')+
-    '</div></div><details class="action-group destructive-group"><summary>'+escapeHtml(tr('ux_security_actions'))+'</summary><div class="row wrap">'+
+    '</div></div>'+otaDetails+'<details class="action-group destructive-group"><summary>'+escapeHtml(tr('ux_security_actions'))+'</summary><div class="row wrap">'+
     (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?action('rotate-key',tr('action_rotate')):'')+
     action('purge-sms',tr('ux_clear_relay'))+
     (!d.revoked? action('revoke',tr('action_revoke'),true):'')+

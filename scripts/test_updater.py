@@ -107,6 +107,22 @@ class UpdaterTests(unittest.TestCase):
         self.assertNotIn("chmod 666", installer)
         self.assertIn("if [[ \"$EUID\" -eq 0 ]]", installer)
 
+    def test_readiness_needs_two_consecutive_successes(self):
+        import io
+        ready = json.dumps({"ok": True, "version": "0.13.2"}).encode()
+        with patch.object(updater.urllib.request, "urlopen", side_effect=[
+                io.BytesIO(ready), OSError("upstream restart"),
+                io.BytesIO(ready), io.BytesIO(ready)]) as fetch, patch.object(
+                updater.time, "sleep", return_value=None):
+            self.assertTrue(updater.health("0.13.2"))
+            self.assertEqual(fetch.call_count, 4)
+
+    def test_caddy_retries_only_safe_reads(self):
+        caddy = Path(__file__).resolve().parent.parent.joinpath("Caddyfile.example").read_text("utf-8")
+        self.assertEqual(caddy.count("lb_try_duration 8s"), 2)
+        self.assertEqual(caddy.count("method GET HEAD"), 2)
+        self.assertNotIn("method POST", caddy)
+
     def test_ipc_control_restricts_actions(self):
         self.assertFalse(hasattr(updater, "extract"))
         self.assertFalse(hasattr(updater, "download"))

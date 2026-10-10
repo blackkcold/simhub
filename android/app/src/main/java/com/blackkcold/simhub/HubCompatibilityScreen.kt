@@ -68,6 +68,16 @@ fun HubCompatibilityScreen(
                 listOf("readSms","receiveSms","sendSms").joinToString(" / "){
                     if(status?.optBoolean(it)==true)hubLabel("允许","Yes") else hubLabel("未允许","No")
                 })
+            CompatibilityValue(hubLabel("最近短信广播","Last SMS broadcast"),
+                compatibilityTime(status?.optLong("lastSmsBroadcastAt",0) ?: 0L))
+            CompatibilityValue(hubLabel("最近补扫","Last reconciliation"),
+                compatibilityTime(status?.optLong("lastReconcileAt",0) ?: 0L)+
+                    " · "+(status?.optInt("lastReconcileCount",0)?:0))
+            CompatibilityValue(hubLabel("最近 Relay 同步","Last Relay sync"),
+                compatibilityTime(status?.optLong("lastRelaySyncAt",0) ?: 0L))
+            if(status?.optString("lastRelaySyncError","")?.isNotBlank()==true)
+                Text(hubLabel("Relay 同步异常：","Relay sync error: ")+status.optString("lastRelaySyncError"),
+                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
             CompatibilityValue(hubLabel("OTP AppOp（只读）","OTP AppOp (read-only)"),
                 status?.optString("otpAppOp","—") ?: "—")
             CompatibilityValue(hubLabel("验证码访问规则","OTP access policy"),
@@ -223,3 +233,6 @@ private fun CompatibilityValue(label:String,value:String){
         Text(value,style=MaterialTheme.typography.bodyMedium,fontWeight=FontWeight.Medium)
     }
 }
+
+private fun compatibilityTime(seconds:Long):String =
+    if(seconds<=0)"—" else java.text.DateFormat.getDateTimeInstance().format(java.util.Date(seconds*1000L))

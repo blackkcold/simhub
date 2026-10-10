@@ -137,6 +137,14 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(st,410);self.assertTrue(body["resetRequired"])
         self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/heartbeat",{},
             device_token=token,admin=False)[0],401)
+        # A lost HTTP 200 reset ACK must be retryable even after deletion.
+        st,repeat,_=self.req("POST",f"/api/v1/devices/{did}/reset",{},
+            device_token=token,admin=False)
+        self.assertEqual(st,410)
+        self.assertEqual(repeat["status"],"deleted")
+        # The tombstone must never permit access with a different credential.
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/reset",{},
+            device_token="Z"*48,admin=False)[0],401)
         self.assertEqual(self.req("GET",f"/api/v1/devices/{did}/lifecycle",
             device_token="Z"*48,admin=False)[0],401)
         with sqlite3.connect(self.db) as con:
@@ -159,6 +167,12 @@ class ApiTest(unittest.TestCase):
                 self.assertEqual(con.execute(f"SELECT COUNT(*) FROM {table} WHERE "+("id=?" if table=="devices" else "device_id=?"),(did,)).fetchone()[0],0)
         self.assertEqual(self.req("GET",f"/api/v1/devices/{did}/lifecycle",
             device_token=token,admin=False)[0],410)
+        # Force-delete while the device is offline must not strand it in
+        # RESET_PENDING when it retries its signed reset request.
+        st,repeated,_=self.req("POST",f"/api/v1/devices/{did}/reset",{},
+            device_token=token,admin=False)
+        self.assertEqual(st,410)
+        self.assertEqual(repeated["status"],"deleted")
         self.assertEqual(self.req("DELETE",f"/api/v1/devices/{did}")[0],404)
         self.assertEqual(self.req("GET","/api/v1/version")[0],200)
 

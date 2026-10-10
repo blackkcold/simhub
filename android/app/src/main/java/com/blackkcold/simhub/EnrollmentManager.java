@@ -1,12 +1,17 @@
 package com.blackkcold.simhub;
 
 import android.content.Context;
+import android.content.Intent;
 import android.net.Uri;
 import org.json.JSONObject;
 import java.net.URI;
 import java.util.Arrays;
 
 public final class EnrollmentManager {
+    public static final String ACTION_ENROLLMENT_CHANGED="com.blackkcold.simhub.ENROLLMENT_CHANGED";
+    static void notifyStateChanged(Context c){
+        c.sendBroadcast(new Intent(ACTION_ENROLLMENT_CHANGED).setPackage(c.getPackageName()));
+    }
     public static void enroll(Context c,String link)throws Exception{
         AgentConfig existing=new AgentConfig(c);if(existing.isEnrolled()||existing.resetPending())throw new IllegalStateException("This node is already enrolled. Reset enrollment before pairing it to another vault or relay.");
         AppLogger.i(c,"Enrollment","Validating enrollment package");
@@ -30,6 +35,28 @@ public final class EnrollmentManager {
         SyncJobService.scheduleNow(c);
         AppLogger.i(c,"Enrollment","Reset requested; awaiting relay confirmation");
     }
-    public static void reset(Context c){RelayForegroundService.stop(c);SharedPoolClient.clearLocalForReset(c);SimTagStore.clearAll(c);LocalStore.get(c).resetForReenrollment();new AgentConfig(c).clearEnrollment();AppLogger.i(c,"Enrollment","Node enrollment and pool secrets cleared");}
+    /** Explicit user-confirmed escape hatch when Relay cannot be reached or credentials are lost. */
+    public static void forceLocalReset(Context c){
+        AgentConfig cfg=new AgentConfig(c);
+        if(!cfg.resetPending() && !cfg.resetRecoveryRequired())
+            throw new IllegalStateException("Force local reset is only available for a pending reset");
+        reset(c);
+        AppLogger.w(c,"Enrollment","User confirmed local-only reset; server may retain old node");
+    }
+    public static void retryReset(Context c){
+        AgentConfig cfg=new AgentConfig(c);
+        if(!cfg.resetPending())return;
+        cfg.retryPendingReset();
+        SyncJobService.scheduleNow(c);
+    }
+    public static void reset(Context c){
+        RelayForegroundService.stop(c);
+        SharedPoolClient.clearLocalForReset(c);
+        SimTagStore.clearAll(c);
+        LocalStore.get(c).resetForReenrollment();
+        new AgentConfig(c).clearEnrollment();
+        AppLogger.i(c,"Enrollment","Node enrollment and pool secrets cleared");
+        notifyStateChanged(c);
+    }
     private EnrollmentManager(){}
 }

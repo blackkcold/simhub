@@ -25,13 +25,23 @@ public final class AgentConfig {
         if(!prefs.edit().putString("pending_pair_id",id).commit())throw new IllegalStateException("Unable to commit pairing journal");
     }
     public void clearPairCompletion(){prefs.edit().remove("pending_pair_id").apply();secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");}
-    public boolean isEnrolled(){return !resetPending()&&!server().isEmpty()&&!deviceId().isEmpty()&&deviceToken()!=null&&(nodeKey()!=null||vaultKey()!=null);}
+    /** These lifecycle states must not be inferred from isEnrolled(): a reset still owns credentials. */
+    public enum EnrollmentState { UNPAIRED, ACTIVE, RESET_PENDING, RECOVERY }
+    public EnrollmentState enrollmentState(){
+        if(resetPending())return resetRecoveryRequired()?EnrollmentState.RECOVERY:EnrollmentState.RESET_PENDING;
+        return !server().isEmpty()&&!deviceId().isEmpty()&&deviceToken()!=null
+                &&(nodeKey()!=null||vaultKey()!=null)?EnrollmentState.ACTIVE:EnrollmentState.UNPAIRED;
+    }
+    public boolean isEnrolled(){return enrollmentState()==EnrollmentState.ACTIVE;}
     public boolean resetPending(){return prefs.getBoolean("reset_pending",false);}
+    public boolean resetRecoveryRequired(){return prefs.getBoolean("reset_recovery_required",false);}
+    public void markResetRecoveryRequired(){prefs.edit().putBoolean("reset_recovery_required",true).apply();}
+    public void retryPendingReset(){prefs.edit().remove("reset_recovery_required").apply();resetSyncBackoff();}
     public boolean remoteResetNotified(){return prefs.getBoolean("remote_reset_notified",false);}
     public void markRemoteResetNotified(){prefs.edit().putBoolean("remote_reset_notified",true).apply();}
     public boolean remoteResetPending(){return prefs.getBoolean("remote_reset_pending",false);}
     public void markRemoteResetPending(){markResetPending();prefs.edit().putBoolean("remote_reset_pending",true).apply();}
-    public void markResetPending(){prefs.edit().putBoolean("reset_pending",true).apply();resetSyncBackoff();}
+    public void markResetPending(){prefs.edit().putBoolean("reset_pending",true).remove("reset_recovery_required").apply();resetSyncBackoff();}
     public String server(){return prefs.getString("server","");}
     public String deviceId(){return prefs.getString("device_id","");}
     public String deviceName(){return prefs.getString("device_name","Android SIM Node");}
@@ -181,7 +191,22 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("reconcile_cursor_date").remove("reconcile_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("sms_provider_error").remove("pending_pair_id").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
-        secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");
+        // Clear secrets BEFORE declaring this node unpaired in preferences. Failed
+        // Keystore writes must never leave the UI showing a successful reset.
+        for(String name:new String[]{SECRET_DEVICE_TOKEN,SECRET_PENDING_DEVICE_TOKEN,SECRET_VAULT_KEY,
+                SECRET_NODE_KEY,SECRET_LOCAL_QUEUE_KEY,"pending_pair_token","pending_pair_proof"})
+            secrets.remove(name);
+        if(!prefs.edit().remove("server").remove("device_id").remove("device_name")
+                .remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id")
+                .remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id")
+                .remove("reconcile_cursor_date").remove("reconcile_cursor_id")
+                .remove("queue_failures").remove("last_queue_failure_at").remove("sms_provider_error")
+                .remove("pending_pair_id").remove("node_key_id").remove("token_issued_at")
+                .remove("token_rotation_pending").remove("pending_token_expires_at")
+                .remove("reset_pending").remove("reset_recovery_required").remove("remote_reset_pending")
+                .remove("next_sync_allowed_at").remove("sync_backoff_failures")
+                .putBoolean("always_on",false).commit())
+            throw new IllegalStateException("Unable to durably finish local enrollment reset");
+
     }
 }

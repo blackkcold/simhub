@@ -170,7 +170,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
     val history=if(new)emptyList() else state?.sms.orEmpty()
         .filter{HubSnapshot.keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision)==key}.sortedBy{it.date}
     val context=LocalContext.current
-    val subscriptions=remember(state?.smsRead,state?.smsRole){
+    val subscriptions=remember(state?.smsRead,state?.smsSend){
         HubRepository.activeSubscriptions(context)
     }
     var selectedSim by remember(key,subscriptions){mutableIntStateOf(
@@ -181,7 +181,7 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
     val draft=ui.drafts[key].orEmpty()
     val isRemote=thread?.latest?.shared==true
     val canSend=!isRemote&&(new||thread?.latest?.historicalUnverified==false)&&
-        state?.smsSend==true&&state.smsRole&&
+        state?.smsSend==true&&
         subscriptions.any{it.first==selectedSim}
     val listState=rememberLazyListState()
     LaunchedEffect(key){if(history.isNotEmpty())listState.scrollToItem(history.lastIndex)}

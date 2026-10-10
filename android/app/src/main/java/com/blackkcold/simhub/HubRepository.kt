@@ -36,7 +36,9 @@ data class HubSnapshot(
     val state: JSONObject,
     val sms: List<HubSms>,
     val localDeviceId:String="",
-    val visibleWindow:Int=100
+    val visibleWindow:Int=100,
+    val resetPending:Boolean=false,
+    val resetRecoveryRequired:Boolean=false
 ) {
     val threads: List<HubThread> get() = sms.groupBy { keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision) }
         .map { (key, items) -> HubThread(key,items.first().from,items.first().subscription,items.first(),items.size) }
@@ -116,7 +118,7 @@ object HubRepository {
             cfg.isEnrolled(), cfg.deviceName(),cfg.server(),cfg.alwaysOn(),
             LocalStore.get(context).pendingEventCount(),cfg.lastSyncSuccessAt(),
             cfg.lastSyncError(),cfg.smsProviderError(),smsRole,read,receive,send,state,
-            unified,cfg.deviceId(),limit
+            unified,cfg.deviceId(),limit,cfg.resetPending(),cfg.resetRecoveryRequired()
         )
     }
     fun readMessages(context: Context,limit:Int): List<HubSms> {

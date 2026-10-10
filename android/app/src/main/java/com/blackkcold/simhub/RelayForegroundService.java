@@ -28,6 +28,7 @@ public final class RelayForegroundService extends Service {
     private ScheduledFuture<?> maintenanceTask;
     private ScheduledFuture<?> commandTask;
     private int commandFailures=0;
+    private volatile long policyEpoch=0;
     private final Handler providerHandler=new Handler(Looper.getMainLooper());
     private long lastProviderWake=0L;
     private final ContentObserver providerObserver=new ContentObserver(providerHandler){
@@ -55,6 +56,22 @@ public final class RelayForegroundService extends Service {
     public static void start(Context c){new AgentConfig(c).setAlwaysOn(true);AppLogger.i(c,"RelayService","Always-on relay enabled");resume(c);}
     public static void resume(Context c){Intent i=new Intent(c,RelayForegroundService.class);if(Build.VERSION.SDK_INT>=26)c.startForegroundService(i);else c.startService(i);}
     public static void stop(Context c){new AgentConfig(c).setAlwaysOn(false);AppLogger.i(c,"RelayService","Always-on relay disabled");c.stopService(new Intent(c,RelayForegroundService.class));}
+    public static boolean isRunning(){
+        RelayForegroundService service=ACTIVE;
+        return service!=null&&!service.exec.isShutdown();
+    }
+    /** Reconfigure timers in place: no foreground-service stop/start or lost observation window. */
+    public static void policyChanged(Context c){
+        RelayForegroundService service=ACTIVE;
+        if(service!=null)service.rescheduleCommands();
+        else if(new AgentConfig(c).alwaysOn())SyncJobService.scheduleNow(c);
+    }
+    private synchronized void rescheduleCommands(){
+        policyEpoch++;
+        if(commandTask!=null)commandTask.cancel(false);
+        commandFailures=0;
+        scheduleCommand(0);
+    }
     public static void kick(Context c){
         RelayForegroundService live=ACTIVE;
         if(live==null||live.exec.isShutdown()){SyncJobService.scheduleNow(c);return;}
@@ -91,6 +108,7 @@ public final class RelayForegroundService extends Service {
     }
     private synchronized void scheduleCommand(long delayMs){
         if(exec.isShutdown()||!new AgentConfig(this).alwaysOn())return;
+        long plannedEpoch=policyEpoch;
         commandTask=exec.schedule(()->{
             long next=EnergyPolicy.commandIntervalMs(this);
             try{
@@ -109,7 +127,7 @@ public final class RelayForegroundService extends Service {
                 next=Math.max(next,backoff);
             }finally{
                 // Idle balanced and eco modes do not keep an HTTP long-poll open.
-                scheduleCommand(next);
+                if(plannedEpoch==policyEpoch)scheduleCommand(next);
             }
         },Math.max(0,delayMs),TimeUnit.MILLISECONDS);
     }

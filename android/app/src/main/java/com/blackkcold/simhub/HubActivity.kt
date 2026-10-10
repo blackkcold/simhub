@@ -65,6 +65,7 @@ interface HubController {
     fun enrollLink(link:String)
     fun startPairing(server:String)
     fun setRealtime(value:Boolean)
+    fun setEnergyMode(mode:String)
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
     fun requestContacts()
@@ -169,6 +170,7 @@ class HubActivity: ComponentActivity(), HubController {
         Shizuku.addBinderReceivedListenerSticky(shizukuBinderListener)
         Shizuku.addBinderDeadListener(shizukuDeadListener)
         UiLocale.apply(this)
+        tools.energyMode=EnergyPolicy.mode(this)
         tools.developer=DeveloperSettings.isEnabled(this)
         tools.language=UiLocale.index(this)
         tools.autoCheckUpdates=AppUpdater.prefs(this).getBoolean("autoCheck",true)
@@ -368,6 +370,20 @@ class HubActivity: ComponentActivity(), HubController {
                 }
             }finally { pendingTask=null }
         }
+    }
+    override fun setEnergyMode(mode:String){
+        try{
+            EnergyPolicy.setMode(this,mode)
+            EnergyPolicy.resetSchedule(this)
+            tools.energyMode=mode
+            SyncJobService.scheduleNow(this)
+            // Restart the opt-in foreground service so no stale timer survives.
+            if(AgentConfig(this).alwaysOn()){
+                stopService(Intent(this,RelayForegroundService::class.java))
+                RelayForegroundService.resume(this)
+            }
+            refresh()
+        }catch(error:Exception){toast(UiErrors.message(this,error))}
     }
     override fun setRealtime(value:Boolean){
         try{

@@ -27,8 +27,12 @@ public final class IncomingSmsReceiver extends BroadcastReceiver {
                 if(c.checkSelfPermission(android.Manifest.permission.READ_SMS)
                         !=android.content.pm.PackageManager.PERMISSION_GRANTED)return;
                 new AgentConfig(c).recordSmsBroadcast();
+                // The default handler may write to Provider *after* this broadcast.
+                // Preserve a durable delayed rescan even when the first scan was empty.
+                new AgentConfig(c).recordSmsProviderChange();
+                EnergyPolicy.stageProviderFollowup(c,8000L);
                 AppLogger.i(c,"SmsReceiver","SMS_RECEIVED broadcast observed in non-default mode");
-                SyncJobService.scheduleNow(c);
+                RelayForegroundService.kick(c);
                 // The OEM's default handler may persist the message after this broadcast.
                 SyncJobService.scheduleAfter(c,8000L);
             }catch(Exception error){AppLogger.e(c,"SmsReceiver","Non-default SMS wake failed",error);}

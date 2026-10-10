@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.12.2.trigger'
+      - '.github/release/v0.13.0.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.12.2.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.13.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -276,7 +276,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Non-default Android SMS companion mode, bounded provider reconciliation, Android 17 OTP limits",
+              "notes":"Adaptive Android energy modes, event-triggered SMS sync, coalesced jobs, bounded reconciliation and command transport",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -299,17 +299,19 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub supports an optional non-default SMS companion mode alongside its existing default-handler mode.
+          Adaptive Android SMS relay scheduling lowers idle network activity while keeping durable SMS delivery and remote command support.
 
           ## Highlights
-          - Fix non-default SMS updates: foreground SMS Provider change observer wakes encrypted Relay sync, with existing SMS_RECEIVED and paged recovery preserved.
-          - Make queue and upload states observable: pending messages, upload receipts, successful ACK timestamps, detailed metadata-only errors and retries.
-          - Fix PWA hiding newly uploaded, old-timestamp messages by reconciling latest events by both time and sequence.
-          - Surface actionable decrypt failures for Vault/Node Key mismatches without altering or deleting existing encrypted history.
-          - Add new Android, Relay and PWA diagnostics with regression tests; preserve Shizuku and Companion Device integrations.
+          - Add Eco, Balanced and Realtime profiles with a dedicated foreground command channel.
+          - Replace 20-second full sync with SMS event wakeups, durable provider followups and 15-minute state maintenance.
+          - Avoid duplicate SMS parsing/encryption; bound six-hour reconciliation and coalesce queued jobs.
+          - Expose metadata-only power counters, delayed command warnings and per-device presence cadence.
+          - Preserve v0.12.2 reset recovery, independent Android OTA and the encrypted Vault protocol.
 
           ## Safety
-          Missing original Vault or historic Node Keys cannot be reconstructed by the Relay. This release never erases messages or silently re-pairs devices. Always-on foreground service is required for its provider observer. Hardware tests on vivo/OriginOS remain necessary.
+          Doze/OEM background restrictions still apply, and Eco mode may delay remote commands.
+          No system energy protections are bypassed and no SMS data or pairing keys are reset.
+          Push wakeups require separately configured push infrastructure. Validate standby and SMS delivery on real devices.
 
           ## Host activation
           After migrating the Docker engine to rootless mode, run \`bash scripts/install-updater.sh\`

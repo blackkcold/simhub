@@ -41,6 +41,29 @@ class CompanionStateTest(unittest.TestCase):
         self.assertNotIn("id",state["pendingEventTasks"][0])
         self.assertNotIn("token",state)
 
+    def test_energy_metrics_only_expose_bounded_metadata(self):
+        state=server.sanitize_state({
+            "energyMode":"balanced","effectiveEnergyMode":"eco",
+            "foregroundRelay":True,
+            "energyStats":{
+                "commandPolls":100,"commandPollErrors":1,
+                "maintenanceRuns":5,"reconciliationRuns":3,
+                "nextProviderFollowup":1790000000,
+                "mode":"balanced","effectiveMode":"eco",
+                "smsBody":"SECRET","deviceToken":"SECRET"
+            },
+            "otp":"SECRET"
+        })
+        self.assertEqual(state["energyMode"],"balanced")
+        self.assertEqual(state["effectiveEnergyMode"],"eco")
+        self.assertTrue(state["foregroundRelay"])
+        self.assertEqual(state["energyStats"]["commandPolls"],100)
+        self.assertNotIn("smsBody",state["energyStats"])
+        self.assertNotIn("deviceToken",state["energyStats"])
+        self.assertNotIn("otp",state)
+        self.assertEqual(server.SimHubHandler.device_offline_threshold(state,"android"),1800)
+        self.assertEqual(server.SimHubHandler.device_offline_threshold(state,"modem"),server.OFFLINE_AFTER)
+
     def test_default_mode_remains_supported(self):
         state=server.sanitize_state({"smsMode":"default","smsRoleHeld":True})
         self.assertEqual(state["smsMode"],"default")

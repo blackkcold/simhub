@@ -31,7 +31,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.12.2"
+APP_VERSION = "0.13.0"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -614,12 +614,25 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
         if isinstance(v,(str,int,float,bool)) or v is None:
             out[k]=v
+    # Energy diagnostics only allow numeric counters and the selected profile;
+    # never accept arbitrary nested JSON as a relay-visible state field.
+    stats=body.get("energyStats")
+    if isinstance(stats,dict):
+        energy={}
+        for key in ("commandPolls","commandPollErrors","maintenanceRuns","reconciliationRuns","nextProviderFollowup"):
+            value=stats.get(key)
+            if type(value) is int and 0<=value<=10**13:
+                energy[key]=value
+        for key in ("mode","effectiveMode"):
+            if stats.get(key) in ("eco","balanced","realtime"):
+                energy[key]=stats[key]
+        out["energyStats"]=energy
     # Queue visibility is metadata-only; never accept task IDs, numbers or bodies.
     tasks=[]
     for item in body.get("pendingEventTasks",[]) if isinstance(body.get("pendingEventTasks"),list) else []:
@@ -1517,6 +1530,21 @@ class SimHubHandler(BaseHTTPRequestHandler):
         audit("enrollment.consume",device_id,"ok",self.ip); signal_stream()
         self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None,"bootstrapEnvelope":bootstrap or None})
 
+    @staticmethod
+    def device_offline_threshold(state:dict[str,Any],node_type:str='android') -> int:
+        # Presence follows the *declared* transport cadence, not every 20 s.
+        # Presence remains a last-contact heuristic, never a guarantee of push reachability.
+        if node_type!="android":
+            return OFFLINE_AFTER
+        if not state.get("foregroundRelay",False):
+            return max(OFFLINE_AFTER,1800)
+        mode=state.get("effectiveEnergyMode",state.get("energyMode","balanced"))
+        if mode=="eco":
+            return max(OFFLINE_AFTER,1800)
+        if mode=="balanced":
+            return max(OFFLINE_AFTER,360)
+        return OFFLINE_AFTER
+
     def get_devices(self) -> None:
         ts=now()
         with open_db() as con:
@@ -1533,12 +1561,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         out=[]
         for r in rows:
             last=r["last_seen_at"] or 0
+            reported_state=safe_json_loads(r["state_json"],{}) if r["state_json"] else {}
+            offline_after=self.device_offline_threshold(reported_state,r["node_type"])
             out.append({
                 "id":r["id"],"name":r["name"],"group":r["group_name"],"model":r["model"],"osVersion":r["os_version"],"appVersion":r["app_version"],
                 "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,"tokenIssuedAt":r["token_issued_at"],
                 "wrappedKey":safe_json_loads(r["wrapped_key_json"],{}) if r["key_id"] else None,
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
-                "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"online":bool(not r["revoked_at"] and not r["reset_requested_at"] and ts-last<=OFFLINE_AFTER),"revoked":bool(r["revoked_at"]),
+                "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"offlineAfterSeconds":offline_after,"online":bool(not r["revoked_at"] and not r["reset_requested_at"] and ts-last<=offline_after),"revoked":bool(r["revoked_at"]),
                 "resetRequestedAt":r["reset_requested_at"] or None,"resetSource":r["reset_source"],
                 "smsCount":sms_counts.get(r["id"],0),"smsPurgeAt":r["sms_purged_before"],"smsEpoch":r["sms_epoch"],
                 "state":safe_json_loads(r["state_json"],{}) if r["state_json"] else None,
@@ -1968,7 +1998,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
         ts=now()
         with open_db() as con:
             devices=con.execute("SELECT COUNT(*) c FROM devices WHERE revoked_at IS NULL").fetchone()["c"]
-            online=con.execute("SELECT COUNT(*) c FROM devices WHERE revoked_at IS NULL AND last_seen_at>=?",(ts-OFFLINE_AFTER,)).fetchone()["c"]
+            presence=con.execute("""SELECT d.last_seen_at,d.node_type,s.state_json FROM devices d
+                LEFT JOIN device_state s ON s.device_id=d.id
+                WHERE d.revoked_at IS NULL AND d.reset_requested_at=0""").fetchall()
+            online=sum(1 for row in presence if row["last_seen_at"] and
+                ts-row["last_seen_at"]<=self.device_offline_threshold(
+                    safe_json_loads(row["state_json"],{}) if row["state_json"] else {},row["node_type"]))
             pending=con.execute("SELECT COUNT(*) c FROM commands WHERE state IN ('queued','dispatched')").fetchone()["c"]
             events24=con.execute("SELECT COUNT(*) c FROM events WHERE received_at>=?",(ts-86400,)).fetchone()["c"]
             oldest=con.execute("SELECT MIN(created_at) v FROM commands WHERE state IN ('queued','dispatched')").fetchone()["v"]

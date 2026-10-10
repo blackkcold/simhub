@@ -14,7 +14,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 [![Release](https://img.shields.io/github/v/release/blackkcold/simhub)](https://github.com/blackkcold/simhub/releases/latest)
 [![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
 
-Android v0.12.2 supports official stable GitHub Release updates without pairing, a Vault, or an online Relay. It also distinguishes pending unpair from a completed reset and provides explicit retry/local recovery without touching system SMS.
+Android v0.13.0 adds adaptive Eco / Balanced / Realtime energy modes, event-driven SMS sync and low-frequency background maintenance. v0.12.2 standalone signed APK updates and safe unpair recovery remain available.
 
 **[Download Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[Quick deployment](docs/QUICKSTART.zh-CN.md)** · [Installation guide](docs/INSTALLATION.md)
 
@@ -57,6 +57,7 @@ Web Settings offers GitHub Release checking, ignore and one-click deployment of 
 | **Pairing** | Scan the controller QR from Android, or enter the Android eight-digit pairing code and verify the device fingerprint |
 | **Privacy and authentication** | Node-Key end-to-end encryption, username / TOTP / Passkeys, active Vault session recovery |
 | **Offline resilience** | Durable queues, retries, foreground relay and scheduled background recovery |
+| **Android power modes** | Eco / Balanced / Realtime; independent command polling and SMS event wakeups ([energy guide](docs/ENERGY_POLICY.md)) |
 
 Editable SVG icon sources are in [design/icons](design/icons); the APK uses matching Android VectorDrawables with automated parity checks.
 

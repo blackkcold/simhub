@@ -1,3 +1,15 @@
+## v0.13.0 — Android energy-aware event-driven relay
+
+- Introduce Eco / Balanced / Realtime profiles, with Battery Saver auto-throttling unless explicit Realtime is selected.
+- Replace the 20-second full sync and overlapping permanent long-poll with a dedicated command transport and bounded 15-minute inventory maintenance.
+- Gate six-hour SMS Provider reconciliation to 30-minute idle cadence, resume bounded pages and retain delayed companion-mode SMS Provider follow-up after broadcasts.
+- Short-circuit already-seen Provider event IDs before contact lookups and AES-GCM encryption; prune durable upload receipts at most daily.
+- Coalesce JobScheduler triggers without replacing in-flight jobs, preserve missed event retries and shared-pool retry due times.
+- Surface metadata-only work counters, adapt web command expiration to the last reported energy mode, and warn before delayed SMS sends.
+- Preserve v0.12.2 independent signed APK OTA and secure unpair recovery; calculate Android presence windows from reported power policy without changing modem defaults.
+
+**Limitations:** Software CI cannot verify hardware battery savings, OEM Doze exemptions, protected OTP visibility, or time-critical remote sends under restrictive ROMs. Optional metadata-only push adapter still requires an external push provider; no configured FCM credentials are bundled.
+
 ## v0.12.2 — Reliable device unpair recovery and independent Android OTA
 
 - Separate ACTIVE, RESET_PENDING, RECOVERY and UNPAIRED Android states so remote unpair no longer renders a false "unpaired" screen while local credentials are retained.

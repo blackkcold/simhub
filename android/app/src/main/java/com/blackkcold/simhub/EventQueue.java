@@ -8,11 +8,12 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class EventQueue {
     private static final AtomicLong LAST_WAKE=new AtomicLong(0);
     private EventQueue(){}
-    private static void wake(Context c){long now=SystemClock.elapsedRealtime();long prev=LAST_WAKE.get();if(now-prev>1000&&LAST_WAKE.compareAndSet(prev,now))SyncJobService.scheduleNow(c);}
+    private static void wake(Context c){long now=SystemClock.elapsedRealtime();long prev=LAST_WAKE.get();if(now-prev>1000&&LAST_WAKE.compareAndSet(prev,now))RelayForegroundService.kick(c);}
     public static boolean queue(Context c,String id,String kind,long occurredAt,int subId,boolean hasOtp,JSONObject payload,JSONObject metadata){
         try{
             AgentConfig cfg=new AgentConfig(c);
             if(!cfg.isEnrolled()){cfg.recordEventQueueError("not_enrolled");return false;}
+            if(LocalStore.get(c).hasSeenEvent(id))return true;
             if("sms.history".equals(kind) && LocalStore.get(c).hasSeenEvent(id))return true;
             String sub=String.valueOf(subId);
             if(kind.startsWith("sms.")){

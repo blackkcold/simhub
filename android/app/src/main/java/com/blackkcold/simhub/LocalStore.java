@@ -12,6 +12,7 @@ import java.util.List;
 
 public final class LocalStore extends SQLiteOpenHelper {
     private static LocalStore INSTANCE;
+    private static long lastReceiptPruneAt=0L;
     public static synchronized LocalStore get(Context c){if(INSTANCE==null)INSTANCE=new LocalStore(c.getApplicationContext());return INSTANCE;}
     private LocalStore(Context c){super(c,"simhub-agent.db",null,5);}
 
@@ -82,7 +83,10 @@ public final class LocalStore extends SQLiteOpenHelper {
             // Provider receipts are useful for months, not indefinitely. The
             // indexed prune bounds offline journal growth on long-running nodes.
             long cutoff=System.currentTimeMillis()/1000-365L*86400;
-            db.delete("uploaded_event_ids","uploaded_at<?",new String[]{Long.toString(cutoff)});
+            if(System.currentTimeMillis()-lastReceiptPruneAt>=24L*3600*1000){
+                db.delete("uploaded_event_ids","uploaded_at<?",new String[]{Long.toString(cutoff)});
+                lastReceiptPruneAt=System.currentTimeMillis();
+            }
             db.delete("events","id=?",new String[]{id});
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}

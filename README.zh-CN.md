@@ -58,6 +58,7 @@ Web「设置 → 系统版本」支持 GitHub Release 检测、忽略及一键�
 | **设备配对** | 设备页三步向导支持「扫码或复制注册链接」及「复制节点地址 + 八位配对码」，核验指纹后授权 |
 | **隐私与登录** | Node Key 端到端加密、用户名 / TOTP / Passkey、Vault 活动会话刷新恢复 |
 | **离线恢复** | 本地队列、断网后重试、常驻中继、后台任务恢复 |
+| **Android 能耗管理** | 极致省电 / 智能均衡 / 实时优先；短信事件触发、命令检查与低频维护分离（[说明](docs/ENERGY_POLICY.md)） |
 
 Android 矢量图标原始 SVG 位于 [design/icons](design/icons)，APK 使用同路径的 Android VectorDrawable，并在 CI 中校验一致性。
 
@@ -84,6 +85,10 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 向导检查 DNS / Docker / 端口，生成管理员 Token、TOTP、私有 `.env`，部署 Relay 与 Caddy HTTPS；**DNS 记录需自行在域名服务商处设置**。已有 Nginx / Caddy / Traefik 时，给命令增加 `--mode external` 并自行配置双域名 HTTPS 反代。
 
 然后打开管理域名，登录并创建/导入本地 Vault；下载正式签名 APK，通过扫码或 Android 发码完成配对并授权读取、接收和发送短信；**不必将 SIM Hub 设置为默认短信应用**，完整接管模式为可选项。
+
+## Android 后台能耗管理（v0.13.0）
+
+Android「设置 → 运行与短信同步」可切换三档能耗模式。默认智能均衡：前台 Relay 连接开启时约每 2 分钟检查命令，设备完整状态每 15 分钟维护；收到短信后仍独立调度加密上传。极致省电模式下远程指令可能延迟，Web 发送短信时会提示。后台调度仍受系统休眠、OEM 限制及 Android 17 OTP 可见性限制，**不保证秒级送达**。参见[能耗与可靠性说明](docs/ENERGY_POLICY.md)。
 
 ## 系统兼容实验室（v0.12.0）
 

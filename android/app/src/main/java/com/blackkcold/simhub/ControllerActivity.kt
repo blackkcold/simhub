@@ -165,7 +165,10 @@ class ControllerActivity:Activity() {
         if(view!=null && view.canGoBack())view.goBack() else super.onBackPressed()
     }
     override fun onDestroy() {
-        web?.apply { stopLoading();destroy() };web=null
+        web?.stopLoading()
+        content.removeAllViews()
+        web?.destroy()
+        web=null
         super.onDestroy()
     }
 }

@@ -86,6 +86,43 @@ public final class SmsHistorySync {
         cfg.clearSmsProviderError();return count;
     }
 
+    /**
+     * Rolling reconciliation for delayed Android 17 SMS/OTP visibility.
+     * A monotonically advancing history cursor alone permanently loses SMS rows
+     * initially filtered by the OS. Replay the last six hours in bounded pages,
+     * restart at the window beginning when exhausted, and deduplicate by provider ID.
+     * No clock-based inference can force protected OTPs to become visible early.
+     */
+    public static synchronized int reconcileRecent(Context c,int requested){
+        if(!canRead(c))return -1;
+        AgentConfig cfg=new AgentConfig(c);
+        if(!cfg.isEnrolled())return 0;
+        final int limit=Math.max(1,Math.min(PAGE,requested));
+        final long cutoff=System.currentTimeMillis()-6L*60*60*1000;
+        long lastDate=cfg.reconcileDate(),lastId=cfg.reconcileId();
+        if(lastDate<cutoff){lastDate=0;lastId=-1;cfg.resetReconcileCursor();}
+        String selection=Telephony.Sms.DATE+">=?"+
+            (lastDate>0?" AND (("+Telephony.Sms.DATE+">?) OR ("+
+                Telephony.Sms.DATE+"=? AND "+BaseColumns._ID+">?))":"");
+        List<String> args=new ArrayList<>();
+        args.add(String.valueOf(cutoff));
+        if(lastDate>0){args.add(String.valueOf(lastDate));args.add(String.valueOf(lastDate));args.add(String.valueOf(lastId));}
+        int scanned=0;
+        try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,selection,
+                args.toArray(new String[0]),Telephony.Sms.DATE+" ASC, "+BaseColumns._ID+" ASC")){
+            if(cur==null){cfg.recordSmsProviderError("RECONCILE_PROVIDER_NULL");return -1;}
+            while(scanned<limit&&cur.moveToNext()){
+                SmsRow row=new SmsRow(cur);
+                if(!enqueue(c,row))break; // Do not advance if durable queue rejected it.
+                cfg.setReconcileCursor(row.date,row.id);
+                scanned++;
+            }
+            if(scanned<limit)cfg.resetReconcileCursor(); // Replay any newly unhidden older rows.
+            cfg.clearSmsProviderError();
+        }catch(Exception error){scanFailed(c,error,"Delayed SMS reconciliation");return -1;}
+        return scanned;
+    }
+
     /** Explicitly rescan the newest N SMS; stable provider event IDs prevent duplicates. */
     public static synchronized int syncRecent(Context c,int requested){
         if(!canRead(c))return -1;

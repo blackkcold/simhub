@@ -28,6 +28,9 @@ public final class SmsHistorySync {
 
     private static boolean enqueue(Context c,SmsRow row) throws Exception {
         if(row.type==Telephony.Sms.MESSAGE_TYPE_DRAFT)return true;
+        // Reconciliation replays recent Provider rows. Skip expensive contact lookup,
+        // key unwrap, JSON construction and AES-GCM for already durable IDs.
+        if(LocalStore.get(c).hasSeenEvent("sms-provider-"+row.id))return true;
         String direction=row.type==Telephony.Sms.MESSAGE_TYPE_INBOX?"in":"out";
         OtpParser.Result otp=direction.equals("in")?OtpParser.parse(row.body):new OtpParser.Result(false,null,0f);
         String contact=ContactResolver.lookup(c,row.address);

@@ -39,7 +39,7 @@ public final class RelayForegroundService extends Service {
             getContentResolver().registerContentObserver(Telephony.Sms.CONTENT_URI,true,providerObserver);
             observingProvider=true;
             AppLogger.i(this,"SmsProvider","Foreground provider observer registered");
-        }catch(SecurityException denied){AppLogger.e(this,"SmsProvider","Observer permission denied",denied);}
+        }catch(SecurityException denied){new AgentConfig(this).recordSmsProviderError("SMS_OBSERVER_PERMISSION_DENIED");AppLogger.e(this,"SmsProvider","Observer permission denied",denied);}
         catch(Exception error){AppLogger.e(this,"SmsProvider","Observer registration failed",error);}
     }
 
@@ -64,7 +64,7 @@ public final class RelayForegroundService extends Service {
                 }
             }
         });}
-    @Override public int onStartCommand(Intent intent,int flags,int startId){return START_STICKY;}
+    @Override public int onStartCommand(Intent intent,int flags,int startId){if(!observingProvider)registerSmsObserver();return START_STICKY;}
     @Override public void onDestroy(){if(observingProvider)try{getContentResolver().unregisterContentObserver(providerObserver);}catch(Exception ignored){}AppLogger.i(this,"RelayService","Foreground relay service stopped");exec.shutdownNow();wakeExecutor.shutdownNow();super.onDestroy();}
     @Override public IBinder onBind(Intent intent){return null;}
 }

@@ -80,7 +80,10 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
     val context=LocalContext.current
     var configured by remember { mutableStateOf(HubModes.configured(context)) }
     var surface by remember { mutableStateOf(HubModes.surface(context)) }
-    LaunchedEffect(controllerRevision) { surface=HubModes.surface(context) }
+    LaunchedEffect(controllerRevision) {
+        configured=HubModes.configured(context)
+        surface=HubModes.surface(context)
+    }
     LaunchedEffect(surface,configured) { if(configured && surface=="node") controller.refresh() }
     fun chooseSurface(value:String) {
         if(HubModes.role(context)!="both" && HubModes.role(context)!=value)

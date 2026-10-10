@@ -40,13 +40,27 @@ data class HubSnapshot(
     val resetPending:Boolean=false,
     val resetRecoveryRequired:Boolean=false
 ) {
-    val threads: List<HubThread> get() = sms.groupBy { keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision) }
-        .map { (key, items) -> HubThread(key,items.first().from,items.first().subscription,items.first(),items.size) }
-        .sortedByDescending { it.latest.date }
+    val threads: List<HubThread> get() = sms.groupBy {
+        keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision)
+    }.map { (key, items) ->
+        val latest=items.maxByOrNull { it.date }!!
+        HubThread(key,latest.from,latest.subscription,latest,items.size)
+    }.sortedByDescending { it.latest.date }
     companion object {
+        /** Group the conversation by correspondent, preserving SIM and device on each SMS. */
+        fun canonicalAddress(address:String):String {
+            val number=address.trim().replace(Regex("[\\s()\\-]"),"").lowercase(java.util.Locale.ROOT)
+            val international=if(number.startsWith("00"))"+"+number.drop(2) else number
+            return when {
+                international.startsWith("+86") && international.drop(3).matches(Regex("1[3-9][0-9]{9}")) -> international.drop(3)
+                international.matches(Regex("1[3-9][0-9]{9}")) -> international
+                else -> international
+            }
+        }
         fun keyFor(address:String,subscription:Int,deviceId:String="",channelId:String="",revision:Long=0) =
-            deviceId+"|"+(if(channelId.isNotBlank())channelId else subscription.toString())+
-                "|"+revision+"|"+address.lowercase()
+            canonicalAddress(address)
+        fun simSourceKey(sms:HubSms):String =
+            sms.sourceDeviceId+"|"+(sms.channelId.ifBlank { "unverified:"+sms.subscription })+"|"+sms.channelRevision
     }
 }
 object HubRepository {

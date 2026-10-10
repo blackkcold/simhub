@@ -5,7 +5,7 @@
 | Mode | Foreground command-check transport | Periodic inventory | SMS ingestion |
 |---|---|---|---|
 | Eco | 14-minute checks (no long poll) | 15-minute JobScheduler | Broadcast/Provider change + delayed follow-up |
-| Balanced (default) | 2-minute checks (no long poll) | 15-minute JobScheduler | Broadcast/Provider change + delayed follow-up |
+| Balanced (default) | ~45s when interactive, ~120s when idle (no long poll) | 15-minute JobScheduler | Broadcast/Provider change + delayed follow-up |
 | Realtime | 15-second server long poll (only when foreground relay is enabled) | 15-minute JobScheduler | Broadcast/Provider change + delayed follow-up |
 
 *The command transport requires the user's separate **foreground relay** toggle. With the toggle off, a persisted 15-minute JobScheduler task is the fallback. Android Doze, background restrictions and device ROMs can delay jobs. These intervals are requested cadences, not OS guarantees.*
@@ -26,7 +26,7 @@ The server stores commands until their **encrypted command's own expiry**. Contr
 
 A server-side optional metadata-only push/tickle adapter is available through `SIMHUB_PUSH_TICKLE_URL`. Android device push-token acquisition requires an externally configured provider; **this release does not ship a configured FCM transport**. Do not put SMS plaintext or keys in any push envelope.
 
-Online/offline classification uses the last *reported* foreground/energy mode. `lastSeenAt` remains the ground truth; presence is not proof of guaranteed command delivery.
+Online/offline classification uses the last *reported actual foreground service liveness*/energy mode. `lastSeenAt` remains the ground truth; presence is not proof of guaranteed command delivery.
 
 ## Measurements and diagnostic safety
 
@@ -41,3 +41,13 @@ Recommended hardware regression matrix:
 5. Baseline vs optimized `adb shell dumpsys batterystats --charged com.blackkcold.simhub`, Perfetto wakeups, HTTP requests, bytes, CPU time, APK memory and job execution.
 
 Do not claim percentage battery savings without controlled physical-device A/B testing. App power cost and whole-device drain are not interchangeable.
+
+## v0.13.1 reliability repair
+
+- **Provider change generation:** The old second-granularity timestamp could miss same-second incoming SMS. Notifications increment a monotonic stored generation; a scan only acknowledges the generation captured before its query. Later events remain pending. An event-driven latest-100 rescan also handles late Provider writes before the history cursor.
+- **Network independence:** Local SMS Provider ingestion/encryption happens before remote command operations, event uploads and retry-backoff gates. Provider follow-up checks remain separately scheduled for companion-mode broadcasts.
+- **Balanced cadence:** Foreground command checks are approximately 45 seconds while Android reports the screen interactive; otherwise they are approximately 120 seconds. A disabled or dead foreground relay requests durable background checks. These delays are not Doze guarantees.
+- **Truthful status:** `foregroundRelay` now means actual in-process service liveness; `foregroundRelayRequested` means the user selected it. `lastCommandFetchAt`, `lastCommandFetchCount` and `lastCommandFetchError` are metadata-only and appear in Android settings.
+- **Manual recovery:** Android Settings provides a single manual operation to inspect recent SMS, check encrypted remote commands and trigger upload. Relay expires commands on controller status reads even when a device does not poll.
+
+No SMS plaintext, sender, OTP, private key, access token or command ciphertext appears in the added diagnostic fields.

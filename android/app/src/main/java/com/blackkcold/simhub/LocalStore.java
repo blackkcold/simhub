@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -89,6 +90,17 @@ public final class LocalStore extends SQLiteOpenHelper {
     public synchronized int uploadedEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM uploaded_event_ids",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingCommandAckCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM command_acks",null)){return c.moveToFirst()?c.getInt(0):0;}}
+    /** Metadata-only task preview: do not export event IDs, ciphertext, SMS body or addresses. */
+    public synchronized JSONArray pendingEventTaskPreview(int max){
+        JSONArray items=new JSONArray();
+        try(Cursor cur=getReadableDatabase().query("events",new String[]{"kind","created_at"},
+                null,null,null,null,"created_at ASC",String.valueOf(Math.max(1,Math.min(10,max))))){
+            while(cur.moveToNext())items.put(new JSONObject().put("kind",cur.getString(0))
+                    .put("queuedAt",cur.getLong(1)));
+        }catch(Exception error){AppLogger.e(null,"LocalStore","Queue preview failed",error);}
+        return items;
+    }
+
 
     public synchronized boolean claimCommand(String id,String commandType){
         ContentValues v=new ContentValues();v.put("id",id);v.put("state","claimed");v.put("command_type",commandType);v.put("processed_at",System.currentTimeMillis()/1000);

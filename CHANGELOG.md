@@ -1,3 +1,14 @@
+## v0.14.0 — Android dual-role controller and staged administration
+
+- Android APK offers a native SIM node, a trusted-origin management-console WebView, and dual-role onboarding. Users may select multiple independent HTTPS management spaces without pairing their controller-only handset as a SIM node.
+- Preserve native node runtime, independent Node Key storage, original background sync, OTA update, SMS roles and existing relay protocol. Management-site JavaScript cannot access native SMS or Node secrets through a bridge.
+- Replace the four-field login gate with administrator password, conditional TOTP challenge dialog and a separate client-side Vault unlock step. Passwords use Argon2id; the administrator can provision/rotate an independent password from the settings page after step-up verification.
+- Keep the emergency Admin Token login path for migration. A short-lived, single-use authentication challenge does not grant a session until the second factor passes. Password changes revoke active sessions.
+- Support opt-in trusted-controller Vault snapshots protected by an origin-bound non-extractable WebCrypto key, with bounded expiry and explicit lock/logout removal. This convenience mechanism is not hardware-backed and does not protect against malicious authenticated same-origin scripts.
+- Add migration and end-to-end authentication replay tests plus Android/Web UI regression coverage; keep recovery keys necessary for new controller devices.
+- **Deployment:** existing Docker/SQLite data is preserved; database schema advances to 12. Existing installations may log in with the Admin Token and provision a new password from account settings. Controller-only devices need their own management HTTPS URL.
+- **Limitations:** WebView Passkey compatibility varies by device; the system browser remains a fallback. Physical Android dual-role, WebView and biometric hardware validation remain necessary. Multiple Relay profiles are independent, not automatic mutual Vault authorization.
+
 ## v0.13.3 — Android 16+ Remote OTA
 
 - Android 16 (API 36) and later: explicit device-authorized remote APK self-update via encrypted relay commands and administrator step-up; earlier platforms have a developer-only test override.

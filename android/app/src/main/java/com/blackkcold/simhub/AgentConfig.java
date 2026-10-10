@@ -67,6 +67,13 @@ public final class AgentConfig {
     public void setHistoryBackfillCursor(long date,long id){prefs.edit().putLong("history_backfill_date",date).putLong("history_backfill_id",id).apply();}
 
     public void setHistoryCursor(long date,long id){prefs.edit().putLong("history_cursor_date",date).putLong("history_cursor_id",id).apply();}
+    // Independent rolling cursor. Resetting the pass is required: Android 17 can
+    // reveal previously hidden OTP rows hours after newer visible SMS.
+    public long reconcileDate(){return prefs.getLong("reconcile_cursor_date",0L);}
+    public long reconcileId(){return prefs.getLong("reconcile_cursor_id",-1L);}
+    public void setReconcileCursor(long date,long id){prefs.edit().putLong("reconcile_cursor_date",date).putLong("reconcile_cursor_id",id).apply();}
+    public void resetReconcileCursor(){prefs.edit().remove("reconcile_cursor_date").remove("reconcile_cursor_id").apply();}
+
     public void recordQueueFailure(){prefs.edit().putLong("queue_failures",prefs.getLong("queue_failures",0)+1).putLong("last_queue_failure_at",System.currentTimeMillis()/1000).apply();}
     public long queueFailures(){return prefs.getLong("queue_failures",0);}
     public long lastQueueFailureAt(){return prefs.getLong("last_queue_failure_at",0);}
@@ -114,7 +121,7 @@ public final class AgentConfig {
     }
 
     private void setBaseEnrollment(String server,String deviceId,String deviceName,String token)throws Exception{
-        prefs.edit().remove("remote_reset_notified").putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").apply();
+        prefs.edit().remove("remote_reset_notified").putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").remove("reconcile_cursor_date").remove("reconcile_cursor_id").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
         localQueueKey();
     }
@@ -142,7 +149,7 @@ public final class AgentConfig {
     }
 
     public void clearEnrollment(){
-        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("sms_provider_error").remove("pending_pair_id").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
+        prefs.edit().remove("server").remove("device_id").remove("device_name").remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("reconcile_cursor_date").remove("reconcile_cursor_id").remove("queue_failures").remove("last_queue_failure_at").remove("sms_provider_error").remove("pending_pair_id").remove("node_key_id").remove("token_issued_at").remove("token_rotation_pending").remove("pending_token_expires_at").remove("reset_pending").remove("remote_reset_pending").putBoolean("always_on",false).apply();
         secrets.remove(SECRET_DEVICE_TOKEN);secrets.remove(SECRET_PENDING_DEVICE_TOKEN);secrets.remove(SECRET_VAULT_KEY);secrets.remove(SECRET_NODE_KEY);secrets.remove(SECRET_LOCAL_QUEUE_KEY);secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");secrets.remove("pending_pair_token");secrets.remove("pending_pair_proof");
     }
 }

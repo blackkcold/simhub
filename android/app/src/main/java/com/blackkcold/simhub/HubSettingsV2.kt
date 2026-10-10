@@ -595,7 +595,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 CompatibilityEntry(controller,Modifier.fillMaxWidth())
                 RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
                 SharingCard(state,tools,controller,Modifier.fillMaxWidth())
-                RemoteOtaCard(tools,controller,Modifier.fillMaxWidth())
+                RemoteOtaCard(state,tools,controller,Modifier.fillMaxWidth())
                 DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 PreferencesCard(tools,controller,Modifier.fillMaxWidth())
             }

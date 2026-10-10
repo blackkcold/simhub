@@ -53,7 +53,7 @@ try {
       });
       assert.ok(positions.dialog<=500,"Dialog is too wide at "+width);
       assert.ok(positions.right<=width+2,"Dialog overflows viewport at "+width);
-      assert.ok(positions.buttonsTop-positions.inputBottom>=16,"Buttons touch input at "+width);
+      assert.ok(positions.buttonsTop-positions.inputBottom>=16,"Buttons touch input at "+width+" "+JSON.stringify(positions));
       await page.locator("#stepupDialog").evaluate(d=>d.close());
       await page.evaluate(()=>{
         document.querySelector("#lockedPanel").hidden=true;

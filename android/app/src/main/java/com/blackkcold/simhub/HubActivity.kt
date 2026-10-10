@@ -419,7 +419,7 @@ class HubActivity: ComponentActivity(), HubController {
                     SyncJobService.scheduleNow(app)
                     Pair(inspected,LocalStore.get(app).pendingEventCount())
                 }
-                toast(hubLabel(
+                toast(actionLabel(
                     "检查了 ${result.first} 条短信；剩余 ${result.second} 条待上传。命令检查已完成。",
                     "Inspected ${result.first} SMS; ${result.second} uploads pending. Command check completed."))
                 refresh()

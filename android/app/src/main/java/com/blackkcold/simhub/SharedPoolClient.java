@@ -54,6 +54,11 @@ public final class SharedPoolClient {
     public boolean optedIn(){return prefs.getBoolean("requested",false);}
     public boolean approved(){return optedIn()&&prefs.getBoolean("approved",false);}
     public int pendingUploadCount(){return store.pendingCount();}
+    /** A scheduled pool retry must be visible to the shared sync coordinator. */
+    public boolean retryDue(){
+        long next=prefs.getLong("next_retry",0L);
+        return next>0&&next<=System.currentTimeMillis();
+    }
     public void scheduleRetry(Exception error){
         int attempts=Math.min(7,prefs.getInt("retry_attempts",0)+1);
         long delay=Math.min(15*60*1000L,15000L*(1L<<Math.min(5,attempts-1)));

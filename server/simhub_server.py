@@ -99,6 +99,7 @@ ALLOWED_COMMANDS = {
     "diagnostics.request",
     "ota.check",
     "ota.install",
+    "ota.cancel",
     "node.rotate_key",
 }
 def remote_ota_capable(app_version: str, state: dict) -> bool:
@@ -1228,7 +1229,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
-            if str(body.get("type","")) in {"sms.send","node.rotate_key","device.network_policy","ota.install"} and not self.require_stepup():return
+            if str(body.get("type","")) in {"sms.send","node.rotate_key","device.network_policy","ota.install","ota.cancel"} and not self.require_stepup():return
             self.create_command(p[3],body); return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return

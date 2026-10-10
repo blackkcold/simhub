@@ -35,6 +35,7 @@ public final class CommandProcessor {
                 }
                 case "device.refresh_state","subscription.refresh" -> {api.putState();result.put("refreshed",true);ack(id,"succeeded",result);}
                 case "diagnostics.request" -> {JSONObject d=StateCollector.collect(c).put("diagnosticAt",now).put("requestId",id);EventQueue.diagnostics(c,d);result.put("queued",true);ack(id,"succeeded",result);}
+                case "ota.cancel" -> {if(!RemoteOta.cancel(c)){ack(id,"rejected",new JSONObject().put("reason","ota_cannot_cancel_after_install_commit"));return;}ack(id,"succeeded",new JSONObject());}
                 case "ota.install" -> {JSONObject accepted=RemoteOta.request(c,id,p.optString("targetVersion","latest"));ack(id,"submitted",accepted);}
                 case "ota.check" -> {JSONObject ota=api.ota();EventQueue.diagnostics(c,new JSONObject().put("ota",ota));result.put("checked",true);ack(id,"succeeded",result);}
                 case "node.rotate_key" -> {if(store.pendingSmsCount()>0){ack(id,"failed",new JSONObject().put("reason","pending_sms"));return;}String keyId=p.getString("keyId");byte[] nodeKey=CryptoBox.ub64(p.getString("nodeKey"));if(nodeKey.length!=32||!CryptoBox.keyId(nodeKey).equals(keyId)){ack(id,"rejected",new JSONObject().put("reason","invalid_node_key"));return;}new AgentConfig(c).rotateNodeKey(keyId,nodeKey);ack(id,"succeeded",new JSONObject().put("rotated",true).put("keyId",keyId));}

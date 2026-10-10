@@ -152,6 +152,7 @@ public final class AppUpdater {
                     byte[] bytes=new byte[65536];
                     int n;
                     while((n=in.read(bytes))!=-1){
+                        if(remote&&RemoteOta.cancelRequested(app))throw new java.io.IOException("remote_ota_cancelled");
                         size+=n;
                         if(size>MAX_APK)throw new SecurityException("APK too large");
                         md.update(bytes,0,n);out.write(bytes,0,n);
@@ -161,12 +162,15 @@ public final class AppUpdater {
                     throw new SecurityException("APK SHA-256 mismatch");
                 MAIN.post(()->callback.onProgress("下载完成，正在验证安装包…"));
                 verifyApk(app,file,metadata);
+                if(remote&&RemoteOta.cancelRequested(app))throw new java.io.IOException("remote_ota_cancelled");
                 if(remote)RemoteOta.stage(app,"verified");
                 MAIN.post(()->callback.onProgress("安装已提交至 Android 系统"));
+                if(remote&&RemoteOta.cancelRequested(app))throw new java.io.IOException("remote_ota_cancelled");
                 if(remote)RemoteOta.stage(app,"installing");
                 install(app,file);
             }catch(Exception error){
-                if(remote)RemoteOta.fail(app,error instanceof SecurityException?"update_security_check_failed":"update_download_or_install_failed");
+                if(remote)RemoteOta.fail(app,RemoteOta.cancelRequested(app)?"update_cancelled":
+                    (error instanceof SecurityException?"update_security_check_failed":"update_download_or_install_failed"));
                 MAIN.post(()->callback.onProgress("更新失败："+error.getMessage()));
             }finally{
                 // Session has already copied the APK into PackageInstaller staging.

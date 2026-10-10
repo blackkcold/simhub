@@ -25,7 +25,7 @@ jobs:
       - run: python3 -m pip install -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_remote_ota server.test_updates server.test_hardening
       - run: node --check web/app.js && node --check web/i18n.js
-      - run: node web/test_ui.mjs
+      - run: node web/test_sms_logic.mjs && node web/test_crypto_vector.mjs && node web/test_bootstrap_vector.mjs
       - run: python3 -m py_compile server/simhub_server.py
   android:
     runs-on: ubuntu-latest

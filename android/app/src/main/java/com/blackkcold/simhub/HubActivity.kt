@@ -577,6 +577,7 @@ class HubActivity: ComponentActivity(), HubController {
     override fun setDeveloperRemoteOtaOverride(value:Boolean){
         try{
             DeveloperSettings.setForceRemoteOtaEnabled(this,value)
+            RemoteOta.capabilityChanged(this)
             tools.forceRemoteOta=DeveloperSettings.isForceRemoteOtaEnabled(this)
             tools.remoteOtaAllowed=RemoteOta.allowed(this)
             SyncJobService.scheduleNow(applicationContext)
@@ -626,7 +627,7 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun setDeveloperEnabled(value:Boolean){
-        DeveloperSettings.setEnabled(this,value);tools.developer=value
+        DeveloperSettings.setEnabled(this,value);RemoteOta.capabilityChanged(this);tools.developer=value
         publishSmsSendCapability()
         AppLogger.i(this,"Developer",if(value)"Diagnostic logging enabled" else "Diagnostic logging disabled")
         if(!value){tools.logs="";tools.diagnostics="";tools.forceSms=false;tools.forceRemoteOta=false;tools.remoteOtaAllowed=RemoteOta.allowed(this);refresh()}else viewLogs()

@@ -484,7 +484,7 @@ function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevi
 function renderCommandActivity(commands){
   const box=$('commandActivity');if(!box||!vaultKey)return;
   const zh=getLocale()==='zh-CN';
-  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation','ota.install':zh?'远程 APK 更新':'Remote APK update'};
+  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation','ota.install':zh?'远程 APK 更新':'Remote APK update','ota.cancel':zh?'取消远程更新':'Cancel remote update'};
   const statuses={queued:zh?'已排队':'Queued',dispatched:zh?'已下发':'Dispatched',submitted:zh?'已提交运营商':'Submitted',sent:zh?'已发送':'Sent',delivered:zh?'已送达':'Delivered',succeeded:zh?'节点已执行':'Executed',failed:zh?'失败':'Failed',rejected:zh?'已拒绝':'Rejected',expired:zh?'已过期':'Expired'};
   box.innerHTML=commands.length?commands.map(c=>{
     const detail=c.result||{};
@@ -695,6 +695,7 @@ function deviceButtons(d) {
     installing:'安装中',awaiting_confirmation:'等待手机确认',
     succeeded:'已更新',failed:'更新失败',idle:'空闲'}[ota.remoteOtaStage]||'待检测';
   const otaLabel=zh?otaStage:(ota.remoteOtaStage||'idle');
+  const otaCancelable=otaReady&&['checking','downloading','verified'].includes(ota.remoteOtaStage);
   const otaDetails=otaVisible?'<div class="action-group"><h4>'+
     (zh?'应用远程更新':'Remote app updates')+'</h4><p class="hint">'+
     escapeHtml(sdk<36?(zh?'开发者测试模式 · 无法保证免确认安装':'Developer test mode · silent install not guaranteed'):
@@ -704,7 +705,7 @@ function deviceButtons(d) {
        escapeHtml(ota.remoteOtaAuthorized!==true
          ?(zh?'请先在安卓设备设置中允许远程应用更新':'Enable remote updates on the Android device first')
          :(zh?'请先在安卓设备上授权安装未知来源应用':'Grant the Android install-sources permission first'))+
-    '</p>')+'</div>':'';
+    '</p>')+(otaCancelable?action('ota-cancel',zh?'取消未提交的更新':'Cancel pending update'):'')+'</div>':'';
 
   return '<div class="detail-actions">'+
     '<div class="action-group"><h4>'+escapeHtml(tr('ux_sms_actions'))+'</h4><div class="row wrap">'+
@@ -1029,7 +1030,7 @@ async function sendConversationReply(){
     }
   }finally{btn.disabled=false;}
 }
-async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
+async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install'||type==='ota.cancel')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
   const energy=power.effectiveEnergyMode||power.energyMode||'balanced';
   // A compact background policy must not make remote commands expire before
   // the next eligible fetch. Preserve a finite expiry and the encrypted AAD.
@@ -1247,6 +1248,12 @@ async function handleDeviceAction(btn){
   const d=devices.find(x=>x.id===id);
   if(!d)return;
   const zh=getLocale()==='zh-CN';
+  if(action==='ota-cancel'){
+    if(!confirm(zh?'仅能取消尚未提交系统安装器的更新。继续？':'Cancel this update if installation has not been committed?'))return;
+    await queueCommand(id,'ota.cancel',{},900);
+    toast(zh?'已请求取消；以设备返回的状态为准':'Cancellation requested; wait for device confirmation');
+    return;
+  }
   if(action==='ota-install'){
     const state=d.state||{};
     if(d.nodeType!=='android'||!versionAtLeast(d.appVersion,'0.13.3')||

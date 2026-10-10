@@ -552,3 +552,5 @@ input,select,textarea { min-width:0; min-height:44px; }
 
 /* Ensure accessible separation of security-dialog input and action targets. */
 #stepupDialog .stepup-actions{margin-top:24px}
+
+#stepupDialog .stepup-actions{margin-top:40px!important}

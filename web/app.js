@@ -882,7 +882,7 @@ function renderConversation(){
     $('replyComposer').hidden=true;
     return;
   }
-  $('replyComposer').hidden=false;
+  $('replyComposer').hidden=!hasSmsSending();
   if(activeConversationKey==='__new'){
     $('conversationTitle').textContent=tr('new_sms');
     $('conversationMeta').textContent='';
@@ -916,35 +916,40 @@ function renderConversation(){
 }
 function replyEligible(){
   const device=$('replyDevice').value,channel=$('replySubscription').value,dest=$('replyTo').value.trim();
-  if(!device||!channel||!/^\+?[0-9 ()-]{3,40}$/.test(dest))return false;
+  if(!deviceCanSendSms(devices.find(d=>d.id===device))||!channel||!/^\+?[0-9 ()-]{3,40}$/.test(dest))return false;
   if(activeConversationKey==='__new')return true;
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(t=>t.key===activeConversationKey);
   const p=selected?.latest?.payload||{},revision=Number(p.channelRevision||0);
-  if(!revision||!p.channelId||selected.latest.deviceId!==device||String(p.channelId)!==channel)return false;
   const current=nodeChannels(devices.find(d=>d.id===device)).find(ch=>String(ch.id)===channel);
-  return !!current&&Number(current.revision||current.channelRevision||1)===revision;
+  if(!current)return false;
+  return selected?.messages.some(e=>e.deviceId===device &&
+    String(e.payload?.channelId||'')===channel &&
+    Number(e.payload?.channelRevision||0)===Number(current.revision||current.channelRevision||1))===true;
 }
 function refreshReplyEligibility(){$('replySend').disabled=!replyEligible();}
 function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
   if(!selected)return;
   activeConversationKey=key;
-  const last=selected.latest,number=messageAddress(last),did=last.deviceId,channel=messageChannel(last);
+  const last=selected.latest,number=messageAddress(last);
+  const eligible=[...selected.messages].reverse().find(e=>{
+    const d=devices.find(x=>x.id===e.deviceId);
+    const ch=nodeChannels(d).find(c=>String(c.id)===String(e.payload?.channelId||''));
+    return deviceCanSendSms(d) && ch &&
+      Number(ch.revision||ch.channelRevision||1)===Number(e.payload?.channelRevision||0);
+  });
+  const did=eligible?.deviceId||'',channel=eligible?messageChannel(eligible):'';
   updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
   $('replyTo').value=number;
   $('replyOptions').open=false;
-  const originalRevision=Number(last.payload?.channelRevision||0);
-  const currentChannel=nodeChannels(devices.find(x=>x.id===did)).find(ch=>String(ch.id)===channel);
-  const stale=originalRevision>0&&
-    (!currentChannel||Number(currentChannel.revision||currentChannel.channelRevision||1)!==originalRevision);
-  const confirmed=!!last.payload?.channelId&&originalRevision>0;
-  const canReply=confirmed&&!stale&&replyEligible();
+  const canReply=!!eligible&&replyEligible();
   refreshReplyEligibility();
-  if(!canReply){$('replyOptions').open=true;toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');}
+  if(!canReply && hasSmsSending()){$('replyOptions').open=true;toast('原会话没有可用的发送 SIM；请新建短信并选择有效通道');}
   syncResponsiveConversation();
   renderInbox();
 }
 function openNewMessage(){
+  if(!hasSmsSending())return;
   switchView('inbox');activeConversationKey='__new';
   updateReplyDevices();
   $('replyDevice').value='';
@@ -983,14 +988,14 @@ async function sendConversationReply(){
     }
   }finally{btn.disabled=false;}
 }
-async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
+async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
   const energy=power.effectiveEnergyMode||power.energyMode||'balanced';
   // A compact background policy must not make remote commands expire before
   // the next eligible fetch. Preserve a finite expiry and the encrypted AAD.
   const minimumTtl=(!power.foregroundRelay||energy==='eco')?1200:(energy==='balanced'?300:180);
   ttl=Math.max(ttl||120,minimumTtl);
   const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
-async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
+async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前是只读短信模式，不能发送');if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
   if(!confirm((getLocale()==='zh-CN'?'该设备使用省电/非前台模式，发送可能延迟约 15 分钟。请确认接收方及发送时效要求。':'This device may check remote commands only every 15 minutes. Confirm the recipient and acceptable delay.')))return;
 }
 if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}

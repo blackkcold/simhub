@@ -1,3 +1,16 @@
+## v0.13.2 — Read-only companion SMS, consolidated threads and updater restart resilience
+
+- Make non-default Android SMS companion mode receive/read-only by default. Hide SMS compose and reply actions in the Android UI and Web/PWA. Allow explicit developer-only testing for up to one hour; the real Android SMS sender and encrypted remote command executor enforce the same policy.
+- Report SMS receive readiness independently from send eligibility and avoid requesting SEND_SMS in standard companion mode. Existing full default-SMS and modem send paths remain available.
+- Consolidate conversations by canonical correspondent rather than creating one thread per SIM/device/revision. Preserve each SMS's original device, channel ID and SIM revision, and make list previews use the latest actual message.
+- Display the source SIM beside conversation timestamps and enable local per-SIM filtering on Android and Web, without changing server plaintext indexes or deleting SMS history.
+- Improve the existing single-container signed rootless updater with consecutive readiness probes and switchover timing. Add safe GET/HEAD retry guidance to the existing Caddy sample and bounded idempotent-read retries in the PWA; never blindly replay POST commands.
+- Add capability, updater readiness, and read-only UI regression checks.
+
+**Deployment compatibility:** Same Compose service, rootless updater, database schema, keys and data volume. No new installation procedure is introduced. Existing custom Caddyfile copies are not overwritten by upgrades; operators can optionally copy the safe-read retry directives into their current Caddyfile and reload Caddy without redeploying containers.
+
+**Validation:** CI validates software logic. Physical Android SMS behavior, OEM-specific permissions and live proxy restart timing need on-device/deployed-environment testing.
+
 ## v0.13.1 — Reliable SMS ingestion, command delivery and adaptive energy UI
 
 - Fix a same-second SMS Provider notification race using a monotonic change generation and acknowledgement of only the generation observed before scanning.

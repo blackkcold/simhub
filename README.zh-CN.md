@@ -47,7 +47,7 @@ Web「设置 → 系统版本」支持 GitHub Release 检测、忽略及一键�
 
 | 能力 | 说明 |
 |---|---|
-| **短信与验证码** | 多 SIM 收发、会话直接回复、新建短信、OTP 识别与复制 |
+| **短信与验证码** | 无需接管系统信息的伴随模式，或可选完整默认短信模式；多 SIM 收发与 OTP 识别（Android 17 非默认模式可能延迟验证码） |
 | **Android 原生界面** | 唯一 Material 3 自适应四 Tab 界面，折叠屏双栏、SIM 标签、完整高级工具与脱敏诊断 |
 | **设备与 SIM** | Android / Linux 蜂窝 Modem 节点；SIM 号码、信号、充电、Wi-Fi 与在线状态 |
 | **共享短信池（主动开启）** | 已授权的 Android 设备通过加密共享池同步短信，最近 100 条、分页及来源 SIM 尾号 |
@@ -80,7 +80,11 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 向导检查 DNS / Docker / 端口，生成管理员 Token、TOTP、私有 `.env`，部署 Relay 与 Caddy HTTPS；**DNS 记录需自行在域名服务商处设置**。已有 Nginx / Caddy / Traefik 时，给命令增加 `--mode external` 并自行配置双域名 HTTPS 反代。
 
-然后打开管理域名，登录并创建/导入本地 Vault；下载正式签名 APK，通过扫码或 Android 发码完成配对、短信权限和**默认短信应用**设置。
+然后打开管理域名，登录并创建/导入本地 Vault；下载正式签名 APK，通过扫码或 Android 发码完成配对并授权读取、接收和发送短信；**不必将 SIM Hub 设置为默认短信应用**，完整接管模式为可选项。
+
+## 非默认短信模式
+
+在系统允许授权 `READ_SMS`、`RECEIVE_SMS` 与 `SEND_SMS` 的情况下，SIM Hub 可以保持 vivo 等原厂「信息」为默认应用，通过 `SMS_RECEIVED` 广播触发系统短信数据库的加密同步，并通过 6 小时滚动补扫恢复延迟可见的短信。**Android 17 对部分非默认应用的受保护验证码有约 3 小时访问延迟**，本项目不绕过系统保护；厂商 ROM 和安装来源也可能限制短信权限。需要实时获取所有验证码时，此模式不能保证满足要求。详见 [Android 设置](docs/ANDROID_SETUP.md)。
 
 ## 使用边界
 

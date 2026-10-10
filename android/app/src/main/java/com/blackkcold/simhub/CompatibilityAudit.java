@@ -38,6 +38,6 @@ public final class CompatibilityAudit {
     }
 
     public static synchronized void clear(Context context){
-        context.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE).remove(KEY).apply();
+        context.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE).edit().remove(KEY).apply();
     }
 }

@@ -1,3 +1,13 @@
+## v0.14.1 — Unified Android surfaces and QR management onboarding
+
+- Replace the independent Android Controller Activity chrome with one shared Material 3 Compose shell for both SIM node and management center; make mode switching a prominent in-app selection, with node-only navigation and manager-only PWA navigation.
+- Keep the controller WebView alive while switching to the local SIM node. Avoid destroying browser sessionStorage and forcing a needless Vault re-unlock on every switch. Node foreground service, SMS permissions, queues, encryption and OTA remain separate from the controller session.
+- Reuse stored v0.14 controller profiles without migration or re-pairing. Support multiple HTTPS management addresses, scanning a QR, pasting a link, opening in an external browser and removing shortcuts without touching server data.
+- Add **Devices → 连接管理手机** to the Web management console. The QR contains only `simhub://controller?url=<encoded HTTPS management origin>`; no SMS enrollment tokens, cookies, admin passwords, OTP or Vault keys.
+- Require HTTPS origin validation, show the host and explicit confirmation before import, and fail closed on WebView certificate errors or cross-origin navigation/subrequests. Users still perform independent admin login and Vault unlock.
+- Add controller-link parser tests plus browser UI regression coverage.
+- Existing Docker data, admin accounts, session flow, Node Keys and SMS ciphertext are not modified. No new deployment steps are necessary.
+
 ## v0.14.0 — Android dual-role controller and staged administration
 
 - Android APK offers a native SIM node, a trusted-origin management-console WebView, and dual-role onboarding. Users may select multiple independent HTTPS management spaces without pairing their controller-only handset as a SIM node.

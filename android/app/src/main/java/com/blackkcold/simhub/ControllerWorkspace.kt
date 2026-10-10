@@ -148,7 +148,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                 }.also { web=it }
             },modifier=Modifier.fillMaxSize().weight(1f),update={view->
                 view.visibility=if(visible)android.view.View.VISIBLE else android.view.View.INVISIBLE
-                if(loadedOrigin!=selected && selected!=null){
+                if(visible && loadedOrigin!=selected && selected!=null){
                     loadedOrigin=selected
                     view.loadUrl(selected!!+"/")
                 }

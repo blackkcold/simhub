@@ -88,3 +88,9 @@ The Android Controller uses a dedicated WebView with JavaScript limited to a sel
 The primary administrator password is Argon2id PHC encoded (server environment or an authenticated, step-up protected SQLite override). A legacy high-entropy Admin Token remains available for emergency recovery. Password-first login issues a single-use, 120-second, IP-bound challenge; with TOTP enabled, only a successful second factor can issue a session cookie. Editing the admin password revokes every active administrator session.
 
 Opt-in trusted Vault snapshots are protected with an origin-bound, non-extractable WebCrypto key. They expire according to user settings and the session idle cap; manual lock/logout purges them. This is a usability feature and is not hardware-backed. It cannot defeat XSS or compromise of an authenticated WebView. The Relay never receives plaintext Master Vault Keys.
+
+## Android unified shell and management QR (v0.14.1)
+
+Controller configuration QR codes encode ONLY the public HTTPS management origin, e.g. `simhub://controller?url=https%3A%2F%2Fadmin.example.com`. This is NOT a SIM/Modem enrollment token and MUST NOT convey a bearer credential, cookie, OTP or Vault secret. The Android app strictly validates origin-only HTTPS URLs and requests explicit user confirmation before adding them. Subsequent administrator login and local Vault recovery/authorization are separate.
+
+The Android Compose shell retains one controller WebView across switches to the native node workspace. Trusted HTTPS origin restrictions, certificate validation and blocked third-party subresources are enforced in that WebView. The local SIM node and its Keystore secrets are never exposed through JavaScript bridges. Profiles share an app WebView runtime but browser storage follows normal origin isolation; profile removal intentionally removes only a shortcut, NOT session cookies or the Vault cache. Use logout/forget-credentials for those.

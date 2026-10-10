@@ -5,6 +5,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.telephony.SubscriptionManager;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Unprivileged data failover: Android routes traffic from Wi-Fi to the
@@ -14,8 +15,21 @@ import android.telephony.SubscriptionManager;
 public final class NetworkFailoverPolicy {
     private static volatile ConnectivityManager.NetworkCallback callback;
     private static volatile String lastStatus="";
+    private static final AtomicBoolean validatedOnline=new AtomicBoolean(false);
     private NetworkFailoverPolicy(){}
     private static void reportChange(Context c){if(!enabled(c))return;String current=status(c);if(!current.equals(lastStatus)){lastStatus=current;SyncJobService.scheduleNow(c);}}
+    private static void validatedTransition(Context c,boolean valid){
+        boolean previous=validatedOnline.getAndSet(valid);
+        if(!valid||previous)return;
+        // Backoff from an offline network is no longer useful once Android has
+        // actually validated a new route; preserve server 429/auth backoff.
+        AgentConfig cfg=new AgentConfig(c);
+        String failure=cfg.lastSyncError();
+        if(failure.equals("UnknownHostException")||failure.equals("ConnectException")||
+                failure.equals("SocketTimeoutException")||failure.equals("NoRouteToHostException"))
+            cfg.resetSyncBackoff();
+        SyncJobService.scheduleNow(c);
+    }
     public static boolean enabled(Context c){return new AgentConfig(c).dataFallbackEnabled();}
     public static String preferredChannel(Context c){return new AgentConfig(c).dataFallbackChannel();}
     public static String status(Context c){
@@ -40,8 +54,11 @@ public final class NetworkFailoverPolicy {
             if(cm==null||callback!=null)return;
             callback=new ConnectivityManager.NetworkCallback(){
                 @Override public void onAvailable(Network network){reportChange(c);}
-                @Override public void onLost(Network network){reportChange(c);}
-                @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities caps){reportChange(c);}
+                @Override public void onLost(Network network){validatedTransition(c,false);reportChange(c);}
+                @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities caps){
+                    validatedTransition(c,caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+                    reportChange(c);
+                }
             };
             cm.registerDefaultNetworkCallback(callback);
         }catch(RuntimeException e){AppLogger.w(c,"NetworkFallback","Network callback unavailable");}

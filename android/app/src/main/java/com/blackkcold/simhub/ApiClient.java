@@ -40,6 +40,7 @@ public final class ApiClient {
     /** Coalesced, event-first sync. An idle timer never rescans SMS or regenerates SIM inventory. */
     public void syncCycle(){
         if(cfg.resetPending()){
+            if(cfg.resetRecoveryRequired())return;
             if(!SYNC_BUSY.compareAndSet(false,true))return;
             try{performPendingReset();}
             finally{SYNC_BUSY.set(false);}
@@ -156,7 +157,7 @@ public final class ApiClient {
         try{
             JSONObject status=request("GET","/api/v1/devices/"+cfg.deviceId()+"/lifecycle",null);
             if(status.optBoolean("resetRequired",false)){
-                cfg.markRemoteResetPending();performPendingReset();return true;
+                cfg.markRemoteResetPending();EnrollmentManager.notifyStateChanged(c);performPendingReset();return true;
             }
             return false;
         }catch(ApiFailure error){
@@ -171,6 +172,23 @@ public final class ApiClient {
             throw error;
         }
     }
+    private void completeResetLocally(boolean notifyRemote){
+        EnrollmentManager.reset(c);
+        cfg.resetSyncBackoff();
+        if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
+        AppLogger.i(c,"Enrollment","Device reset confirmed; local credentials cleared");
+    }
+    /**
+     * A 401 on the reset route is NOT proof of deletion: revoked/rotated
+     * credentials can produce the same response. Verify the original token
+     * against the server's bounded deletion tombstone first.
+     */
+    private void verifyLifecycleStillExists()throws Exception{
+        // A valid 200 means the node still exists, possibly reset-pending.
+        // A 410 deletion receipt is handled separately by the caller.
+        raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/lifecycle",
+            "GET",null,"Device "+cfg.deviceToken(),cfg.deviceId());
+    }
     private void performPendingReset(){
         long delay=cfg.nextSyncAllowedAt()-System.currentTimeMillis();
         if(delay>0){SyncJobService.scheduleAfter(c,delay);return;}
@@ -179,15 +197,33 @@ public final class ApiClient {
             requireHttps(cfg.server());
             raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/reset","POST",new JSONObject(),
                 "Device "+cfg.deviceToken(),cfg.deviceId());
-            EnrollmentManager.reset(c);
-            cfg.resetSyncBackoff();
-            if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
-            AppLogger.i(c,"Enrollment","Server confirmed reset; local data cleared");
+            completeResetLocally(notifyRemote);
         }catch(ApiFailure failure){
             if(failure.status==410){
-                EnrollmentManager.reset(c);
-                if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
-                AppLogger.i(c,"Enrollment","Server already deleted device; local data cleared");
+                completeResetLocally(notifyRemote);
+                return;
+            }
+            if(failure.status==401||failure.status==403||failure.status==404){
+                try{
+                    verifyLifecycleStillExists();
+                    // A 200 lifecycle with a failing reset is a real protocol
+                    // conflict. Surface recovery rather than hiding it behind UI.
+                    cfg.markResetRecoveryRequired();EnrollmentManager.notifyStateChanged(c);
+                    cfg.recordSyncError("reset_recovery_required");
+                    AppLogger.e(c,"Enrollment","Reset denied although lifecycle remains active",failure);
+                }catch(ApiFailure stateFailure){
+                    if(stateFailure.status==410){
+                        completeResetLocally(notifyRemote);
+                        return;
+                    }
+                    if(stateFailure.status==401||stateFailure.status==403||stateFailure.status==404){
+                        cfg.markResetRecoveryRequired();EnrollmentManager.notifyStateChanged(c);
+                        cfg.recordSyncError("reset_recovery_required");
+                        AppLogger.e(c,"Enrollment","Cannot verify reset; user recovery required",stateFailure);
+                    }else retryPendingReset(stateFailure);
+                }catch(Exception networkFailure){
+                    retryPendingReset(networkFailure);
+                }
                 return;
             }
             retryPendingReset(failure);

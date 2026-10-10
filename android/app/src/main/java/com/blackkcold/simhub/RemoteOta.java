@@ -24,7 +24,13 @@ public final class RemoteOta {
     public static void setWifiOnly(Context c,boolean value){prefs(c).edit().putBoolean("wifiOnly",value).putBoolean("stateDirty",true).apply();}
     public static void capabilityChanged(Context c){prefs(c).edit().putBoolean("stateDirty",true).apply();}
     public static boolean needsStateUpload(Context c){return prefs(c).getBoolean("stateDirty",false);}
-    public static void markStateUploaded(Context c){prefs(c).edit().putBoolean("stateDirty",false).apply();}
+    public static String currentStage(Context c){return prefs(c).getString("stage","idle");}
+    public static void markStateUploaded(Context c,String sentStage){
+        synchronized(RemoteOta.class){
+            if(sentStage.equals(currentStage(c)))
+                prefs(c).edit().putBoolean("stateDirty",false).apply();
+        }
+    }
     private static String prerequisites(Context c){
         if(wifiOnly(c)){
             ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
@@ -53,6 +59,7 @@ public final class RemoteOta {
     public static void setAllowed(Context c,boolean enabled){
         if(enabled&&!supported(c))throw new SecurityException("Remote OTA requires Android 16+ or developer override");
         prefs(c).edit().putBoolean("consent",enabled).putBoolean("stateDirty",true).apply();
+        if(!enabled)cancel(c);
     }
     public static JSONObject state(Context c){
         SharedPreferences p=prefs(c);

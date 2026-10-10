@@ -16,7 +16,7 @@ SIM Hub remote OTA is **explicitly opt-in** on the device and is available for A
 
 - Android 16+ is a **feature visibility and control gate**, not a promise of silent installation.
 - Android 17 also restricts background Activity launches; the app does not force-open its UI. It attempts to recover the already authorized relay service using system broadcasts and scheduled jobs.
-- The developer override is test-only; it requires developer mode. Disabling developer mode removes the override.
+- The developer override is test-only; it requires developer mode. Disabling developer mode removes the override and local consent on older devices; re-enabling the override requires renewed local consent.
 - Android background restrictions, install-source approval, Doze and OEM policy can delay or block unattended updates.
 - This feature does not install arbitrary packages, bypass the installer, use Shizuku/Root or change the relay's rootless Docker updater.
 - Updates use the existing GitHub stable-release pipeline and are self-updates only. Version rollback is not supported by default.

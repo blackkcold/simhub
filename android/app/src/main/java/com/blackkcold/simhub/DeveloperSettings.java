@@ -8,6 +8,7 @@ public final class DeveloperSettings {
         SharedPreferences.Editor edit=prefs(c).edit().putBoolean(KEY_ENABLED,enabled);
         if(!enabled)edit.remove(KEY_FORCE_SMS_UNTIL).remove(KEY_FORCE_REMOTE_OTA);
         edit.apply();
+        if(!enabled && android.os.Build.VERSION.SDK_INT<36)RemoteOta.setAllowed(c,false);
     }
     /** Explicit, temporary (one-hour) developer-only SMS transmission override. */
     public static void setForceSmsEnabled(Context c,boolean enabled){
@@ -21,6 +22,7 @@ public final class DeveloperSettings {
     public static void setForceRemoteOtaEnabled(Context c,boolean enabled){
         if(enabled&&!isEnabled(c))throw new SecurityException("Enable developer mode first");
         prefs(c).edit().putBoolean(KEY_FORCE_REMOTE_OTA,enabled).apply();
+        if(!enabled && android.os.Build.VERSION.SDK_INT<36)RemoteOta.setAllowed(c,false);
     }
     public static boolean isForceRemoteOtaEnabled(Context c){
         return isEnabled(c)&&prefs(c).getBoolean(KEY_FORCE_REMOTE_OTA,false);

@@ -140,8 +140,9 @@ public final class ApiClient {
                 }
             }
             if(maintenance||RemoteOta.needsStateUpload(c)){
+                String otaStage=RemoteOta.currentStage(c);
                 putState();
-                if(RemoteOta.needsStateUpload(c))RemoteOta.markStateUploaded(c);
+                if(RemoteOta.needsStateUpload(c))RemoteOta.markStateUploaded(c,otaStage);
             }
             if(maintenance){
                 heartbeat();

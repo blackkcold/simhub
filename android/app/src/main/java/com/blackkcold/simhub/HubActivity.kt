@@ -370,7 +370,9 @@ class HubActivity: ComponentActivity(), HubController {
     override fun setEnergyMode(mode:String){
         try{
             EnergyPolicy.setMode(this,mode)
+            EnergyPolicy.resetSchedule(this)
             tools.energyMode=mode
+            SyncJobService.scheduleNow(this)
             // Restart the opt-in foreground service so no stale timer survives.
             if(AgentConfig(this).alwaysOn()){
                 stopService(Intent(this,RelayForegroundService::class.java))

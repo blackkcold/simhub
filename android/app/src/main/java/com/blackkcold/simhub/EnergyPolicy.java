@@ -58,6 +58,26 @@ public final class EnergyPolicy {
     public static void finishProviderFollowup(Context c) {
         prefs(c).edit().remove("provider_followup").apply();
     }
+    public static synchronized void increment(Context c,String key) {
+        if(!"commandPolls".equals(key)&&!"commandPollErrors".equals(key)&&
+           !"maintenanceRuns".equals(key)&&!"reconciliationRuns".equals(key))return;
+        SharedPreferences p=prefs(c);
+        p.edit().putLong(key,p.getLong(key,0)+1).apply();
+    }
+    public static org.json.JSONObject metrics(Context c) {
+        SharedPreferences p=prefs(c);
+        org.json.JSONObject stats=new org.json.JSONObject();
+        try{
+            stats.put("mode",mode(c))
+                 .put("effectiveMode",effectiveMode(c))
+                 .put("commandPolls",p.getLong("commandPolls",0))
+                 .put("commandPollErrors",p.getLong("commandPollErrors",0))
+                 .put("maintenanceRuns",p.getLong("maintenanceRuns",0))
+                 .put("reconciliationRuns",p.getLong("reconciliationRuns",0))
+                 .put("nextProviderFollowup",p.getLong("provider_followup",0));
+        }catch(org.json.JSONException ignored){}
+        return stats;
+    }
     public static void resetSchedule(Context c) {
         prefs(c).edit().remove("maintenance").remove("reconciliation").apply();
     }

@@ -104,6 +104,7 @@ public final class AgentConfig {
     public long uploadedTotal(){return prefs.getLong("uploaded_total",0L);}
     public void recordUploadError(String code){prefs.edit().putString("last_upload_error",safeError(code)).apply();}
     public String lastUploadError(){return prefs.getString("last_upload_error","");}
+    public void clearUploadError(){prefs.edit().remove("last_upload_error").apply();}
     public void recordEventQueueError(String code){prefs.edit().putString("last_queue_error",safeError(code)).apply();}
     public String lastEventQueueError(){return prefs.getString("last_queue_error","");}
     private static String safeError(String code){return code==null?"unknown":code.replaceAll("[^A-Za-z0-9_.-]","_").substring(0,Math.min(64,code.length()));}

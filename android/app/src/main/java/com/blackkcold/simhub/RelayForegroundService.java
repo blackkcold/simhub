@@ -19,6 +19,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RelayForegroundService extends Service {
+    public static final String ACTION_RELAY_STATE="com.blackkcold.simhub.RELAY_STATE";
     private static volatile RelayForegroundService ACTIVE;
     private final AtomicBoolean urgentQueued=new AtomicBoolean(false);
     private final AtomicBoolean urgentAgain=new AtomicBoolean(false);
@@ -96,6 +97,7 @@ public final class RelayForegroundService extends Service {
         else startForeground(4101,NotificationHelper.relay(this));
         if(!new AgentConfig(this).alwaysOn()){stopSelf();return;}
         ACTIVE=this;
+        sendBroadcast(new Intent(ACTION_RELAY_STATE).setPackage(getPackageName()));
         AppLogger.i(this,"RelayService","Foreground relay service started");
         registerSmsObserver();
         // JobScheduler is the durable recovery mechanism. The foreground service
@@ -143,6 +145,7 @@ public final class RelayForegroundService extends Service {
         if(commandTask!=null)commandTask.cancel(true);
         exec.shutdownNow();
         if(ACTIVE==this)ACTIVE=null;
+        sendBroadcast(new Intent(ACTION_RELAY_STATE).setPackage(getPackageName()));
         super.onDestroy();
     }
     @Override public IBinder onBind(Intent intent){return null;}

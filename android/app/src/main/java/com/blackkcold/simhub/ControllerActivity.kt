@@ -91,7 +91,7 @@ class ControllerActivity:Activity() {
         }
     }
     private fun showEmpty() {
-        web?.destroy();web=null;content.removeAllViews()
+        content.removeAllViews();web?.destroy();web=null
         val wrap=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL; setPadding(36,80,36,20)
         }
@@ -131,7 +131,7 @@ class ControllerActivity:Activity() {
         val valid=validOrigin(origin) ?: run { showEmpty();return }
         activeOrigin=valid;store(valid)
         title.text="管理控制台 · "+Uri.parse(valid).host
-        web?.apply { stopLoading();destroy() };web=null;content.removeAllViews()
+        web?.stopLoading();content.removeAllViews();web?.destroy();web=null
         val w=WebView(this)
         w.settings.apply {
             javaScriptEnabled=true

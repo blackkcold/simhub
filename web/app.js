@@ -1449,6 +1449,9 @@ function wire(){
   $('loginForm').onsubmit=e=>{e.preventDefault();loginFlow().catch(err=>toast(err.message));};
   $('vaultUnlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));
   $('gateImportRecovery').onclick=()=>importGateRecovery().catch(e=>toast(e.message));
+  const leaveAccount=async()=>{await logoutSession();lockVault();toast('已退出管理员登录');};
+  $('vaultLogoutBtn').onclick=()=>leaveAccount().catch(e=>toast(e.message));
+  $('logoutBtn').onclick=()=>leaveAccount().catch(e=>toast(e.message));
   const trust=trustedOptions();
   $('vaultTrustEnabled').checked=trust.enabled;$('vaultTrustDuration').value=String(trust.duration);
   $('vaultTrustEnabled').onchange=()=>updateTrustedOptions().catch(e=>{toast(e.message);$('vaultTrustEnabled').checked=trustedOptions().enabled;});

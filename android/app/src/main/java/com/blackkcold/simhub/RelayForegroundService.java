@@ -16,8 +16,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RelayForegroundService extends Service {
+    private static volatile RelayForegroundService ACTIVE;
+    private final AtomicBoolean urgentQueued=new AtomicBoolean(false);
     // Only two bounded workers: command transport and periodic maintenance.
     // No continuous short-interval full synchronization or busy loop.
     private final ScheduledExecutorService exec=Executors.newScheduledThreadPool(2);
@@ -34,7 +37,7 @@ public final class RelayForegroundService extends Service {
             lastProviderWake=now;
             new AgentConfig(RelayForegroundService.this).recordSmsProviderChange();
             AppLogger.i(RelayForegroundService.this,"SmsProvider","Provider changed; scheduling encrypted sync");
-            SyncJobService.scheduleNow(RelayForegroundService.this);
+            RelayForegroundService.kick(RelayForegroundService.this);
         }
     };
     private boolean observingProvider=false;
@@ -51,13 +54,27 @@ public final class RelayForegroundService extends Service {
     public static void start(Context c){new AgentConfig(c).setAlwaysOn(true);AppLogger.i(c,"RelayService","Always-on relay enabled");resume(c);}
     public static void resume(Context c){Intent i=new Intent(c,RelayForegroundService.class);if(Build.VERSION.SDK_INT>=26)c.startForegroundService(i);else c.startService(i);}
     public static void stop(Context c){new AgentConfig(c).setAlwaysOn(false);AppLogger.i(c,"RelayService","Always-on relay disabled");c.stopService(new Intent(c,RelayForegroundService.class));}
-    public static void kick(Context c){SyncJobService.scheduleNow(c);}
+    public static void kick(Context c){
+        RelayForegroundService live=ACTIVE;
+        if(live==null||live.exec.isShutdown()){SyncJobService.scheduleNow(c);return;}
+        if(!live.urgentQueued.compareAndSet(false,true))return;
+        try{
+            live.exec.execute(()->{
+                try{new ApiClient(live).syncCycle();}
+                finally{live.urgentQueued.set(false);}
+            });
+        }catch(java.util.concurrent.RejectedExecutionException shutdown){
+            live.urgentQueued.set(false);
+            SyncJobService.scheduleNow(c);
+        }
+    }
     @Override public void onCreate(){
         super.onCreate();
         NotificationHelper.ensureChannels(this);
         if(Build.VERSION.SDK_INT>=34)startForeground(4101,NotificationHelper.relay(this),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else startForeground(4101,NotificationHelper.relay(this));
         if(!new AgentConfig(this).alwaysOn()){stopSelf();return;}
+        ACTIVE=this;
         AppLogger.i(this,"RelayService","Foreground relay service started");
         registerSmsObserver();
         // JobScheduler is the durable recovery mechanism. The foreground service
@@ -103,6 +120,7 @@ public final class RelayForegroundService extends Service {
         if(maintenanceTask!=null)maintenanceTask.cancel(true);
         if(commandTask!=null)commandTask.cancel(true);
         exec.shutdownNow();
+        if(ACTIVE==this)ACTIVE=null;
         super.onDestroy();
     }
     @Override public IBinder onBind(Intent intent){return null;}

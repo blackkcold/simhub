@@ -66,6 +66,7 @@ interface HubController {
     fun startPairing(server:String)
     fun setRealtime(value:Boolean)
     fun setEnergyMode(mode:String)
+    fun syncNow()
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
     fun requestContacts()
@@ -402,6 +403,31 @@ class HubActivity: ComponentActivity(), HubController {
         }catch(e:Exception){
             AppLogger.e(this,"Relay","Foreground service toggle failed",e)
             toast(UiErrors.message(this,e))
+        }
+    }
+    override fun syncNow(){
+        if(!AgentConfig(this).isEnrolled()){toast(getString(R.string.enroll_first));return}
+        lifecycleScope.launch {
+            try{
+                val result=withContext(Dispatchers.IO){
+                    val app=applicationContext
+                    val inspected=SmsHistorySync.syncRecent(app,100)
+                    if(inspected<0)throw IllegalStateException("SMS_PROVIDER_NOT_READABLE")
+                    val api=ApiClient(app)
+                    api.pollCommands(false)
+                    api.syncCycle()
+                    SyncJobService.scheduleNow(app)
+                    Pair(inspected,LocalStore.get(app).pendingEventCount())
+                }
+                toast(hubLabel(
+                    "检查了 ${result.first} 条短信；剩余 ${result.second} 条待上传。命令检查已完成。",
+                    "Inspected ${result.first} SMS; ${result.second} uploads pending. Command check completed."))
+                refresh()
+            }catch(error:Exception){
+                AppLogger.e(this@HubActivity,"ManualSync","Manual command/SMS check failed",error)
+                toast(UiErrors.message(this@HubActivity,error))
+                refresh()
+            }
         }
     }
     override fun syncHistory(older:Boolean){

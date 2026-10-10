@@ -58,12 +58,14 @@ fun HubMessages(state:HubSnapshot?,ui:HubViewModel,controller:HubController,
 @Composable
 private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:HubViewModel,
                                 controller:HubController,modifier:Modifier){
+    val context=LocalContext.current
+    val sendingAllowed=SmsSendPolicy.canSend(context)
     Column(modifier.padding(16.dp)){
         Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween,
             modifier=Modifier.fillMaxWidth()){
             Text(stringResource(R.string.hub_conversations),style=MaterialTheme.typography.titleLarge,
                 fontWeight=FontWeight.Bold)
-            FilledIconButton(onClick={ui.thread="__new__";ui.newRecipient=""}){
+            if(sendingAllowed)FilledIconButton(onClick={ui.thread="__new__";ui.newRecipient=""}){
                 HubIcon(R.drawable.ic_hub_add,Modifier.size(23.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_new_sms))
             }
         }

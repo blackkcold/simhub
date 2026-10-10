@@ -88,6 +88,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
     public synchronized int uploadedEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM uploaded_event_ids",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events",null)){return c.moveToFirst()?c.getInt(0):0;}}
+    public synchronized int pendingCommandAckCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM command_acks",null)){return c.moveToFirst()?c.getInt(0):0;}}
 
     public synchronized boolean claimCommand(String id,String commandType){
         ContentValues v=new ContentValues();v.put("id",id);v.put("state","claimed");v.put("command_type",commandType);v.put("processed_at",System.currentTimeMillis()/1000);

@@ -78,6 +78,7 @@ public final class ApiClient {
             if(pendingBefore>0)AppLogger.i(c,"ApiClient","Sync cycle completed pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
         }catch(Exception error){
             String reason=error instanceof ApiFailure f?"HTTP "+f.status+" "+f.code:error.getClass().getSimpleName();
+            if(pendingBefore>0 || LocalStore.get(c).pendingEventCount()>0)cfg.recordUploadError(reason);
             cfg.recordSyncError(reason);AppLogger.e(c,"ApiClient","Sync cycle failed",error);
             int attempts=cfg.incrementSyncBackoff();
             long base=error instanceof ApiFailure f&&f.status==429?Math.max(10,f.retryAfter)*1000L:30000L;
@@ -151,6 +152,9 @@ public final class ApiClient {
     }
     public void flushEvents()throws Exception{
         LocalStore store=LocalStore.get(c);int sent=0;
+        if(store.pendingEventCount()==0)return;
+        cfg.recordUploadAttempt();
+        try{
         for(int page=0;page<5;page++){
             List<JSONObject> pending=store.pendingEvents(BATCH_SIZE);if(pending.isEmpty())break;
             if(BATCH_SUPPORTED){
@@ -178,7 +182,15 @@ public final class ApiClient {
                 if(response.optBoolean("accepted")){store.markEventSent(e.getString("eventId"));sent++;}
             }
         }
-        if(sent>0)AppLogger.i(c,"ApiClient","Uploaded encrypted events count="+sent);
+        }catch(Exception uploadError){
+            String reason=uploadError instanceof ApiFailure f?"HTTP_"+f.status+"_"+f.code:uploadError.getClass().getSimpleName();
+            cfg.recordUploadError(reason);
+            AppLogger.e(c,"EventUpload","Encrypted event upload failed; queued events retained",uploadError);
+            throw uploadError;
+        }finally{
+            cfg.recordUploadSuccess(sent);
+            if(sent>0)AppLogger.i(c,"EventUpload","Relay acknowledged encrypted events="+sent+" remaining="+store.pendingEventCount());
+        }
     }
     public boolean waitForCommands()throws Exception{
         if(!cfg.isEnrolled()||cfg.resetPending())return false;

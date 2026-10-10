@@ -56,10 +56,13 @@ public final class ApiClient {
             // Priority lane: ACK and inbound remote commands must not wait for an
             // expensive SMS-provider scan or full historical event upload.
             flushCommandAcks();fetchCommands();flushCommandAcks();
-            int scanned=0;
+            int scanned=0, reconciled=0;
             try{
                 flushEvents();
-                if(store.pendingEventCount()<200)scanned=SmsHistorySync.sync(c,30);
+                if(store.pendingEventCount()<200){
+                    scanned=SmsHistorySync.sync(c,30);
+                    reconciled=SmsHistorySync.reconcileRecent(c,100);
+                }
                 flushEvents();
             }catch(SecurityException error){
                 cfg.recordSmsProviderError("SMS_PROVIDER_SECURITY_EXCEPTION");
@@ -71,7 +74,7 @@ public final class ApiClient {
                 new SharedPoolClient(c).scheduleRetry(poolError);
             }
             putState();heartbeat();cfg.recordSyncSuccess();cfg.resetSyncBackoff();
-            if(scanned>=30||store.pendingEventCount()>0)SyncJobService.scheduleAfter(c,5000);
+            if(scanned>=30||reconciled>=100||store.pendingEventCount()>0)SyncJobService.scheduleAfter(c,5000);
             if(pendingBefore>0)AppLogger.i(c,"ApiClient","Sync cycle completed pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
         }catch(Exception error){
             String reason=error instanceof ApiFailure f?"HTTP "+f.status+" "+f.code:error.getClass().getSimpleName();

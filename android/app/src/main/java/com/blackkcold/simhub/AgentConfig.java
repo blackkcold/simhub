@@ -91,6 +91,18 @@ public final class AgentConfig {
     public void recordSmsProviderError(String reason){prefs.edit().putString("sms_provider_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
     public void clearSmsProviderError(){prefs.edit().remove("sms_provider_error").apply();}
     public String smsProviderError(){return prefs.getString("sms_provider_error","");}
+    public void recordCommandFetch(int count){
+        prefs.edit().putLong("last_command_fetch_at",System.currentTimeMillis()/1000)
+                .putInt("last_command_fetch_count",Math.max(0,count))
+                .remove("last_command_fetch_error").apply();
+    }
+    public void recordCommandFetchError(String reason){
+        prefs.edit().putString("last_command_fetch_error",
+                reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();
+    }
+    public long lastCommandFetchAt(){return prefs.getLong("last_command_fetch_at",0);}
+    public int lastCommandFetchCount(){return prefs.getInt("last_command_fetch_count",0);}
+    public String lastCommandFetchError(){return prefs.getString("last_command_fetch_error","");}
     public void recordSyncSuccess(){prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
     public void recordSyncError(String reason){prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
     public void recordSmsBroadcast(){

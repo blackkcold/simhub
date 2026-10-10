@@ -45,7 +45,12 @@ public final class ApiClient {
             finally{SYNC_BUSY.set(false);}
             return;
         }
-        if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
+        if(!cfg.isEnrolled())return;
+        if(!SYNC_BUSY.compareAndSet(false,true)){
+            // A concurrent command request must not cause SMS upload to be lost.
+            SyncJobService.scheduleAfter(c,12000L);
+            return;
+        }
         long now=System.currentTimeMillis();
         long delay=cfg.nextSyncAllowedAt()-now;
         if(delay>0){SYNC_BUSY.set(false);SyncJobService.scheduleAfter(c,delay);return;}

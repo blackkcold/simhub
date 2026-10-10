@@ -57,7 +57,6 @@ public final class ApiClient {
         }
         long now=System.currentTimeMillis();
         long delay=cfg.nextSyncAllowedAt()-now;
-        if(delay>0){SYNC_BUSY.set(false);SyncJobService.scheduleAfter(c,delay);return;}
         LocalStore store=LocalStore.get(c);
         int pendingBefore=store.pendingEventCount();
         boolean maintenance=EnergyPolicy.due(c,"maintenance",EnergyPolicy.maintenanceIntervalMs(),now);
@@ -78,23 +77,9 @@ public final class ApiClient {
             SYNC_BUSY.set(false);return;
         }
         try{
-            PairingManager.completePending(c);
-            if(maintenance&&checkServerReset())return;
-            if(maintenance)rotateDeviceTokenIfNeeded();
-            store.recoverStaleClaims();
-            if(maintenance){
-                for(String id:store.expireStalePendingSms(48L*3600)){
-                    store.finishCommand(id,"failed");
-                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));
-                }
-            }
-            // Remote commands are NOT tied to SIM inventory/heartbeat cadence.
-            // Foreground nodes poll via CommandTransport, others use durable
-            // best-effort jobs; do not discard a queued command for 15 minutes.
-            if(maintenance||commandFallback){
-                flushCommandAcks();fetchCommands();flushCommandAcks();
-                if(commandFallback)EnergyPolicy.mark(c,"command_fallback",System.currentTimeMillis());
-            }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
+            // Local Provider staging is independent of Relay/network availability,
+            // including an active HTTP retry backoff. Never block a received SMS
+            // from entering the encrypted SQLite queue on remote API failure.
             int scanned=0,reconciled=0;
             try{
                 // Stage the SMS locally BEFORE network I/O. A failed upload
@@ -121,11 +106,32 @@ public final class ApiClient {
                             EnergyPolicy.mark(c,"reconciliation",System.currentTimeMillis());
                     }
                 }
-                flushEvents();
             }catch(SecurityException error){
                 cfg.recordSmsProviderError("SMS_PROVIDER_SECURITY_EXCEPTION");
                 AppLogger.e(c,"ApiClient","Non-critical local SMS synchronization failed",error);
             }
+            if(delay>0){
+                SyncJobService.scheduleAfter(c,delay);
+                return;
+            }
+            PairingManager.completePending(c);
+            if(maintenance&&checkServerReset())return;
+            if(maintenance)rotateDeviceTokenIfNeeded();
+            store.recoverStaleClaims();
+            if(maintenance){
+                for(String id:store.expireStalePendingSms(48L*3600)){
+                    store.finishCommand(id,"failed");
+                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));
+                }
+            }
+            // Remote commands are NOT tied to SIM inventory/heartbeat cadence.
+            // Foreground nodes poll via CommandTransport, others use durable
+            // best-effort jobs; do not discard a queued command for 15 minutes.
+            if(maintenance||commandFallback){
+                flushCommandAcks();fetchCommands();flushCommandAcks();
+                if(commandFallback)EnergyPolicy.mark(c,"command_fallback",System.currentTimeMillis());
+            }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
+            flushEvents();
             if(maintenance||pendingBefore>0||poolRetry){
                 try{new SharedPoolClient(c).sync();}
                 catch(Exception poolError){

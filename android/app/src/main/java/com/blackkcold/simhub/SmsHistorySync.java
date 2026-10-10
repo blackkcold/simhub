@@ -98,9 +98,9 @@ public final class SmsHistorySync {
         AgentConfig cfg=new AgentConfig(c);
         if(!cfg.isEnrolled())return 0;
         final int limit=Math.max(1,Math.min(PAGE,requested));
-        final long cutoff=System.currentTimeMillis()-6L*60*60*1000;
+        final long cutoff=SmsReconcilePolicy.cutoff(System.currentTimeMillis());
         long lastDate=cfg.reconcileDate(),lastId=cfg.reconcileId();
-        if(lastDate<cutoff){lastDate=0;lastId=-1;cfg.resetReconcileCursor();}
+        if(SmsReconcilePolicy.restart(lastDate,cutoff)){lastDate=0;lastId=-1;cfg.resetReconcileCursor();}
         String selection=Telephony.Sms.DATE+">=?"+
             (lastDate>0?" AND (("+Telephony.Sms.DATE+">?) OR ("+
                 Telephony.Sms.DATE+"=? AND "+BaseColumns._ID+">?))":"");
@@ -117,7 +117,7 @@ public final class SmsHistorySync {
                 cfg.setReconcileCursor(row.date,row.id);
                 scanned++;
             }
-            if(scanned<limit)cfg.resetReconcileCursor(); // Replay any newly unhidden older rows.
+            if(SmsReconcilePolicy.passComplete(scanned,limit))cfg.resetReconcileCursor(); // Replay any newly unhidden older rows.
             cfg.clearSmsProviderError();
         }catch(Exception error){scanFailed(c,error,"Delayed SMS reconciliation");return -1;}
         return scanned;

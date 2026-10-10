@@ -28,6 +28,7 @@ class HubToolsState {
     var energyMode by mutableStateOf(EnergyPolicy.BALANCED)
     var relayAlive by mutableStateOf(false)
     var developer by mutableStateOf(false)
+    var forceSms by mutableStateOf(false)
     var logs by mutableStateOf("")
     var diagnostics by mutableStateOf("")
     var ota by mutableStateOf("")
@@ -410,6 +411,18 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
             Text(tools.ota,style=MaterialTheme.typography.bodySmall)
         }
         if(tools.developer){
+            if(state?.smsRole==false){
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider()
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){
+                        Text(hubLabel("强制开启发送短信（仅测试）","Allow SMS sending (testing only)"))
+                        Text(hubLabel("仅非接管模式。1 小时自动失效；关闭开发者模式立即撤销。","Companion mode only. Expires after 1 hour; disabling developer mode revokes it."),
+                            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked=tools.forceSms,onCheckedChange=controller::setDeveloperSmsOverride)
+                }
+            }
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
                 OutlinedButton(onClick=controller::viewLogs,modifier=Modifier.weight(1f)){Text(hubLabel("查看日志","View logs"))}

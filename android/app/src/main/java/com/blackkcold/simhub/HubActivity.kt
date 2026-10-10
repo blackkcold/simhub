@@ -78,6 +78,7 @@ interface HubController {
     fun setAutoDownloadUpdates(value:Boolean)
     fun exportDiagnostics()
     fun setDeveloperEnabled(value:Boolean)
+    fun setDeveloperSmsOverride(value:Boolean)
     fun viewLogs()
     fun clearLogs()
     fun refreshDiagnostics()
@@ -174,6 +175,7 @@ class HubActivity: ComponentActivity(), HubController {
         UiLocale.apply(this)
         tools.energyMode=EnergyPolicy.mode(this)
         tools.developer=DeveloperSettings.isEnabled(this)
+        tools.forceSms=DeveloperSettings.isForceSmsEnabled(this)
         tools.language=UiLocale.index(this)
         tools.autoCheckUpdates=AppUpdater.prefs(this).getBoolean("autoCheck",true)
         tools.autoDownloadUpdates=AppUpdater.prefs(this).getBoolean("autoDownload",false)
@@ -267,6 +269,7 @@ class HubActivity: ComponentActivity(), HubController {
                 val next=withContext(Dispatchers.IO){HubRepository.snapshot(applicationContext,smsLimit)}
                 snapshot=next
                 tools.relayAlive=RelayForegroundService.isRunning()
+                tools.forceSms=DeveloperSettings.isForceSmsEnabled(applicationContext)
                 val pool=SharedPoolClient(applicationContext)
                 tools.poolEnabled=pool.optedIn()
                 tools.poolApproved=pool.approved()
@@ -446,6 +449,9 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit){
+        if(!SmsSendPolicy.canSend(this)){
+            toast("短信发送已被当前接管模式禁用");return
+        }
         if(subId<0 || to.isBlank() || body.isBlank()){
             toast(getString(R.string.hub_compose_required));return
         }
@@ -582,7 +588,14 @@ class HubActivity: ComponentActivity(), HubController {
     override fun setDeveloperEnabled(value:Boolean){
         DeveloperSettings.setEnabled(this,value);tools.developer=value
         AppLogger.i(this,"Developer",if(value)"Diagnostic logging enabled" else "Diagnostic logging disabled")
-        if(!value){tools.logs="";tools.diagnostics=""}else viewLogs()
+        if(!value){tools.logs="";tools.diagnostics="";tools.forceSms=false;refresh()}else viewLogs()
+    }
+    override fun setDeveloperSmsOverride(value:Boolean){
+        try {
+            DeveloperSettings.setForceSmsEnabled(this,value)
+            tools.forceSms=DeveloperSettings.isForceSmsEnabled(this)
+            refresh()
+        }catch(error:Exception){toast(UiErrors.message(this,error))}
     }
     override fun viewLogs(){if(!DeveloperSettings.isEnabled(this))return
         tools.logs=AppLogger.recent(this,24000).ifBlank{getString(R.string.logs_empty)}

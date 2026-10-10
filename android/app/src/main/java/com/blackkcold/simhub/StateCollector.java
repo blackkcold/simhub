@@ -68,6 +68,12 @@ public final class StateCollector {
                     .put("nextSyncAllowedAt",cfg.nextSyncAllowedAt()/1000)
                     .put("syncBackoffFailures",cfg.syncBackoffFailures());
 
+            JSONObject remoteOta=RemoteOta.state(c);
+            java.util.Iterator<String> otaFields=remoteOta.keys();
+            while(otaFields.hasNext()){
+                String key=otaFields.next();
+                o.put(key,remoteOta.opt(key));
+            }
             Intent bat=c.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             if(bat!=null){
                 int level=bat.getIntExtra(BatteryManager.EXTRA_LEVEL,-1),scale=bat.getIntExtra(BatteryManager.EXTRA_SCALE,100),status=bat.getIntExtra(BatteryManager.EXTRA_STATUS,-1);

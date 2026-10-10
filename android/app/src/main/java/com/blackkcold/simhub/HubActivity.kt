@@ -76,6 +76,8 @@ interface HubController {
     fun checkOta()
     fun setAutoCheckUpdates(value:Boolean)
     fun setAutoDownloadUpdates(value:Boolean)
+    fun setRemoteOtaAllowed(value:Boolean)
+    fun setDeveloperRemoteOtaOverride(value:Boolean)
     fun exportDiagnostics()
     fun setDeveloperEnabled(value:Boolean)
     fun setDeveloperSmsOverride(value:Boolean)
@@ -175,6 +177,8 @@ class HubActivity: ComponentActivity(), HubController {
         UiLocale.apply(this)
         tools.energyMode=EnergyPolicy.mode(this)
         tools.developer=DeveloperSettings.isEnabled(this)
+        tools.forceRemoteOta=DeveloperSettings.isForceRemoteOtaEnabled(this)
+        tools.remoteOtaAllowed=RemoteOta.allowed(this)
         tools.forceSms=DeveloperSettings.isForceSmsEnabled(this)
         tools.language=UiLocale.index(this)
         tools.autoCheckUpdates=AppUpdater.prefs(this).getBoolean("autoCheck",true)
@@ -270,6 +274,8 @@ class HubActivity: ComponentActivity(), HubController {
                 snapshot=next
                 tools.relayAlive=RelayForegroundService.isRunning()
                 tools.forceSms=DeveloperSettings.isForceSmsEnabled(applicationContext)
+                tools.forceRemoteOta=DeveloperSettings.isForceRemoteOtaEnabled(applicationContext)
+                tools.remoteOtaAllowed=RemoteOta.allowed(applicationContext)
                 val pool=SharedPoolClient(applicationContext)
                 tools.poolEnabled=pool.optedIn()
                 tools.poolApproved=pool.approved()
@@ -553,6 +559,23 @@ class HubActivity: ComponentActivity(), HubController {
         tools.autoDownloadUpdates=value
         AppUpdater.prefs(this).edit().putBoolean("autoDownload",value).apply()
     }
+    override fun setRemoteOtaAllowed(value:Boolean){
+        try{
+            RemoteOta.setAllowed(this,value)
+            tools.remoteOtaAllowed=RemoteOta.allowed(this)
+            SyncJobService.scheduleNow(applicationContext)
+            refresh()
+        }catch(error:Exception){toast(UiErrors.message(this,error))}
+    }
+    override fun setDeveloperRemoteOtaOverride(value:Boolean){
+        try{
+            DeveloperSettings.setForceRemoteOtaEnabled(this,value)
+            tools.forceRemoteOta=DeveloperSettings.isForceRemoteOtaEnabled(this)
+            tools.remoteOtaAllowed=RemoteOta.allowed(this)
+            SyncJobService.scheduleNow(applicationContext)
+            refresh()
+        }catch(error:Exception){toast(UiErrors.message(this,error))}
+    }
     override fun checkOta(){
         tools.ota="正在检查新版本…"
         AppUpdater.check(applicationContext,true){info,error->
@@ -599,7 +622,7 @@ class HubActivity: ComponentActivity(), HubController {
         DeveloperSettings.setEnabled(this,value);tools.developer=value
         publishSmsSendCapability()
         AppLogger.i(this,"Developer",if(value)"Diagnostic logging enabled" else "Diagnostic logging disabled")
-        if(!value){tools.logs="";tools.diagnostics="";tools.forceSms=false;refresh()}else viewLogs()
+        if(!value){tools.logs="";tools.diagnostics="";tools.forceSms=false;tools.forceRemoteOta=false;tools.remoteOtaAllowed=RemoteOta.allowed(this);refresh()}else viewLogs()
     }
     override fun setDeveloperSmsOverride(value:Boolean){
         try {

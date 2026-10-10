@@ -34,6 +34,8 @@ class HubToolsState {
     var ota by mutableStateOf("")
     var autoCheckUpdates by mutableStateOf(true)
     var autoDownloadUpdates by mutableStateOf(false)
+    var remoteOtaAllowed by mutableStateOf(false)
+    var forceRemoteOta by mutableStateOf(false)
     var installedAt by mutableStateOf("")
     var language by mutableIntStateOf(0)
     var poolEnabled by mutableStateOf(false)
@@ -370,6 +372,33 @@ private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubCon
     }
 }
 
+/** Shown only on Android 16+ or after an explicit developer override. */
+@Composable
+private fun RemoteOtaCard(tools:HubToolsState,controller:HubController,modifier:Modifier){
+    val native=android.os.Build.VERSION.SDK_INT>=36
+    if(!native && !tools.forceRemoteOta)return
+    ToolSection(hubLabel("远程应用更新","Remote app updates"),modifier){
+        Row(verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("允许管理服务器发起 APK 更新","Allow remote APK updates"),
+                    fontWeight=FontWeight.Medium)
+                Text(hubLabel("仅允许官方同签名的新版本；系统可能要求手动确认安装。",
+                    "Official, identically signed newer APKs only; Android may require confirmation."),
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked=tools.remoteOtaAllowed,onCheckedChange=controller::setRemoteOtaAllowed)
+        }
+        Spacer(Modifier.height(10.dp))
+        StatePill(
+            if(native)hubLabel("Android 16+ · 平台门槛通过","Android 16+ · platform eligible")
+            else hubLabel("开发者强制测试 · 非原生适配","Developer test override · not natively eligible"),native)
+        Spacer(Modifier.height(8.dp))
+        Text(hubLabel("服务端可下发更新命令，但无法保证免确认安装或后台弹出界面。安装成功后仅尝试自动恢复原有中继服务。",
+            "The server may request updates; silent installation and foreground UI launches are not guaranteed. Relay recovery is best effort."),
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
 @Composable
 private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:HubController,modifier:Modifier){
     ToolSection(hubLabel("高级工具与诊断","Advanced tools & diagnostics"),modifier){
@@ -380,6 +409,19 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
                     style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked=tools.developer,onCheckedChange=controller::setDeveloperEnabled)
+        }
+        if(tools.developer){
+            HorizontalDivider(Modifier.padding(vertical=10.dp))
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f)){
+                    Text(hubLabel("强制启用远程 OTA 功能入口（仅测试）",
+                        "Force remote OTA feature gate (testing only)"))
+                    Text(hubLabel("允许 Android 16 以下设备测试远程命令；不绕过系统安装权限或确认。",
+                        "Exposes the feature below Android 16; never bypasses installer security."),
+                        style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked=tools.forceRemoteOta,onCheckedChange=controller::setDeveloperRemoteOtaOverride)
+            }
         }
         HorizontalDivider(Modifier.padding(vertical=12.dp))
         Row(verticalAlignment=Alignment.CenterVertically){
@@ -511,6 +553,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
                     RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
                     SharingCard(state,tools,controller,Modifier.fillMaxWidth())
+                    RemoteOtaCard(tools,controller,Modifier.fillMaxWidth())
                     DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 }
             }
@@ -522,6 +565,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 CompatibilityEntry(controller,Modifier.fillMaxWidth())
                 RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
                 SharingCard(state,tools,controller,Modifier.fillMaxWidth())
+                RemoteOtaCard(tools,controller,Modifier.fillMaxWidth())
                 DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 PreferencesCard(tools,controller,Modifier.fillMaxWidth())
             }

@@ -47,6 +47,9 @@ public final class ApiClient {
             return;
         }
         if(!cfg.isEnrolled())return;
+        // Nodes without a foreground relay require an independent, durable
+        // command check. Android may defer this work in Doze.
+        if(!cfg.alwaysOn())SyncJobService.scheduleAfter(c,EnergyPolicy.commandFallbackIntervalMs(c));
         if(!SYNC_BUSY.compareAndSet(false,true)){
             // A concurrent command request must not cause SMS upload to be lost.
             SyncJobService.scheduleAfter(c,12000L);
@@ -59,16 +62,21 @@ public final class ApiClient {
         int pendingBefore=store.pendingEventCount();
         boolean maintenance=EnergyPolicy.due(c,"maintenance",EnergyPolicy.maintenanceIntervalMs(),now);
         boolean reconciliation=EnergyPolicy.due(c,"reconciliation",EnergyPolicy.reconciliationIntervalMs(),now);
-        long changedAt=cfg.lastSmsProviderChangeAt()*1000L;
-        long lastScan=c.getSharedPreferences("simhub_energy_v1",Context.MODE_PRIVATE).getLong("provider_scan",0L);
-        boolean providerDirty=changedAt>0 && changedAt>=lastScan;
+        // Generation is captured BEFORE reading Provider. Notifications received
+        // during the query increment the counter and remain pending afterward.
+        long providerGeneration=cfg.smsChangeGeneration();
+        boolean providerDirty=providerGeneration>cfg.smsScannedGeneration();
         long followupAt=EnergyPolicy.providerFollowupAt(c);
         if(followupAt>now)SyncJobService.scheduleAfter(c,followupAt-now);
         boolean providerFollowup=followupAt>0&&followupAt<=now;
         boolean poolRetry=new SharedPoolClient(c).retryDue();
+        boolean commandFallback=!cfg.alwaysOn() &&
+                EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
         boolean outstanding=poolRetry || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
-        if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding){SYNC_BUSY.set(false);return;}
+        if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding&&!commandFallback){
+            SYNC_BUSY.set(false);return;
+        }
         try{
             PairingManager.completePending(c);
             if(maintenance&&checkServerReset())return;
@@ -79,17 +87,30 @@ public final class ApiClient {
                     store.finishCommand(id,"failed");
                     store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));
                 }
-                // Non-foreground nodes can still claim commands on their durable periodic job.
+            }
+            // Remote commands are NOT tied to SIM inventory/heartbeat cadence.
+            // Foreground nodes poll via CommandTransport, others use durable
+            // best-effort jobs; do not discard a queued command for 15 minutes.
+            if(maintenance||commandFallback){
                 flushCommandAcks();fetchCommands();flushCommandAcks();
+                if(commandFallback)EnergyPolicy.mark(c,"command_fallback",System.currentTimeMillis());
             }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
             int scanned=0,reconciled=0;
             try{
-                flushEvents();
+                // Stage the SMS locally BEFORE network I/O. A failed upload
+                // must never prevent the Provider cursor from being inspected.
                 if(store.pendingEventCount()<200){
                     if(providerDirty||providerFollowup||maintenance){
                         scanned=SmsHistorySync.sync(c,30);
+                        if(scanned>=0 && (providerDirty||providerFollowup)){
+                            // Late Provider writes may have dates at/before the
+                            // incremental cursor. The latest-100 bounded rescan
+                            // covers those rows without re-encrypting receipts.
+                            int inspected=SmsHistorySync.syncRecent(c,100);
+                            if(inspected<0)scanned=-1;
+                        }
                         if(scanned>=0){
-                            EnergyPolicy.mark(c,"provider_scan",System.currentTimeMillis());
+                            cfg.markSmsScanned(providerGeneration);
                             if(providerFollowup)EnergyPolicy.finishProviderFollowup(c);
                         }
                     }
@@ -147,7 +168,12 @@ public final class ApiClient {
                 RelayForegroundService.kick(c);
             return;
         }
-        if(!SYNC_BUSY.compareAndSet(false,true))return;
+        if(!SYNC_BUSY.compareAndSet(false,true)){
+            // A foreground command check must not be silently skipped while
+            // SMS upload holds the lease; retry promptly and persist a fallback.
+            SyncJobService.scheduleAfter(c,3000);
+            return;
+        }
         boolean pending=false;
         try{
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();

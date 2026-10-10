@@ -66,19 +66,14 @@ try {
           return {status:r.status,mime:r.headers.get("content-type"),script:document.querySelector("script[src]")?.outerHTML};
         })),consoleErrors,httpErrors,errors);
       }
+      assert.equal(await page.locator("#simFilter").count(),1,"SIM source filter must exist");
+      // No enrolled send-capable device: forcing the button visible for this
+      // layout fixture must not bypass the read-only sender policy.
       await page.locator("#newSmsBtn").click();
-      const visible=await page.locator("#replyComposer").isVisible();
-      if(!visible){
-        console.error("UI-DIAGNOSTICS",JSON.stringify(await page.evaluate(()=>{
-          const x=id=>{const e=document.getElementById(id);return {
-            exists:!!e,hidden:e?.hidden,css:e?getComputedStyle(e).display:null,
-            className:e?.className};};
-          return {composer:x('replyComposer'),app:x('appContent'),
-            inbox:x('view-inbox'),layout:x('smsLayout'),
-            newButton:x('newSmsBtn'),handler:typeof document.getElementById('newSmsBtn').onclick};
-        })),errors);
-      }
-      assert.ok(visible,"New SMS composer hidden");
+      assert.equal(await page.locator("#replyComposer").isVisible(),false,
+        "Read-only device must not enter SMS compose");
+      // Isolate responsive composer geometry from the device capability check.
+      await page.evaluate(()=>{document.getElementById("replyComposer").hidden=false;});
       await page.locator("#replyTo").fill("+8613800138000");
       await page.locator("#replyBody").fill("Hello");
       const composer=await page.locator("#replyComposer").boundingBox();

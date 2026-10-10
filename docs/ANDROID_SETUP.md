@@ -110,10 +110,12 @@ Both methods require the usual SMS role and SIM permissions after enrollment. If
 
 Open **Settings → Shared SMS**, enable explicit opt-in, then in the logged-in Web controller open **Devices → Shared pool** and approve that device while the local Vault is unlocked. The relay stores only ciphertext and individually wrapped Pool Keys. This is independent of SMS Provider storage and remote sending permissions. Pool sharing is disabled by default; the current implementation uses the owner's single default pool. Read [Shared SMS security and sync](SHARED_SMS.md) before approving a device.
 
-## v0.9.1 signed in-app updates
+## Signed in-app updates (v0.12.2)
 
-Open **Settings → Advanced tools & diagnostics → Check for updates** to
-compare Android `versionCode` with the relay's GitHub Release manifest.
+Open **Settings → Check for updates** to compare Android `versionCode` with
+the **public GitHub stable Release manifest**. The app can check for and
+download a newer version even before pairing, while unpairing, or while the Relay
+is offline. No Vault unlock, Device Token or SMS permission is required.
 A signed update is downloaded into private cache, limited to 80 MiB, checked
 against the released SHA-256 and the pinned **SIM Hub signing certificate**,
 then submitted to Android PackageInstaller. The system may require you to
@@ -131,7 +133,24 @@ PackageInstaller's documented prerequisites are met.
 - APK update requires the official `com.blackkcold.simhub` package and its
   original release signing key. Debug builds and unrelated APKs cannot replace
   the signed production package.
-- Update metadata is served by the connected Relay. Upgrade Relay first.
+- Update metadata is read directly from GitHub Releases over HTTPS. The
+  APK asset URL must match this repository's official versioned release path;
+  both checksum and original signing identity are verified before installation.
+
+## Pairing reset and recovery (v0.12.2)
+
+When a Relay admin unpairs a device, Android first shows **Awaiting reset
+confirmation**, not a false unpaired state. After the signed reset ACK (200) or
+a verified token-bound deleted-device receipt (410), local Node/Vault Keys,
+device tokens, pool keys and queued SIM Hub events are removed; **original
+phone SMS remain intact**. Failed network calls retry with bounded backoff.
+
+If the Relay reports a credential or protocol conflict, Android displays
+**Reset blocked** with **Retry reset confirmation** and **Force local reset**.
+The second action is explicitly user-confirmed and irreversible: it erases this
+app's local enrollment but cannot revoke a still-active server record. Verify
+or delete the old device in the Web management console before re-pairing.
+Do **not** erase the Web Master Vault or its recovery key.
 
 
 

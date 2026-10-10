@@ -57,7 +57,7 @@ public final class AppUpdater {
         Context app=c.getApplicationContext();
         IO.execute(()->{
             try{
-                JSONObject info=new ApiClient(app).ota();
+                JSONObject info=ReleaseUpdateSource.latest();
                 int version=info.optInt("versionCode",0);
                 boolean available=info.optBoolean("available") &&
                     version>BuildConfig.VERSION_CODE && version>0;
@@ -98,9 +98,9 @@ public final class AppUpdater {
     /** JobScheduler invokes this on its existing worker thread, not the UI thread. */
     public static void checkInBackground(Context context){
         Context c=context.getApplicationContext();
-        if(!shouldCheck(c)||!new AgentConfig(c).isEnrolled())return;
+        if(!shouldCheck(c))return;
         try{
-            JSONObject info=new ApiClient(c).ota();
+            JSONObject info=ReleaseUpdateSource.latest();
             prefs(c).edit().putLong("lastCheck",System.currentTimeMillis()).apply();
             int code=info.optInt("versionCode",0);
             if(!info.optBoolean("available")||code<=BuildConfig.VERSION_CODE||code==ignored(c))return;

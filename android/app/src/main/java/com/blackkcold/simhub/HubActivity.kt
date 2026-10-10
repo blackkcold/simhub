@@ -69,6 +69,8 @@ interface HubController {
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
     fun requestContacts()
     fun resetEnrollment()
+    fun retryReset()
+    fun forceLocalReset()
     fun checkOta()
     fun setAutoCheckUpdates(value:Boolean)
     fun setAutoDownloadUpdates(value:Boolean)
@@ -113,7 +115,8 @@ class HubActivity: ComponentActivity(), HubController {
     private val refreshAfterChange=Runnable { refresh() }
     private val poolObserver=object:BroadcastReceiver(){
         override fun onReceive(context:Context?,intent:Intent?){
-            if(intent?.action==SharedPoolClient.ACTION_CACHE_UPDATED){
+            if(intent?.action==SharedPoolClient.ACTION_CACHE_UPDATED ||
+                intent?.action==EnrollmentManager.ACTION_ENROLLMENT_CHANGED){
                 refreshHandler.removeCallbacks(refreshAfterChange)
                 refreshHandler.postDelayed(refreshAfterChange,350)
             }
@@ -200,11 +203,12 @@ class HubActivity: ComponentActivity(), HubController {
     override fun onStart(){
         super.onStart()
         val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
+        poolFilter.addAction(EnrollmentManager.ACTION_ENROLLMENT_CHANGED)
         if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(poolObserver,poolFilter)
         try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
         catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
-        if(AgentConfig(this).isEnrolled()&&AppUpdater.shouldCheck(this)){
+        if(AppUpdater.shouldCheck(this)){
             AppUpdater.check(applicationContext,false){info,error->
                 if(error==null && info!=null && info.optBoolean("available")){
                     val version=info.optString("versionName")
@@ -452,6 +456,38 @@ class HubActivity: ComponentActivity(), HubController {
                 toast(getString(R.string.enrollment_reset_pending))
             }.show()
     }
+    private fun actionLabel(zh:String,en:String):String =
+        if(resources.configuration.locales.get(0)?.language=="zh") zh else en
+    override fun retryReset(){
+        if(!AgentConfig(this).resetPending())return
+        EnrollmentManager.retryReset(this)
+        refresh()
+        toast(actionLabel("已重新提交解绑状态校验","Retrying reset confirmation"))
+    }
+    override fun forceLocalReset(){
+        if(!AgentConfig(this).resetPending())return
+        AlertDialog.Builder(this)
+            .setTitle(actionLabel("仅清除此手机的 SIM Hub 配对","Clear SIM Hub pairing on this phone only"))
+            .setMessage(actionLabel(
+                "无法保证服务器已撤销旧设备权限。继续将删除此应用内本地密钥、事件队列及配对记录（不会删除系统短信）。若服务器仍有旧设备，请在管理后台撤销或删除。",
+                "The Relay may still retain the old device and its access. This removes local SIM Hub keys, queued events and enrollment only; system SMS are unaffected. Remove the old device from the Relay separately."
+            ))
+            .setNegativeButton(R.string.cancel,null)
+            .setPositiveButton(actionLabel("确认本机重置","Confirm local reset")){_,_->
+                lifecycleScope.launch {
+                    try{
+                        withContext(Dispatchers.IO){
+                            EnrollmentManager.forceLocalReset(applicationContext)
+                        }
+                        refresh()
+                        toast(actionLabel("本地配对已清除，可以重新配对","Local pairing cleared; ready to pair"))
+                    }catch(e:Exception){
+                        AppLogger.e(this@HubActivity,"Enrollment","Local recovery reset failed",e)
+                        toast(UiErrors.message(this@HubActivity,e))
+                    }
+                }
+            }.show()
+    }
     override fun setAutoCheckUpdates(value:Boolean){
         tools.autoCheckUpdates=value
         AppUpdater.prefs(this).edit().putBoolean("autoCheck",value).apply()
@@ -461,9 +497,6 @@ class HubActivity: ComponentActivity(), HubController {
         AppUpdater.prefs(this).edit().putBoolean("autoDownload",value).apply()
     }
     override fun checkOta(){
-        if(!AgentConfig(this).isEnrolled()){
-            toast("请先配对 SIM Hub 服务器");return
-        }
         tools.ota="正在检查新版本…"
         AppUpdater.check(applicationContext,true){info,error->
             if(error!=null){tools.ota="检查失败："+error;return@check}

@@ -13,8 +13,8 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
-        versionCode = 27
-        versionName = "0.12.1"
+        versionCode = 28
+        versionName = "0.12.2"
     }
     buildFeatures { buildConfig = true; compose = true }
     signingConfigs {
@@ -55,4 +55,5 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

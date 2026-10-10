@@ -1,3 +1,13 @@
+## v0.12.2 — Reliable device unpair recovery and independent Android OTA
+
+- Separate ACTIVE, RESET_PENDING, RECOVERY and UNPAIRED Android states so remote unpair no longer renders a false "unpaired" screen while local credentials are retained.
+- Make reset acknowledgements idempotent for the exact deleted-device token recorded in a short-lived Relay tombstone; reject unknown and unrelated tokens.
+- On an ambiguous 401/403/404 reset response, verify the original device's lifecycle before clearing keys. Surface genuine credential conflicts instead of retrying indefinitely.
+- Add explicit **Retry reset** and user-confirmed **Local-only reset** actions. Local-only reset warns that Relay authorization may still need server-side removal; system SMS remain untouched.
+- Query official stable GitHub Releases and their versioned update manifest directly from Android, without requiring Relay availability, pairing, Vault, SMS permissions or Device Token.
+- Preserve opt-in auto-download, ignored versions, signed-APK certificate pinning, SHA-256 verification, package identity and versionCode anti-downgrade checks.
+- Extend Relay deletion/tombstone regression coverage and Android stable-release metadata tests.
+
 ## v0.12.1 — Non-default SMS sync, upload visibility and Vault decryption diagnostics
 
 - Register a continuously running SMS Provider ContentObserver while the opt-in foreground Relay service is enabled. Also wake encrypted synchronization on foreground Android SMS Provider changes; keep existing SMS_RECEIVED and bounded history scans as fallback.

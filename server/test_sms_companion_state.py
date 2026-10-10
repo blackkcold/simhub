@@ -25,7 +25,9 @@ class CompanionStateTest(unittest.TestCase):
             "lastEventQueueError":"database_insert_rejected",
             "lastSmsProviderChangeAt":1789999000,
             "lastSmsBroadcastAt":0,"lastReconcileAt":1790000000,
-            "lastReconcileCount":100,"smsBody":"secret",
+            "lastReconcileCount":100,
+            "pendingEventTasks":[{"kind":"sms.history","queuedAt":1790000000,"body":"DO_NOT_SEND","id":"sensitive-queue-id"},{"kind":"sms.received","queuedAt":1790000001}],
+            "smsBody":"secret",
             "token":"do_not_expose"
         })
         self.assertEqual(state["pendingEvents"],0)
@@ -33,6 +35,10 @@ class CompanionStateTest(unittest.TestCase):
         self.assertEqual(state["lastUploadError"],"HTTP_429_rate_limited")
         self.assertEqual(state["lastReconcileCount"],100)
         self.assertNotIn("smsBody",state)
+        self.assertEqual(len(state["pendingEventTasks"]),2)
+        self.assertEqual(state["pendingEventTasks"][0],{"kind":"sms.history","queuedAt":1790000000})
+        self.assertNotIn("body",state["pendingEventTasks"][0])
+        self.assertNotIn("id",state["pendingEventTasks"][0])
         self.assertNotIn("token",state)
 
     def test_default_mode_remains_supported(self):

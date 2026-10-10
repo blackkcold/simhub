@@ -82,6 +82,10 @@ The installer checks DNS / Docker / ports, creates the Admin Token, TOTP and own
 
 Open the management URL, log in, create/import your local Vault, then install the signed Android APK, enroll by QR/code and grant SMS receive/read/send permissions. Keeping the built-in Messages app as default is supported; switching to SIM Hub as the default SMS handler is optional.
 
+## Android system compatibility lab (v0.12.0)
+
+The Android Agent's **Settings → System compatibility lab** is a separate optional screen for Shizuku 13.1.5 Binder/permission onboarding, Android 13+ user-confirmed self-managed CDM associations, SDK/target and SMS/AppOp read-only diagnostics, SMS Provider permission probes, manual encrypted reconciliation, OEM battery settings and privacy-safe audit logs. No silent OEM Messages disabling, OTP/AppOps permission changes or Android compatibility override is performed. **Neither Shizuku nor CDM alone guarantees real-time protected OTP access.** See [compatibility lab](docs/COMPATIBILITY_LAB.md).
+
 ## Non-default SMS compatibility
 
 The Android node listens for `SMS_RECEIVED` and reads the system SMS Provider without replacing the OEM Messages app, when the device grants `RECEIVE_SMS`, `READ_SMS` and `SEND_SMS`. SMS broadcasts wake the existing encrypted sync queue; a six-hour rolling Provider scan reconciles delayed SMS without overwriting the OEM inbox. On Android 17, non-exempt apps can receive protected OTP messages **about three hours late**. Permissions may be withheld by the installer or OEM; live OTP reception is not guaranteed in companion mode. Use the optional default-handler mode where supported if real-time protected OTPs are essential. [Android setup](docs/ANDROID_SETUP.md) explains the limits.

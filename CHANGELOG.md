@@ -1,3 +1,15 @@
+## v0.12.1 — Non-default SMS sync, upload visibility and Vault decryption diagnostics
+
+- Register a continuously running SMS Provider ContentObserver while the opt-in foreground Relay service is enabled. Also wake encrypted synchronization on foreground Android SMS Provider changes; keep existing SMS_RECEIVED and bounded history scans as fallback.
+- Stop swallowing event encryption/queue errors. Record metadata-only failure categories and upload attempts, last successful Relay ACK time/count, local uploaded-event receipts, pending events and command ACK counts. Keep SMS bodies, addresses and OTPs out of diagnostics.
+- Correct the misleading "100 SMS queued" message: distinguish provider records inspected, newly staged events and previously queued/already-uploaded records. A queue count of zero after Relay ACK is normal.
+- Fix PWA event loading so a newly uploaded older-dated SMS is not silently discarded. Bootstrap from both recent-by-time and recent-by-sequence windows to account for late imports.
+- Show visible, non-destructive Vault/Node Key decryption failure classification and recovery guidance. Missing original Vault or historical Node Keys cannot be recreated from Relay ciphertext.
+- Surface broadcast, SMS Provider change, reconciliation and upload checkpoints in Android settings and PWA device details; add server allowlist and browser regression tests.
+- Preserve all existing SMS ciphertext, local queue receipts, device keys, pairing, encrypted Relay and Shizuku/Companion functionality. No automatic deletion, re-pair or default-SMS role takeover.
+
+**Field findings:** Android 16 / API 36 with READ_SMS, RECEIVE_SMS, SEND_SMS and Shizuku authorized; latest-100 rescan ran, zero local pending events was observed, while no SMS_RECEIVED broadcast was logged. The earlier blanket failure message did not distinguish Vault/key mismatches from missing SMS. Real vivo/OriginOS live-SMS and old-Vault key recovery still require device-specific verification.
+
 ## v0.12.0 — Android system compatibility lab and Shizuku authorization
 
 - Introduce an **independent, adaptive System compatibility lab** under Android Settings to avoid mixing experimental system controls with the normal Relay, SMS and security setup.

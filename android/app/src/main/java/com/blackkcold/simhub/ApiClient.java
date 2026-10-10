@@ -71,7 +71,7 @@ public final class ApiClient {
         boolean poolRetry=new SharedPoolClient(c).retryDue();
         boolean commandFallback=!RelayForegroundService.isRunning() &&
                 EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
-        boolean outstanding=poolRetry || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
+        boolean outstanding=poolRetry || RemoteOta.needsStateUpload(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
         if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding&&!commandFallback){
             SYNC_BUSY.set(false);return;
@@ -139,8 +139,13 @@ public final class ApiClient {
                     new SharedPoolClient(c).scheduleRetry(poolError);
                 }
             }
+            if(maintenance||RemoteOta.needsStateUpload(c)){
+                String otaStage=RemoteOta.currentStage(c);
+                putState();
+                if(RemoteOta.needsStateUpload(c))RemoteOta.markStateUploaded(c,otaStage);
+            }
             if(maintenance){
-                putState();heartbeat();
+                heartbeat();
                 EnergyPolicy.mark(c,"maintenance",System.currentTimeMillis());
                 EnergyPolicy.increment(c,"maintenanceRuns");
             }

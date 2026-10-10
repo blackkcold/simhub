@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.13.2.trigger'
+      - '.github/release/v0.13.3.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.13.2.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.13.3.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -73,7 +73,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_updates
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
       - run: python3 scripts/test_icons.py
@@ -277,7 +277,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Restore reliable SMS ingestion, balanced remote command delivery and responsive full-width Android energy cards",
+              "notes":"Android 16+ opt-in remote APK updates, installer confirmation fallback and automatic relay recovery",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -300,9 +300,15 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub v0.13.1 repairs SMS and remote command delivery regressions in v0.13.0.
+          SIM Hub v0.13.3 adds opt-in remote signed APK updates on Android 16+, with developer-only eligibility override for testing older versions.
 
           ## Highlights
+          - Remote controller-initiated Android self-updates require explicit local opt-in and administrator step-up.
+          - Android 16+ gating; developer override below Android 16 never bypasses installer permissions or confirmation.
+          - Track download, verification, installation, confirmation and verified post-replacement recovery states.
+          - Enforce original APK signature, release metadata and SHA-256; never install third-party packages.
+          - Restore enabled relay/job transport using ACTION_MY_PACKAGE_REPLACED without forcing a background Activity.
+          - Default to Wi-Fi downloads and pause on battery under 25% unless charging; cancellation before installer commit.
           - Persist SMS Provider change generations, catch same-second updates and late Provider writes.
           - Encrypt and queue new SMS before Relay network checks, even during retry backoff.
           - Decouple remote command retrieval from 15-minute maintenance; Balanced command checks use ~45s interactive and ~120s idle cadences with best-effort background recovery.

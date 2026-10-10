@@ -31,7 +31,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.13.2"
+APP_VERSION = "0.13.3"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -98,8 +98,25 @@ ALLOWED_COMMANDS = {
     "subscription.refresh",
     "diagnostics.request",
     "ota.check",
+    "ota.install",
+    "ota.cancel",
     "node.rotate_key",
 }
+def remote_ota_capable(app_version: str, state: dict) -> bool:
+    """Fail closed for missing or older Android Agent state. A developer override is explicit."""
+    try:
+        version = tuple(int(p) for p in str(app_version).split("."))
+        sdk = state.get("sdk")
+        return (len(version) == 3 and version >= (0, 13, 3)
+                and type(sdk) is int and sdk >= 29
+                and (sdk >= 36 or state.get("remoteOtaDeveloperOverride") is True)
+                and state.get("remoteOtaSupported") is True
+                and state.get("remoteOtaAuthorized") is True
+                and state.get("remoteOtaInstallPermission") is True)
+    except (TypeError, ValueError):
+        return False
+
+
 PHONE_COMMAND_PREFIXES = ("call.", "dialer.", "phone.")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.~]{20,512}$")
 BOOTSTRAP_PROOF_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
@@ -614,7 +631,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaError","remoteOtaUpdatedAt"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -1212,7 +1229,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
-            if str(body.get("type","")) in {"sms.send","node.rotate_key","device.network_policy"} and not self.require_stepup():return
+            if str(body.get("type","")) in {"sms.send","node.rotate_key","device.network_policy","ota.install","ota.cancel"} and not self.require_stepup():return
             self.create_command(p[3],body); return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return
@@ -1887,6 +1904,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
         ctype=str(body.get("type",""))
         if ctype.startswith(PHONE_COMMAND_PREFIXES) or ctype not in ALLOWED_COMMANDS:
             self.send_error_json(400,"command_not_allowed","Only SIM/SMS/device commands are supported; phone/call commands are intentionally disabled"); return
+        if ctype == "ota.install":
+            with open_db() as con:
+                row=con.execute("""SELECT d.app_version,s.state_json FROM devices d
+                    LEFT JOIN device_state s ON s.device_id=d.id WHERE d.id=?""",
+                    (device_id,)).fetchone()
+            state=safe_json_loads(row["state_json"],{}) if row and row["state_json"] else {}
+            if not row or not remote_ota_capable(row["app_version"],state):
+                self.send_error_json(409,"ota_not_enabled",
+                    "Device has not reported Android 16+ eligibility and local remote OTA consent"); return
         cipher=body.get("ciphertext")
         if not validate_cipher(cipher):
             self.send_error_json(400,"invalid_ciphertext","Valid AES-GCM ciphertext envelope required"); return
@@ -1954,14 +1980,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not isinstance(result,dict): result={}
         # Positive allowlist: a compromised node must not smuggle SMS text into
         # command status/audit metadata via arbitrary result keys.
-        safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate"}
+        safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate","targetVersion"}
         result={k:(v[:120] if isinstance(v,str) else v) for k,v in result.items()
                 if k in safe_result_keys and isinstance(v,(str,int,float,bool,type(None)))}
         # Terminal ACKs are immutable; duplicate ACKs never replace stored result metadata.
         successors={
             "queued":{"submitted","sent","delivered","succeeded","failed","rejected","expired"},
             "dispatched":{"submitted","sent","delivered","succeeded","failed","rejected","expired"},
-            "submitted":{"sent","delivered","failed"},
+            "submitted":{"sent","delivered","succeeded","failed"},
             "sent":{"delivered","failed"},
         }
         with open_db() as con:

@@ -48,6 +48,16 @@ public final class EnergyPolicy {
     public static void mark(Context c, String key, long now) {
         prefs(c).edit().putLong(key, now).apply();
     }
+    public static void stageProviderFollowup(Context c, long delayMs) {
+        prefs(c).edit().putLong("provider_followup",System.currentTimeMillis()+delayMs).apply();
+    }
+    public static boolean providerFollowupDue(Context c,long now) {
+        long at=prefs(c).getLong("provider_followup",0);
+        return at>0&&now>=at;
+    }
+    public static void finishProviderFollowup(Context c) {
+        prefs(c).edit().remove("provider_followup").apply();
+    }
     public static void resetSchedule(Context c) {
         prefs(c).edit().remove("maintenance").remove("reconciliation").apply();
     }

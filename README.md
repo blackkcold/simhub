@@ -14,6 +14,8 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 [![Release](https://img.shields.io/github/v/release/blackkcold/simhub)](https://github.com/blackkcold/simhub/releases/latest)
 [![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
 
+Android v0.12.2 supports official stable GitHub Release updates without pairing, a Vault, or an online Relay. It also distinguishes pending unpair from a completed reset and provides explicit retry/local recovery without touching system SMS.
+
 **[Download Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[Quick deployment](docs/QUICKSTART.zh-CN.md)** · [Installation guide](docs/INSTALLATION.md)
 
 </div>

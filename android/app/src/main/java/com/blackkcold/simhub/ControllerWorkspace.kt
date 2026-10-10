@@ -43,6 +43,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
     var error by remember { mutableStateOf("") }
 
     BackHandler(visible && canGoBack) { web?.goBack() }
+    LaunchedEffect(visible,web) {
+        // Leave the active tab and its Vault snapshot in place, but suspend
+        // WebView timers while the user is working in the native SIM node.
+        if(visible)web?.onResume() else web?.onPause()
+    }
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=8.dp),
             verticalAlignment=Alignment.CenterVertically,

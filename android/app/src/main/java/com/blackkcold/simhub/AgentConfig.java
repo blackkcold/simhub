@@ -98,7 +98,25 @@ public final class AgentConfig {
     }
     public long lastSmsBroadcastAt(){return prefs.getLong("last_sms_broadcast_at",0L);}
     // Metadata-only pipeline checkpoints. Counts never include SMS body or number.
-    public void recordSmsProviderChange(){prefs.edit().putLong("last_sms_provider_change",System.currentTimeMillis()/1000).apply();}
+    // A monotonic generation avoids losing Provider notifications that share a second
+    // with a completed scan. All AgentConfig instances serialize on this same lock.
+    private static final Object SMS_CHANGE_LOCK=new Object();
+    public void recordSmsProviderChange(){
+        synchronized(SMS_CHANGE_LOCK){
+            long next=prefs.getLong("sms_change_generation",0)+1;
+            prefs.edit().putLong("sms_change_generation",next)
+                    .putLong("last_sms_provider_change",System.currentTimeMillis()/1000).apply();
+        }
+    }
+    public long smsChangeGeneration(){return prefs.getLong("sms_change_generation",0);}
+    public long smsScannedGeneration(){return prefs.getLong("sms_scanned_generation",0);}
+    /** Commit only the generation observed before the scan; later events remain dirty. */
+    public void markSmsScanned(long observed){
+        synchronized(SMS_CHANGE_LOCK){
+            if(observed>prefs.getLong("sms_scanned_generation",0))
+                prefs.edit().putLong("sms_scanned_generation",observed).apply();
+        }
+    }
     public long lastSmsProviderChangeAt(){return prefs.getLong("last_sms_provider_change",0L);}
     public void recordUploadAttempt(){prefs.edit().putLong("last_upload_attempt_at",System.currentTimeMillis()/1000).apply();}
     public long lastUploadAttemptAt(){return prefs.getLong("last_upload_attempt_at",0L);}

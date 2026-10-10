@@ -37,6 +37,7 @@ public final class StateCollector {
                     .put("energyMode",EnergyPolicy.mode(c))
                     .put("effectiveEnergyMode",EnergyPolicy.effectiveMode(c))
                     .put("foregroundRelay",cfg.alwaysOn())
+                    .put("energyStats",EnergyPolicy.metrics(c))
                     .put("network",network(c))
                     .put("pendingEvents",LocalStore.get(c).pendingEventCount())
                     .put("pendingCommandAcks",LocalStore.get(c).pendingCommandAckCount())

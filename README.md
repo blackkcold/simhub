@@ -47,7 +47,7 @@ Web Settings offers GitHub Release checking, ignore and one-click deployment of 
 
 | Capability | What it does |
 |---|---|
-| **SMS and OTP** | Multi-SIM receive/send, conversation replies, new messages, code detection and copy |
+| **SMS and OTP** | Non-default companion mode or optional full SMS-handler mode; multi-SIM receive/send and OTP parsing (Android 17 OTP delay applies to non-default apps) |
 | **Native Android UI** | One Material 3 adaptive interface with foldable panes, SIM tags, messaging, all advanced tools and local diagnostics |
 | **Devices and SIMs** | Android and Linux modem nodes; phone numbers, signal, charging, Wi-Fi and connectivity |
 | **Shared SMS (opt-in)** | Authorized Android devices decrypt a common encrypted pool; latest 100, incremental/older pagination and masked SIM provenance |
@@ -80,7 +80,11 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 The installer checks DNS / Docker / ports, creates the Admin Token, TOTP and owner-only `.env`, then starts Relay and Caddy HTTPS. **You must create DNS records at your provider.** For an existing Nginx / Caddy / Traefik proxy, add `--mode external` and configure dual-host TLS routing yourself.
 
-Open the management URL, log in, create/import your local Vault, then install the signed Android APK, enroll by QR/code and configure SMS permissions and **default SMS app** access.
+Open the management URL, log in, create/import your local Vault, then install the signed Android APK, enroll by QR/code and grant SMS receive/read/send permissions. Keeping the built-in Messages app as default is supported; switching to SIM Hub as the default SMS handler is optional.
+
+## Non-default SMS compatibility
+
+The Android node listens for `SMS_RECEIVED` and reads the system SMS Provider without replacing the OEM Messages app, when the device grants `RECEIVE_SMS`, `READ_SMS` and `SEND_SMS`. SMS broadcasts wake the existing encrypted sync queue; a six-hour rolling Provider scan reconciles delayed SMS without overwriting the OEM inbox. On Android 17, non-exempt apps can receive protected OTP messages **about three hours late**. Permissions may be withheld by the installer or OEM; live OTP reception is not guaranteed in companion mode. Use the optional default-handler mode where supported if real-time protected OTPs are essential. [Android setup](docs/ANDROID_SETUP.md) explains the limits.
 
 ## Boundaries
 

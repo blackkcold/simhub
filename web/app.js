@@ -121,6 +121,29 @@ async function encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid){
   return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
 }
 async function deviceCrypto(deviceId){if(deviceKeyCache.has(deviceId))return deviceKeyCache.get(deviceId);const info=devices.find(x=>x.id===deviceId);let out;if(info&&info.keyId&&info.wrappedKey){const raw=await unwrapNodeKey(info.wrappedKey,info.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);out={raw:raw,key:key,kid:info.keyId,mode:'node'};}else out=await deriveLegacyDevice(deviceId);deviceKeyCache.set(deviceId,out);return out;}
+/** Safe failure category only: never surface raw ciphertext, plaintext or keys. */
+function decryptFailureCategory(e,error){
+  const d=devices.find(x=>x.id===e.deviceId);
+  const kid=e.ciphertext?.kid||'';
+  if(d?.state?.cryptoKeyId && d?.keyId && d.state.cryptoKeyId!==d.keyId)return 'device_key_diverged';
+  if(error?.message==='Node key mismatch')return 'historical_key_missing';
+  if(error?.message==='Wrapped node key does not match key id')return 'node_key_invalid';
+  if(e.ciphertext?.v===1)return 'legacy_vault_unavailable';
+  if(kid && d?.keyId && kid!==d.keyId &&
+     !(d?.historicalWrappedKeys||[]).some(k=>k.keyId===kid))return 'historical_key_missing';
+  if(error?.name==='OperationError')return 'vault_key_mismatch_or_integrity';
+  return 'unreadable_ciphertext';
+}
+function renderDecryptNotice(){
+  const el=$('decryptNotice');if(!el)return;
+  const failures=decryptedEvents.filter(e=>e.kind.startsWith('sms.')&&e.decryptError);
+  if(!failures.length){el.hidden=true;el.textContent='';return;}
+  const counts={};for(const e of failures){const code=e.decryptCategory||'unreadable_ciphertext';counts[code]=(counts[code]||0)+1;}
+  const primary=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0]||'unreadable_ciphertext';
+  const detail=tr('decrypt_issue_'+primary);
+  el.hidden=false;
+  el.textContent=tr('decrypt_notice',{count:failures.length})+' '+detail+' '+tr('decrypt_recovery_hint');
+}
 async function decryptEvent(e){const cipher=e.ciphertext;if(cipher&&cipher.v===1){const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode('simhub-event-v1')},vaultKey,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}if(!cipher||cipher.v!==2)throw new Error('Unsupported ciphertext version');let d=await deviceCrypto(e.deviceId);if(cipher.kid!==d.kid){const info=devices.find(x=>x.id===e.deviceId);if(info&&info.pendingKeyId===cipher.kid&&info.pendingWrappedKey){const raw=await unwrapNodeKey(info.pendingWrappedKey,info.pendingKeyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw:raw,key:key,kid:info.pendingKeyId,mode:'pending-node'};}else{const hist=(info?.historicalWrappedKeys||[]).find(k=>k.keyId===cipher.kid);if(hist){const raw=await unwrapNodeKey(hist.wrappedKey,hist.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw,key,kid:hist.keyId,mode:'retired-node'};}else{const legacy=await deriveLegacyDevice(e.deviceId);if(cipher.kid!==legacy.kid)throw new Error('Node key mismatch');d=legacy;}}}const aad=eventAad(e.deviceId,e.eventId,e.kind,e.occurredAt,e.subscriptionId,e.hasOtp),pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode(aad)},d.key,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}
 function versionAtLeast(v,target){const a=String(v||'0').split('.').map(Number),b=String(target).split('.').map(Number);for(let i=0;i<Math.max(a.length,b.length);i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x>y;}return true;}
 async function encryptCommand(deviceId,outer,payload){const info=devices.find(x=>x.id===deviceId);if(!versionAtLeast(info&&info.appVersion,'0.1.5')){const iv=crypto.getRandomValues(new Uint8Array(12)),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-command-v1')},vaultKey,enc.encode(JSON.stringify(payload))));return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};}const d=await deviceCrypto(deviceId),iv=crypto.getRandomValues(new Uint8Array(12)),aad=commandAad(deviceId,outer.commandId,outer.type,outer.createdAt,outer.expiresAt,outer.idempotencyKey),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode(aad)},d.key,enc.encode(JSON.stringify(payload))));return {v:2,alg:'A256GCM',kid:d.kid,iv:b64u(iv),ct:b64u(ct)};}
@@ -334,14 +357,14 @@ async function ingestEvents(batch,notify=true){
     lastSeq=Math.max(lastSeq,e.seq||0);
     const id=e.deviceId+':'+e.eventId;
     if(eventIds.has(id))continue;
-    const boundary=decryptedEvents.length>=30?Math.min(...decryptedEvents.map(x=>x.occurredAt||0)):0;
-    if(notify&&boundary&&e.occurredAt<boundary)continue; // older sync data stays accessible via historical pagination
+    // An SMS uploaded today can carry an older provider timestamp. Keep it visible
+    // instead of discarding new Relay sequences solely due to message age.
     events.push(e);eventIds.add(id);changed=true;
     try{
       const payload=await decryptEvent(e),row=Object.assign({},e,{payload});
       if(epoch!==securityEpoch||!vaultKey)return false;
       decryptedEvents.push(row);if(notify)maybeNotify(row);
-    }catch(err){if(epoch!==securityEpoch||!vaultKey)return false;decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptReason:err.message}));}
+    }catch(err){if(epoch!==securityEpoch||!vaultKey)return false;decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptCategory:decryptFailureCategory(e,err)}));}
   }
   return changed;
 }
@@ -355,6 +378,12 @@ async function loadEvents(){
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
+    if(epoch!==securityEpoch||!vaultKey)return;
+    // Recent uploads can contain old-dated messages excluded by occurredAt paging.
+    // Fetch the latest Relay sequence page too, without losing the original head.
+    const newest=await api('/api/v1/events?latest=1&limit=100');
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    await ingestEvents(newest.events||[],false);
     if(epoch!==securityEpoch||!vaultKey)return;
     initialEventsLoaded=true;renderInbox();return;
   }
@@ -740,6 +769,7 @@ function buildThreads(source){
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
 function renderInbox(){
+  renderDecryptNotice();
   const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
   const list=$('inboxList'),previousTop=list.scrollTop;
   $('emptyInbox').hidden=!!show.length;

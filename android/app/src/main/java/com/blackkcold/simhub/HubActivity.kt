@@ -281,9 +281,11 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun requestAccess(){
-        val missing=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,
-            Manifest.permission.SEND_SMS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
-            .filter{checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED}.toMutableList()
+        val requested=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
+        val smsRole=getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true
+        if(smsRole || DeveloperSettings.isForceSmsEnabled(this))requested.add(Manifest.permission.SEND_SMS)
+        val missing=requested.filter{checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED}.toMutableList()
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
             missing.add(Manifest.permission.POST_NOTIFICATIONS)
         if(missing.isEmpty())toast(getString(R.string.permissions_granted))

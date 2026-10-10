@@ -1,3 +1,15 @@
+## v0.12.0 — Android system compatibility lab and Shizuku authorization
+
+- Introduce an **independent, adaptive System compatibility lab** under Android Settings to avoid mixing experimental system controls with the normal Relay, SMS and security setup.
+- Integrate upstream Shizuku 13.1.5 API/Provider: detect the Binder, identify ADB/root service UID where permission is granted, request a separate per-app authorization, and handle permission results and service disconnection.
+- Add Android 13+ user-confirmed self-managed CompanionDeviceManager associations for already-enrolled devices, including explicit safe disassociation and truthful OTP exemption caveats.
+- Offer user-triggered OS/target SDK analysis, role/SMS permission and read-only OTP AppOp status, metadata-only SMS Provider probe, bounded encrypted SMS reconciliation, OEM battery settings and copyable read-only ADB/Rish diagnostics.
+- Add a local **60-entry, metadata-only compatibility audit** independent of Developer Mode, with export inside the existing redacted diagnostics ZIP and a separate clear control.
+- Add unit tests for SDK policy, association eligibility and audit token validation; maintain compatibility with v0.11.2 SMS ingestion.
+- Do not attempt automatic SMS app disabling, OTP security flag overrides, AppOps privilege grants or unsafe notification-based OTP harvesting.
+
+**Important:** Shizuku authorization, self-managed CDM association and successful Provider queries **do not prove** immediate access to protected Android 17 OTPs. Hardware testing on the target ROM remains required. See [compatibility lab](docs/COMPATIBILITY_LAB.md).
+
 ## v0.11.2 — Non-default Android SMS companion mode
 
 - Receive `SMS_RECEIVED` broadcasts to wake encrypted SMS Provider synchronization without replacing vivo/OriginOS or other OEM Messages apps; preserve the `SMS_DELIVER` default-handler path.

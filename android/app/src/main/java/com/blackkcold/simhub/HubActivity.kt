@@ -7,6 +7,13 @@ import android.os.Looper
 import android.provider.Telephony
 import android.app.AlertDialog
 import android.app.role.RoleManager
+import android.companion.AssociationInfo
+import android.companion.AssociationRequest
+import android.companion.CompanionDeviceManager
+import android.content.IntentSender
+import android.provider.Settings
+import androidx.activity.result.IntentSenderRequest
+import rikka.shizuku.Shizuku
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ClipDescription
@@ -76,6 +83,19 @@ interface HubController {
     fun openNetworkSettings()
     fun loadMoreSms()
     fun copyOtp(code:String)
+    fun openCompatibility()
+    fun closeCompatibility()
+    fun refreshCompatibility()
+    fun probeSmsProvider()
+    fun reconcileSmsNow()
+    fun requestShizukuAuthorization()
+    fun openShizukuManager()
+    fun copyAdbDiagnostics()
+    fun startCompanionAssociation()
+    fun removeCompanionAssociations()
+    fun openBatteryOptimization()
+    fun refreshCompatibilityAudit()
+    fun clearCompatibilityAudit()
 }
 class HubActivity: ComponentActivity(), HubController {
     private var snapshot by mutableStateOf<HubSnapshot?>(null)
@@ -105,6 +125,25 @@ class HubActivity: ComponentActivity(), HubController {
             refreshHandler.postDelayed(refreshAfterChange,400)
         }
     }
+    private val companionLauncher=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()){result->
+        CompatibilityAudit.record(this,"companion_confirmation",
+            if(result.resultCode==RESULT_OK)"accepted" else "cancelled")
+        refreshCompatibility()
+    }
+    private val shizukuPermissionListener=Shizuku.OnRequestPermissionResultListener {requestCode,result->
+        if(requestCode==12012){
+            CompatibilityAudit.record(this,"shizuku_permission",
+                if(result==PackageManager.PERMISSION_GRANTED)"granted" else "denied")
+            AppLogger.i(this,"Compatibility","Shizuku permission result received")
+            refreshCompatibility()
+        }
+    }
+    private val shizukuBinderListener=Shizuku.OnBinderReceivedListener {
+        if(tools.compatibilityOpen)refreshCompatibility()
+    }
+    private val shizukuDeadListener=Shizuku.OnBinderDeadListener {
+        if(tools.compatibilityOpen)refreshCompatibility()
+    }
     private val smsRoleLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){refresh()}
     private val permissionsLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){refresh()}
     private val contactsLauncher=registerForActivityResult(ActivityResultContracts.RequestPermission()){refresh()}
@@ -119,6 +158,9 @@ class HubActivity: ComponentActivity(), HubController {
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
+        Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
+        Shizuku.addBinderReceivedListenerSticky(shizukuBinderListener)
+        Shizuku.addBinderDeadListener(shizukuDeadListener)
         UiLocale.apply(this)
         tools.developer=DeveloperSettings.isEnabled(this)
         tools.language=UiLocale.index(this)
@@ -144,6 +186,12 @@ class HubActivity: ComponentActivity(), HubController {
                         .firstOrNull { it.isSeparating } }
             }
         }
+    }
+    override fun onDestroy(){
+        Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
+        Shizuku.removeBinderReceivedListener(shizukuBinderListener)
+        Shizuku.removeBinderDeadListener(shizukuDeadListener)
+        super.onDestroy()
     }
     override fun onStart(){
         super.onStart()
@@ -174,6 +222,7 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun onResume(){
         super.onResume();refresh()
+        if(tools.compatibilityOpen)refreshCompatibility()
         val active=ActivePairing.session
         if(active!=null && pendingTask==null)pollSession(active)
     }
@@ -483,5 +532,206 @@ class HubActivity: ComponentActivity(), HubController {
         getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
         toast(getString(R.string.hub_code_copied))
     }
+    private fun auditCompatibility(action:String,outcome:String){
+        CompatibilityAudit.record(this,action,outcome)
+        AppLogger.i(this,"Compatibility","action="+action+" outcome="+outcome)
+        tools.compatibilityAudit=CompatibilityAudit.export(this)
+    }
+    override fun openCompatibility(){
+        tools.compatibilityOpen=true
+        tools.compatibilityAudit=CompatibilityAudit.export(this)
+        refreshCompatibility()
+    }
+    override fun closeCompatibility(){
+        tools.compatibilityOpen=false
+        tools.compatibilityError=""
+        tools.compatibilityNote=""
+    }
+    override fun refreshCompatibility(){
+        lifecycleScope.launch {
+            try {
+                tools.compatibilityBusy=true
+                tools.compatibilityStatus=withContext(Dispatchers.IO){
+                    CompatibilityManager.inspect(applicationContext,false)
+                }
+                tools.compatibilityError=""
+            }catch(error:Exception){
+                tools.compatibilityError=hubError("inspect_failed")
+                auditCompatibility("capability_inspection","failed")
+            }finally{tools.compatibilityBusy=false}
+        }
+    }
+    private fun hubError(code:String):String = when(code){
+        "inspect_failed"->"系统能力检测失败，请导出诊断日志。"
+        else->"系统拒绝了此次操作，请查看诊断记录。"
+    }
+    override fun probeSmsProvider(){
+        lifecycleScope.launch {
+            tools.compatibilityBusy=true
+            try{
+                val result=withContext(Dispatchers.IO){CompatibilityManager.inspect(applicationContext,true)}
+                tools.compatibilityStatus=result
+                val outcome=result.optString("providerProbe","query_failed")
+                auditCompatibility("provider_probe",outcome)
+                tools.compatibilityNote="SMS Provider: "+outcome
+                tools.compatibilityError=""
+            }catch(error:Exception){
+                auditCompatibility("provider_probe","failed")
+                tools.compatibilityError=hubError("probe_failed")
+            }finally{tools.compatibilityBusy=false}
+        }
+    }
+    override fun reconcileSmsNow(){
+        if(!AgentConfig(this).isEnrolled())return
+        lifecycleScope.launch {
+            tools.compatibilityBusy=true
+            try{
+                val count=withContext(Dispatchers.IO){
+                    val result=SmsHistorySync.reconcileRecent(applicationContext,100)
+                    if(result>=0)SyncJobService.scheduleNow(applicationContext)
+                    result
+                }
+                auditCompatibility("manual_reconcile",if(count>=0)"completed" else "provider_failed")
+                tools.compatibilityNote=if(count>=0)
+                    "已扫描 "+count+" 条本地短信记录。待上传队列将通过加密 Relay 发送。"
+                    else "短信数据库拒绝扫描；请检查权限和状态。"
+            }catch(error:Exception){
+                auditCompatibility("manual_reconcile","failed")
+                tools.compatibilityError=hubError("reconcile_failed")
+            }finally{tools.compatibilityBusy=false}
+        }
+    }
+    override fun requestShizukuAuthorization(){
+        try{
+            if(!Shizuku.pingBinder()){
+                tools.compatibilityError="请先启动 Shizuku 服务，再申请独立授权。"
+                auditCompatibility("shizuku_request","service_unavailable")
+                return
+            }
+            if(Shizuku.checkSelfPermission()==PackageManager.PERMISSION_GRANTED){
+                auditCompatibility("shizuku_request","already_granted")
+                refreshCompatibility()
+                return
+            }
+            auditCompatibility("shizuku_request","requested")
+            Shizuku.requestPermission(12012)
+        }catch(error:Exception){
+            auditCompatibility("shizuku_request","failed")
+            tools.compatibilityError="Shizuku 授权请求失败，请检查管理器状态。"
+        }
+    }
+    override fun openShizukuManager(){
+        try {
+            val launch=packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+            if(launch!=null){
+                startActivity(launch)
+                auditCompatibility("shizuku_manager","opened")
+            }else{
+                startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://shizuku.rikka.app/")))
+                auditCompatibility("shizuku_manager","official_website")
+            }
+        }catch(error:Exception){
+            auditCompatibility("shizuku_manager","failed")
+            tools.compatibilityError=hubError("shizuku_open_failed")
+        }
+    }
+    override fun copyAdbDiagnostics(){
+        val uid=android.os.Process.myUid()
+        val commands=listOf(
+            "adb shell getprop ro.build.version.sdk",
+            "adb shell getprop ro.product.manufacturer",
+            "adb shell cmd role get-role-holders android.app.role.SMS",
+            "adb shell cmd appops get --uid "+uid+" READ_OTP_SMS",
+            "adb shell dumpsys package com.blackkcold.simhub"
+        ).joinToString("\n")
+        val clip=ClipData.newPlainText("SIM Hub read-only diagnostics",commands)
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+        auditCompatibility("copy_adb_diagnostics","copied")
+        tools.compatibilityNote="已复制只读 ADB 命令。使用 Rish 时去掉 adb shell 前缀。"
+    }
+    override fun startCompanionAssociation(){
+        if(!CompatibilityPolicy.canOfferSelfManagedAssociation(
+                Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled())){
+            tools.compatibilityError="需要 Android 13 以上系统以及已配对的 Relay。"
+            return
+        }
+        if(CompatibilityManager.associationCount(this)>0){
+            tools.compatibilityNote="已存在 SIM Hub 关联。如需重新测试，先手动解除关联。"
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Android 系统伴侣关联")
+            .setMessage("将向 Android 请求自管理伴侣关联，需要系统授权确认。它不会自动读取 OTP，也不保证获得验证码实时访问豁免。仅对自己管理的可信设备进行关联。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("继续") { _,_ ->
+                try{
+                    val cdm=getSystemService(CompanionDeviceManager::class.java)
+                        ?:throw IllegalStateException("Companion service unavailable")
+                    val name=AgentConfig(this).deviceName().take(40)
+                    val request=AssociationRequest.Builder()
+                        .setSelfManaged(true)
+                        .setDisplayName("SIM Hub · "+name)
+                        .setSingleDevice(true).build()
+                    auditCompatibility("companion_association","requested")
+                    cdm.associate(request,mainExecutor,object:CompanionDeviceManager.Callback(){
+                        override fun onAssociationPending(intentSender:IntentSender){
+                            companionLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                        }
+                        override fun onAssociationCreated(associationInfo:AssociationInfo){
+                            auditCompatibility("companion_association","created")
+                            refreshCompatibility()
+                        }
+                        override fun onFailure(errorMessage:CharSequence?){
+                            auditCompatibility("companion_association","failed")
+                            tools.compatibilityError="关联失败，可能被厂商系统拒绝；请导出诊断日志。"
+                        }
+                    })
+                }catch(error:Exception){
+                    auditCompatibility("companion_association","failed")
+                    tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName
+                }
+            }.show()
+    }
+    override fun removeCompanionAssociations(){
+        AlertDialog.Builder(this)
+            .setTitle("解除系统伴侣关联")
+            .setMessage("只解除本应用创建的自管理 CDM 关联，不会删除 SIM Hub Relay 配对、短信或加密密钥。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("解除"){_,_->
+                try{
+                    val removed=CompatibilityManager.removeSimHubAssociations(this)
+                    auditCompatibility("companion_disassociate",if(removed)"completed" else "none")
+                    refreshCompatibility()
+                }catch(error:Exception){
+                    auditCompatibility("companion_disassociate","failed")
+                    tools.compatibilityError=hubError("companion_remove_failed")
+                }
+            }.show()
+    }
+    override fun openBatteryOptimization(){
+        try{
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            auditCompatibility("battery_settings","opened")
+        }catch(error:Exception){
+            try{startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:"+packageName)))
+                auditCompatibility("battery_settings","app_details")
+            }catch(second:Exception){auditCompatibility("battery_settings","failed")}
+        }
+    }
+    override fun refreshCompatibilityAudit(){
+        tools.compatibilityAudit=CompatibilityAudit.export(this)
+    }
+    override fun clearCompatibilityAudit(){
+        AlertDialog.Builder(this)
+            .setTitle("清空兼容性审计记录")
+            .setMessage("仅删除本机诊断操作元数据，不影响短信、配对或已授予的权限。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("清空"){_,_->
+                CompatibilityAudit.clear(this)
+                tools.compatibilityAudit=CompatibilityAudit.export(this)
+            }.show()
+    }
+
     private fun toast(msg:String){Toast.makeText(this,msg,Toast.LENGTH_SHORT).show()}
 }

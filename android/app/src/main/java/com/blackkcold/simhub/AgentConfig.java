@@ -83,6 +83,16 @@ public final class AgentConfig {
     public String smsProviderError(){return prefs.getString("sms_provider_error","");}
     public void recordSyncSuccess(){prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
     public void recordSyncError(String reason){prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
+    public void recordSmsBroadcast(){
+        prefs.edit().putLong("last_sms_broadcast_at",System.currentTimeMillis()/1000).apply();
+    }
+    public long lastSmsBroadcastAt(){return prefs.getLong("last_sms_broadcast_at",0L);}
+    public void recordSmsReconcile(int scanned){
+        prefs.edit().putLong("last_reconcile_at",System.currentTimeMillis()/1000)
+                .putInt("last_reconcile_count",Math.max(0,scanned)).apply();
+    }
+    public long lastReconcileAt(){return prefs.getLong("last_reconcile_at",0L);}
+    public int lastReconcileCount(){return prefs.getInt("last_reconcile_count",0);}
     public long lastSmsReceivedAt(){return prefs.getLong("last_sms_received_at",0);}
     public long lastSyncSuccessAt(){return prefs.getLong("last_sync_success_at",0);}
     public String lastSyncError(){return prefs.getString("last_sync_error","");}

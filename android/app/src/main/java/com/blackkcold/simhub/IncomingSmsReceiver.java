@@ -26,6 +26,8 @@ public final class IncomingSmsReceiver extends BroadcastReceiver {
                 if(rm!=null && rm.isRoleHeld(android.app.role.RoleManager.ROLE_SMS))return;
                 if(c.checkSelfPermission(android.Manifest.permission.READ_SMS)
                         !=android.content.pm.PackageManager.PERMISSION_GRANTED)return;
+                new AgentConfig(c).recordSmsBroadcast();
+                AppLogger.i(c,"SmsReceiver","SMS_RECEIVED broadcast observed in non-default mode");
                 SyncJobService.scheduleNow(c);
                 // The OEM's default handler may persist the message after this broadcast.
                 SyncJobService.scheduleAfter(c,8000L);

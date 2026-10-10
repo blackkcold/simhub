@@ -62,7 +62,8 @@ public final class ApiClient {
         long lastScan=c.getSharedPreferences("simhub_energy_v1",Context.MODE_PRIVATE).getLong("provider_scan",0L);
         boolean providerDirty=changedAt>0 && changedAt>=lastScan;
         boolean providerFollowup=EnergyPolicy.providerFollowupDue(c,now);
-        boolean outstanding=pendingBefore>0 || store.pendingCommandAckCount()>0 ||
+        boolean poolRetry=new SharedPoolClient(c).retryDue();
+        boolean outstanding=poolRetry || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
         if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding){SYNC_BUSY.set(false);return;}
         try{
@@ -100,7 +101,7 @@ public final class ApiClient {
                 cfg.recordSmsProviderError("SMS_PROVIDER_SECURITY_EXCEPTION");
                 AppLogger.e(c,"ApiClient","Non-critical local SMS synchronization failed",error);
             }
-            if(maintenance||pendingBefore>0){
+            if(maintenance||pendingBefore>0||poolRetry){
                 try{new SharedPoolClient(c).sync();}
                 catch(Exception poolError){
                     AppLogger.e(c,"SharedPool","Non-critical shared SMS sync failed",poolError);

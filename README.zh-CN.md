@@ -82,6 +82,10 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 然后打开管理域名，登录并创建/导入本地 Vault；下载正式签名 APK，通过扫码或 Android 发码完成配对并授权读取、接收和发送短信；**不必将 SIM Hub 设置为默认短信应用**，完整接管模式为可选项。
 
+## 系统兼容实验室（v0.12.0）
+
+Android App 的「设置 → 系统兼容实验室」是**独立的高级可选页面**：支持官方 Shizuku SDK 分步授权和服务状态检测、Android 13+ 自管理 Companion Device 系统确认关联、机型及系统 SDK 检测、短信权限和只读 OTP AppOp 查询、单次 SMS Provider 探测、近期加密补扫，以及针对 vivo/OPPO 等设备的电池优化设置入口。高级操作记录为独立的脱敏审计日志，可在诊断 ZIP 中导出。**不自动停用系统短信、关闭验证码安全保护或修改敏感 AppOps。Shizuku/CDM 不保证实时 OTP。**详见[系统兼容实验室](docs/COMPATIBILITY_LAB.md)。
+
 ## 非默认短信模式
 
 在系统允许授权 `READ_SMS`、`RECEIVE_SMS` 与 `SEND_SMS` 的情况下，SIM Hub 可以保持 vivo 等原厂「信息」为默认应用，通过 `SMS_RECEIVED` 广播触发系统短信数据库的加密同步，并通过 6 小时滚动补扫恢复延迟可见的短信。**Android 17 对部分非默认应用的受保护验证码有约 3 小时访问延迟**，本项目不绕过系统保护；厂商 ROM 和安装来源也可能限制短信权限。需要实时获取所有验证码时，此模式不能保证满足要求。详见 [Android 设置](docs/ANDROID_SETUP.md)。

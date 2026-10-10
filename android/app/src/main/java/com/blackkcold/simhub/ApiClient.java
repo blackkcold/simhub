@@ -125,10 +125,11 @@ public final class ApiClient {
      * credentials can produce the same response. Verify the original token
      * against the server's bounded deletion tombstone first.
      */
-    private boolean confirmedDeletedByLifecycle()throws Exception{
-        JSONObject state=raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/lifecycle",
+    private void verifyLifecycleStillExists()throws Exception{
+        // A valid 200 means the node still exists, possibly reset-pending.
+        // A 410 deletion receipt is handled separately by the caller.
+        raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/lifecycle",
             "GET",null,"Device "+cfg.deviceToken(),cfg.deviceId());
-        return false; // 200 is active or awaiting reset, never a deletion receipt.
     }
     private void performPendingReset(){
         long delay=cfg.nextSyncAllowedAt()-System.currentTimeMillis();
@@ -146,10 +147,7 @@ public final class ApiClient {
             }
             if(failure.status==401||failure.status==403||failure.status==404){
                 try{
-                    if(confirmedDeletedByLifecycle()){
-                        completeResetLocally(notifyRemote);
-                        return;
-                    }
+                    verifyLifecycleStillExists();
                     // A 200 lifecycle with a failing reset is a real protocol
                     // conflict. Surface recovery rather than hiding it behind UI.
                     cfg.markResetRecoveryRequired();

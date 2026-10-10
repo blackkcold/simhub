@@ -149,6 +149,23 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,modifie
                 modifier=Modifier.weight(1f)){Text(hubLabel("更早 100 条","Previous 100"),maxLines=1)}
         }
         InfoRow(hubLabel("待上传事件","Queued events"),(state?.pending?:0).toString())
+        InfoRow(hubLabel("已上传回执（本机）","Uploaded receipts on device"),
+            (state?.state?.optInt("uploadedEventReceipts",0)?:0).toString())
+        InfoRow(hubLabel("待上传命令 ACK","Pending command ACKs"),
+            (state?.state?.optInt("pendingCommandAcks",0)?:0).toString())
+        InfoRow(hubLabel("上次事件上传","Last event upload"),
+            state?.state?.optLong("lastEventUploadAt",0L)?.takeIf{it>0L}?.let{
+                java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it*1000))
+            }?:"—")
+        InfoRow(hubLabel("上次上传数量","Last uploaded count"),
+            (state?.state?.optInt("lastEventUploadCount",0)?:0).toString())
+        if(state?.state?.optString("lastUploadError","")?.isNotBlank()==true)
+            Text("Upload: "+state.state.optString("lastUploadError"),color=MaterialTheme.colorScheme.error)
+        if(state?.state?.optString("lastEventQueueError","")?.isNotBlank()==true)
+            Text("Queue: "+state.state.optString("lastEventQueueError"),color=MaterialTheme.colorScheme.error)
+        Text(hubLabel("队列为 0 不代表没有读取短信；已上传的事件会立即从待上传队列移除并保留去重回执。","A zero queue does not mean SMS was not scanned; acknowledged events leave the queue and retain upload receipts."),
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+
         InfoRow(hubLabel("最近同步","Last sync"),state?.lastSync?.takeIf{it>0}?.let{
             java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it*1000))
         }?:"—")

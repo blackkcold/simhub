@@ -81,8 +81,9 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
             ui.drafts["__new__"]=incomingBody
         }
     }
-    BackHandler(enabled=ui.tab!=0 || ui.thread!=null || ui.simDetail>=0){
-        if(ui.tab==1 && ui.thread!=null)ui.thread=null
+    BackHandler(enabled=tools.compatibilityOpen || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0){
+        if(tools.compatibilityOpen)controller.closeCompatibility()
+        else if(ui.tab==1 && ui.thread!=null)ui.thread=null
         else if(ui.tab==2 && ui.simDetail>=0)ui.simDetail=-1
         else ui.tab=0
     }

@@ -93,11 +93,23 @@ private fun PairedNodeCard(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubView
 @Composable
 private fun PermissionsCard(state:HubSnapshot?,controller:HubController,modifier:Modifier){
     ToolSection(hubLabel("短信与系统权限","SMS & system permissions"),modifier){
-        InfoRow(hubLabel("默认短信应用","Default SMS app"),if(state?.smsRole==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
+        val full=state?.smsRole==true
+        StatePill(if(full)hubLabel("完整短信模式","Full SMS handler mode")
+            else hubLabel("不接管短信模式","Non-default SMS companion mode"),true)
+        Spacer(Modifier.height(8.dp))
+        Text(if(full)
+            hubLabel("SIM Hub 当前负责系统短信收发与入库。","SIM Hub is the system SMS handler and writes received messages.")
+            else hubLabel("保留系统信息为默认应用；SIM Hub 在授权后通过短信广播和系统短信数据库同步。","Keep the system Messages app as default; SIM Hub listens for SMS events and reads the SMS database when permitted."),
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
         InfoRow(hubLabel("读取短信","Read SMS"),if(state?.smsRead==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
+        InfoRow(hubLabel("接收短信广播","Receive SMS broadcasts"),if(state?.smsReceive==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
         InfoRow(hubLabel("发送短信","Send SMS"),if(state?.smsSend==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
+        if(!full)Text(hubLabel("Android 17 可能对非默认应用延迟开放验证码短信约 3 小时，SIM Hub 不会绕过此保护。若系统拒绝 READ_SMS 或 RECEIVE_SMS，需检查厂商权限策略。","Android 17 may delay access to OTP SMS by about three hours for non-default apps; SIM Hub does not bypass this protection. If READ_SMS or RECEIVE_SMS is denied, check OEM permission policy."),
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick=controller::requestSmsRole,modifier=Modifier.fillMaxWidth()){
-            Text(hubLabel("设置默认短信应用","Set default SMS app"))
+            Text(hubLabel("改用完整短信模式（可选）","Use full SMS handler mode (optional)"))
         }
         Spacer(Modifier.height(7.dp))
         OutlinedButton(onClick=controller::requestAccess,modifier=Modifier.fillMaxWidth()){

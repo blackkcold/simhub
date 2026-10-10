@@ -43,6 +43,16 @@ public final class LocalStore extends SQLiteOpenHelper {
         if(oldV<5)createUploadIndex(db);
     }
 
+    /** Fast path for repeated window rescans; avoids redundant encryption and staging. */
+    public synchronized boolean hasSeenEvent(String id){
+        try(Cursor c=getReadableDatabase().query("uploaded_event_ids",new String[]{"id"},"id=?",new String[]{id},null,null,null)){
+            if(c.moveToFirst())return true;
+        }
+        try(Cursor c=getReadableDatabase().query("events",new String[]{"id"},"id=?",new String[]{id},null,null,null)){
+            return c.moveToFirst();
+        }
+    }
+
     public synchronized boolean queueEvent(String id,String kind,long occurredAt,String subId,boolean hasOtp,JSONObject metadata,JSONObject cipher){
         // Retain durable upload receipts so explicit rescans do not reupload
         // already-delivered provider SMS; unsent events remain separately queued.

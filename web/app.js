@@ -253,7 +253,7 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=false;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
+function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
@@ -347,7 +347,7 @@ async function loadDevices(){
     }catch(err){console.warn('SIM number inventory unavailable',d.id,err.name);}
   }
   if(epoch!==securityEpoch||!vaultKey)return;
-  renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();
+  renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();syncSendControls();
 }
 async function ingestEvents(batch,notify=true){
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
@@ -427,7 +427,23 @@ async function fullRefresh(){
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
 function startRealtime(){if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>setConnected(true);eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
 
-function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
+function deviceCanSendSms(d){
+  if(!d||d.revoked||d.resetRequestedAt)return false;
+  const state=d.state||{};
+  // Modem agents are independent send-capable nodes, not Android SMS role holders.
+  if(d.nodeType==='modem'||state.nodeType==='modem')
+    return state.smsOperational!==false && nodeChannels(d).length>0;
+  if(state.smsSendAllowed===true)return nodeChannels(d).length>0;
+  // Conservative fallback for Android nodes which have not yet upgraded.
+  return state.smsMode==='default' && state.smsSendPermission===true && nodeChannels(d).length>0;
+}
+function sendingDevices(){return devices.filter(deviceCanSendSms);}
+function hasSmsSending(){return sendingDevices().length>0;}
+function syncSendControls(){
+  $('newSmsBtn').hidden=!vaultKey || !document.getElementById('view-inbox').classList.contains('active') || !hasSmsSending();
+  if(activeConversationKey && !hasSmsSending())$('replyComposer').hidden=true;
+}
+function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
 function nodeChannels(d){
   if(!d||!d.state)return[];
   const channels=Array.isArray(d.state.channels)&&d.state.channels.length?d.state.channels:(d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));
@@ -806,7 +822,7 @@ function renderInbox(){
 function updateReplyDevices(){
   const el=$('replyDevice'),chosen=el.value;
   el.innerHTML='<option value="">'+escapeHtml(tr('sim_node'))+'</option>'+
-    devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');
+    sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');
   if([...el.options].some(x=>x.value===chosen))el.value=chosen;
   updateReplyChannels();
 }
@@ -1202,7 +1218,7 @@ function switchView(name){
     // floating above another section or behind the persistent bottom dock.
     $('smsLayout').classList.remove('conversation-open');
   }
-  document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();$('newSmsBtn').hidden=!vaultKey||name!=='inbox';syncResponsiveConversation();}
+  document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();syncSendControls();syncResponsiveConversation();}
 
 function relocalizeDynamic(){
   applyI18n();

@@ -169,6 +169,19 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
             Switch(checked=state?.realtime==true,onCheckedChange=controller::setRealtime,
                 enabled=state?.enrolled==true)
         }
+        val energy=state?.state?.optJSONObject("energyStats")
+        if(energy!=null){
+            InfoRow(hubLabel("有效运行档位","Effective power mode"),
+                when(energy.optString("effectiveMode","balanced")){
+                    EnergyPolicy.ECO->hubLabel("极致省电","Eco")
+                    EnergyPolicy.REALTIME->hubLabel("实时优先","Realtime")
+                    else->hubLabel("智能均衡","Balanced")
+                })
+            InfoRow(hubLabel("命令检查次数 / 失败","Command checks / errors"),
+                energy.optLong("commandPolls",0L).toString()+" / "+energy.optLong("commandPollErrors",0L))
+            InfoRow(hubLabel("维护 / 补偿扫描次数","Maintenance / reconciliation"),
+                energy.optLong("maintenanceRuns",0L).toString()+" / "+energy.optLong("reconciliationRuns",0L))
+        }
         HorizontalDivider(Modifier.padding(vertical=12.dp))
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
             OutlinedButton(onClick={controller.syncHistory(false)},enabled=state?.enrolled==true,

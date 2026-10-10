@@ -47,6 +47,25 @@ class ApiTest(unittest.TestCase):
         if v==2:x['kid']='abcdefgh1234'
         return x
 
+    def test_expired_command_is_finalized_without_device_poll(self):
+        node=self.enroll("Expiry-regression")
+        ts=int(time.time())
+        cmd="expired-without-poll-"+node["deviceId"]
+        with sqlite3.connect(self.db) as con:
+            con.execute(
+                """INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json,state)
+                VALUES(?,?,?,?,?,?,?,'queued')""",
+                (cmd,node["deviceId"],"sms.sync_recent",ts-50,ts-1,cmd,
+                 json.dumps(self.cipher(2))))
+        status,body,_=self.req("GET","/api/v1/commands/recent?limit=50")
+        self.assertEqual(status,200)
+        row=next(x for x in body["commands"] if x["commandId"]==cmd)
+        self.assertEqual(row["state"],"expired")
+        self.assertGreater(row["ackAt"],0)
+        with sqlite3.connect(self.db) as con:
+            saved=con.execute("SELECT state FROM commands WHERE id=?",(cmd,)).fetchone()
+        self.assertEqual(saved[0],"expired")
+
     def test_browser_csrf_and_second_factor(self):
         status,login,h=self.req('POST','/api/v1/auth/session',{'adminToken':TOKEN,'totp':''},admin=False)
         self.assertEqual(status,201)

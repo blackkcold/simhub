@@ -223,15 +223,20 @@ def pull_verified_image(image):
 
 
 def health(version):
+    # Require successive successful DB-aware readiness probes; a one-off response
+    # is insufficient evidence that the replacement process is stable.
     deadline = time.monotonic() + 90
+    consecutive = 0
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen("http://127.0.0.1:8787/readyz", timeout=3) as r:
                 payload = json.load(r)
-            if payload.get("ok") and payload.get("version") == version:
+            consecutive = (consecutive + 1) if (
+                payload.get("ok") and payload.get("version") == version) else 0
+            if consecutive >= 2:
                 return True
         except (OSError, ValueError):
-            pass
+            consecutive = 0
         time.sleep(2)
     return False
 
@@ -257,6 +262,7 @@ def job(version):
         old_image = "simhub-relay:rollback-" + str(int(time.time()))
         run("docker", "image", "tag", old_id, old_image)
         backup = backup_database()
+        switch_start = time.monotonic()
         save("switching", previousTag=old_image, previousVersion=old_version,
              backup=backup, imageDigest=image.partition("@")[2])
         switched = True
@@ -265,7 +271,7 @@ def job(version):
         save("verifying")
         if not health(version):
             raise RuntimeError("Readiness/version check failed")
-        save("complete", installed=version, error=None)
+        save("complete", installed=version, switchElapsedMs=int((time.monotonic()-switch_start)*1000), error=None)
     except Exception as err:
         error = str(err)[:400]
         if switched and old_image and old_version:

@@ -148,7 +148,19 @@ async function decryptEvent(e){const cipher=e.ciphertext;if(cipher&&cipher.v===1
 function versionAtLeast(v,target){const a=String(v||'0').split('.').map(Number),b=String(target).split('.').map(Number);for(let i=0;i<Math.max(a.length,b.length);i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x>y;}return true;}
 async function encryptCommand(deviceId,outer,payload){const info=devices.find(x=>x.id===deviceId);if(!versionAtLeast(info&&info.appVersion,'0.1.5')){const iv=crypto.getRandomValues(new Uint8Array(12)),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-command-v1')},vaultKey,enc.encode(JSON.stringify(payload))));return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};}const d=await deviceCrypto(deviceId),iv=crypto.getRandomValues(new Uint8Array(12)),aad=commandAad(deviceId,outer.commandId,outer.type,outer.createdAt,outer.expiresAt,outer.idempotencyKey),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode(aad)},d.key,enc.encode(JSON.stringify(payload))));return {v:2,alg:'A256GCM',kid:d.kid,iv:b64u(iv),ct:b64u(ct)};}
 
-async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body=Object.prototype.hasOwnProperty.call(opts,'body')?opts.body:null,headers={};if(body!==null)headers['Content-Type']='application/json';if(vaultKey&&Date.now()-lastActivity<60000)headers['X-SimHub-Activity']='1';if(!['GET','HEAD'].includes(method)&&path!=='/api/v1/auth/session'&&csrfToken)headers['X-SimHub-CSRF']=csrfToken;const res=await fetch(path,{method:method,headers:headers,body:body===null?undefined:JSON.stringify(body),cache:'no-store',credentials:'same-origin'});let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check')lockVault();throw new Error(data.message||data.error||('HTTP '+res.status));}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;if(typeof data.passkeyCount==='number')passkeyCount=data.passkeyCount;if(typeof data.sessionIdleTtlSeconds==='number')sessionIdleMs=Math.max(60000,data.sessionIdleTtlSeconds*1000);if(data.username&&$('username'))$('username').value=data.username;return data;}
+async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body=Object.prototype.hasOwnProperty.call(opts,'body')?opts.body:null,headers={};if(body!==null)headers['Content-Type']='application/json';if(vaultKey&&Date.now()-lastActivity<60000)headers['X-SimHub-Activity']='1';if(!['GET','HEAD'].includes(method)&&path!=='/api/v1/auth/session'&&csrfToken)headers['X-SimHub-CSRF']=csrfToken;let res;
+  // Only retry idempotent reads: never resend SMS, enrollment, or update POSTs.
+  const safe=method==='GET'||method==='HEAD';
+  for(let attempt=0;attempt<4;attempt++){
+    try{
+      res=await fetch(path,{method:method,headers:headers,body:body===null?undefined:JSON.stringify(body),cache:'no-store',credentials:'same-origin'});
+      if(!safe||![502,503,504].includes(res.status)||attempt===3)break;
+    }catch(error){
+      if(!safe||attempt===3)throw error;
+    }
+    await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)));
+  }
+  let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check')lockVault();throw new Error(data.message||data.error||('HTTP '+res.status));}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;if(typeof data.passkeyCount==='number')passkeyCount=data.passkeyCount;if(typeof data.sessionIdleTtlSeconds==='number')sessionIdleMs=Math.max(60000,data.sessionIdleTtlSeconds*1000);if(data.username&&$('username'))$('username').value=data.username;return data;}
 async function establishSession(){try{return await api('/api/v1/auth/check');}catch(e){}const adminToken=$('adminToken').value.trim(),totp=$('totp').value.trim(),username=$('username').value.trim();if(adminToken.length<32)throw new Error('Admin token is required for a new session.');const data=await api('/api/v1/auth/session',{method:'POST',body:{username:username,adminToken:adminToken,totp:totp}});$('adminToken').value='';$('totp').value='';return data;}
 async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST',body:{logout:true}});}catch(e){}csrfToken='';stepUpUntil=0;clearTabVault();}
 async function ensureStepUp(){
@@ -253,7 +265,7 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=false;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
+function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
@@ -347,7 +359,7 @@ async function loadDevices(){
     }catch(err){console.warn('SIM number inventory unavailable',d.id,err.name);}
   }
   if(epoch!==securityEpoch||!vaultKey)return;
-  renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();
+  renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();syncSendControls();
 }
 async function ingestEvents(batch,notify=true){
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
@@ -427,7 +439,23 @@ async function fullRefresh(){
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
 function startRealtime(){if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>setConnected(true);eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
 
-function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
+function deviceCanSendSms(d){
+  if(!d||d.revoked||d.resetRequestedAt)return false;
+  const state=d.state||{};
+  // Modem agents are independent send-capable nodes, not Android SMS role holders.
+  if(d.nodeType==='modem'||state.nodeType==='modem')
+    return state.smsOperational!==false && nodeChannels(d).length>0;
+  if(state.smsSendAllowed===true)return nodeChannels(d).length>0;
+  // Conservative fallback for Android nodes which have not yet upgraded.
+  return state.smsMode==='default' && state.smsSendPermission===true && nodeChannels(d).length>0;
+}
+function sendingDevices(){return devices.filter(deviceCanSendSms);}
+function hasSmsSending(){return sendingDevices().length>0;}
+function syncSendControls(){
+  $('newSmsBtn').hidden=!vaultKey || !document.getElementById('view-inbox').classList.contains('active') || !hasSmsSending();
+  if(activeConversationKey && !hasSmsSending())$('replyComposer').hidden=true;
+}
+function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
 function nodeChannels(d){
   if(!d||!d.state)return[];
   const channels=Array.isArray(d.state.channels)&&d.state.channels.length?d.state.channels:(d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));
@@ -759,15 +787,38 @@ function messageChannel(e){
   if(!id||!revision)return 'unverified:'+String(e.subscriptionId||'');
   return id;
 }
-function threadKey(e){
-  const phone=messageAddress(e).replace(/[\s()-]/g,'');
-  const revision=e.payload?.channelRevision||'historical';
-  return e.deviceId+'|'+messageChannel(e)+'|'+revision+'|'+phone;
+function canonicalAddress(value){
+  const clean=String(value||'').trim().replace(/[\s()\-]/g,'').toLowerCase();
+  const intl=clean.startsWith('00')?'+'+clean.slice(2):clean;
+  return /^\+861[3-9]\d{9}$/.test(intl)?intl.slice(3):intl;
+}
+function threadKey(e){return canonicalAddress(messageAddress(e));}
+function eventSimKey(e){
+  const p=e.payload||{},ch=String(p.channelId||''),rev=Number(p.channelRevision||0);
+  return e.deviceId+'|'+(ch&&rev?ch+'|'+rev:'unverified:'+String(p.subscriptionId??e.subscriptionId??-1));
+}
+function refreshSimFilter(){
+  const el=$('simFilter'),prior=el.value;
+  const known=new Map();
+  for(const e of decryptedEvents){
+    if(!e.kind.startsWith('sms.'))continue;
+    const key=eventSimKey(e);
+    if(!known.has(key))known.set(key,deviceName(e.deviceId)+' · '+messageChannelLabel(e));
+  }
+  el.innerHTML='<option value="">'+escapeHtml(tr('all_sims'))+'</option>'+
+    [...known.entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([key,label])=>
+      '<option value="'+escapeHtml(key)+'">'+escapeHtml(label)+'</option>').join('');
+  if([...el.options].some(o=>o.value===prior))el.value=prior;
 }
 function filteredEvents(){
-  const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
-  return collapseMessageEvents(decryptedEvents).filter(e=>e.kind.startsWith('sms.')&&(!dev||e.deviceId===dev)&&(!kind||e.kind===kind))
-    .filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));});
+  const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,
+    sim=$('simFilter').value,kind=$('kindFilter').value;
+  return collapseMessageEvents(decryptedEvents).filter(e=>
+    e.kind.startsWith('sms.')&&(!dev||e.deviceId===dev)&&(!sim||eventSimKey(e)===sim)&&
+    (!kind||e.kind===kind))
+    .filter(e=>{if(!q)return true;const p=e.payload||{};
+      return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)]
+        .some(v=>String(v||'').toLowerCase().includes(q));});
 }
 function buildThreads(source){
   const threads=new Map();
@@ -782,6 +833,8 @@ function buildThreads(source){
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
 function renderInbox(){
+  refreshSimFilter();
+  syncSendControls();
   renderDecryptNotice();
   const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
   const list=$('inboxList'),previousTop=list.scrollTop;
@@ -796,9 +849,10 @@ function renderInbox(){
     return '<button type="button" class="message'+(activeConversationKey===t.key?' active':'')+
       '" data-thread="'+escapeHtml(t.key)+'"><span class="avatar">'+escapeHtml(who.slice(0,1).toUpperCase())+
       '</span><span class="message-body"><span class="message-title"><strong>'+escapeHtml(who)+
-      '</strong><small class="meta">'+fmtTime(e.occurredAt)+'</small></span>'+
+      '</strong><span class="message-meta-right"><span class="message-sim-tag" title="'+escapeHtml(messageChannelLabel(e))+'">'+
+      escapeHtml(messageChannelLabel(e))+'</span><small class="meta">'+fmtTime(e.occurredAt)+'</small></span></span>'+
       '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
-      escapeHtml(deviceName(e.deviceId))+' · '+escapeHtml(messageChannelLabel(e))+'</small></span></button>';
+      escapeHtml(deviceName(e.deviceId))+'</small></span></button>';
   }).join('');
   list.scrollTop=previousTop;
   renderConversation();
@@ -806,7 +860,7 @@ function renderInbox(){
 function updateReplyDevices(){
   const el=$('replyDevice'),chosen=el.value;
   el.innerHTML='<option value="">'+escapeHtml(tr('sim_node'))+'</option>'+
-    devices.filter(d=>!d.revoked).map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');
+    sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');
   if([...el.options].some(x=>x.value===chosen))el.value=chosen;
   updateReplyChannels();
 }
@@ -840,7 +894,7 @@ function renderConversation(){
     $('replyComposer').hidden=true;
     return;
   }
-  $('replyComposer').hidden=false;
+  $('replyComposer').hidden=!hasSmsSending();
   if(activeConversationKey==='__new'){
     $('conversationTitle').textContent=tr('new_sms');
     $('conversationMeta').textContent='';
@@ -874,35 +928,40 @@ function renderConversation(){
 }
 function replyEligible(){
   const device=$('replyDevice').value,channel=$('replySubscription').value,dest=$('replyTo').value.trim();
-  if(!device||!channel||!/^\+?[0-9 ()-]{3,40}$/.test(dest))return false;
+  if(!deviceCanSendSms(devices.find(d=>d.id===device))||!channel||!/^\+?[0-9 ()-]{3,40}$/.test(dest))return false;
   if(activeConversationKey==='__new')return true;
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(t=>t.key===activeConversationKey);
   const p=selected?.latest?.payload||{},revision=Number(p.channelRevision||0);
-  if(!revision||!p.channelId||selected.latest.deviceId!==device||String(p.channelId)!==channel)return false;
   const current=nodeChannels(devices.find(d=>d.id===device)).find(ch=>String(ch.id)===channel);
-  return !!current&&Number(current.revision||current.channelRevision||1)===revision;
+  if(!current)return false;
+  return selected?.messages.some(e=>e.deviceId===device &&
+    String(e.payload?.channelId||'')===channel &&
+    Number(e.payload?.channelRevision||0)===Number(current.revision||current.channelRevision||1))===true;
 }
 function refreshReplyEligibility(){$('replySend').disabled=!replyEligible();}
 function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
   if(!selected)return;
   activeConversationKey=key;
-  const last=selected.latest,number=messageAddress(last),did=last.deviceId,channel=messageChannel(last);
+  const last=selected.latest,number=messageAddress(last);
+  const eligible=[...selected.messages].reverse().find(e=>{
+    const d=devices.find(x=>x.id===e.deviceId);
+    const ch=nodeChannels(d).find(c=>String(c.id)===String(e.payload?.channelId||''));
+    return deviceCanSendSms(d) && ch &&
+      Number(ch.revision||ch.channelRevision||1)===Number(e.payload?.channelRevision||0);
+  });
+  const did=eligible?.deviceId||'',channel=eligible?messageChannel(eligible):'';
   updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
   $('replyTo').value=number;
   $('replyOptions').open=false;
-  const originalRevision=Number(last.payload?.channelRevision||0);
-  const currentChannel=nodeChannels(devices.find(x=>x.id===did)).find(ch=>String(ch.id)===channel);
-  const stale=originalRevision>0&&
-    (!currentChannel||Number(currentChannel.revision||currentChannel.channelRevision||1)!==originalRevision);
-  const confirmed=!!last.payload?.channelId&&originalRevision>0;
-  const canReply=confirmed&&!stale&&replyEligible();
+  const canReply=!!eligible&&replyEligible();
   refreshReplyEligibility();
-  if(!canReply){$('replyOptions').open=true;toast('发件人不可直接回复，或原设备 / SIM 已不可用；请检查收件人和发送通道');}
+  if(!canReply && hasSmsSending()){$('replyOptions').open=true;toast('原会话没有可用的发送 SIM；请新建短信并选择有效通道');}
   syncResponsiveConversation();
   renderInbox();
 }
 function openNewMessage(){
+  if(!hasSmsSending())return;
   switchView('inbox');activeConversationKey='__new';
   updateReplyDevices();
   $('replyDevice').value='';
@@ -941,14 +1000,14 @@ async function sendConversationReply(){
     }
   }finally{btn.disabled=false;}
 }
-async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
+async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
   const energy=power.effectiveEnergyMode||power.energyMode||'balanced';
   // A compact background policy must not make remote commands expire before
   // the next eligible fetch. Preserve a finite expiry and the encrypted AAD.
   const minimumTtl=(!power.foregroundRelay||energy==='eco')?1200:(energy==='balanced'?300:180);
   ttl=Math.max(ttl||120,minimumTtl);
   const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
-async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
+async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前是只读短信模式，不能发送');if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
   if(!confirm((getLocale()==='zh-CN'?'该设备使用省电/非前台模式，发送可能延迟约 15 分钟。请确认接收方及发送时效要求。':'This device may check remote commands only every 15 minutes. Confirm the recipient and acceptable delay.')))return;
 }
 if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
@@ -1202,7 +1261,7 @@ function switchView(name){
     // floating above another section or behind the persistent bottom dock.
     $('smsLayout').classList.remove('conversation-open');
   }
-  document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();$('newSmsBtn').hidden=!vaultKey||name!=='inbox';syncResponsiveConversation();}
+  document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));$('viewTitle').textContent=tr(titleKeys[name][0]);$('viewSubtitle').textContent=tr(titleKeys[name][1]);if(name==='send')updateSubscriptionSelector();syncSendControls();syncResponsiveConversation();}
 
 function relocalizeDynamic(){
   applyI18n();
@@ -1236,6 +1295,7 @@ function wire(){
   $('search').oninput=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('deviceFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('kindFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
+  $('simFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
   $('newSmsBtn').onclick=openNewMessage;

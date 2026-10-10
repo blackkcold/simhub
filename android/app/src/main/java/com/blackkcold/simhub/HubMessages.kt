@@ -58,12 +58,14 @@ fun HubMessages(state:HubSnapshot?,ui:HubViewModel,controller:HubController,
 @Composable
 private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:HubViewModel,
                                 controller:HubController,modifier:Modifier){
+    val context=LocalContext.current
+    val sendingAllowed=SmsSendPolicy.canSend(context)
     Column(modifier.padding(16.dp)){
         Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween,
             modifier=Modifier.fillMaxWidth()){
             Text(stringResource(R.string.hub_conversations),style=MaterialTheme.typography.titleLarge,
                 fontWeight=FontWeight.Bold)
-            FilledIconButton(onClick={ui.thread="__new__";ui.newRecipient=""}){
+            if(sendingAllowed)FilledIconButton(onClick={ui.thread="__new__";ui.newRecipient=""}){
                 HubIcon(R.drawable.ic_hub_add,Modifier.size(23.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_new_sms))
             }
         }
@@ -78,6 +80,31 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
             FilterChip(selected=ui.otpOnly,onClick={ui.otpOnly=true},
                 label={Text(stringResource(R.string.hub_codes))})
         }
+        val sourceOptions=state?.sms.orEmpty().distinctBy { HubSnapshot.simSourceKey(it) }
+        var simMenu by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick={simMenu=true}){
+                HubIcon(R.drawable.ic_hub_sim,Modifier.size(17.dp))
+                Spacer(Modifier.width(6.dp))
+                val selected=sourceOptions.find { HubSnapshot.simSourceKey(it)==ui.simFilter }
+                Text(selected?.let { it.simTag.ifBlank {
+                    if(it.simTail.isNotBlank())"••••"+it.simTail else "SIM "+it.subscription
+                } } ?: stringResource(R.string.hub_all))
+            }
+            DropdownMenu(expanded=simMenu,onDismissRequest={simMenu=false}){
+                DropdownMenuItem(text={Text(stringResource(R.string.hub_all))},
+                    onClick={ui.simFilter="";simMenu=false})
+                sourceOptions.forEach { sms ->
+                    DropdownMenuItem(text={Text(listOfNotNull(
+                        sms.sourceDeviceName.takeIf { it.isNotBlank() },
+                        sms.simTag.takeIf { it.isNotBlank() } ?: "SIM "+sms.subscription,
+                        sms.simTail.takeIf { it.isNotBlank() }?.let { "••••"+it }
+                    ).joinToString(" · "))},onClick={
+                        ui.simFilter=HubSnapshot.simSourceKey(sms);simMenu=false
+                    })
+                }
+            }
+        }
         if(state?.smsRead!=true&&threads.isEmpty()){
             HubCard(Modifier.fillMaxWidth()){
                 Text(stringResource(R.string.hub_sms_permissions))
@@ -87,11 +114,18 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                 }
             }
         }else {
-            val display=threads.filter {
+            val filteredSms=if(ui.simFilter.isBlank())state?.sms.orEmpty() else
+                state?.sms.orEmpty().filter { HubSnapshot.simSourceKey(it)==ui.simFilter }
+            val latestByKey=filteredSms.groupBy {
+                HubSnapshot.keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision)
+            }.mapValues { (_,items)-> items.maxByOrNull { it.date }!! }
+            val display=threads.mapNotNull { thread ->
+                val latest=latestByKey[thread.key] ?: return@mapNotNull null
                 val search=ui.search.trim()
-                (search.isEmpty() || it.address.contains(search,true) || it.latest.text.contains(search,true)) &&
-                    (!ui.otpOnly || OtpParser.parse(it.latest.text).detected)
-            }
+                if((search.isEmpty() || thread.address.contains(search,true) || latest.text.contains(search,true)) &&
+                    (!ui.otpOnly || OtpParser.parse(latest.text).detected)) thread.copy(latest=latest)
+                else null
+            }.sortedByDescending { it.latest.date }
             if(display.isEmpty())Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center){
                 Text(stringResource(R.string.hub_empty_sms),
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -118,6 +152,16 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                             Row(verticalAlignment=Alignment.CenterVertically){
                                 Text(thread.address,Modifier.weight(1f),maxLines=1,
                                     overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold)
+                                val simName=thread.latest.simTag.ifBlank {
+                                    if(thread.latest.historicalUnverified)stringResource(R.string.hub_historical_sim)
+                                    else "SIM "+thread.latest.subscription
+                                }
+                                Surface(shape=RoundedCornerShape(7.dp),color=MaterialTheme.colorScheme.primaryContainer){
+                                    Text(simName,Modifier.padding(horizontal=6.dp,vertical=3.dp),
+                                        style=MaterialTheme.typography.labelSmall,maxLines=1,
+                                        overflow=TextOverflow.Ellipsis)
+                                }
+                                Spacer(Modifier.width(5.dp))
                                 Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(thread.latest.date)),
                                     style=MaterialTheme.typography.labelSmall,
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -179,9 +223,9 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
     var dropdown by remember { mutableStateOf(false) }
     var newTo by remember(key){ mutableStateOf(if(new)ui.newRecipient else thread?.address.orEmpty()) }
     val draft=ui.drafts[key].orEmpty()
-    val isRemote=thread?.latest?.shared==true
-    val canSend=!isRemote&&(new||thread?.latest?.historicalUnverified==false)&&
-        state?.smsSend==true&&
+    val isRemote=!new && history.none { !it.shared }
+    val canSend=SmsSendPolicy.canSend(context)&&!isRemote&&
+        (new||history.any { !it.shared&&!it.historicalUnverified })&&
         subscriptions.any{it.first==selectedSim}
     val listState=rememberLazyListState()
     LaunchedEffect(key){if(history.isNotEmpty())listState.scrollToItem(history.lastIndex)}
@@ -213,10 +257,11 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
             modifier=Modifier.fillMaxWidth())
         if(!new)LazyColumn(state=listState,modifier=Modifier.weight(1f),
             verticalArrangement=Arrangement.spacedBy(11.dp),contentPadding=PaddingValues(vertical=14.dp)){
-            items(history,key={it.id}){sms->
+            items(history,key={HubSnapshot.simSourceKey(it)+"|"+it.id}){sms->
                 SmsBubble(sms,controller)
             }
         }else Spacer(Modifier.weight(1f))
+        if(SmsSendPolicy.canSend(context) && !isRemote){
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
             Box{
                 TextButton(onClick={dropdown=true},enabled=!isRemote){
@@ -251,8 +296,9 @@ private fun SmsConversationDetail(state:HubSnapshot?,ui:HubViewModel,
                 HubIcon(R.drawable.ic_hub_send,Modifier.size(22.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_send))
             }
         }
-        if(!canSend)Text(if(isRemote)stringResource(R.string.hub_shared_readonly) else stringResource(R.string.hub_read_only),
+        if(!canSend)Text(stringResource(R.string.hub_read_only),
             style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
+        } // Composer hidden when the device is read-only.
     }
 }
 @Composable

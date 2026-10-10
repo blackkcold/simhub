@@ -47,6 +47,7 @@ class HubViewModel:ViewModel(){
     var newRecipient by mutableStateOf("")
     var search by mutableStateOf("")
     var otpOnly by mutableStateOf(false)
+    var simFilter by mutableStateOf("")
     var showAllSms by mutableStateOf(false)
     var enrollmentLink by mutableStateOf("")
     var serverUrl by mutableStateOf("")
@@ -75,8 +76,9 @@ private val navText=listOf(R.string.hub_home,R.string.hub_sms,R.string.hub_sim,R
 fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:FoldingFeature?,
            controller:HubController,tools:HubToolsState,incomingId:Int=0,incomingRecipient:String="",incomingBody:String=""){
     val ui:HubViewModel=viewModel()
+    val context=LocalContext.current
     LaunchedEffect(incomingId){
-        if(incomingId>0){
+        if(incomingId>0 && SmsSendPolicy.canSend(context)){
             ui.tab=1;ui.thread="__new__";ui.newRecipient=incomingRecipient
             ui.drafts["__new__"]=incomingBody
         }

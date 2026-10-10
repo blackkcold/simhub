@@ -3,6 +3,19 @@ import unittest
 import simhub_server as server
 
 class CompanionStateTest(unittest.TestCase):
+    def test_separate_receive_and_send_capability_is_sanitized(self):
+        state=server.sanitize_state({
+            "smsMode":"companion","smsRoleHeld":False,
+            "smsReadPermission":True,"smsReceivePermission":True,
+            "smsSendPermission":True,"smsSendAllowed":False,
+            "smsReceiveOperational":True,"smsSendOperational":False,
+            "smsOperational":True,
+        })
+        self.assertTrue(state["smsReceiveOperational"])
+        self.assertFalse(state["smsSendAllowed"])
+        self.assertFalse(state["smsSendOperational"])
+        self.assertTrue(state["smsOperational"])
+
     def test_permission_and_mode_diagnostics_survive_sanitization(self):
         state=server.sanitize_state({
             "smsMode":"companion","smsRoleHeld":False,

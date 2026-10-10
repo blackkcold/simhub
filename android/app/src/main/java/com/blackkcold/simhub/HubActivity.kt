@@ -78,6 +78,7 @@ interface HubController {
     fun setAutoDownloadUpdates(value:Boolean)
     fun exportDiagnostics()
     fun setDeveloperEnabled(value:Boolean)
+    fun setDeveloperSmsOverride(value:Boolean)
     fun viewLogs()
     fun clearLogs()
     fun refreshDiagnostics()
@@ -174,6 +175,7 @@ class HubActivity: ComponentActivity(), HubController {
         UiLocale.apply(this)
         tools.energyMode=EnergyPolicy.mode(this)
         tools.developer=DeveloperSettings.isEnabled(this)
+        tools.forceSms=DeveloperSettings.isForceSmsEnabled(this)
         tools.language=UiLocale.index(this)
         tools.autoCheckUpdates=AppUpdater.prefs(this).getBoolean("autoCheck",true)
         tools.autoDownloadUpdates=AppUpdater.prefs(this).getBoolean("autoDownload",false)
@@ -267,6 +269,7 @@ class HubActivity: ComponentActivity(), HubController {
                 val next=withContext(Dispatchers.IO){HubRepository.snapshot(applicationContext,smsLimit)}
                 snapshot=next
                 tools.relayAlive=RelayForegroundService.isRunning()
+                tools.forceSms=DeveloperSettings.isForceSmsEnabled(applicationContext)
                 val pool=SharedPoolClient(applicationContext)
                 tools.poolEnabled=pool.optedIn()
                 tools.poolApproved=pool.approved()
@@ -278,9 +281,11 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun requestAccess(){
-        val missing=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,
-            Manifest.permission.SEND_SMS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
-            .filter{checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED}.toMutableList()
+        val requested=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
+        val smsRole=getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true
+        if(smsRole || DeveloperSettings.isForceSmsEnabled(this))requested.add(Manifest.permission.SEND_SMS)
+        val missing=requested.filter{checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED}.toMutableList()
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
             missing.add(Manifest.permission.POST_NOTIFICATIONS)
         if(missing.isEmpty())toast(getString(R.string.permissions_granted))
@@ -446,6 +451,9 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit){
+        if(!SmsSendPolicy.canSend(this)){
+            toast("短信发送已被当前接管模式禁用");return
+        }
         if(subId<0 || to.isBlank() || body.isBlank()){
             toast(getString(R.string.hub_compose_required));return
         }
@@ -579,10 +587,27 @@ class HubActivity: ComponentActivity(), HubController {
                 toast(getString(R.string.diagnostic_export_failed))}
         }
     }
+    private fun publishSmsSendCapability(){
+        if(!AgentConfig(this).isEnrolled())return
+        SyncJobService.scheduleNow(applicationContext)
+        lifecycleScope.launch(Dispatchers.IO){
+            try{ApiClient(applicationContext).putState()}
+            catch(error:Exception){AppLogger.e(applicationContext,"SmsPolicy","Failed to publish send mode",error)}
+        }
+    }
     override fun setDeveloperEnabled(value:Boolean){
         DeveloperSettings.setEnabled(this,value);tools.developer=value
+        publishSmsSendCapability()
         AppLogger.i(this,"Developer",if(value)"Diagnostic logging enabled" else "Diagnostic logging disabled")
-        if(!value){tools.logs="";tools.diagnostics=""}else viewLogs()
+        if(!value){tools.logs="";tools.diagnostics="";tools.forceSms=false;refresh()}else viewLogs()
+    }
+    override fun setDeveloperSmsOverride(value:Boolean){
+        try {
+            DeveloperSettings.setForceSmsEnabled(this,value)
+            tools.forceSms=DeveloperSettings.isForceSmsEnabled(this)
+            publishSmsSendCapability()
+            refresh()
+        }catch(error:Exception){toast(UiErrors.message(this,error))}
     }
     override fun viewLogs(){if(!DeveloperSettings.isEnabled(this))return
         tools.logs=AppLogger.recent(this,24000).ifBlank{getString(R.string.logs_empty)}

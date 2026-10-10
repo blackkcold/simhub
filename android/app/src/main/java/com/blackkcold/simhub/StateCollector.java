@@ -37,6 +37,7 @@ public final class StateCollector {
                     .put("network",network(c))
                     .put("pendingEvents",LocalStore.get(c).pendingEventCount())
                     .put("pendingCommandAcks",LocalStore.get(c).pendingCommandAckCount())
+                    .put("pendingEventTasks",LocalStore.get(c).pendingEventTaskPreview(10))
                     .put("uploadedEventReceipts",LocalStore.get(c).uploadedEventCount())
                     .put("lastEventUploadAt",cfg.lastUploadAt())
                     .put("lastEventUploadCount",cfg.lastUploadCount())

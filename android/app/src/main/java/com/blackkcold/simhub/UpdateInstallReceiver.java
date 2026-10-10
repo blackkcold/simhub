@@ -13,12 +13,14 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
             Intent approve=Build.VERSION.SDK_INT>=33
                 ? intent.getParcelableExtra(Intent.EXTRA_INTENT,Intent.class)
                 : (Intent)intent.getParcelableExtra(Intent.EXTRA_INTENT);
-            if(approve!=null)AppUpdater.notifyInstallAction(c,approve);
+            if(approve!=null){RemoteOta.installApprovalRequired(c);AppUpdater.notifyInstallAction(c,approve);}
         }else if(status==PackageInstaller.STATUS_SUCCESS) {
             NotificationManager manager=c.getSystemService(NotificationManager.class);
             if(manager!=null)manager.cancel(2717);
+            RemoteOta.onPackageReplaced(c);
         }else {
             AppLogger.e(c,"AppUpdater","Install status: "+status,null);
+            RemoteOta.fail(c,"installer_status_"+status);
         }
     }
 }

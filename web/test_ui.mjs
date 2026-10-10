@@ -185,13 +185,14 @@ try {
   await p.goto("http://127.0.0.1:"+port+"/",{waitUntil:"networkidle"});
   await p.locator("#username").fill("admin");
   await p.locator("#adminToken").fill("A".repeat(48));
+  await p.locator("#unlockBtn").click();
   await p.locator("#passphrase").fill("session-resume-test-passphrase");
+  p.once("dialog",d=>d.accept());
   await p.locator("#createVaultBtn").click();
   await p.waitForFunction(()=>!!sessionStorage.getItem("simhub_session_vault_v1"),null,{timeout:12000});
   const loginErrors=[];
   p.on("response",response=>{if(response.url().includes("/api/")&&response.status()>=400)loginErrors.push({url:response.url(),status:response.status()});});
   p.on("pageerror",error=>loginErrors.push({pageError:error.message}));
-  await p.locator("#unlockBtn").click();
   try{await p.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});}
   catch(error){
     const state=await p.evaluate(()=>({toast:document.getElementById("toast").textContent,username:document.getElementById("username").value,tokenSize:document.getElementById("adminToken").value.length,vault:!!localStorage.getItem("simhub_vault_v1"),snapshot:!!sessionStorage.getItem("simhub_session_vault_v1"),locked:document.getElementById("lockedPanel").hidden}));
@@ -243,7 +244,7 @@ try {
   const sibling=await c.newPage();
   await sibling.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
   await sibling.locator("#passphrase").fill("session-resume-test-passphrase");
-  await sibling.locator("#unlockBtn").click();
+  await sibling.locator("#vaultUnlockBtn").click();
   await sibling.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
   // Exercise the real ES-module application through a synthetic Relay API
   // response, not inaccessible module-local browser variables. The final item

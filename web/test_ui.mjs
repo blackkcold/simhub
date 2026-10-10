@@ -246,6 +246,24 @@ try {
   await sibling.locator("#passphrase").fill("session-resume-test-passphrase");
   await sibling.locator("#unlockBtn").click();
   await sibling.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
+  // A new Relay sequence with an old provider timestamp must not vanish
+  // just because previously displayed messages are newer.
+  const late=await p.evaluate(async()=>{
+    const deviceId="synthetic-node-for-test";
+    for(let i=0;i<31;i++)decryptedEvents.push({deviceId,eventId:"seed-"+i,
+      kind:"sms.history",occurredAt:1790000000+i,payload:{body:"synthetic"}});
+    const before=decryptedEvents.length;
+    await ingestEvents([{deviceId,eventId:"late-provider-import",kind:"sms.history",
+      seq:5000,occurredAt:100,subscriptionId:"-1",hasOtp:false,
+      ciphertext:{v:2,kid:"test-wrong-key",iv:"AA",ct:"AA"}}],true);
+    renderInbox();
+    return {added:decryptedEvents.length-before,
+      notice:document.getElementById("decryptNotice").textContent,
+      visible:!document.getElementById("decryptNotice").hidden};
+  });
+  assert.equal(late.added,1,"Old timestamp must not hide newly uploaded Relay sequence");
+  assert.ok(late.visible,"Failed decrypts must show a visible recovery notice");
+  assert.ok(!late.notice.includes("test-wrong-key"),"Never display ciphertext key material");
   // Use synthetic secrets only: test that hidden DOM, fields, links and even
   // diagnostic dialogs are destroyed when locking one of two active tabs.
   await p.evaluate(()=>{

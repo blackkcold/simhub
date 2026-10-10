@@ -73,7 +73,10 @@ try {
       assert.equal(await page.locator("#replyComposer").isVisible(),false,
         "Read-only device must not enter SMS compose");
       // Isolate responsive composer geometry from the device capability check.
-      await page.evaluate(()=>{document.getElementById("replyComposer").hidden=false;});
+      await page.evaluate(()=>{
+        document.getElementById("replyComposer").hidden=false;
+        document.getElementById("replyOptions").open=true;
+      });
       await page.locator("#replyTo").fill("+8613800138000");
       await page.locator("#replyBody").fill("Hello");
       const composer=await page.locator("#replyComposer").boundingBox();

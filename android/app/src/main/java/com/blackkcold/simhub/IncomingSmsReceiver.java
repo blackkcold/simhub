@@ -18,6 +18,21 @@ public final class IncomingSmsReceiver extends BroadcastReceiver {
         AgentExecutors.io().execute(()->{try{handle(context,intent);}finally{pending.finish();}});
     }
     private void handle(Context c,Intent intent){
+        if(Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(intent.getAction())){
+            // The system default SMS app owns provider writes. We only wake provider
+            // reconciliation; never insert an SMS or duplicate SMS_DELIVER here.
+            try{
+                android.app.role.RoleManager rm=c.getSystemService(android.app.role.RoleManager.class);
+                if(rm!=null && rm.isRoleHeld(android.app.role.RoleManager.ROLE_SMS))return;
+                if(c.checkSelfPermission(android.Manifest.permission.READ_SMS)
+                        !=android.content.pm.PackageManager.PERMISSION_GRANTED)return;
+                SyncJobService.scheduleNow(c);
+                // The OEM's default handler may persist the message after this broadcast.
+                SyncJobService.scheduleAfter(c,8000L);
+            }catch(Exception error){AppLogger.e(c,"SmsReceiver","Non-default SMS wake failed",error);}
+            return;
+        }
+        if(!Telephony.Sms.Intents.SMS_DELIVER_ACTION.equals(intent.getAction()))return;
         Uri uri=null;
         try{
             SmsMessage[] msgs=Telephony.Sms.Intents.getMessagesFromIntent(intent);if(msgs==null||msgs.length==0)return;

@@ -1518,9 +1518,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_json(201,{"deviceId":device_id,"deviceToken":device_token,"tokenIssuedAt":ts,"serverTime":ts,"nodeType":node_type,"keyId":str(row["key_id"] or "") or None,"bootstrapEnvelope":bootstrap or None})
 
     @staticmethod
-    def device_offline_threshold(state:dict[str,Any]) -> int:
+    def device_offline_threshold(state:dict[str,Any],node_type:str='android') -> int:
         # Presence follows the *declared* transport cadence, not every 20 s.
         # Presence remains a last-contact heuristic, never a guarantee of push reachability.
+        if node_type!="android":
+            return OFFLINE_AFTER
         if not state.get("foregroundRelay",False):
             return max(OFFLINE_AFTER,1800)
         mode=state.get("effectiveEnergyMode",state.get("energyMode","balanced"))
@@ -1547,7 +1549,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         for r in rows:
             last=r["last_seen_at"] or 0
             reported_state=safe_json_loads(r["state_json"],{}) if r["state_json"] else {}
-            offline_after=self.device_offline_threshold(reported_state)
+            offline_after=self.device_offline_threshold(reported_state,r["node_type"])
             out.append({
                 "id":r["id"],"name":r["name"],"group":r["group_name"],"model":r["model"],"osVersion":r["os_version"],"appVersion":r["app_version"],
                 "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,"tokenIssuedAt":r["token_issued_at"],
@@ -1983,12 +1985,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
         ts=now()
         with open_db() as con:
             devices=con.execute("SELECT COUNT(*) c FROM devices WHERE revoked_at IS NULL").fetchone()["c"]
-            presence=con.execute("""SELECT d.last_seen_at,s.state_json FROM devices d
+            presence=con.execute("""SELECT d.last_seen_at,d.node_type,s.state_json FROM devices d
                 LEFT JOIN device_state s ON s.device_id=d.id
                 WHERE d.revoked_at IS NULL AND d.reset_requested_at=0""").fetchall()
             online=sum(1 for row in presence if row["last_seen_at"] and
                 ts-row["last_seen_at"]<=self.device_offline_threshold(
-                    safe_json_loads(row["state_json"],{}) if row["state_json"] else {}))
+                    safe_json_loads(row["state_json"],{}) if row["state_json"] else {},row["node_type"]))
             pending=con.execute("SELECT COUNT(*) c FROM commands WHERE state IN ('queued','dispatched')").fetchone()["c"]
             events24=con.execute("SELECT COUNT(*) c FROM events WHERE received_at>=?",(ts-86400,)).fetchone()["c"]
             oldest=con.execute("SELECT MIN(created_at) v FROM commands WHERE state IN ('queued','dispatched')").fetchone()["v"]

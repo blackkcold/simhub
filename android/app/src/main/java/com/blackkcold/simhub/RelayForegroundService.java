@@ -74,10 +74,12 @@ public final class RelayForegroundService extends Service {
             long next=EnergyPolicy.commandIntervalMs(this);
             try{
                 if(new AgentConfig(this).isEnrolled()){
+                    EnergyPolicy.increment(this,"commandPolls");
                     new ApiClient(this).pollCommands(EnergyPolicy.isRealtime(this));
                     commandFailures=0;
                 }
             }catch(Exception error){
+                EnergyPolicy.increment(this,"commandPollErrors");
                 AppLogger.e(this,"RelayService","Command check failed",error);
                 commandFailures=Math.min(8,commandFailures+1);
                 long backoff=Math.min(15L*60*1000,30000L*(1L<<Math.min(5,commandFailures-1)));

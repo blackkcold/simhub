@@ -142,7 +142,7 @@ private fun PermissionsCard(state:HubSnapshot?,controller:HubController,modifier
         Spacer(Modifier.height(8.dp))
         InfoRow(hubLabel("读取短信","Read SMS"),if(state?.smsRead==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
         InfoRow(hubLabel("接收短信广播","Receive SMS broadcasts"),if(state?.smsReceive==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
-        if(full || tools.developer&&tools.forceSms)
+        if(full)
             InfoRow(hubLabel("发送短信","Send SMS"),if(state?.smsSend==true)hubLabel("已授权","Granted") else hubLabel("未授权","Not granted"))
         if(!full)Text(hubLabel("Android 17 可能对非默认应用延迟开放验证码短信约 3 小时，SIM Hub 不会绕过此保护。若系统拒绝 READ_SMS 或 RECEIVE_SMS，需检查厂商权限策略。","Android 17 may delay access to OTP SMS by about three hours for non-default apps; SIM Hub does not bypass this protection. If READ_SMS or RECEIVE_SMS is denied, check OEM permission policy."),
             style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)

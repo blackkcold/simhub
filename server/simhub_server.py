@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import passkeys
+from argon2 import PasswordHasher, exceptions as argon2_errors
 import shared_pool
 import update_bridge
 from typing import Any
@@ -42,6 +43,8 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 PUBLIC_BASE_URL = os.getenv("SIMHUB_PUBLIC_BASE_URL", "").rstrip("/")
 ADMIN_TOKEN = os.getenv("SIMHUB_ADMIN_TOKEN", "")
 ADMIN_USERNAME = os.getenv("SIMHUB_ADMIN_USERNAME", "admin").strip()
+ADMIN_PASSWORD_HASH = os.getenv("SIMHUB_ADMIN_PASSWORD_HASH", "").strip()
+_password_hasher = PasswordHasher(time_cost=3,memory_cost=65536,parallelism=2,hash_len=32,salt_len=16)
 TOTP_SECRET = os.getenv("SIMHUB_TOTP_SECRET", "").strip().replace(" ", "")
 ENROLL_TTL = int(os.getenv("SIMHUB_ENROLL_TTL", "600"))
 COMMAND_TTL = int(os.getenv("SIMHUB_COMMAND_TTL", "120"))
@@ -421,7 +424,7 @@ def init_db() -> None:
         _migrate_v8(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         shared_pool.init(con)
-        con.execute("PRAGMA user_version=11")
+        con.execute("PRAGMA user_version=12")
     run_maintenance()
 
 
@@ -434,6 +437,7 @@ def run_maintenance() -> dict[str,int]:
             result["audit"]=con.execute("DELETE FROM audit WHERE occurred_at<?",(ts-AUDIT_RETENTION_DAYS*86400,)).rowcount
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
+        con.execute("DELETE FROM admin_login_challenges WHERE expires_at<=?",(ts,))
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
         con.execute("DELETE FROM pairing_requests WHERE expires_at<?",(ts-86400,))
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
@@ -497,7 +501,24 @@ def _cookie_session(headers) -> str:
 
 
 def session_fingerprint() -> str:
-    return sha256_text("simhub-session-v1|" + ADMIN_TOKEN)
+    return sha256_text("simhub-session-v2|" + ADMIN_TOKEN + "|" + ADMIN_PASSWORD_HASH)
+
+def verify_admin_password(presented: str) -> bool:
+    """A separately hashed operator password. The emergency token remains supported."""
+    if not presented or len(presented)>1024:
+        return False
+    if ADMIN_PASSWORD_HASH:
+        try:
+            return bool(_password_hasher.verify(ADMIN_PASSWORD_HASH,presented))
+        except (argon2_errors.VerificationError,argon2_errors.InvalidHashError):
+            return False
+    return False
+
+def verify_first_factor(username: str, presented: str) -> bool:
+    valid_name=hmac.compare_digest(username, ADMIN_USERNAME)
+    token_match=bool(ADMIN_TOKEN and hmac.compare_digest(presented,ADMIN_TOKEN))
+    return valid_name and (token_match or verify_admin_password(presented))
+
 
 def csrf_for_session(token: str) -> str:
     return hmac.new(ADMIN_TOKEN.encode(), ("simhub-csrf-v1|" + token).encode(), hashlib.sha256).hexdigest()
@@ -976,7 +997,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<11:
+                if version<12:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -1078,6 +1099,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None: return
             self.passkey_action(path,body); return
+        if path=="/api/v1/auth/start":
+            body=self.read_json()
+            if body is None:return
+            self.start_admin_login(body);return
         if path=="/api/v1/auth/session":
             body=self.read_json()
             if body is None:return
@@ -1092,7 +1117,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None: return
             if not auth_rate_allowed(self.ip):
                 self.send_error_json(429,"rate_limited","Too many authentication attempts"); return
-            correct = totp_valid(str(body.get("totp",""))) if TOTP_SECRET else hmac.compare_digest(str(body.get("adminToken","")), ADMIN_TOKEN)
+            correct = totp_valid(str(body.get("totp",""))) if TOTP_SECRET else verify_first_factor(ADMIN_USERNAME,str(body.get("adminToken","")))
             if not correct:
                 auth_rate_fail(self.ip)
                 audit("auth.stepup","","denied",self.ip)
@@ -1272,15 +1297,52 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.patch_device(p[3],body); return
         self.send_error_json(404,"not_found","API endpoint not found")
 
+    def start_admin_login(self, body:dict[str,Any]) -> None:
+        """Verify the first factor without creating an authenticated session."""
+        if not auth_rate_allowed(self.ip):
+            self.send_error_json(429,"rate_limited","Too many authentication failures"); return
+        username=str(body.get("username",""))
+        password=str(body.get("password",""))
+        if not verify_first_factor(username,password):
+            auth_rate_fail(self.ip);audit("auth.first_factor","","denied",self.ip)
+            self.send_error_json(401,"unauthorized","Invalid administrator credentials");return
+        if not TOTP_SECRET:
+            auth_rate_success(self.ip)
+            session,exp=create_session(self.ip)
+            cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
+            self.send_json(201,{"ok":True,"username":ADMIN_USERNAME,"expiresAt":exp,"totpRequired":False,
+                "sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(session)},{"Set-Cookie":cookie})
+            return
+        challenge=secrets.token_urlsafe(32)
+        ts=now()
+        with open_db() as con:
+            con.execute("DELETE FROM admin_login_challenges WHERE expires_at<=?",(ts,))
+            con.execute("INSERT INTO admin_login_challenges(token_hash,ip,created_at,expires_at,auth_fingerprint) VALUES(?,?,?,?,?)",
+                (sha256_text(challenge),self.ip,ts,ts+120,session_fingerprint()))
+        self.send_json(202,{"ok":True,"requiresTotp":True,"challengeId":challenge,"expiresIn":120})
+
     def create_admin_session(self,body:dict[str,Any]) -> None:
         if not auth_rate_allowed(self.ip):
             self.send_error_json(429,"rate_limited","Too many authentication failures"); return
         token=str(body.get("adminToken",""))
+        challenge=str(body.get("challengeId",""))
         username=str(body.get("username",ADMIN_USERNAME))
         totp=str(body.get("totp",""))
-        if not ADMIN_TOKEN or not hmac.compare_digest(username,ADMIN_USERNAME) or not hmac.compare_digest(token,ADMIN_TOKEN) or not totp_valid(totp):
-            auth_rate_fail(self.ip); audit("auth.session","","denied",self.ip)
-            self.send_error_json(401,"unauthorized","Invalid admin token or TOTP"); return
+        if challenge:
+            if len(challenge)>128 or not totp_valid(totp):
+                auth_rate_fail(self.ip);audit("auth.session","","denied",self.ip)
+                self.send_error_json(401,"unauthorized","Invalid or expired verification");return
+            with open_db() as con:
+                deleted=con.execute(
+                    "DELETE FROM admin_login_challenges WHERE token_hash=? AND ip=? AND expires_at>? AND auth_fingerprint=?",
+                    (sha256_text(challenge),self.ip,now(),session_fingerprint())).rowcount
+            valid=deleted==1
+        else:
+            # Legacy token+OTP clients remain supported during the migration.
+            valid=verify_first_factor(username,token) and totp_valid(totp)
+        if not valid:
+            auth_rate_fail(self.ip);audit("auth.session","","denied",self.ip)
+            self.send_error_json(401,"unauthorized","Invalid or expired verification");return
         auth_rate_success(self.ip)
         session,exp=create_session(self.ip)
         audit("auth.session","","ok",self.ip)

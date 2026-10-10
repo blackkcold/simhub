@@ -614,12 +614,25 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
         if isinstance(v,(str,int,float,bool)) or v is None:
             out[k]=v
+    # Energy diagnostics only allow numeric counters and the selected profile;
+    # never accept arbitrary nested JSON as a relay-visible state field.
+    stats=body.get("energyStats")
+    if isinstance(stats,dict):
+        energy={}
+        for key in ("commandPolls","commandPollErrors","maintenanceRuns","reconciliationRuns","nextProviderFollowup"):
+            value=stats.get(key)
+            if type(value) is int and 0<=value<=10**13:
+                energy[key]=value
+        for key in ("mode","effectiveMode"):
+            if stats.get(key) in ("eco","balanced","realtime"):
+                energy[key]=stats[key]
+        out["energyStats"]=energy
     # Queue visibility is metadata-only; never accept task IDs, numbers or bodies.
     tasks=[]
     for item in body.get("pendingEventTasks",[]) if isinstance(body.get("pendingEventTasks"),list) else []:

@@ -2,7 +2,7 @@
 
 - Fix a same-second SMS Provider notification race using a monotonic change generation and acknowledgement of only the generation observed before scanning.
 - Scan the latest 100 Provider rows after a dirty event to recover messages the system persisted with a date earlier than the incremental history cursor.
-- Read and stage SMS into the encrypted local queue before Relay networking, including during upload retry backoff; preserve delayed companion Provider follow-up.
+- Read and stage SMS into the encrypted local queue before Relay networking, including during upload retry backoff; immediate/Provider follow-up jobs have no network prerequisite. Resume upload after validated connectivity returns.
 - Retrieve remote commands independently of 15-minute device telemetry; Balanced foreground checks use about 45 seconds when interactive and 2 minutes otherwise. Devices without a working foreground listener schedule best-effort durable command fallback.
 - Distinguish the foreground-relay enabled preference from actual listener liveness; update mode scheduling without stopping the Android foreground service.
 - Add manual command check + SMS sync, command retrieval/error checkpoints, Provider change/scan diagnostics and server-side expiration of stale queued commands.

@@ -9,6 +9,7 @@ const SESSION_VAULT_CACHE = 'simhub_session_vault_v1';
 const TRUSTED_VAULT_CACHE = 'simhub_trusted_vault_v1';
 const TRUSTED_VAULT_CONFIG = 'simhub_trusted_vault_options_v1';
 let authenticated=false;
+let passwordConfigured=false;
 const PHONE_OVERRIDES_STORE = 'simhub_phone_overrides_v1';
 let phoneOverrides={};
 let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
@@ -80,6 +81,15 @@ async function restoreTrustedVault(){
     await importVault(raw);await loadPhoneOverrides();showUnlocked();await fullRefresh();
     refreshVersionInfo().catch(()=>{});startRealtime();return true;
   }catch{clearTrustedVault();return false;}
+}
+async function setAdminPassword(){
+  const value=$('newAdminPassword').value;
+  if(value.length<12)throw Error('请输入至少 12 位管理员密码');
+  if(!confirm('修改管理员密码会撤销全部设备的管理员会话，需要重新登录。确认继续？'))return;
+  await ensureStepUp();
+  await api('/api/v1/auth/password',{method:'POST',body:{newPassword:value}});
+  $('newAdminPassword').value='';authenticated=false;csrfToken='';clearTrustedVault();lockVault();
+  toast('管理员密码已更新，全部会话已撤销，请重新登录');
 }
 async function updateTrustedOptions(){
   await ensureStepUp();
@@ -225,7 +235,9 @@ async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body
     }
     await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)));
   }
-  let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check'){authenticated=false;lockVault();}throw new Error(data.message||data.error||('HTTP '+res.status));}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;if(typeof data.passkeyCount==='number')passkeyCount=data.passkeyCount;if(typeof data.sessionIdleTtlSeconds==='number')sessionIdleMs=Math.max(60000,data.sessionIdleTtlSeconds*1000);if(data.username&&$('username'))$('username').value=data.username;return data;}
+  let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check'){authenticated=false;lockVault();}throw new Error(data.message||data.error||('HTTP '+res.status));}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;
+  if(typeof data.passwordConfigured==='boolean'){passwordConfigured=data.passwordConfigured;
+    const status=$('adminPasswordStatus');if(status)status.textContent=passwordConfigured?'已设置独立管理员密码':'未设置独立密码：当前仍使用 Admin Token 登录';}if(typeof data.passkeyCount==='number')passkeyCount=data.passkeyCount;if(typeof data.sessionIdleTtlSeconds==='number')sessionIdleMs=Math.max(60000,data.sessionIdleTtlSeconds*1000);if(data.username&&$('username'))$('username').value=data.username;return data;}
 async function establishSession(){
   try{const session=await api('/api/v1/auth/check');authenticated=true;return session;}catch{}
   const password=$('adminToken').value,username=$('username').value.trim();
@@ -1506,6 +1518,7 @@ function wire(){
   $('approvePairCode').onclick=async()=>{const b=$('approvePairCode');if(b.disabled)return;b.disabled=true;try{await approveDevicePairCode();}catch(e){$('pairCodeStatus').textContent=e.message;toast(e.message);}finally{b.disabled=false;}};
   $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
+  $('setAdminPassword').onclick=()=>setAdminPassword().catch(e=>toast(e.message));
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};
   $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);localStorage.removeItem(PHONE_OVERRIDES_STORE);lockVault();toast(tr('credentials_forgotten'));}};
   $('diagnosticsClose').onclick=()=>$('diagnosticsDialog').close();

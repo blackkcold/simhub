@@ -211,3 +211,9 @@ CREATE TABLE IF NOT EXISTS admin_login_challenges(
   auth_fingerprint TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_login_challenges_expiry ON admin_login_challenges(expires_at);
+
+CREATE TABLE IF NOT EXISTS admin_credentials(
+  username TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  changed_at INTEGER NOT NULL
+);

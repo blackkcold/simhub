@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SIM Hub personal relay server. Python standard library only."""
+"""SIM Hub personal relay server with Argon2id and WebAuthn dependencies."""
 from __future__ import annotations
 
 import base64
@@ -503,13 +503,22 @@ def _cookie_session(headers) -> str:
 def session_fingerprint() -> str:
     return sha256_text("simhub-session-v2|" + ADMIN_TOKEN + "|" + ADMIN_PASSWORD_HASH)
 
+def admin_password_hash() -> str:
+    # Deployment can bootstrap from an environment hash. A password set through
+    # the authenticated UI takes precedence, without rewriting Docker secrets.
+    with open_db() as con:
+        row=con.execute("SELECT password_hash FROM admin_credentials WHERE username=?",
+            (ADMIN_USERNAME,)).fetchone()
+    return str(row["password_hash"]) if row else ADMIN_PASSWORD_HASH
+
 def verify_admin_password(presented: str) -> bool:
     """A separately hashed operator password. The emergency token remains supported."""
     if not presented or len(presented)>1024:
         return False
-    if ADMIN_PASSWORD_HASH:
+    phc=admin_password_hash()
+    if phc:
         try:
-            return bool(_password_hasher.verify(ADMIN_PASSWORD_HASH,presented))
+            return bool(_password_hasher.verify(phc,presented))
         except (argon2_errors.VerificationError,argon2_errors.InvalidHashError):
             return False
     return False
@@ -1014,7 +1023,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(401,"unauthorized","No active administrator session"); return
             with open_db() as con:
                 num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]
-            self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None}); return
+            self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None,
+                "passwordConfigured":bool(admin_password_hash())}); return
         if path=="/api/v1/auth/passkeys":
             if not self.require_admin(): return
             with open_db() as con:
@@ -1107,6 +1117,23 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             self.create_admin_session(body); return
+        if path=="/api/v1/auth/password":
+            if not self.require_stepup(): return
+            body=self.read_json()
+            if body is None:return
+            value=str(body.get("newPassword",""))
+            if len(value)<12 or len(value)>1024:
+                self.send_error_json(400,"weak_password","Administrator password must be 12-1024 characters");return
+            phc=_password_hasher.hash(value)
+            with open_db() as con:
+                con.execute("INSERT INTO admin_credentials(username,password_hash,changed_at) VALUES(?,?,?) "
+                    "ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,changed_at=excluded.changed_at",
+                    (ADMIN_USERNAME,phc,now()))
+                con.execute("DELETE FROM admin_sessions")
+                con.execute("DELETE FROM admin_login_challenges")
+            audit("auth.password.rotate","","ok",self.ip)
+            self.send_json(200,{"ok":True,"sessionsRevoked":True},
+                {"Set-Cookie":f"{SESSION_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0"});return
         if path=="/api/v1/auth/logout":
             if not self.require_admin(): return
             delete_session(self.headers)

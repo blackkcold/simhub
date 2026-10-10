@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
  * All actions call HubController, never perform network, SMS Provider or file IO on the UI thread.
  */
 class HubToolsState {
+    var energyMode by mutableStateOf(EnergyPolicy.BALANCED)
     var developer by mutableStateOf(false)
     var logs by mutableStateOf("")
     var diagnostics by mutableStateOf("")
@@ -130,8 +131,35 @@ private fun PermissionsCard(state:HubSnapshot?,controller:HubController,modifier
 }
 
 @Composable
-private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,modifier:Modifier){
+private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:HubToolsState,modifier:Modifier){
     ToolSection(hubLabel("运行与短信同步","Runtime & synchronization"),modifier){
+        Text(hubLabel("后台能耗管理","Background energy policy"),fontWeight=FontWeight.Medium)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement=Arrangement.spacedBy(6.dp),modifier=Modifier.fillMaxWidth()){
+            val options=listOf(
+                EnergyPolicy.ECO to hubLabel("极致省电","Eco"),
+                EnergyPolicy.BALANCED to hubLabel("智能均衡","Balanced"),
+                EnergyPolicy.REALTIME to hubLabel("实时优先","Realtime"))
+            for((value,label) in options){
+                FilterChip(selected=tools.energyMode==value,
+                    onClick={controller.setEnergyMode(value)},
+                    label={Text(label,maxLines=1,overflow=TextOverflow.Ellipsis)},
+                    modifier=Modifier.weight(1f))
+            }
+        }
+        Text(when(tools.energyMode){
+            EnergyPolicy.ECO->hubLabel(
+                "后台命令检查约 14 分钟一次；无推送时，短时效远程命令可能过期。短信事件仍单独调度。",
+                "Commands are checked approximately every 14 minutes. Without push, short-lived remote commands may expire. Incoming SMS still schedules upload.")
+            EnergyPolicy.REALTIME->hubLabel(
+                "前台常驻时启用 15 秒长轮询，仅用于命令，不重复扫描短信。耗电相对较高。",
+                "With foreground relay enabled, 15-second long polling handles commands only. Battery use is higher.")
+            else->hubLabel(
+                "默认约 2 分钟检查远程命令，普通设备状态每 15 分钟维护，短信按事件上传。省电模式下自动降频。",
+                "Commands checked about every 2 minutes; state maintenance every 15 minutes. SMS is event-triggered; battery saver throttles polling.")
+        },style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+
         Row(verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
                 Text(hubLabel("低延迟前台连接","Low-latency foreground relay"),fontWeight=FontWeight.Medium)
@@ -343,7 +371,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                     PreferencesCard(tools,controller,Modifier.fillMaxWidth())
                 }
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
-                    RelayRuntimeCard(state,controller,Modifier.fillMaxWidth())
+                    RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
                     SharingCard(state,tools,controller,Modifier.fillMaxWidth())
                     DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 }
@@ -354,7 +382,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 PairedNodeCard(state,pairing,ui,controller,Modifier.fillMaxWidth())
                 PermissionsCard(state,controller,Modifier.fillMaxWidth())
                 CompatibilityEntry(controller,Modifier.fillMaxWidth())
-                RelayRuntimeCard(state,controller,Modifier.fillMaxWidth())
+                RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
                 SharingCard(state,tools,controller,Modifier.fillMaxWidth())
                 DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
                 PreferencesCard(tools,controller,Modifier.fillMaxWidth())

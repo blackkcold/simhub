@@ -1189,6 +1189,38 @@ async function sha256Hex(text){
   return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
 }
 
+/** Credential-free QR for pairing a management console (not a SIM node). */
+function managementControllerLink(origin){
+  const url=new URL(origin);
+  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||url.pathname!=='/')
+    throw new Error('管理端需要有效的 HTTPS 根域名才能生成二维码');
+  return 'simhub://controller?url='+encodeURIComponent(url.origin);
+}
+function openControllerConnect(){
+  const qr=$('controllerQr'),hint=$('controllerConnectHint');
+  const dialog=$('controllerConnectDialog');
+  $('controllerConnectLink').value='';qr.replaceChildren();
+  $('controllerCopyLink').disabled=false;$('controllerCopyAddress').disabled=false;
+  try{
+    const link=managementControllerLink(location.origin);
+    $('controllerConnectLink').value=link;
+    if(typeof QRCode!=='undefined'){
+      new QRCode(qr,{text:link,width:232,height:232,correctLevel:QRCode.CorrectLevel.M});
+      hint.textContent='扫码只会保存本服务器地址，手机仍需账号、OTP 及 Vault 授权。';
+    }else{
+      hint.textContent='二维码组件不可用，请复制配置链接。';
+    }
+  }catch(e){
+    hint.textContent=e.message;
+    $('controllerCopyLink').disabled=true;
+    $('controllerCopyAddress').disabled=true;
+  }
+  dialog.showModal();
+}
+function closeControllerConnect(){
+  $('controllerConnectDialog').close();
+  $('controllerQr').replaceChildren();
+}
 function setSettingsCategory(category,open=true) {
   const titles={security:tr('ux_account_security'),notifications:tr('notifications'),system:tr('ux_system_updates')};
   const root=document.querySelector('.settings-shell');
@@ -1498,6 +1530,11 @@ function wire(){
   }
   $('loadNewerBtn').onclick=()=>{$('inboxList').scrollTop=0;};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
+  $('controllerConnectBtn').onclick=openControllerConnect;
+  $('controllerConnectClose').onclick=closeControllerConnect;
+  $('controllerConnectDialog').addEventListener('cancel',()=>queueMicrotask(()=> $('controllerQr').replaceChildren()));
+  $('controllerCopyLink').onclick=()=>copy($('controllerConnectLink').value,'已复制管理配置链接').catch(e=>toast(e.message));
+  $('controllerCopyAddress').onclick=()=>copy(location.origin,'已复制管理域名').catch(e=>toast(e.message));
   $('addDeviceBtn').onclick=()=>openEnrollDialog().catch(e=>toast(e.message));
   $('closeEnroll').onclick=closeEnrollDialog;
   $('enrollDialog').addEventListener('cancel',()=>{queueMicrotask(closeEnrollDialog);});

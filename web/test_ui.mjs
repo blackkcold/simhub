@@ -44,6 +44,8 @@ try {
       assert.equal(await page.locator("#passkeyLoginBtn").count(),1);
       assert.equal(await page.evaluate(()=>typeof window.QRCode),"function","Offline QR renderer must load");
       assert.equal(await page.locator("#approvePairCode").count(),1);
+      assert.equal(await page.locator("#controllerConnectBtn").count(),1);
+      assert.equal(await page.locator("#controllerConnectDialog").count(),1);
       await page.evaluate(()=>document.querySelector("#stepupDialog").showModal());
       const positions=await page.evaluate(()=>{
         const d=document.querySelector("#stepupDialog").getBoundingClientRect();
@@ -202,6 +204,12 @@ try {
   // v0.10.0 device onboarding: both user-selected methods must work without
   // relocating the administrator to Settings or exposing bootstrap secrets.
   await p.locator('.nav[data-view="devices"]').click();
+  await p.locator("#controllerConnectBtn").click();
+  assert.equal(await p.locator("#controllerConnectDialog").evaluate(el=>el.open),true);
+  assert.equal(await p.locator("#controllerCopyLink").isDisabled(),true,
+    "HTTP local test host cannot generate management QR");
+  await p.locator("#controllerConnectClose").click();
+
   await p.locator("#addDeviceBtn").click();
   assert.equal(await p.locator("#enrollDialog").evaluate(el=>el.open),true,"Device wizard must open on Devices");
   assert.equal(await p.locator("#enrollCard").getAttribute("data-enroll-step"),"1");

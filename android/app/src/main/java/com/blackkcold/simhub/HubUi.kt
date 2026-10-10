@@ -74,10 +74,23 @@ private val navText=listOf(R.string.hub_home,R.string.hub_sms,R.string.hub_sim,R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:FoldingFeature?,
-           controller:HubController,tools:HubToolsState,incomingId:Int=0,incomingRecipient:String="",incomingBody:String=""){
+           controller:HubController,tools:HubToolsState,incomingId:Int=0,incomingRecipient:String="",incomingBody:String="",
+           controllerRevision:Int=0){
     val ui:HubViewModel=viewModel()
     val context=LocalContext.current
     var configured by remember { mutableStateOf(HubModes.configured(context)) }
+    var surface by remember { mutableStateOf(HubModes.surface(context)) }
+    LaunchedEffect(controllerRevision) {
+        configured=HubModes.configured(context)
+        surface=HubModes.surface(context)
+    }
+    LaunchedEffect(surface,configured) { if(configured && surface=="node") controller.refresh() }
+    fun chooseSurface(value:String) {
+        if(HubModes.role(context)!="both" && HubModes.role(context)!=value)
+            HubModes.select(context,"both")
+        HubModes.surface(context,value)
+        surface=value
+    }
     if(!configured) {
         HubTheme {
             Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,
@@ -91,7 +104,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                     Triple("both","同时使用","本机节点与远程管理随时切换")).forEach { (role,label,hint) ->
                     ElevatedCard(onClick={
                         HubModes.select(context,role);configured=true
-                        if(role=="controller")context.startActivity(android.content.Intent(context,ControllerActivity::class.java))
+                        surface=HubModes.surface(context)
                     },modifier=Modifier.fillMaxWidth().padding(vertical=6.dp)) {
                         Column(Modifier.padding(19.dp)) {
                             Text(label,fontWeight=FontWeight.SemiBold)
@@ -110,77 +123,113 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
             ui.drafts["__new__"]=incomingBody
         }
     }
-    BackHandler(enabled=tools.compatibilityOpen || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0){
+    BackHandler(enabled=surface=="node" && (tools.compatibilityOpen || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0)){
         if(tools.compatibilityOpen)controller.closeCompatibility()
         else if(ui.tab==1 && ui.thread!=null)ui.thread=null
         else if(ui.tab==2 && ui.simDetail>=0)ui.simDetail=-1
         else ui.tab=0
     }
     HubTheme {
-        BoxWithConstraints(Modifier.fillMaxSize()){
+        BoxWithConstraints(Modifier.fillMaxSize()) {
             val expanded=maxWidth>=840.dp
-            val phoneHeight=maxHeight<540.dp
-            val foldVertical=fold!=null && fold.orientation==FoldingFeature.Orientation.VERTICAL && fold.isSeparating
-            val rail=HubLayoutPolicy.navigationRail(maxWidth.value.toInt(),maxHeight.value.toInt(),foldVertical)
+            val foldVertical=fold!=null &&
+                fold.orientation==FoldingFeature.Orientation.VERTICAL && fold.isSeparating
+            val rail=HubLayoutPolicy.navigationRail(maxWidth.value.toInt(),
+                maxHeight.value.toInt(),foldVertical)
+            val isNode=surface=="node"
             Scaffold(
                 containerColor=MaterialTheme.colorScheme.background,
                 contentWindowInsets=WindowInsets.safeDrawing,
                 topBar={
-                    TopAppBar(
-                        title={Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                            Box(Modifier.size(35.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)),
-                                contentAlignment=Alignment.Center){
-                                HubIcon(R.drawable.ic_hub_sim,Modifier.size(21.dp),MaterialTheme.colorScheme.onPrimary)
-                            }
-                            Column {
-                                Text("SIM Hub",fontWeight=FontWeight.Bold,fontSize=18.sp)
-                                Text(stringResource(navText[ui.tab]),style=MaterialTheme.typography.labelSmall,
-                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }},
-                        actions={
-                            IconButton(onClick={
-                                HubModes.surface(context,"controller")
-                                context.startActivity(android.content.Intent(context,ControllerActivity::class.java))
-                            }) {
-                                HubIcon(R.drawable.ic_hub_shield,Modifier.size(22.dp),description="打开管理控制台")
-                            }
-                            IconButton(onClick=controller::refresh){
-                                HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),description=stringResource(R.string.hub_refresh))
-                            }
-                        },
-                        colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.surface))
+                    Column {
+                        TopAppBar(
+                            title={
+                                Row(verticalAlignment=Alignment.CenterVertically,
+                                    horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                                    Box(Modifier.size(35.dp).background(
+                                        MaterialTheme.colorScheme.primary,RoundedCornerShape(12.dp)),
+                                        contentAlignment=Alignment.Center){
+                                        HubIcon(R.drawable.ic_hub_sim,Modifier.size(21.dp),
+                                            MaterialTheme.colorScheme.onPrimary)
+                                    }
+                                    Column {
+                                        Text("SIM Hub",fontWeight=FontWeight.Bold,fontSize=18.sp)
+                                        Text(if(isNode) "本机 SIM 节点" else "管理控制台",
+                                            style=MaterialTheme.typography.labelSmall,
+                                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            },
+                            actions={
+                                if(isNode)IconButton(onClick=controller::refresh) {
+                                    HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),
+                                        description=stringResource(R.string.hub_refresh))
+                                }
+                            },
+                            colors=TopAppBarDefaults.topAppBarColors(
+                                containerColor=MaterialTheme.colorScheme.surface)
+                        )
+                        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+                            .padding(horizontal=16.dp,vertical=5.dp),
+                            horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                            FilterChip(selected=isNode,onClick={chooseSurface("node")},
+                                label={Text("SIM 节点")},leadingIcon={
+                                    HubIcon(R.drawable.ic_hub_sim,Modifier.size(17.dp))
+                                })
+                            FilterChip(selected=!isNode,onClick={chooseSurface("controller")},
+                                label={Text("管理中心")},leadingIcon={
+                                    HubIcon(R.drawable.ic_hub_shield,Modifier.size(17.dp))
+                                })
+                        }
+                        HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+                    }
                 },
                 bottomBar={
-                    if(!rail)NavigationBar(containerColor=MaterialTheme.colorScheme.surface){
-                        navIcons.forEachIndexed { i,id ->
-                            NavigationBarItem(selected=ui.tab==i,onClick={ui.tab=i},
-                                icon={HubIcon(id,Modifier.size(23.dp))},
-                                label={Text(stringResource(navText[i]),maxLines=1)},
-                                alwaysShowLabel=true)
+                    if(isNode && !rail){
+                        NavigationBar(containerColor=MaterialTheme.colorScheme.surface){
+                            navIcons.forEachIndexed { i,id ->
+                                NavigationBarItem(selected=ui.tab==i,onClick={ui.tab=i},
+                                    icon={HubIcon(id,Modifier.size(23.dp))},
+                                    label={Text(stringResource(navText[i]),maxLines=1)},
+                                    alwaysShowLabel=true)
+                            }
                         }
                     }
                 }
-            ){ padding ->
-                Row(Modifier.fillMaxSize().padding(padding)){
-                    if(rail)NavigationRail(containerColor=MaterialTheme.colorScheme.surface){
-                        Spacer(Modifier.height(12.dp))
-                        navIcons.forEachIndexed { i,id ->
-                            NavigationRailItem(selected=ui.tab==i,onClick={ui.tab=i},
-                                icon={HubIcon(id,Modifier.size(23.dp))},label={Text(stringResource(navText[i]))})
-                        }
-                    }
-                    AnimatedContent(
-                        targetState=ui.tab,
-                        modifier=Modifier.weight(1f).fillMaxHeight(),
-                        transitionSpec={fadeIn(tween(190)) togetherWith fadeOut(tween(130))},
-                        label="tabContent"
-                    ){ page ->
-                        when(page){
-                            0->HubHomeAdaptive(snapshot,loading,ui,controller)
-                            1->HubMessages(snapshot,ui,controller,expanded,foldVertical,fold)
-                            2->HubSimScreen(snapshot,ui,controller,expanded)
-                            else->HubSettingsV2(snapshot,pairing,ui,controller,tools,expanded)
+            ) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding)) {
+                    // Keep this WebView and its sessionStorage alive while users inspect
+                    // the local node. Android View is hidden, not recreated, on switching.
+                    ControllerWorkspace(visible=!isNode,revision=controllerRevision,
+                        onScan=controller::scanController,
+                        modifier=Modifier.fillMaxSize())
+                    if(isNode){
+                        Surface(Modifier.fillMaxSize(),
+                            color=MaterialTheme.colorScheme.background){
+                            Row(Modifier.fillMaxSize()) {
+                                if(rail){
+                                    NavigationRail(containerColor=MaterialTheme.colorScheme.surface){
+                                        Spacer(Modifier.height(12.dp))
+                                        navIcons.forEachIndexed { i,id ->
+                                            NavigationRailItem(selected=ui.tab==i,
+                                                onClick={ui.tab=i},
+                                                icon={HubIcon(id,Modifier.size(23.dp))},
+                                                label={Text(stringResource(navText[i]))})
+                                        }
+                                    }
+                                }
+                                AnimatedContent(targetState=ui.tab,
+                                    modifier=Modifier.weight(1f).fillMaxHeight(),
+                                    transitionSpec={fadeIn(tween(190)) togetherWith fadeOut(tween(130))},
+                                    label="nodeTabContent") { page ->
+                                    when(page) {
+                                        0->HubHomeAdaptive(snapshot,loading,ui,controller)
+                                        1->HubMessages(snapshot,ui,controller,expanded,foldVertical,fold)
+                                        2->HubSimScreen(snapshot,ui,controller,expanded)
+                                        else->HubSettingsV2(snapshot,pairing,ui,controller,tools,expanded)
+                                    }
+                                }
+                            }
                         }
                     }
                 }

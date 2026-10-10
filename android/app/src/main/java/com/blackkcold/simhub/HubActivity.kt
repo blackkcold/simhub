@@ -62,6 +62,7 @@ interface HubController {
     fun requestAccess()
     fun requestSmsRole()
     fun scan()
+    fun scanController()
     fun enrollLink(link:String)
     fun startPairing(server:String)
     fun setRealtime(value:Boolean)
@@ -115,6 +116,8 @@ class HubActivity: ComponentActivity(), HubController {
     private var incomingId by mutableStateOf(0)
     private var incomingRecipient by mutableStateOf("")
     private var incomingBody by mutableStateOf("")
+    private var controllerRevision by mutableStateOf(0)
+    private var scanForController=false
     private var pairing by mutableStateOf<PairingDisplay?>(null)
     private var fold by mutableStateOf<FoldingFeature?>(null)
     private var pendingTask:Job?=null
@@ -191,16 +194,18 @@ class HubActivity: ComponentActivity(), HubController {
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         handleComposeIntent(intent)
-        setContent { HubApp(snapshot,loading,pairing,fold,this,tools,incomingId,incomingRecipient,incomingBody) }
-        if(intent?.action==Intent.ACTION_MAIN && HubModes.configured(this) && HubModes.surface(this)=="controller") {
-            startActivity(Intent(this,ControllerActivity::class.java))
-        }
+        setContent { HubApp(snapshot,loading,pairing,fold,this,tools,
+            incomingId,incomingRecipient,incomingBody,controllerRevision) }
         // ACTION_VIEW is delivered to onCreate for a cold-start browser QR link;
         // onNewIntent only handles an already running Activity.
         if(intent?.action==Intent.ACTION_VIEW &&
             intent.data?.scheme.equals("simhub",ignoreCase=true) &&
             intent.data?.host.equals("enroll",ignoreCase=true)) {
             enrollLink(intent.data.toString())
+        }
+        if(intent?.action==Intent.ACTION_VIEW &&
+            intent.data?.scheme=="simhub" && intent.data?.host=="controller"){
+            confirmControllerLink(intent.data.toString())
         }
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -230,8 +235,10 @@ class HubActivity: ComponentActivity(), HubController {
             try{RelayForegroundService.resume(this)}
             catch(error:Exception){AppLogger.e(this,"Relay","Foreground recovery blocked",error)}
         }
-        try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
-        catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
+        if(localNodeEnabled()) {
+            try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
+            catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
+        }
         if(AppUpdater.shouldCheck(this)){
             AppUpdater.check(applicationContext,false){info,error->
                 if(error==null && info!=null && info.optBoolean("available")){
@@ -252,8 +259,12 @@ class HubActivity: ComponentActivity(), HubController {
         refreshHandler.removeCallbacks(refreshAfterChange)
         super.onStop()
     }
+    private fun localNodeEnabled():Boolean =
+        AgentConfig(this).isEnrolled() || HubModes.role(this) in setOf("node","both")
+
     override fun onResume(){
-        super.onResume();refresh()
+        super.onResume()
+        if(localNodeEnabled())refresh() else loading=false
         if(tools.compatibilityOpen)refreshCompatibility()
         val active=ActivePairing.session
         if(active!=null && pendingTask==null)pollSession(active)
@@ -262,7 +273,8 @@ class HubActivity: ComponentActivity(), HubController {
         super.onNewIntent(intent)
         handleComposeIntent(intent)
         if(intent.action==Intent.ACTION_VIEW && intent.data?.scheme=="simhub") {
-            enrollLink(intent.data.toString())
+            if(intent.data?.host=="controller")confirmControllerLink(intent.data.toString())
+            else enrollLink(intent.data.toString())
         }
     }
     private fun handleComposeIntent(intent:Intent?){
@@ -310,15 +322,42 @@ class HubActivity: ComponentActivity(), HubController {
         else toast(getString(R.string.sms_role_already))
     }
     override fun scan(){
+        scanForController=false
         IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
             .setPrompt(getString(R.string.scan_pair_qr)).setBeepEnabled(false)
             .setOrientationLocked(false).initiateScan()
+    }
+    override fun scanController(){
+        scanForController=true
+        IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+            .setPrompt("扫描网页管理中心配置二维码").setBeepEnabled(false)
+            .setOrientationLocked(false).initiateScan()
+    }
+    private fun confirmControllerLink(value:String){
+        val origin=ControllerLinks.decode(value)
+        if(origin==null){toast("二维码或链接无效：仅支持 HTTPS 管理地址");return}
+        val host=Uri.parse(origin).host ?:return
+        AlertDialog.Builder(this).setTitle("连接管理中心")
+            .setMessage("添加可信管理服务器："+host+"\\n\\n二维码不提供登录权限。进入后仍需账号及 Vault 验证。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("添加并打开"){_,_->
+                if(ControllerProfiles.add(this,origin)!=null){
+                    if(!HubModes.configured(this))HubModes.select(this,"controller")
+                    else if(HubModes.role(this)=="node")HubModes.select(this,"both")
+                    HubModes.surface(this,"controller")
+                    controllerRevision+=1
+                    toast("管理中心已添加")
+                }else toast("无法保存管理空间")
+            }.show()
     }
     @Deprecated("ZXing activity result compatibility")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
         super.onActivityResult(requestCode,resultCode,data)
         val result:IntentResult?=IntentIntegrator.parseActivityResult(requestCode,resultCode,data)
-        if(result?.contents!=null)enrollLink(result.contents)
+        if(result?.contents!=null){
+            if(scanForController)confirmControllerLink(result.contents) else enrollLink(result.contents)
+        }
+        scanForController=false
     }
     override fun enrollLink(link:String){
         val uri=try{Uri.parse(link.trim())}catch(_:Exception){null}

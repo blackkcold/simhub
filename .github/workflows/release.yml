@@ -73,6 +73,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
+      - run: PYTHONPATH=server python3 server/test_auth_stages.py
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py

@@ -16,8 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -145,7 +143,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                 HubModes.surface(context,"controller")
                                 context.startActivity(android.content.Intent(context,ControllerActivity::class.java))
                             }) {
-                                Icon(Icons.Default.Dashboard,contentDescription="打开管理控制台")
+                                HubIcon(R.drawable.ic_hub_shield,Modifier.size(22.dp),description="打开管理控制台")
                             }
                             IconButton(onClick=controller::refresh){
                                 HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),description=stringResource(R.string.hub_refresh))

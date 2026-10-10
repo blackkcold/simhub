@@ -39,6 +39,16 @@
 
 <sub>均为依据当前 UI 绘制的模拟数据示意图，非真实短信或已登录设备截图。</sub>
 
+## Android 双角色与分阶段登录
+
+Android APK 同时提供 **SIM 节点（原生 Compose）** 和 **管理控制台（受限 HTTPS WebView）**。首次安装选择节点、控制台或双角色；控制台不需要短信权限，节点的后台同步不依赖控制台登录。管理控制台顶部可配置多个 HTTPS 管理空间，各空间的登录 Cookie、Vault 和 IndexedDB 以站点 Origin 隔离。Passkey 在部分 Android WebView 中可能不可用，此时使用账号密码 + TOTP，或选择在系统浏览器打开管理域名。
+
+Web/PWA 使用 **账号密码（Argon2id）→ TOTP 弹窗 → 按需 Vault 解锁** 的独立阶段。旧部署的 Admin Token 仍然保留作为应急登录/初始化方式；管理员登录后可在「设置 → 账户与安全」设置新密码，原始 Admin Token 不会被自动删除。密码修改会撤销所有管理员会话。管理员会话凭据仍使用 Secure/HttpOnly Cookie。
+
+Vault 保持原本的端到端加密。可选「在本设备有效期内免重复输入 Vault 密码」，仅通过受保护的本地 WebCrypto Key 解开缓存中的主密钥；不会发送给服务器。手动锁定、退出、会话失效或清除凭据时必须销毁缓存。**该缓存不等于硬件 Keystore，也不具备抵御恶意同源脚本读取已解锁数据的能力。**新设备必须用合法的 Vault 恢复密钥导入旧 Vault；新建 Vault 不能解密原有密文。
+
+首次配置独立登录密码可在服务器运行 `python3 scripts/hash_admin_password.py` 生成 Argon2id PHC Hash，并写入私有的 `SIMHUB_ADMIN_PASSWORD_HASH` 环境变量；也可先使用原 Admin Token 登录后在 UI 中设置。更新后旧 Node Key、SMS 密文和设备配对协议不变。
+
 ## 在线更新
 
 Android v0.12.2 起可直接从 GitHub 正式 Release 检查、下载及安装更新，**无需先配对或连接 Relay**。更新仍核验版本号、SHA-256 与原 APK 签名。远程解绑期间会显示独立的待确认/异常恢复状态，可重试确认或经明确风险提示后仅清理本机配对；原始系统短信不受影响。

@@ -80,3 +80,11 @@ The Relay retains only Vault-wrapped *retired* Node Keys after a successful rota
 Device enrollment credentials are short-lived single-use packages. New Web guidance disables clickable custom-scheme dispatch of credentials; copy/paste into the target Agent instead, then confirm the HTTPS host on the device. Avoid sharing package links with other apps or message forwarding services.
 
 Device command status exposes only whitelisted operational metadata. Auth/API/static rate budgets are separated; Android respects Retry-After and applies exponential network backoff.
+
+## Dual-role Android and staged login (v0.14)
+
+The Android Controller uses a dedicated WebView with JavaScript limited to a selected HTTPS management Origin. No JavaScript bridge exposes Node credentials, SMS Provider access, or Keystore operations. The Node service operates independently of Controller login. Different Controller Profiles isolate browser storage by HTTPS Origin. Origin-based storage isolation is not a substitute for per-pool access controls.
+
+The primary administrator password is Argon2id PHC encoded (server environment or an authenticated, step-up protected SQLite override). A legacy high-entropy Admin Token remains available for emergency recovery. Password-first login issues a single-use, 120-second, IP-bound challenge; with TOTP enabled, only a successful second factor can issue a session cookie. Editing the admin password revokes every active administrator session.
+
+Opt-in trusted Vault snapshots are protected with an origin-bound, non-extractable WebCrypto key. They expire according to user settings and the session idle cap; manual lock/logout purges them. This is a usability feature and is not hardware-backed. It cannot defeat XSS or compromise of an authenticated WebView. The Relay never receives plaintext Master Vault Keys.

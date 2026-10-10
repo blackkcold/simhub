@@ -64,6 +64,22 @@ class CompanionStateTest(unittest.TestCase):
         self.assertEqual(server.SimHubHandler.device_offline_threshold(state,"android"),1800)
         self.assertEqual(server.SimHubHandler.device_offline_threshold(state,"modem"),server.OFFLINE_AFTER)
 
+    def test_command_fetch_health_and_sms_generation_are_redacted(self):
+        state=server.sanitize_state({
+            "foregroundRelay":False,"foregroundRelayRequested":True,
+            "lastCommandFetchAt":1790000000,"lastCommandFetchCount":2,
+            "lastCommandFetchError":"HTTP_429_rate_limited",
+            "smsChangeGeneration":14,"smsScannedGeneration":13,
+            "smsBody":"private","deviceToken":"never_forward"
+        })
+        self.assertFalse(state["foregroundRelay"])
+        self.assertTrue(state["foregroundRelayRequested"])
+        self.assertEqual(state["lastCommandFetchCount"],2)
+        self.assertEqual(state["smsChangeGeneration"],14)
+        self.assertEqual(state["smsScannedGeneration"],13)
+        self.assertNotIn("smsBody",state)
+        self.assertNotIn("deviceToken",state)
+
     def test_default_mode_remains_supported(self):
         state=server.sanitize_state({"smsMode":"default","smsRoleHeld":True})
         self.assertEqual(state["smsMode"],"default")

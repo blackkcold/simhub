@@ -123,6 +123,10 @@ class HubActivity: ComponentActivity(), HubController {
         override fun onChange(selfChange:Boolean){
             refreshHandler.removeCallbacks(refreshAfterChange)
             refreshHandler.postDelayed(refreshAfterChange,400)
+            if(!selfChange && AgentConfig(this@HubActivity).isEnrolled()){
+                AgentConfig(this@HubActivity).recordSmsProviderChange()
+                SyncJobService.scheduleNow(applicationContext)
+            }
         }
     }
     private val companionLauncher=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()){result->

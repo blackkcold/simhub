@@ -31,13 +31,12 @@ public final class EnergyPolicy {
     }
     public static long commandIntervalMs(Context c) {
         String mode=effectiveMode(c);
-        if(BALANCED.equals(mode)){
-            PowerManager pm=c.getSystemService(PowerManager.class);
-            // Screen-interactive sessions prioritize responsiveness; the idle
-            // process uses a slower interval without waking the radio every 45s.
-            if(pm!=null&&pm.isInteractive())return 45_000L;
-        }
-        return commandIntervalMs(mode);
+        PowerManager pm=c.getSystemService(PowerManager.class);
+        return commandIntervalMs(mode,pm!=null&&pm.isInteractive());
+    }
+    /** Pure scheduling rule, testable without an Android device. */
+    public static long commandIntervalMs(String mode,boolean interactive) {
+        return BALANCED.equals(mode)&&interactive?45_000L:commandIntervalMs(mode);
     }
     /** Best effort only: JobScheduler/Doze do not promise exact deadlines. */
     public static long commandFallbackIntervalMs(Context c) {

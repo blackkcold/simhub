@@ -255,6 +255,31 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
                 color=if(requested&&!connected)MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Spacer(Modifier.height(10.dp))
+        Button(onClick=controller::syncNow,
+            enabled=state?.enrolled==true,modifier=Modifier.fillMaxWidth()){
+            HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(hubLabel("立即检查命令并同步短信","Check commands & sync SMS"))
+        }
+        val commandAt=state?.state?.optLong("lastCommandFetchAt",0L)?:0L
+        InfoRow(hubLabel("上次成功检查命令","Last successful command check"),
+            if(commandAt>0)java.text.DateFormat.getDateTimeInstance()
+                .format(java.util.Date(commandAt*1000)) else "—")
+        InfoRow(hubLabel("上次获取命令数","Commands fetched last check"),
+            (state?.state?.optInt("lastCommandFetchCount",0)?:0).toString())
+        val commandError=state?.state?.optString("lastCommandFetchError","").orEmpty()
+        if(commandError.isNotBlank())
+            Text(hubLabel("命令连接错误：","Command connection error: ")+commandError,
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.error)
+        val receivedGeneration=state?.state?.optLong("smsChangeGeneration",0L)?:0L
+        val scannedGeneration=state?.state?.optLong("smsScannedGeneration",0L)?:0L
+        if(receivedGeneration>scannedGeneration)
+            Text(hubLabel("有尚未确认扫描的短信变化，后台将自动重试。",
+                "SMS Provider changes are awaiting a confirmed scan."),
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
         val energy=state?.state?.optJSONObject("energyStats")
         if(energy!=null){
             InfoRow(hubLabel("有效运行档位","Effective power mode"),

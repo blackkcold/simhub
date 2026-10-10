@@ -688,11 +688,20 @@ function renderDeviceDetail(id) {
     stat(tr('charging_state'),s.charging===true?tr('charging_now'):s.charging===false?tr('not_charging'):'—')+
     stat(tr('ux_fallback_state'),s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+
     stat(tr('last_sync'),fmtTime(s.lastSyncSuccessAt))+
+    stat('SMS Provider 变化',fmtTime(s.lastSmsProviderChangeAt))+
+    stat('SMS 广播',fmtTime(s.lastSmsBroadcastAt))+
+    stat('最近补扫',fmtTime(s.lastReconcileAt))+
+    stat('待上传事件 / 命令 ACK',(s.pendingEvents??0)+' / '+(s.pendingCommandAcks??0))+
+    stat('已上传回执',(s.uploadedEventReceipts??0))+
+    stat('累计确认上传',(s.uploadedEventTotal??0))+
+    stat('最近上传',fmtTime(s.lastEventUploadAt))+
+    stat('上次上传条数',(s.lastEventUploadCount??0))+
     stat(tr('last_sms'),fmtTime(s.lastSmsReceivedAt))+
     stat(tr('ux_sms_count'),d.smsCount??0)+
     '</div></section>'+
     '<section class="detail-section"><h3>'+escapeHtml(tr('ux_channels'))+'</h3><div class="sim-detail-list">'+(simRows||'<p class="hint">'+escapeHtml(tr('no_subscriptions'))+'</p>')+'</div></section>'+
-    ((s.lastSyncError||s.smsProviderError||s.stateCollectionError)?'<section class="detail-section"><h3>'+escapeHtml(tr('ux_sync_warning'))+'</h3><p class="warn detail-error">'+escapeHtml(s.lastSyncError||s.smsProviderError||s.stateCollectionError)+'</p></section>':'')+
+    ((s.lastUploadError||s.lastEventQueueError||s.lastSyncError||s.smsProviderError||s.stateCollectionError)?'<section class="detail-section"><h3>'+escapeHtml(tr('ux_sync_warning'))+'</h3><p class="warn detail-error">'+escapeHtml(s.lastUploadError||s.lastEventQueueError||s.lastSyncError||s.smsProviderError||s.stateCollectionError)+'</p></section>':'')+
+    ((s.cryptoKeyId&&d.keyId&&s.cryptoKeyId!==d.keyId)?'<section class="detail-section"><p class="warn detail-error">'+escapeHtml(tr('decrypt_issue_device_key_diverged'))+' '+escapeHtml(tr('decrypt_recovery_hint'))+'</p></section>':'')+
     deviceButtons(d);
   content.scrollTop=previousScroll;
   return true;

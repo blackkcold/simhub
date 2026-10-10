@@ -55,7 +55,31 @@ private fun ToolSection(title:String, modifier:Modifier=Modifier,content:@Compos
 private fun PairedNodeCard(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                             controller:HubController,modifier:Modifier){
     ToolSection(hubLabel("设备配对与连接","Device pairing & connection"),modifier){
-        if(state?.enrolled==true){
+        if(state?.resetPending==true){
+            StatePill(
+                if(state.resetRecoveryRequired)
+                    hubLabel("解绑异常 · 需要恢复","Reset blocked · recovery required")
+                else hubLabel("正在等待解绑确认","Awaiting reset confirmation"),false)
+            Spacer(Modifier.height(10.dp))
+            Text(state.server,style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if(state.resetRecoveryRequired)
+                    hubLabel("服务器凭据或状态无法确认。本地密钥尚未清除，请重试校验或选择本机强制重置。",
+                        "Relay status or credentials could not be verified. Local keys remain. Retry or confirm a local-only reset.")
+                else hubLabel("短信同步已暂停。等待服务器确认后才会清除本地配对信息。",
+                    "SMS syncing is paused. Local enrollment will be cleared only after Relay confirmation."),
+                style=MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick=controller::retryReset,modifier=Modifier.fillMaxWidth()){
+                Text(hubLabel("重新验证并完成解绑","Retry reset confirmation"))
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick=controller::forceLocalReset,modifier=Modifier.fillMaxWidth()){
+                Text(hubLabel("本机强制重置…","Force local reset…"))
+            }
+        }else if(state?.enrolled==true){
             StatePill(hubLabel("已配对","Paired"),true)
             Spacer(Modifier.height(10.dp))
             Text(state.device,fontWeight=FontWeight.Medium)

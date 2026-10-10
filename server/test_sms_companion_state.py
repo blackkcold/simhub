@@ -61,8 +61,8 @@ class CompanionStateTest(unittest.TestCase):
         self.assertNotIn("smsBody",state["energyStats"])
         self.assertNotIn("deviceToken",state["energyStats"])
         self.assertNotIn("otp",state)
-        self.assertEqual(server.Handler.device_offline_threshold(state,"android"),1800)
-        self.assertEqual(server.Handler.device_offline_threshold(state,"modem"),server.OFFLINE_AFTER)
+        self.assertEqual(server.SimHubHandler.device_offline_threshold(state,"android"),1800)
+        self.assertEqual(server.SimHubHandler.device_offline_threshold(state,"modem"),server.OFFLINE_AFTER)
 
     def test_default_mode_remains_supported(self):
         state=server.sanitize_state({"smsMode":"default","smsRoleHeld":True})

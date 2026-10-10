@@ -30,6 +30,27 @@ public final class EnrollmentManager {
         SyncJobService.scheduleNow(c);
         AppLogger.i(c,"Enrollment","Reset requested; awaiting relay confirmation");
     }
-    public static void reset(Context c){RelayForegroundService.stop(c);SharedPoolClient.clearLocalForReset(c);SimTagStore.clearAll(c);LocalStore.get(c).resetForReenrollment();new AgentConfig(c).clearEnrollment();AppLogger.i(c,"Enrollment","Node enrollment and pool secrets cleared");}
+    /** Explicit user-confirmed escape hatch when Relay cannot be reached or credentials are lost. */
+    public static void forceLocalReset(Context c){
+        AgentConfig cfg=new AgentConfig(c);
+        if(!cfg.resetPending() && !cfg.resetRecoveryRequired())
+            throw new IllegalStateException("Force local reset is only available for a pending reset");
+        reset(c);
+        AppLogger.w(c,"Enrollment","User confirmed local-only reset; server may retain old node");
+    }
+    public static void retryReset(Context c){
+        AgentConfig cfg=new AgentConfig(c);
+        if(!cfg.resetPending())return;
+        cfg.retryPendingReset();
+        SyncJobService.scheduleNow(c);
+    }
+    public static void reset(Context c){
+        RelayForegroundService.stop(c);
+        SharedPoolClient.clearLocalForReset(c);
+        SimTagStore.clearAll(c);
+        LocalStore.get(c).resetForReenrollment();
+        new AgentConfig(c).clearEnrollment();
+        AppLogger.i(c,"Enrollment","Node enrollment and pool secrets cleared");
+    }
     private EnrollmentManager(){}
 }

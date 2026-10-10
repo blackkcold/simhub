@@ -139,19 +139,21 @@ public final class ApiClient {
     public void pollCommands(boolean longPoll)throws Exception{
         if(!cfg.isEnrolled()||cfg.resetPending())return;
         if(longPoll){
-            // Never hold the global sync lease during a 15-second network wait;
-            // otherwise a newly received SMS could be skipped until the next Job.
+            // Do not keep the global sync lease while the server is waiting.
             boolean received=waitForCommands();
             if(received||LocalStore.get(c).pendingCommandAckCount()>0)
-                SyncJobService.scheduleNow(c);
+                RelayForegroundService.kick(c);
             return;
         }
         if(!SYNC_BUSY.compareAndSet(false,true))return;
+        boolean pending=false;
         try{
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
             fetchCommands();
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
+            pending=LocalStore.get(c).pendingEventCount()>0;
         }finally{SYNC_BUSY.set(false);}
+        if(pending)RelayForegroundService.kick(c);
     }
     private boolean checkServerReset()throws Exception{
         try{

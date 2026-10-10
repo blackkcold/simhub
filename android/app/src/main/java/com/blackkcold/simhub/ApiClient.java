@@ -92,6 +92,7 @@ public final class ApiClient {
                     }
                     if(reconciliation){
                         reconciled=SmsHistorySync.reconcileRecent(c,100);
+                        if(reconciled>=0)EnergyPolicy.increment(c,"reconciliationRuns");
                         if(reconciled>=0&&reconciled<100)
                             EnergyPolicy.mark(c,"reconciliation",System.currentTimeMillis());
                     }
@@ -111,6 +112,7 @@ public final class ApiClient {
             if(maintenance){
                 putState();heartbeat();
                 EnergyPolicy.mark(c,"maintenance",System.currentTimeMillis());
+                EnergyPolicy.increment(c,"maintenanceRuns");
             }
             cfg.recordSyncSuccess();cfg.resetSyncBackoff();
             if(scanned>=30||reconciled>=100||store.pendingEventCount()>0)

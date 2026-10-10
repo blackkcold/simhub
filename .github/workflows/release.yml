@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.13.0.trigger'
+      - '.github/release/v0.13.1.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.13.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.13.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -276,7 +276,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Adaptive Android energy modes, event-triggered SMS sync, coalesced jobs, bounded reconciliation and command transport",
+              "notes":"Restore reliable SMS ingestion, balanced remote command delivery and responsive full-width Android energy cards",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -299,19 +299,21 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Adaptive Android SMS relay scheduling lowers idle network activity while keeping durable SMS delivery and remote command support.
+          SIM Hub v0.13.1 repairs SMS and remote command delivery regressions in v0.13.0.
 
           ## Highlights
-          - Add Eco, Balanced and Realtime profiles with a dedicated foreground command channel.
-          - Replace 20-second full sync with SMS event wakeups, durable provider followups and 15-minute state maintenance.
-          - Avoid duplicate SMS parsing/encryption; bound six-hour reconciliation and coalesce queued jobs.
-          - Expose metadata-only power counters, delayed command warnings and per-device presence cadence.
-          - Preserve v0.12.2 reset recovery, independent Android OTA and the encrypted Vault protocol.
+          - Persist SMS Provider change generations, catch same-second updates and late Provider writes.
+          - Encrypt and queue new SMS before Relay network checks, even during retry backoff.
+          - Decouple remote command retrieval from 15-minute maintenance; Balanced command checks use ~45s interactive and ~120s idle cadences with best-effort background recovery.
+          - Expose actual foreground listener health, command-check times/errors and a manual check-and-sync action.
+          - Expire stale controller commands even if their device never polls again.
+          - Replace narrow three-way chips with full-width accessible power cards and icon assets.
+          - Preserve v0.13.0 encrypted storage, queue idempotency, v0.12.2 unpair recovery and pairing-independent APK updates.
 
-          ## Safety
-          Doze/OEM background restrictions still apply, and Eco mode may delay remote commands.
-          No system energy protections are bypassed and no SMS data or pairing keys are reset.
-          Push wakeups require separately configured push infrastructure. Validate standby and SMS delivery on real devices.
+          ## Platform limits
+          Doze and OEM restrictions may delay background jobs. Configured FCM/push delivery
+          is not bundled. No Android OTP protection is bypassed; confirm real-device
+          receive latency and background survival independently from CI.
 
           ## Host activation
           After migrating the Docker engine to rootless mode, run \`bash scripts/install-updater.sh\`

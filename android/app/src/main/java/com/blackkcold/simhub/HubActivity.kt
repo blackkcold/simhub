@@ -587,8 +587,17 @@ class HubActivity: ComponentActivity(), HubController {
                 toast(getString(R.string.diagnostic_export_failed))}
         }
     }
+    private fun publishSmsSendCapability(){
+        if(!AgentConfig(this).isEnrolled())return
+        SyncJobService.scheduleNow(applicationContext)
+        lifecycleScope.launch(Dispatchers.IO){
+            try{ApiClient(applicationContext).putState()}
+            catch(error:Exception){AppLogger.e(applicationContext,"SmsPolicy","Failed to publish send mode",error)}
+        }
+    }
     override fun setDeveloperEnabled(value:Boolean){
         DeveloperSettings.setEnabled(this,value);tools.developer=value
+        publishSmsSendCapability()
         AppLogger.i(this,"Developer",if(value)"Diagnostic logging enabled" else "Diagnostic logging disabled")
         if(!value){tools.logs="";tools.diagnostics="";tools.forceSms=false;refresh()}else viewLogs()
     }
@@ -596,6 +605,7 @@ class HubActivity: ComponentActivity(), HubController {
         try {
             DeveloperSettings.setForceSmsEnabled(this,value)
             tools.forceSms=DeveloperSettings.isForceSmsEnabled(this)
+            publishSmsSendCapability()
             refresh()
         }catch(error:Exception){toast(UiErrors.message(this,error))}
     }

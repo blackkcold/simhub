@@ -77,6 +77,7 @@ interface HubController {
     fun setAutoCheckUpdates(value:Boolean)
     fun setAutoDownloadUpdates(value:Boolean)
     fun setRemoteOtaAllowed(value:Boolean)
+    fun setRemoteOtaWifiOnly(value:Boolean)
     fun setDeveloperRemoteOtaOverride(value:Boolean)
     fun exportDiagnostics()
     fun setDeveloperEnabled(value:Boolean)
@@ -179,6 +180,7 @@ class HubActivity: ComponentActivity(), HubController {
         tools.developer=DeveloperSettings.isEnabled(this)
         tools.forceRemoteOta=DeveloperSettings.isForceRemoteOtaEnabled(this)
         tools.remoteOtaAllowed=RemoteOta.allowed(this)
+        tools.remoteOtaWifiOnly=RemoteOta.wifiOnly(this)
         tools.forceSms=DeveloperSettings.isForceSmsEnabled(this)
         tools.language=UiLocale.index(this)
         tools.autoCheckUpdates=AppUpdater.prefs(this).getBoolean("autoCheck",true)
@@ -558,6 +560,11 @@ class HubActivity: ComponentActivity(), HubController {
     override fun setAutoDownloadUpdates(value:Boolean){
         tools.autoDownloadUpdates=value
         AppUpdater.prefs(this).edit().putBoolean("autoDownload",value).apply()
+    }
+    override fun setRemoteOtaWifiOnly(value:Boolean){
+        RemoteOta.setWifiOnly(this,value)
+        tools.remoteOtaWifiOnly=RemoteOta.wifiOnly(this)
+        SyncJobService.scheduleNow(applicationContext)
     }
     override fun setRemoteOtaAllowed(value:Boolean){
         try{

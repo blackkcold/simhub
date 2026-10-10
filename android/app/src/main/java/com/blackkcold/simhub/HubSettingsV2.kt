@@ -35,6 +35,7 @@ class HubToolsState {
     var autoCheckUpdates by mutableStateOf(true)
     var autoDownloadUpdates by mutableStateOf(false)
     var remoteOtaAllowed by mutableStateOf(false)
+    var remoteOtaWifiOnly by mutableStateOf(true)
     var forceRemoteOta by mutableStateOf(false)
     var installedAt by mutableStateOf("")
     var language by mutableIntStateOf(0)
@@ -388,6 +389,16 @@ private fun RemoteOtaCard(tools:HubToolsState,controller:HubController,modifier:
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked=tools.remoteOtaAllowed,onCheckedChange=controller::setRemoteOtaAllowed)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("仅 Wi-Fi 下载远程更新","Download remote updates over Wi-Fi only"))
+                Text(hubLabel("默认开启；电量低于 25% 且未充电时暂停更新。",
+                    "On by default; updates pause below 25% battery unless charging."),
+                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked=tools.remoteOtaWifiOnly,onCheckedChange=controller::setRemoteOtaWifiOnly)
         }
         Spacer(Modifier.height(10.dp))
         StatePill(

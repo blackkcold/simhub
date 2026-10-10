@@ -1,6 +1,11 @@
 package com.blackkcold.simhub;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
+import android.os.BatteryManager;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -14,6 +19,34 @@ public final class RemoteOta {
     private static SharedPreferences prefs(Context c){return c.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE);}
     public static boolean supported(Context c){
         return RemoteOtaPolicy.supported(Build.VERSION.SDK_INT,DeveloperSettings.isForceRemoteOtaEnabled(c));
+    }
+    public static boolean wifiOnly(Context c){return prefs(c).getBoolean("wifiOnly",true);}
+    public static void setWifiOnly(Context c,boolean value){prefs(c).edit().putBoolean("wifiOnly",value).apply();}
+    public static boolean needsStateUpload(Context c){return prefs(c).getBoolean("stateDirty",false);}
+    public static void markStateUploaded(Context c){prefs(c).edit().putBoolean("stateDirty",false).apply();}
+    private static String prerequisites(Context c){
+        if(wifiOnly(c)){
+            ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
+            NetworkCapabilities caps=cm==null?null:cm.getNetworkCapabilities(cm.getActiveNetwork());
+            if(caps==null||!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+                return "wifi_required";
+        }
+        Intent bat=c.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if(bat!=null){
+            int level=bat.getIntExtra(BatteryManager.EXTRA_LEVEL,-1);
+            int scale=bat.getIntExtra(BatteryManager.EXTRA_SCALE,100);
+            int state=bat.getIntExtra(BatteryManager.EXTRA_STATUS,-1);
+            if(level>=0 && level*100/Math.max(1,scale)<25 &&
+                state!=BatteryManager.BATTERY_STATUS_CHARGING &&
+                state!=BatteryManager.BATTERY_STATUS_FULL)return "battery_below_25_percent";
+        }
+        return "";
+    }
+    public static boolean active(Context c){
+        SharedPreferences p=prefs(c);
+        String state=p.getString("stage","idle");
+        return !p.getString(COMMAND,"").isBlank() &&
+            !("succeeded".equals(state)||"failed".equals(state));
     }
     public static boolean allowed(Context c){return supported(c)&&prefs(c).getBoolean("consent",false);}
     public static void setAllowed(Context c,boolean enabled){
@@ -29,6 +62,7 @@ public final class RemoteOta {
              .put("remoteOtaDeveloperOverride",DeveloperSettings.isForceRemoteOtaEnabled(c))
              .put("remoteOtaAuthorized",allowed(c))
              .put("remoteOtaInstallPermission",AppUpdater.pmCanInstall(c))
+             .put("remoteOtaWifiOnly",wifiOnly(c))
              .put("remoteOtaStage",p.getString("stage","idle"))
              .put("remoteOtaTarget",p.getString("target",""))
              .put("remoteOtaError",p.getString("error",""))
@@ -39,6 +73,8 @@ public final class RemoteOta {
     public static synchronized JSONObject request(Context c,String commandId,String target)throws Exception{
         if(!allowed(c))throw new SecurityException("remote_ota_not_authorized");
         if(!AppUpdater.pmCanInstall(c))throw new SecurityException("install_sources_permission_required");
+        String blocked=prerequisites(c);
+        if(!blocked.isBlank())throw new SecurityException(blocked);
         if(!"latest".equals(target)&&!target.matches("[0-9]+\\.[0-9]+\\.[0-9]+"))
             throw new SecurityException("invalid_target_version");
         SharedPreferences p=prefs(c);
@@ -48,7 +84,7 @@ public final class RemoteOta {
             throw new IllegalStateException("ota_already_in_progress");
         p.edit().putString(COMMAND,commandId).putString("target",target)
          .putInt("targetCode",0).putString("stage","checking")
-         .putString("error","").putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+         .putString("error","").putBoolean("stateDirty",true).putLong("updatedAt",System.currentTimeMillis()/1000).commit();
         AppUpdater.check(c,true,(metadata,error)->{
             if(error!=null||metadata==null||!metadata.optBoolean("available")){
                 fail(c,error!=null?"release_unavailable":"no_new_version");return;
@@ -63,14 +99,14 @@ public final class RemoteOta {
         return new JSONObject().put("submitted",true);
     }
     public static void stage(Context c,String stage){
-        prefs(c).edit().putString("stage",stage).putLong("updatedAt",System.currentTimeMillis()/1000).apply();
+        prefs(c).edit().putString("stage",stage).putBoolean("stateDirty",true).putLong("updatedAt",System.currentTimeMillis()/1000).apply();
         SyncJobService.scheduleNow(c);
     }
     private static void finish(Context c,String status,String reason){
         SharedPreferences p=prefs(c);
         String id=p.getString(COMMAND,"");
         p.edit().putString("stage",status).putString("error",reason)
-          .putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+          .putBoolean("stateDirty",true).putLong("updatedAt",System.currentTimeMillis()/1000).commit();
         if(!id.isBlank()){
             try {
                 JSONObject result=new JSONObject();

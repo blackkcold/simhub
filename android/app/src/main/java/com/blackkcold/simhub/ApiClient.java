@@ -62,7 +62,9 @@ public final class ApiClient {
         long changedAt=cfg.lastSmsProviderChangeAt()*1000L;
         long lastScan=c.getSharedPreferences("simhub_energy_v1",Context.MODE_PRIVATE).getLong("provider_scan",0L);
         boolean providerDirty=changedAt>0 && changedAt>=lastScan;
-        boolean providerFollowup=EnergyPolicy.providerFollowupDue(c,now);
+        long followupAt=EnergyPolicy.providerFollowupAt(c);
+        if(followupAt>now)SyncJobService.scheduleAfter(c,followupAt-now);
+        boolean providerFollowup=followupAt>0&&followupAt<=now;
         boolean poolRetry=new SharedPoolClient(c).retryDue();
         boolean outstanding=poolRetry || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();

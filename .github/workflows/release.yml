@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.11.2.trigger'
+      - '.github/release/v0.12.0.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.11.2.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.12.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -302,14 +302,15 @@ jobs:
           SIM Hub supports an optional non-default SMS companion mode alongside its existing default-handler mode.
 
           ## Highlights
-          - Add SMS_RECEIVED wake-ups and six-hour paged SMS Provider reconciliation while keeping vivo/OriginOS Messages as the default app.
-          - Retain SMS_DELIVER full-handler mode; enable SEND_SMS without default-role ownership and preserve carrier send/delivery ACKs.
-          - Present permission state and Android 17 OTP access-delay caveats in Android settings.
-          - Deduplicate already-synchronized Provider messages before encrypting or staging them, with JVM tests.
-          - Keep signed APK, digest-pinned OCI relay, offline queues, E2EE and OTA verification.
+          - Add a separate system compatibility lab on the Android agent with clear read/receive/send and Android 17 OTP policy diagnostics.
+          - Integrate official Shizuku API (13.1.5) Binder availability, per-app opt-in authorization and read-only verification; never execute privileged changes automatically.
+          - Add optional Android 13+ self-managed CompanionDeviceManager associations with explicit OS confirmation and unpair handling.
+          - Provide manual SMS Provider probes, bounded historical reconciliation, OEM battery settings and copyable read-only ADB/Rish diagnostics.
+          - Record redacted, bounded compatibility action audit entries and export them in the diagnostic ZIP.
+          - Keep the default-free SMS companion mode and encrypted Relay behavior intact.
 
-          ## Compatibility
-          Android 17 may withhold protected OTP SMS from non-exempt apps for roughly three hours; manufacturer permission and background limits remain device-specific. No bypass is provided.
+          ## Security and compatibility
+          Shizuku authorization and a CDM association do not themselves grant an Android 17 OTP exemption. The app never disables OEM Messages, grants sensitive AppOps, modifies compatibility flags or captures notification OTPs. Hardware validation remains required.
 
           ## Host activation
           After migrating the Docker engine to rootless mode, run \`bash scripts/install-updater.sh\`

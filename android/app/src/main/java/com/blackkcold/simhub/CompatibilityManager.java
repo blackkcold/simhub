@@ -38,6 +38,12 @@ public final class CompatibilityManager {
             state.put("receiveSms",granted(context,Manifest.permission.RECEIVE_SMS));
             state.put("sendSms",granted(context,Manifest.permission.SEND_SMS));
             state.put("packageUid",Process.myUid());
+            AgentConfig cfg=new AgentConfig(context);
+            state.put("lastSmsBroadcastAt",cfg.lastSmsBroadcastAt());
+            state.put("lastReconcileAt",cfg.lastReconcileAt());
+            state.put("lastReconcileCount",cfg.lastReconcileCount());
+            state.put("lastRelaySyncAt",cfg.lastSyncSuccessAt());
+            state.put("lastRelaySyncError",cfg.lastSyncError());
             try{
                 AppOpsManager ops=context.getSystemService(AppOpsManager.class);
                 int mode=ops.unsafeCheckOpNoThrow("android:read_otp_sms",Process.myUid(),context.getPackageName());

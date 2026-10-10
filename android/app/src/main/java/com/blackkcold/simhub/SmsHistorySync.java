@@ -120,6 +120,8 @@ public final class SmsHistorySync {
             if(SmsReconcilePolicy.passComplete(scanned,limit))cfg.resetReconcileCursor(); // Replay any newly unhidden older rows.
             cfg.clearSmsProviderError();
         }catch(Exception error){scanFailed(c,error,"Delayed SMS reconciliation");return -1;}
+        cfg.recordSmsReconcile(scanned);
+        if(DeveloperSettings.isEnabled(c))AppLogger.i(c,"SmsSync","Rolling reconciliation inspected="+scanned+" max="+limit+" (no OTP content logged)");
         return scanned;
     }
 

@@ -76,6 +76,7 @@ try {
       await page.evaluate(()=>{
         document.getElementById("replyComposer").hidden=false;
         document.getElementById("replyOptions").open=true;
+        document.getElementById("smsLayout").classList.add("conversation-open");
       });
       await page.locator("#replyTo").fill("+8613800138000");
       await page.locator("#replyBody").fill("Hello");

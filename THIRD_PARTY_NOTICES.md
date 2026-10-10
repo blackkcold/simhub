@@ -29,3 +29,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+### Shizuku API and Provider (13.1.5)
+
+- Components: `dev.rikka.shizuku:api:13.1.5`, `dev.rikka.shizuku:provider:13.1.5`
+- Upstream: https://github.com/RikkaApps/Shizuku-API
+- License: MIT (see upstream license: https://github.com/RikkaApps/Shizuku-API/blob/master/LICENSE)
+- Use: optional explicit Shizuku Binder permission/status integration on Android. No privileged shell operations are run by SIM Hub.

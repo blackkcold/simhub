@@ -3,6 +3,12 @@ admin.simhub.example.com {
     respond @internal_health 404
     encode zstd gzip
     reverse_proxy 127.0.0.1:8787 {
+        # Retry only safe reads during the existing single-container updater restart.
+        lb_try_duration 8s
+        lb_try_interval 250ms
+        lb_retry_match {
+            method GET HEAD
+        }
         header_up X-Forwarded-For {remote_host}
     }
     header {
@@ -19,6 +25,12 @@ node.simhub.example.com {
     respond @internal_health 404
     encode zstd gzip
     reverse_proxy 127.0.0.1:8787 {
+        # Retry only safe reads during the existing single-container updater restart.
+        lb_try_duration 8s
+        lb_try_interval 250ms
+        lb_retry_match {
+            method GET HEAD
+        }
         header_up X-Forwarded-For {remote_host}
     }
     header {

@@ -201,3 +201,19 @@ CREATE TABLE IF NOT EXISTS pairing_requests(
   complete_proof_hash TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_pairing_requests_expiry ON pairing_requests(expires_at);
+
+-- The first factor never grants a session; a short, single-use challenge gates OTP.
+CREATE TABLE IF NOT EXISTS admin_login_challenges(
+  token_hash TEXT PRIMARY KEY,
+  ip TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  auth_fingerprint TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_challenges_expiry ON admin_login_challenges(expires_at);
+
+CREATE TABLE IF NOT EXISTS admin_credentials(
+  username TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  changed_at INTEGER NOT NULL
+);

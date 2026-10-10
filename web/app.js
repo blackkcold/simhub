@@ -6,6 +6,10 @@ const VAULT_STORE = 'simhub_vault_v1';
 const PBKDF2_ITER = 310000;
 const DEFAULT_SESSION_IDLE_MS = 8 * 60 * 60 * 1000;
 const SESSION_VAULT_CACHE = 'simhub_session_vault_v1';
+const TRUSTED_VAULT_CACHE = 'simhub_trusted_vault_v1';
+const TRUSTED_VAULT_CONFIG = 'simhub_trusted_vault_options_v1';
+let authenticated=false;
+let passwordConfigured=false;
 const PHONE_OVERRIDES_STORE = 'simhub_phone_overrides_v1';
 let phoneOverrides={};
 let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
@@ -49,6 +53,73 @@ async function tabVaultKey(){
   }finally{db.close();}
 }
 function clearTabVault(){try{sessionStorage.removeItem(SESSION_VAULT_CACHE);}catch{}}
+function trustedOptions(){
+  try{const p=JSON.parse(localStorage.getItem(TRUSTED_VAULT_CONFIG)||'null');
+    return {enabled:p?.enabled===true,duration:[900,3600,28800].includes(p?.duration)?p.duration:28800};
+  }catch{return {enabled:false,duration:28800};}
+}
+function clearTrustedVault(){try{localStorage.removeItem(TRUSTED_VAULT_CACHE);}catch{}}
+async function storeTrustedVault(){
+  const config=trustedOptions();
+  if(!config.enabled||!vaultRaw||!authenticated)return;
+  const secret=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
+  try{
+    const key=await tabVaultKey();
+    const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-trusted-vault-v1')},key,secret);
+    localStorage.setItem(TRUSTED_VAULT_CACHE,JSON.stringify({v:1,iv:b64u(iv),
+      ct:b64u(new Uint8Array(ct)),expiresAt:Date.now()+Math.min(config.duration*1000,sessionIdleMs)}));
+  }finally{secret.fill(0);}
+}
+async function restoreTrustedVault(){
+  if(!authenticated||!trustedOptions().enabled)return false;
+  try{
+    const data=JSON.parse(localStorage.getItem(TRUSTED_VAULT_CACHE)||'null');
+    if(!data||data.v!==1||Date.now()>=data.expiresAt)throw Error('Expired');
+    const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(data.iv),
+      additionalData:enc.encode('simhub-trusted-vault-v1')},await tabVaultKey(),unb64u(data.ct));
+    if(raw.byteLength!==32)throw Error('Invalid Vault Key');
+    await importVault(raw);await loadPhoneOverrides();showUnlocked();await fullRefresh();
+    refreshVersionInfo().catch(()=>{});startRealtime();return true;
+  }catch{clearTrustedVault();return false;}
+}
+async function setAdminPassword(){
+  const value=$('newAdminPassword').value;
+  if(value.length<12)throw Error('请输入至少 12 位管理员密码');
+  if(!confirm('修改管理员密码会撤销全部设备的管理员会话，需要重新登录。确认继续？'))return;
+  await ensureStepUp();
+  await api('/api/v1/auth/password',{method:'POST',body:{newPassword:value}});
+  $('newAdminPassword').value='';authenticated=false;csrfToken='';clearTrustedVault();lockVault();
+  toast('管理员密码已更新，全部会话已撤销，请重新登录');
+}
+async function updateTrustedOptions(){
+  await ensureStepUp();
+  const enabled=$('vaultTrustEnabled').checked,duration=Number($('vaultTrustDuration').value);
+  localStorage.setItem(TRUSTED_VAULT_CONFIG,JSON.stringify({enabled,duration}));
+  if(enabled)await storeTrustedVault();else clearTrustedVault();
+  toast(enabled?'已允许本设备有效期内免重复解锁':'已关闭自动解锁');
+}
+function showVaultStage(){
+  authenticated=true;
+  $('authStage').hidden=true;$('vaultStage').hidden=false;
+  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?'请输入 Vault 密码，或使用已授权的可信设备解锁':'首次使用：请导入已有恢复密钥，或创建新 Vault';
+}
+async function finishLogin(){
+  showVaultStage();
+  await restoreTrustedVault();
+}
+function promptLoginTotp(){
+  return new Promise((resolve,reject)=>{
+    const d=$('loginOtpDialog'),form=$('loginOtpForm'),input=$('totp'),cancel=$('loginOtpCancel');
+    const clean=(value)=>{form.removeEventListener('submit',submit);cancel.removeEventListener('click',dismiss);
+      d.removeEventListener('cancel',dismiss);d.close();input.value='';
+      if(value)resolve(value);else reject(new Error('已取消二次验证'));};
+    const submit=e=>{e.preventDefault();clean(input.value.trim());};
+    const dismiss=e=>{e.preventDefault();clean('');};
+    form.addEventListener('submit',submit);cancel.addEventListener('click',dismiss);
+    d.addEventListener('cancel',dismiss);input.value='';d.showModal();input.focus();
+  });
+}
+
 async function cacheTabVault(){
   if(!vaultRaw||!vaultKey)return;
   const snapshot=vaultKey,raw=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
@@ -74,7 +145,11 @@ async function restoreTabVault(){
   }catch(e){clearTabVault();if(vaultKey)lockVault();return false;}
 }
 async function resumeExistingSession(){
-  try{await api('/api/v1/auth/check');await restoreTabVault();}catch{clearTabVault();}
+  try{
+    await api('/api/v1/auth/check');authenticated=true;
+    if(await restoreTabVault())return;
+    await finishLogin();
+  }catch{authenticated=false;clearTabVault();}
 }
 
 async function loadPhoneOverrides(){
@@ -160,9 +235,24 @@ async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body
     }
     await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)));
   }
-  let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check')lockVault();throw new Error(data.message||data.error||('HTTP '+res.status));}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;if(typeof data.passkeyCount==='number')passkeyCount=data.passkeyCount;if(typeof data.sessionIdleTtlSeconds==='number')sessionIdleMs=Math.max(60000,data.sessionIdleTtlSeconds*1000);if(data.username&&$('username'))$('username').value=data.username;return data;}
-async function establishSession(){try{return await api('/api/v1/auth/check');}catch(e){}const adminToken=$('adminToken').value.trim(),totp=$('totp').value.trim(),username=$('username').value.trim();if(adminToken.length<32)throw new Error('Admin token is required for a new session.');const data=await api('/api/v1/auth/session',{method:'POST',body:{username:username,adminToken:adminToken,totp:totp}});$('adminToken').value='';$('totp').value='';return data;}
-async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST',body:{logout:true}});}catch(e){}csrfToken='';stepUpUntil=0;clearTabVault();}
+  let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check'){authenticated=false;lockVault();}throw new Error(data.message||data.error||('HTTP '+res.status));}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;
+  if(typeof data.passwordConfigured==='boolean'){passwordConfigured=data.passwordConfigured;
+    const status=$('adminPasswordStatus');if(status)status.textContent=passwordConfigured?'已设置独立管理员密码':'未设置独立密码：当前仍使用 Admin Token 登录';}if(typeof data.passkeyCount==='number')passkeyCount=data.passkeyCount;if(typeof data.sessionIdleTtlSeconds==='number')sessionIdleMs=Math.max(60000,data.sessionIdleTtlSeconds*1000);if(data.username&&$('username'))$('username').value=data.username;return data;}
+async function establishSession(){
+  try{const session=await api('/api/v1/auth/check');authenticated=true;return session;}catch{}
+  const password=$('adminToken').value,username=$('username').value.trim();
+  if(!username||!password)throw Error('请输入用户名和密码');
+  const start=await api('/api/v1/auth/start',{method:'POST',body:{username,password}});
+  $('adminToken').value='';
+  let result=start;
+  if(start.requiresTotp) {
+    const totp=await promptLoginTotp();
+    result=await api('/api/v1/auth/session',{method:'POST',body:{username,challengeId:start.challengeId,totp}});
+  }
+  authenticated=true;
+  return result;
+}
+async function logoutSession(){try{await api('/api/v1/auth/logout',{method:'POST',body:{logout:true}});}catch(e){}authenticated=false;csrfToken='';stepUpUntil=0;clearTabVault();clearTrustedVault();}
 async function ensureStepUp(){
   if(Date.now()<stepUpUntil-5000)return;
   const label=secondFactorIsTotp?'请输入当前 6 位 TOTP 验证码以确认敏感操作：':'开发模式：请再次输入管理员 Token：';
@@ -231,9 +321,8 @@ async function passkeyElevate(){
 async function passkeyLogin(){
   await passkeyAuthenticate('login');
   await api('/api/v1/auth/check');
-  toast('通行密钥登录成功，请继续解锁本地 Vault');
-  if($('passphrase').value){await connectAndUnlock();}
-  else $('passphrase').focus();
+  await finishLogin();
+  toast('通行密钥登录成功');
 }
 async function refreshPasskeys(){
   const result=await api('/api/v1/auth/passkeys');
@@ -269,7 +358,7 @@ function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textCon
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary']){
+  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','gateRecoveryKey','newAdminPassword','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
@@ -295,7 +384,7 @@ function purgeSensitiveUI(){
   if($('enrollQr'))$('enrollQr').replaceChildren();
   if($('pairCodeInput'))$('pairCodeInput').value='';
   if($('pairCodeStatus'))$('pairCodeStatus').textContent='';
-  for(const id of ['enrollDialog','deviceDetailDialog']){const d=$(id);if(d?.open)d.close();}
+  for(const id of ['enrollDialog','deviceDetailDialog','loginOtpDialog']){const d=$(id);if(d?.open)d.close();}
   nodeBaseUrl='';enrollStartingDevices.clear();
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
@@ -316,6 +405,8 @@ function lockVault(broadcast=true){
   clearTimeout(refreshTimer);refreshTimer=null;
   if(eventSource){eventSource.close();eventSource=null;}
   $('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;
+  clearTrustedVault();
+  $('authStage').hidden=authenticated;$('vaultStage').hidden=!authenticated;
   $('vaultStatus').textContent=tr('vault_locked');setConnected(false);
   if(broadcast)try{vaultLockChannel?.postMessage({action:'lock'});}catch{}
   toast('Vault locked');
@@ -331,8 +422,29 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 window.addEventListener('focus',enforceAutoLock);
 window.addEventListener('pageshow',enforceAutoLock);
 
-async function connectAndUnlock(){await establishSession();await unlockVault($('passphrase').value);await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();}
-async function createVaultFlow(){await createVault($('passphrase').value);$('gateHint').textContent=tr('vault_created_hint');toast(tr('vault_created'));}
+async function connectAndUnlock(){
+  await establishSession();
+  if(!authenticated)throw Error('请先登录');
+  await unlockVault($('passphrase').value);
+  await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
+  await storeTrustedVault();
+}
+async function loginFlow(){await establishSession();await finishLogin();}
+async function importGateRecovery(){
+  $('recoveryKey').value=$('gateRecoveryKey').value;
+  await importRecoveryFlow();
+  $('gateRecoveryKey').value='';
+  await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
+  await storeTrustedVault();
+}
+async function createVaultFlow(){
+  if(!authenticated)throw Error('请先登录');
+  if(localStorage.getItem(VAULT_STORE))throw Error('此浏览器已有 Vault，请使用恢复密钥而不是创建新密钥');
+  if(!confirm('仅首次创建管理池时使用：如果 Relay 已经存在加密短信，新 Vault 无法解密旧数据。确认创建？'))return;
+  await createVault($('passphrase').value);
+  await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
+  await storeTrustedVault();
+}
 
 async function loadDevices(){
   const epoch=securityEpoch;
@@ -1334,7 +1446,16 @@ function wire(){
   applyI18n();
   $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?tr('local_vault_found'):tr('no_local_vault');
   $('languageSelect').onchange=()=>{setLocale($('languageSelect').value);relocalizeDynamic();};
-  $('unlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));
+  $('loginForm').onsubmit=e=>{e.preventDefault();loginFlow().catch(err=>toast(err.message));};
+  $('vaultUnlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));
+  $('gateImportRecovery').onclick=()=>importGateRecovery().catch(e=>toast(e.message));
+  const leaveAccount=async()=>{await logoutSession();lockVault();toast('已退出管理员登录');};
+  $('vaultLogoutBtn').onclick=()=>leaveAccount().catch(e=>toast(e.message));
+  $('logoutBtn').onclick=()=>leaveAccount().catch(e=>toast(e.message));
+  const trust=trustedOptions();
+  $('vaultTrustEnabled').checked=trust.enabled;$('vaultTrustDuration').value=String(trust.duration);
+  $('vaultTrustEnabled').onchange=()=>updateTrustedOptions().catch(e=>{toast(e.message);$('vaultTrustEnabled').checked=trustedOptions().enabled;});
+  $('vaultTrustDuration').onchange=()=>updateTrustedOptions().catch(e=>{toast(e.message);$('vaultTrustDuration').value=String(trustedOptions().duration);});
   $('passkeyLoginBtn').onclick=()=>passkeyLogin().catch(e=>toast(e.message));
   $('registerPasskeyBtn').onclick=()=>registerPasskey().catch(e=>toast(e.message));
   $('passkeysList').onclick=e=>{const b=e.target.closest('button[data-passkey-id]');if(b)removePasskey(b.dataset.passkeyId).catch(err=>toast(err.message));};
@@ -1400,6 +1521,7 @@ function wire(){
   $('approvePairCode').onclick=async()=>{const b=$('approvePairCode');if(b.disabled)return;b.disabled=true;try{await approveDevicePairCode();}catch(e){$('pairCodeStatus').textContent=e.message;toast(e.message);}finally{b.disabled=false;}};
   $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
   $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
+  $('setAdminPassword').onclick=()=>setAdminPassword().catch(e=>toast(e.message));
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};
   $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);localStorage.removeItem(PHONE_OVERRIDES_STORE);lockVault();toast(tr('credentials_forgotten'));}};
   $('diagnosticsClose').onclick=()=>$('diagnosticsDialog').close();

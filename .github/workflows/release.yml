@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.13.3.trigger'
+      - '.github/release/v0.14.0.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.13.3.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.14.0.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -73,6 +73,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
+      - run: PYTHONPATH=server python3 server/test_auth_stages.py
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
@@ -277,7 +278,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Android 16+ opt-in remote APK updates, installer confirmation fallback and automatic relay recovery",
+              "notes":"Android dual-role controller, staged password/TOTP login and trusted Vault sessions",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),

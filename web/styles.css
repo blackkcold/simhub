@@ -532,3 +532,25 @@ input,select,textarea { min-width:0; min-height:44px; }
   #view-inbox .toolbar { grid-template-columns:minmax(0,1fr); }
   #view-inbox .toolbar #search { grid-column:auto; }
 }
+
+/* Separate login, OTP and Vault stages; controller WebView shares responsive PWA layout. */
+.auth-form{display:grid;gap:16px;margin:24px 0 12px}
+.auth-form label,.vault-input{display:grid;gap:8px}
+.auth-form button{width:100%;min-height:46px}
+.recovery-panel{margin-top:18px;padding:14px;border:1px solid var(--line);border-radius:14px}
+.recovery-panel label{display:grid;gap:8px;margin:12px 0}
+.vault-trust-control{display:flex!important;align-items:center;justify-content:space-between;gap:16px}
+.vault-trust-control input[type=checkbox]{width:20px;min-width:20px;flex:none}
+.vault-trust-control select{max-width:170px}
+#loginOtpDialog{color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:20px;width:min(430px,calc(100vw - 32px));padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.25)}
+#loginOtpDialog::backdrop{background:rgba(7,12,24,.65);backdrop-filter:blur(3px)}
+#loginOtpForm{display:grid;gap:16px}
+#loginOtpForm h2,#loginOtpForm p{margin:0}
+#loginOtpForm label{display:grid;gap:8px}
+#loginOtpForm input{font-size:22px;letter-spacing:.28em;text-align:center}
+[hidden]{display:none!important}
+
+/* Ensure accessible separation of security-dialog input and action targets. */
+#stepupDialog .stepup-actions{margin-top:24px}
+
+#stepupDialog .stepup-actions{margin-top:40px!important}

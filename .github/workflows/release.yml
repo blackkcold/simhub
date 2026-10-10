@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.12.0.trigger'
+      - '.github/release/v0.12.1.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.12.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.12.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -302,15 +302,14 @@ jobs:
           SIM Hub supports an optional non-default SMS companion mode alongside its existing default-handler mode.
 
           ## Highlights
-          - Add a separate system compatibility lab on the Android agent with clear read/receive/send and Android 17 OTP policy diagnostics.
-          - Integrate official Shizuku API (13.1.5) Binder availability, per-app opt-in authorization and read-only verification; never execute privileged changes automatically.
-          - Add optional Android 13+ self-managed CompanionDeviceManager associations with explicit OS confirmation and unpair handling.
-          - Provide manual SMS Provider probes, bounded historical reconciliation, OEM battery settings and copyable read-only ADB/Rish diagnostics.
-          - Record redacted, bounded compatibility action audit entries and export them in the diagnostic ZIP.
-          - Keep the default-free SMS companion mode and encrypted Relay behavior intact.
+          - Fix non-default SMS updates: foreground SMS Provider change observer wakes encrypted Relay sync, with existing SMS_RECEIVED and paged recovery preserved.
+          - Make queue and upload states observable: pending messages, upload receipts, successful ACK timestamps, detailed metadata-only errors and retries.
+          - Fix PWA hiding newly uploaded, old-timestamp messages by reconciling latest events by both time and sequence.
+          - Surface actionable decrypt failures for Vault/Node Key mismatches without altering or deleting existing encrypted history.
+          - Add new Android, Relay and PWA diagnostics with regression tests; preserve Shizuku and Companion Device integrations.
 
-          ## Security and compatibility
-          Shizuku authorization and a CDM association do not themselves grant an Android 17 OTP exemption. The app never disables OEM Messages, grants sensitive AppOps, modifies compatibility flags or captures notification OTPs. Hardware validation remains required.
+          ## Safety
+          Missing original Vault or historic Node Keys cannot be reconstructed by the Relay. This release never erases messages or silently re-pairs devices. Always-on foreground service is required for its provider observer. Hardware tests on vivo/OriginOS remain necessary.
 
           ## Host activation
           After migrating the Docker engine to rootless mode, run \`bash scripts/install-updater.sh\`

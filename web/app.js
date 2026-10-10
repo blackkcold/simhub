@@ -700,6 +700,10 @@ function renderDeviceDetail(id) {
     stat(tr('ux_sms_count'),d.smsCount??0)+
     '</div></section>'+
     '<section class="detail-section"><h3>'+escapeHtml(tr('ux_channels'))+'</h3><div class="sim-detail-list">'+(simRows||'<p class="hint">'+escapeHtml(tr('no_subscriptions'))+'</p>')+'</div></section>'+
+    (Array.isArray(s.pendingEventTasks)&&s.pendingEventTasks.length?
+      '<section class="detail-section"><h3>'+escapeHtml(tr('queue_task_preview'))+'</h3><div class="detail-stats">'+
+      s.pendingEventTasks.slice(0,10).map(t=>stat(String(t.kind||'unknown'),fmtTime(t.queuedAt))).join('')+
+      '</div></section>':'')+
     ((s.lastUploadError||s.lastEventQueueError||s.lastSyncError||s.smsProviderError||s.stateCollectionError)?'<section class="detail-section"><h3>'+escapeHtml(tr('ux_sync_warning'))+'</h3><p class="warn detail-error">'+escapeHtml(s.lastUploadError||s.lastEventQueueError||s.lastSyncError||s.smsProviderError||s.stateCollectionError)+'</p></section>':'')+
     ((s.cryptoKeyId&&d.keyId&&s.cryptoKeyId!==d.keyId)?'<section class="detail-section"><p class="warn detail-error">'+escapeHtml(tr('decrypt_issue_device_key_diverged'))+' '+escapeHtml(tr('decrypt_recovery_hint'))+'</p></section>':'')+
     deviceButtons(d);

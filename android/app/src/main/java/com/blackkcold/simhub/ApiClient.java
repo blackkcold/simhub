@@ -37,6 +37,7 @@ public final class ApiClient {
         if(bootstrapProof!=null&&!bootstrapProof.isBlank())b.put("bootstrapProof",bootstrapProof);
         return raw(server+"/api/v1/enroll","POST",b,null,null);
     }
+    /** Coalesced, event-first sync. An idle timer never rescans SMS or regenerates SIM inventory. */
     public void syncCycle(){
         if(cfg.resetPending()){
             if(!SYNC_BUSY.compareAndSet(false,true))return;
@@ -45,52 +46,90 @@ public final class ApiClient {
             return;
         }
         if(!cfg.isEnrolled()||!SYNC_BUSY.compareAndSet(false,true))return;
-        long delay=cfg.nextSyncAllowedAt()-System.currentTimeMillis();
+        long now=System.currentTimeMillis();
+        long delay=cfg.nextSyncAllowedAt()-now;
         if(delay>0){SYNC_BUSY.set(false);SyncJobService.scheduleAfter(c,delay);return;}
-        int pendingBefore=LocalStore.get(c).pendingEventCount();
+        LocalStore store=LocalStore.get(c);
+        int pendingBefore=store.pendingEventCount();
+        boolean maintenance=EnergyPolicy.due(c,"maintenance",EnergyPolicy.maintenanceIntervalMs(),now);
+        boolean reconciliation=EnergyPolicy.due(c,"reconciliation",EnergyPolicy.reconciliationIntervalMs(),now);
+        long changedAt=cfg.lastSmsProviderChangeAt()*1000L;
+        long lastScan=c.getSharedPreferences("simhub_energy_v1",Context.MODE_PRIVATE).getLong("provider_scan",0L);
+        boolean providerDirty=changedAt>0 && changedAt>=lastScan;
+        boolean outstanding=pendingBefore>0 || store.pendingCommandAckCount()>0 ||
+                !cfg.pendingPairId().isBlank();
+        if(!maintenance&&!reconciliation&&!providerDirty&&!outstanding){SYNC_BUSY.set(false);return;}
         try{
             PairingManager.completePending(c);
-            if(checkServerReset())return;
-            rotateDeviceTokenIfNeeded();LocalStore store=LocalStore.get(c);store.recoverStaleClaims();
-            for(String id:store.expireStalePendingSms(48L*3600)){store.finishCommand(id,"failed");store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));}
-            // Priority lane: ACK and inbound remote commands must not wait for an
-            // expensive SMS-provider scan or full historical event upload.
-            flushCommandAcks();fetchCommands();flushCommandAcks();
-            int scanned=0, reconciled=0;
+            if(maintenance&&checkServerReset())return;
+            if(maintenance)rotateDeviceTokenIfNeeded();
+            store.recoverStaleClaims();
+            if(maintenance){
+                for(String id:store.expireStalePendingSms(48L*3600)){
+                    store.finishCommand(id,"failed");
+                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));
+                }
+                // Non-foreground nodes can still claim commands on their durable periodic job.
+                flushCommandAcks();fetchCommands();flushCommandAcks();
+            }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
+            int scanned=0,reconciled=0;
             try{
                 flushEvents();
                 if(store.pendingEventCount()<200){
-                    scanned=SmsHistorySync.sync(c,30);
-                    reconciled=SmsHistorySync.reconcileRecent(c,100);
+                    if(providerDirty||maintenance){
+                        scanned=SmsHistorySync.sync(c,30);
+                        if(scanned>=0)EnergyPolicy.mark(c,"provider_scan",System.currentTimeMillis());
+                    }
+                    if(reconciliation){
+                        reconciled=SmsHistorySync.reconcileRecent(c,100);
+                        if(reconciled>=0&&reconciled<100)
+                            EnergyPolicy.mark(c,"reconciliation",System.currentTimeMillis());
+                    }
                 }
                 flushEvents();
             }catch(SecurityException error){
                 cfg.recordSmsProviderError("SMS_PROVIDER_SECURITY_EXCEPTION");
                 AppLogger.e(c,"ApiClient","Non-critical local SMS synchronization failed",error);
             }
-            try{new SharedPoolClient(c).sync();}
-            catch(Exception poolError){
-                AppLogger.e(c,"SharedPool","Non-critical shared SMS sync failed",poolError);
-                new SharedPoolClient(c).scheduleRetry(poolError);
+            if(maintenance||pendingBefore>0){
+                try{new SharedPoolClient(c).sync();}
+                catch(Exception poolError){
+                    AppLogger.e(c,"SharedPool","Non-critical shared SMS sync failed",poolError);
+                    new SharedPoolClient(c).scheduleRetry(poolError);
+                }
             }
-            putState();heartbeat();cfg.recordSyncSuccess();cfg.resetSyncBackoff();
-            if(scanned>=30||reconciled>=100||store.pendingEventCount()>0)SyncJobService.scheduleAfter(c,5000);
-            if(pendingBefore>0)AppLogger.i(c,"ApiClient","Sync cycle completed pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
+            if(maintenance){
+                putState();heartbeat();
+                EnergyPolicy.mark(c,"maintenance",System.currentTimeMillis());
+            }
+            cfg.recordSyncSuccess();cfg.resetSyncBackoff();
+            if(scanned>=30||reconciled>=100||store.pendingEventCount()>0)
+                SyncJobService.scheduleAfter(c,reconciled>=100?30000:5000);
+            if(pendingBefore>0)
+                AppLogger.i(c,"ApiClient","Sync cycle pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
         }catch(Exception error){
             String reason=error instanceof ApiFailure f?"HTTP "+f.status+" "+f.code:error.getClass().getSimpleName();
-            if(pendingBefore>0 || LocalStore.get(c).pendingEventCount()>0)cfg.recordUploadError(reason);
+            if(pendingBefore>0 || store.pendingEventCount()>0)cfg.recordUploadError(reason);
             cfg.recordSyncError(reason);AppLogger.e(c,"ApiClient","Sync cycle failed",error);
             int attempts=cfg.incrementSyncBackoff();
             long base=error instanceof ApiFailure f&&f.status==429?Math.max(10,f.retryAfter)*1000L:30000L;
             long exponential=Math.min(15L*60*1000,base*(1L<<Math.min(5,attempts-1)));
             long jitter=java.util.concurrent.ThreadLocalRandom.current().nextLong(1000L,Math.max(1001L,base/3));
             long wait=Math.min(15L*60*1000,exponential+jitter);
-            // 4xx other than 408/429 normally require operator intervention:
-            // avoid battery/network hammering while surfacing the failure.
             if(error instanceof ApiFailure f && f.status>=400 && f.status<500 && f.status!=408 && f.status!=429)
                 wait=Math.max(wait,5L*60*1000);
             cfg.setNextSyncAllowedAt(System.currentTimeMillis()+wait);
             SyncJobService.scheduleAfter(c,wait);
+        }finally{SYNC_BUSY.set(false);}
+    }
+    /** Remote command transport never performs an SMS Provider scan or full-state upload. */
+    public void pollCommands(boolean longPoll)throws Exception{
+        if(!cfg.isEnrolled()||cfg.resetPending()||!SYNC_BUSY.compareAndSet(false,true))return;
+        try{
+            if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
+            if(longPoll)waitForCommands();
+            else fetchCommands();
+            if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
         }finally{SYNC_BUSY.set(false);}
     }
     private boolean checkServerReset()throws Exception{
@@ -199,6 +238,8 @@ public final class ApiClient {
         JSONObject r=raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50&wait=15",
             "GET",null,"Device "+cfg.deviceToken(),cfg.deviceId(),22000);
         JSONArray commands=r.optJSONArray("commands");
+        if(commands!=null&&commands.length()>0)
+            new CommandProcessor(c,this).process(commands);
         return commands!=null&&commands.length()>0;
     }
     public void flushCommandAcks()throws Exception{int sent=0;for(JSONObject a:LocalStore.get(c).pendingCommandAcks(100)){String id=a.getString("commandId"),state=a.getString("state");request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+id+"/ack",new JSONObject().put("state",state).put("result",a.optJSONObject("result")==null?new JSONObject():a.optJSONObject("result")));LocalStore.get(c).markCommandAckSent(id,state);sent++;}if(sent>0)AppLogger.i(c,"ApiClient","Uploaded command acknowledgements count="+sent);}

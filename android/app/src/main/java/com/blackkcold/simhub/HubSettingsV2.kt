@@ -32,6 +32,13 @@ class HubToolsState {
     var poolEnabled by mutableStateOf(false)
     var poolApproved by mutableStateOf(false)
     var poolStatus by mutableStateOf("未开启")
+    var compatibilityOpen by mutableStateOf(false)
+    var compatibilityStatus by mutableStateOf<org.json.JSONObject?>(null)
+    var compatibilityBusy by mutableStateOf(false)
+    var compatibilityError by mutableStateOf("")
+    var compatibilityNote by mutableStateOf("")
+    var compatibilityAudit by mutableStateOf("")
+
 }
 
 @Composable
@@ -275,10 +282,27 @@ private fun PreferencesCard(tools:HubToolsState,controller:HubController,modifie
     }
 }
 
+@Composable
+private fun CompatibilityEntry(controller:HubController,modifier:Modifier){
+    ToolSection(hubLabel("系统兼容实验室（高级可选）","System compatibility lab (optional)"),modifier){
+        Text(hubLabel("独立管理 Shizuku、伴侣设备关联、系统短信探测及脱敏日志。不会影响普通配对与短信权限。",
+            "Separate Shizuku, companion pairing, SMS diagnostics and redacted audit. Normal pairing and SMS settings remain unchanged."),
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(10.dp))
+        Button(onClick=controller::openCompatibility,modifier=Modifier.fillMaxWidth()){
+            Text(hubLabel("进入兼容实验室","Open compatibility lab"))
+        }
+    }
+}
+
 /** Responsive two-column settings; no transition to any legacy activity. */
 @Composable
 fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                   controller:HubController,tools:HubToolsState,wide:Boolean){
+    if(tools.compatibilityOpen){
+        HubCompatibilityScreen(state,tools,controller,wide)
+        return
+    }
     BoxWithConstraints(Modifier.fillMaxSize()){
         val twoColumns=wide && maxWidth>=740.dp && maxHeight>=480.dp
         if(twoColumns){
@@ -287,6 +311,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
                     PairedNodeCard(state,pairing,ui,controller,Modifier.fillMaxWidth())
                     PermissionsCard(state,controller,Modifier.fillMaxWidth())
+                    CompatibilityEntry(controller,Modifier.fillMaxWidth())
                     PreferencesCard(tools,controller,Modifier.fillMaxWidth())
                 }
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
@@ -300,6 +325,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 verticalArrangement=Arrangement.spacedBy(14.dp)){
                 PairedNodeCard(state,pairing,ui,controller,Modifier.fillMaxWidth())
                 PermissionsCard(state,controller,Modifier.fillMaxWidth())
+                CompatibilityEntry(controller,Modifier.fillMaxWidth())
                 RelayRuntimeCard(state,controller,Modifier.fillMaxWidth())
                 SharingCard(state,tools,controller,Modifier.fillMaxWidth())
                 DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())

@@ -94,7 +94,8 @@ public final class StateCollector {
             boolean sendPermission=c.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED;
             o.put("smsRoleHeld",smsRole).put("smsMode",smsRole?"default":"companion")
                     .put("smsReceivePermission",recvPermission).put("smsReadPermission",readPermission)
-                    .put("smsSendPermission",sendPermission);
+                    .put("smsSendPermission",sendPermission)
+                    .put("smsSendAllowed",SmsSendPolicy.canSend(c));
             JSONArray subscriptions=new JSONArray(),channels=new JSONArray(),phoneNumbers=new JSONArray();
             if(c.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)==PackageManager.PERMISSION_GRANTED){
                 SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);
@@ -132,11 +133,13 @@ public final class StateCollector {
                     channels.put(new JSONObject(x.toString()).put("id",ch.channelId).put("localId",String.valueOf(sub)).put("kind","android-sim").put("revision",ch.revision));
                 }
             }
-            o.put("smsOperational",readPermission&&recvPermission&&sendPermission&&subscriptions.length()>0);
+            o.put("smsReceiveOperational",readPermission&&recvPermission&&subscriptions.length()>0);
+            o.put("smsSendOperational",SmsSendPolicy.canSend(c)&&subscriptions.length()>0);
+            o.put("smsOperational",readPermission&&recvPermission&&subscriptions.length()>0);
             o.put("subscriptions",subscriptions)
                     .put("channels",channels)
                     .put("nodeType","android")
-                    .put("capabilities",new JSONArray().put("sms.receive").put("sms.send").put("sms.history").put("signal.basic").put("signal.radio").put("dual-sim"));
+                    .put("capabilities",(SmsSendPolicy.canSend(c)?new JSONArray().put("sms.receive").put("sms.send"):new JSONArray().put("sms.receive")).put("sms.history").put("signal.basic").put("signal.radio").put("dual-sim"));
             if(cfg.isEnrolled()){
                 CryptoBox crypt=new CryptoBox(c);
                 o.put("cryptoKeyId",crypt.keyId()).put("cryptoKeyMode",cfg.hasIndependentNodeKey()?"node":"legacy-derived");

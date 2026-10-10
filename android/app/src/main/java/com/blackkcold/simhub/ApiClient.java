@@ -39,6 +39,8 @@ public final class ApiClient {
     }
     public void syncCycle(){
         if(cfg.resetPending()){
+            // A credential mismatch requires explicit recovery, not an endless job loop.
+            if(cfg.resetRecoveryRequired())return;
             if(!SYNC_BUSY.compareAndSet(false,true))return;
             try{performPendingReset();}
             finally{SYNC_BUSY.set(false);}
@@ -112,6 +114,22 @@ public final class ApiClient {
             throw error;
         }
     }
+    private void completeResetLocally(boolean notifyRemote){
+        EnrollmentManager.reset(c);
+        cfg.resetSyncBackoff();
+        if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
+        AppLogger.i(c,"Enrollment","Device reset confirmed; local credentials cleared");
+    }
+    /**
+     * A 401 on the reset route is NOT proof of deletion: revoked/rotated
+     * credentials can produce the same response. Verify the original token
+     * against the server's bounded deletion tombstone first.
+     */
+    private boolean confirmedDeletedByLifecycle()throws Exception{
+        JSONObject state=raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/lifecycle",
+            "GET",null,"Device "+cfg.deviceToken(),cfg.deviceId());
+        return false; // 200 is active or awaiting reset, never a deletion receipt.
+    }
     private void performPendingReset(){
         long delay=cfg.nextSyncAllowedAt()-System.currentTimeMillis();
         if(delay>0){SyncJobService.scheduleAfter(c,delay);return;}
@@ -120,15 +138,36 @@ public final class ApiClient {
             requireHttps(cfg.server());
             raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/reset","POST",new JSONObject(),
                 "Device "+cfg.deviceToken(),cfg.deviceId());
-            EnrollmentManager.reset(c);
-            cfg.resetSyncBackoff();
-            if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
-            AppLogger.i(c,"Enrollment","Server confirmed reset; local data cleared");
+            completeResetLocally(notifyRemote);
         }catch(ApiFailure failure){
             if(failure.status==410){
-                EnrollmentManager.reset(c);
-                if(notifyRemote){new AgentConfig(c).markRemoteResetNotified();NotificationHelper.postRemoteReset(c);}
-                AppLogger.i(c,"Enrollment","Server already deleted device; local data cleared");
+                completeResetLocally(notifyRemote);
+                return;
+            }
+            if(failure.status==401||failure.status==403||failure.status==404){
+                try{
+                    if(confirmedDeletedByLifecycle()){
+                        completeResetLocally(notifyRemote);
+                        return;
+                    }
+                    // A 200 lifecycle with a failing reset is a real protocol
+                    // conflict. Surface recovery rather than hiding it behind UI.
+                    cfg.markResetRecoveryRequired();
+                    cfg.recordSyncError("reset_recovery_required");
+                    AppLogger.e(c,"Enrollment","Reset denied although lifecycle remains active",failure);
+                }catch(ApiFailure stateFailure){
+                    if(stateFailure.status==410){
+                        completeResetLocally(notifyRemote);
+                        return;
+                    }
+                    if(stateFailure.status==401||stateFailure.status==403||stateFailure.status==404){
+                        cfg.markResetRecoveryRequired();
+                        cfg.recordSyncError("reset_recovery_required");
+                        AppLogger.e(c,"Enrollment","Cannot verify reset; user recovery required",stateFailure);
+                    }else retryPendingReset(stateFailure);
+                }catch(Exception networkFailure){
+                    retryPendingReset(networkFailure);
+                }
                 return;
             }
             retryPendingReset(failure);

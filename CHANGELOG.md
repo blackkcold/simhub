@@ -1,3 +1,16 @@
+## v0.13.1 — Reliable SMS ingestion, command delivery and adaptive energy UI
+
+- Fix a same-second SMS Provider notification race using a monotonic change generation and acknowledgement of only the generation observed before scanning.
+- Scan the latest 100 Provider rows after a dirty event to recover messages the system persisted with a date earlier than the incremental history cursor.
+- Read and stage SMS into the encrypted local queue before Relay networking, including during upload retry backoff; immediate/Provider follow-up jobs have no network prerequisite. Resume upload after validated connectivity returns.
+- Retrieve remote commands independently of 15-minute device telemetry; Balanced foreground checks use about 45 seconds when interactive and 2 minutes otherwise. Devices without a working foreground listener schedule best-effort durable command fallback.
+- Distinguish the foreground-relay enabled preference from actual listener liveness; update mode scheduling without stopping the Android foreground service.
+- Add manual command check + SMS sync, command retrieval/error checkpoints, Provider change/scan diagnostics and server-side expiration of stale queued commands.
+- Replace truncated horizontal power chips with responsive, fully clickable, vertically stacked Material 3 radio cards with native vector symbols.
+- Preserve encryption, device/command idempotency, Android 17 OTP restrictions, app OTA independence and secure v0.12.2 unpair recovery.
+
+**Verification:** Software CI/CodeQL can verify source behavior, but real-device Doze, OEM power policy and SMS timing require field testing. No automatic push service is configured in the APK.
+
 ## v0.13.0 — Android energy-aware event-driven relay
 
 - Introduce Eco / Balanced / Realtime profiles, with Battery Saver auto-throttling unless explicit Realtime is selected.

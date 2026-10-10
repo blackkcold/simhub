@@ -31,7 +31,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.13.1"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -614,7 +614,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -1983,7 +1983,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
         """Safe controller progress read: state/result metadata, never ciphertext."""
         try: limit=max(1,min(int(q.get("limit",["20"])[0]),50))
         except ValueError: limit=20
+        ts=now()
         with open_db() as con:
+            # Commands must expire even if the Android node never reconnects.
+            # Otherwise the controller displays a phantom 'queued' task forever.
+            con.execute("UPDATE commands SET state='expired',ack_at=? WHERE state IN ('queued','dispatched') AND expires_at<=?",
+                        (ts,ts))
             rows=con.execute("SELECT id,device_id,type,created_at,expires_at,ack_at,state,result_json FROM commands ORDER BY seq DESC LIMIT ?",(limit,)).fetchall()
         self.send_json(200,{"commands":[{"commandId":r["id"],"deviceId":r["device_id"],"type":r["type"],"createdAt":r["created_at"],"expiresAt":r["expires_at"],"ackAt":r["ack_at"],"state":r["state"],"result":safe_json_loads(r["result_json"],{})} for r in rows]})
 

@@ -19,6 +19,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RelayForegroundService extends Service {
+    public static final String ACTION_RELAY_STATE="com.blackkcold.simhub.RELAY_STATE";
     private static volatile RelayForegroundService ACTIVE;
     private final AtomicBoolean urgentQueued=new AtomicBoolean(false);
     private final AtomicBoolean urgentAgain=new AtomicBoolean(false);
@@ -28,6 +29,7 @@ public final class RelayForegroundService extends Service {
     private ScheduledFuture<?> maintenanceTask;
     private ScheduledFuture<?> commandTask;
     private int commandFailures=0;
+    private volatile long policyEpoch=0;
     private final Handler providerHandler=new Handler(Looper.getMainLooper());
     private long lastProviderWake=0L;
     private final ContentObserver providerObserver=new ContentObserver(providerHandler){
@@ -55,6 +57,22 @@ public final class RelayForegroundService extends Service {
     public static void start(Context c){new AgentConfig(c).setAlwaysOn(true);AppLogger.i(c,"RelayService","Always-on relay enabled");resume(c);}
     public static void resume(Context c){Intent i=new Intent(c,RelayForegroundService.class);if(Build.VERSION.SDK_INT>=26)c.startForegroundService(i);else c.startService(i);}
     public static void stop(Context c){new AgentConfig(c).setAlwaysOn(false);AppLogger.i(c,"RelayService","Always-on relay disabled");c.stopService(new Intent(c,RelayForegroundService.class));}
+    public static boolean isRunning(){
+        RelayForegroundService service=ACTIVE;
+        return service!=null&&!service.exec.isShutdown();
+    }
+    /** Reconfigure timers in place: no foreground-service stop/start or lost observation window. */
+    public static void policyChanged(Context c){
+        RelayForegroundService service=ACTIVE;
+        if(service!=null)service.rescheduleCommands();
+        else if(new AgentConfig(c).alwaysOn())SyncJobService.scheduleNow(c);
+    }
+    private synchronized void rescheduleCommands(){
+        policyEpoch++;
+        if(commandTask!=null)commandTask.cancel(false);
+        commandFailures=0;
+        scheduleCommand(0);
+    }
     public static void kick(Context c){
         RelayForegroundService live=ACTIVE;
         if(live==null||live.exec.isShutdown()){SyncJobService.scheduleNow(c);return;}
@@ -79,6 +97,7 @@ public final class RelayForegroundService extends Service {
         else startForeground(4101,NotificationHelper.relay(this));
         if(!new AgentConfig(this).alwaysOn()){stopSelf();return;}
         ACTIVE=this;
+        sendBroadcast(new Intent(ACTION_RELAY_STATE).setPackage(getPackageName()));
         AppLogger.i(this,"RelayService","Foreground relay service started");
         registerSmsObserver();
         // JobScheduler is the durable recovery mechanism. The foreground service
@@ -91,6 +110,7 @@ public final class RelayForegroundService extends Service {
     }
     private synchronized void scheduleCommand(long delayMs){
         if(exec.isShutdown()||!new AgentConfig(this).alwaysOn())return;
+        long plannedEpoch=policyEpoch;
         commandTask=exec.schedule(()->{
             long next=EnergyPolicy.commandIntervalMs(this);
             try{
@@ -101,6 +121,9 @@ public final class RelayForegroundService extends Service {
                 }
             }catch(Exception error){
                 EnergyPolicy.increment(this,"commandPollErrors");
+                new AgentConfig(this).recordCommandFetchError(
+                    error instanceof ApiClient.ApiFailure failure ?
+                        "HTTP_"+failure.status+"_"+failure.code:error.getClass().getSimpleName());
                 AppLogger.e(this,"RelayService","Command check failed",error);
                 commandFailures=Math.min(8,commandFailures+1);
                 long backoff=Math.min(15L*60*1000,30000L*(1L<<Math.min(5,commandFailures-1)));
@@ -109,7 +132,7 @@ public final class RelayForegroundService extends Service {
                 next=Math.max(next,backoff);
             }finally{
                 // Idle balanced and eco modes do not keep an HTTP long-poll open.
-                scheduleCommand(next);
+                if(plannedEpoch==policyEpoch)scheduleCommand(next);
             }
         },Math.max(0,delayMs),TimeUnit.MILLISECONDS);
     }
@@ -125,6 +148,7 @@ public final class RelayForegroundService extends Service {
         if(commandTask!=null)commandTask.cancel(true);
         exec.shutdownNow();
         if(ACTIVE==this)ACTIVE=null;
+        sendBroadcast(new Intent(ACTION_RELAY_STATE).setPackage(getPackageName()));
         super.onDestroy();
     }
     @Override public IBinder onBind(Intent intent){return null;}

@@ -33,8 +33,10 @@ public final class SyncJobService extends JobService {
             if(scheduler==null)return;
             if(!RUNNING.isEmpty()){DIRTY.set(true);return;}
             if(scheduler.getPendingJob(ONCE)!=null)return;
+            // Incoming SMS must be encrypted into the local queue even when
+            // cellular data / Wi-Fi is disconnected.
             JobInfo j=new JobInfo.Builder(ONCE,new ComponentName(c,SyncJobService.class))
-                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build();
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_NONE).build();
             scheduler.schedule(j);
         }catch(Exception e){AppLogger.e(c,"SyncJob","Immediate scheduling failed",e);}
     }
@@ -50,8 +52,9 @@ public final class SyncJobService extends JobService {
             long due=SystemClock.elapsedRealtime()+delay;
             if(scheduler.getPendingJob(next)!=null&&DELAYED_AT[slot]>0&&DELAYED_AT[slot]<=due)return;
             DELAYED_AT[slot]=due;
+            // A delayed Provider rescan must not wait for network availability.
             JobInfo job=new JobInfo.Builder(next,new ComponentName(c,SyncJobService.class))
-                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setMinimumLatency(delay).build();
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_NONE).setMinimumLatency(delay).build();
             scheduler.schedule(job);
         }catch(Exception e){AppLogger.e(c,"SyncJob","Delayed scheduling failed",e);}
     }

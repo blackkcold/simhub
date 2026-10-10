@@ -66,6 +66,7 @@ interface HubController {
     fun startPairing(server:String)
     fun setRealtime(value:Boolean)
     fun setEnergyMode(mode:String)
+    fun syncNow()
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
     fun requestContacts()
@@ -117,7 +118,8 @@ class HubActivity: ComponentActivity(), HubController {
     private val poolObserver=object:BroadcastReceiver(){
         override fun onReceive(context:Context?,intent:Intent?){
             if(intent?.action==SharedPoolClient.ACTION_CACHE_UPDATED ||
-                intent?.action==EnrollmentManager.ACTION_ENROLLMENT_CHANGED){
+                intent?.action==EnrollmentManager.ACTION_ENROLLMENT_CHANGED ||
+                intent?.action==RelayForegroundService.ACTION_RELAY_STATE){
                 refreshHandler.removeCallbacks(refreshAfterChange)
                 refreshHandler.postDelayed(refreshAfterChange,350)
             }
@@ -206,8 +208,16 @@ class HubActivity: ComponentActivity(), HubController {
         super.onStart()
         val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
         poolFilter.addAction(EnrollmentManager.ACTION_ENROLLMENT_CHANGED)
+        poolFilter.addAction(RelayForegroundService.ACTION_RELAY_STATE)
         if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(poolObserver,poolFilter)
+        // User-visible startup is permitted; recover an explicitly enabled
+        // foreground relay if the OEM previously killed its process.
+        if(AgentConfig(this).alwaysOn()&&AgentConfig(this).isEnrolled()&&
+            !RelayForegroundService.isRunning()){
+            try{RelayForegroundService.resume(this)}
+            catch(error:Exception){AppLogger.e(this,"Relay","Foreground recovery blocked",error)}
+        }
         try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}
         catch(error:SecurityException){AppLogger.e(this,"HubSms","SMS observer permission denied",error)}
         if(AppUpdater.shouldCheck(this)){
@@ -256,6 +266,7 @@ class HubActivity: ComponentActivity(), HubController {
             try{
                 val next=withContext(Dispatchers.IO){HubRepository.snapshot(applicationContext,smsLimit)}
                 snapshot=next
+                tools.relayAlive=RelayForegroundService.isRunning()
                 val pool=SharedPoolClient(applicationContext)
                 tools.poolEnabled=pool.optedIn()
                 tools.poolApproved=pool.approved()
@@ -377,11 +388,8 @@ class HubActivity: ComponentActivity(), HubController {
             EnergyPolicy.resetSchedule(this)
             tools.energyMode=mode
             SyncJobService.scheduleNow(this)
-            // Restart the opt-in foreground service so no stale timer survives.
-            if(AgentConfig(this).alwaysOn()){
-                stopService(Intent(this,RelayForegroundService::class.java))
-                RelayForegroundService.resume(this)
-            }
+            // Replan command checks without tearing down Provider observers or TLS.
+            RelayForegroundService.policyChanged(this)
             refresh()
         }catch(error:Exception){toast(UiErrors.message(this,error))}
     }
@@ -395,6 +403,31 @@ class HubActivity: ComponentActivity(), HubController {
         }catch(e:Exception){
             AppLogger.e(this,"Relay","Foreground service toggle failed",e)
             toast(UiErrors.message(this,e))
+        }
+    }
+    override fun syncNow(){
+        if(!AgentConfig(this).isEnrolled()){toast(getString(R.string.enroll_first));return}
+        lifecycleScope.launch {
+            try{
+                val result=withContext(Dispatchers.IO){
+                    val app=applicationContext
+                    val inspected=SmsHistorySync.syncRecent(app,100)
+                    if(inspected<0)throw IllegalStateException("SMS_PROVIDER_NOT_READABLE")
+                    val api=ApiClient(app)
+                    api.pollCommands(false)
+                    api.syncCycle()
+                    SyncJobService.scheduleNow(app)
+                    Pair(inspected,LocalStore.get(app).pendingEventCount())
+                }
+                toast(actionLabel(
+                    "检查了 ${result.first} 条短信；剩余 ${result.second} 条待上传。命令检查已完成。",
+                    "Inspected ${result.first} SMS; ${result.second} uploads pending. Command check completed."))
+                refresh()
+            }catch(error:Exception){
+                AppLogger.e(this@HubActivity,"ManualSync","Manual command/SMS check failed",error)
+                toast(UiErrors.message(this@HubActivity,error))
+                refresh()
+            }
         }
     }
     override fun syncHistory(older:Boolean){

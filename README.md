@@ -14,7 +14,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 [![Release](https://img.shields.io/github/v/release/blackkcold/simhub)](https://github.com/blackkcold/simhub/releases/latest)
 [![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
 
-Android v0.13.0 adds adaptive Eco / Balanced / Realtime energy modes, event-driven SMS sync and low-frequency background maintenance. v0.12.2 standalone signed APK updates and safe unpair recovery remain available.
+Android v0.13.1 fixes delayed SMS ingestion and queued remote commands, with adaptive Balanced command checks (45s interactive / 120s idle), accessible icon-based energy cards and safe manual retry diagnostics. Android release updates still work without pairing.
 
 **[Download Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[Quick deployment](docs/QUICKSTART.zh-CN.md)** · [Installation guide](docs/INSTALLATION.md)
 

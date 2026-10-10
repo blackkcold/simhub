@@ -91,6 +91,18 @@ public final class AgentConfig {
     public void recordSmsProviderError(String reason){prefs.edit().putString("sms_provider_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
     public void clearSmsProviderError(){prefs.edit().remove("sms_provider_error").apply();}
     public String smsProviderError(){return prefs.getString("sms_provider_error","");}
+    public void recordCommandFetch(int count){
+        prefs.edit().putLong("last_command_fetch_at",System.currentTimeMillis()/1000)
+                .putInt("last_command_fetch_count",Math.max(0,count))
+                .remove("last_command_fetch_error").apply();
+    }
+    public void recordCommandFetchError(String reason){
+        prefs.edit().putString("last_command_fetch_error",
+                reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();
+    }
+    public long lastCommandFetchAt(){return prefs.getLong("last_command_fetch_at",0);}
+    public int lastCommandFetchCount(){return prefs.getInt("last_command_fetch_count",0);}
+    public String lastCommandFetchError(){return prefs.getString("last_command_fetch_error","");}
     public void recordSyncSuccess(){prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
     public void recordSyncError(String reason){prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
     public void recordSmsBroadcast(){
@@ -98,7 +110,25 @@ public final class AgentConfig {
     }
     public long lastSmsBroadcastAt(){return prefs.getLong("last_sms_broadcast_at",0L);}
     // Metadata-only pipeline checkpoints. Counts never include SMS body or number.
-    public void recordSmsProviderChange(){prefs.edit().putLong("last_sms_provider_change",System.currentTimeMillis()/1000).apply();}
+    // A monotonic generation avoids losing Provider notifications that share a second
+    // with a completed scan. All AgentConfig instances serialize on this same lock.
+    private static final Object SMS_CHANGE_LOCK=new Object();
+    public void recordSmsProviderChange(){
+        synchronized(SMS_CHANGE_LOCK){
+            long next=prefs.getLong("sms_change_generation",0)+1;
+            prefs.edit().putLong("sms_change_generation",next)
+                    .putLong("last_sms_provider_change",System.currentTimeMillis()/1000).apply();
+        }
+    }
+    public long smsChangeGeneration(){return prefs.getLong("sms_change_generation",0);}
+    public long smsScannedGeneration(){return prefs.getLong("sms_scanned_generation",0);}
+    /** Commit only the generation observed before the scan; later events remain dirty. */
+    public void markSmsScanned(long observed){
+        synchronized(SMS_CHANGE_LOCK){
+            if(observed>prefs.getLong("sms_scanned_generation",0))
+                prefs.edit().putLong("sms_scanned_generation",observed).apply();
+        }
+    }
     public long lastSmsProviderChangeAt(){return prefs.getLong("last_sms_provider_change",0L);}
     public void recordUploadAttempt(){prefs.edit().putLong("last_upload_attempt_at",System.currentTimeMillis()/1000).apply();}
     public long lastUploadAttemptAt(){return prefs.getLong("last_upload_attempt_at",0L);}

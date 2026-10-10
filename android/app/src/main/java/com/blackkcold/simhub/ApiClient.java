@@ -47,6 +47,9 @@ public final class ApiClient {
             return;
         }
         if(!cfg.isEnrolled())return;
+        // Nodes without a foreground relay require an independent, durable
+        // command check. Android may defer this work in Doze.
+        if(!RelayForegroundService.isRunning())SyncJobService.scheduleAfter(c,EnergyPolicy.commandFallbackIntervalMs(c));
         if(!SYNC_BUSY.compareAndSet(false,true)){
             // A concurrent command request must not cause SMS upload to be lost.
             SyncJobService.scheduleAfter(c,12000L);
@@ -54,42 +57,45 @@ public final class ApiClient {
         }
         long now=System.currentTimeMillis();
         long delay=cfg.nextSyncAllowedAt()-now;
-        if(delay>0){SYNC_BUSY.set(false);SyncJobService.scheduleAfter(c,delay);return;}
         LocalStore store=LocalStore.get(c);
         int pendingBefore=store.pendingEventCount();
         boolean maintenance=EnergyPolicy.due(c,"maintenance",EnergyPolicy.maintenanceIntervalMs(),now);
         boolean reconciliation=EnergyPolicy.due(c,"reconciliation",EnergyPolicy.reconciliationIntervalMs(),now);
-        long changedAt=cfg.lastSmsProviderChangeAt()*1000L;
-        long lastScan=c.getSharedPreferences("simhub_energy_v1",Context.MODE_PRIVATE).getLong("provider_scan",0L);
-        boolean providerDirty=changedAt>0 && changedAt>=lastScan;
+        // Generation is captured BEFORE reading Provider. Notifications received
+        // during the query increment the counter and remain pending afterward.
+        long providerGeneration=cfg.smsChangeGeneration();
+        boolean providerDirty=providerGeneration>cfg.smsScannedGeneration();
         long followupAt=EnergyPolicy.providerFollowupAt(c);
         if(followupAt>now)SyncJobService.scheduleAfter(c,followupAt-now);
         boolean providerFollowup=followupAt>0&&followupAt<=now;
         boolean poolRetry=new SharedPoolClient(c).retryDue();
+        boolean commandFallback=!RelayForegroundService.isRunning() &&
+                EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
         boolean outstanding=poolRetry || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
-        if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding){SYNC_BUSY.set(false);return;}
+        if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding&&!commandFallback){
+            SYNC_BUSY.set(false);return;
+        }
         try{
-            PairingManager.completePending(c);
-            if(maintenance&&checkServerReset())return;
-            if(maintenance)rotateDeviceTokenIfNeeded();
-            store.recoverStaleClaims();
-            if(maintenance){
-                for(String id:store.expireStalePendingSms(48L*3600)){
-                    store.finishCommand(id,"failed");
-                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));
-                }
-                // Non-foreground nodes can still claim commands on their durable periodic job.
-                flushCommandAcks();fetchCommands();flushCommandAcks();
-            }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
+            // Local Provider staging is independent of Relay/network availability,
+            // including an active HTTP retry backoff. Never block a received SMS
+            // from entering the encrypted SQLite queue on remote API failure.
             int scanned=0,reconciled=0;
             try{
-                flushEvents();
+                // Stage the SMS locally BEFORE network I/O. A failed upload
+                // must never prevent the Provider cursor from being inspected.
                 if(store.pendingEventCount()<200){
                     if(providerDirty||providerFollowup||maintenance){
                         scanned=SmsHistorySync.sync(c,30);
+                        if(scanned>=0 && (providerDirty||providerFollowup)){
+                            // Late Provider writes may have dates at/before the
+                            // incremental cursor. The latest-100 bounded rescan
+                            // covers those rows without re-encrypting receipts.
+                            int inspected=SmsHistorySync.syncRecent(c,100);
+                            if(inspected<0)scanned=-1;
+                        }
                         if(scanned>=0){
-                            EnergyPolicy.mark(c,"provider_scan",System.currentTimeMillis());
+                            cfg.markSmsScanned(providerGeneration);
                             if(providerFollowup)EnergyPolicy.finishProviderFollowup(c);
                         }
                     }
@@ -100,11 +106,32 @@ public final class ApiClient {
                             EnergyPolicy.mark(c,"reconciliation",System.currentTimeMillis());
                     }
                 }
-                flushEvents();
             }catch(SecurityException error){
                 cfg.recordSmsProviderError("SMS_PROVIDER_SECURITY_EXCEPTION");
                 AppLogger.e(c,"ApiClient","Non-critical local SMS synchronization failed",error);
             }
+            if(delay>0){
+                SyncJobService.scheduleAfter(c,delay);
+                return;
+            }
+            PairingManager.completePending(c);
+            if(maintenance&&checkServerReset())return;
+            if(maintenance)rotateDeviceTokenIfNeeded();
+            store.recoverStaleClaims();
+            if(maintenance){
+                for(String id:store.expireStalePendingSms(48L*3600)){
+                    store.finishCommand(id,"failed");
+                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));
+                }
+            }
+            // Remote commands are NOT tied to SIM inventory/heartbeat cadence.
+            // Foreground nodes poll via CommandTransport, others use durable
+            // best-effort jobs; do not discard a queued command for 15 minutes.
+            if(maintenance||commandFallback){
+                flushCommandAcks();fetchCommands();flushCommandAcks();
+                if(commandFallback)EnergyPolicy.mark(c,"command_fallback",System.currentTimeMillis());
+            }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
+            flushEvents();
             if(maintenance||pendingBefore>0||poolRetry){
                 try{new SharedPoolClient(c).sync();}
                 catch(Exception poolError){
@@ -118,7 +145,8 @@ public final class ApiClient {
                 EnergyPolicy.increment(c,"maintenanceRuns");
             }
             cfg.recordSyncSuccess();cfg.resetSyncBackoff();
-            if(scanned>=30||reconciled>=100||store.pendingEventCount()>0)
+            boolean unscannedProvider=providerDirty&&cfg.smsScannedGeneration()<providerGeneration;
+            if(scanned>=30||reconciled>=100||store.pendingEventCount()>0||unscannedProvider)
                 SyncJobService.scheduleAfter(c,reconciled>=100?30000:5000);
             if(pendingBefore>0)
                 AppLogger.i(c,"ApiClient","Sync cycle pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
@@ -147,7 +175,14 @@ public final class ApiClient {
                 RelayForegroundService.kick(c);
             return;
         }
-        if(!SYNC_BUSY.compareAndSet(false,true))return;
+        if(!SYNC_BUSY.compareAndSet(false,true)){
+            // Never report a manual remote check as successful when no server
+            // request actually occurred. Persist a scheduled retry and surface
+            // the contention to diagnostics and the foreground transport.
+            SyncJobService.scheduleAfter(c,3000);
+            cfg.recordCommandFetchError("command_sync_busy");
+            throw new IOException("Command check busy; retry scheduled");
+        }
         boolean pending=false;
         try{
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
@@ -298,12 +333,13 @@ public final class ApiClient {
         JSONObject r=raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50&wait=15",
             "GET",null,"Device "+cfg.deviceToken(),cfg.deviceId(),22000);
         JSONArray commands=r.optJSONArray("commands");
+        cfg.recordCommandFetch(commands==null?0:commands.length());
         if(commands!=null&&commands.length()>0)
             new CommandProcessor(c,this).process(commands);
         return commands!=null&&commands.length()>0;
     }
     public void flushCommandAcks()throws Exception{int sent=0;for(JSONObject a:LocalStore.get(c).pendingCommandAcks(100)){String id=a.getString("commandId"),state=a.getString("state");request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+id+"/ack",new JSONObject().put("state",state).put("result",a.optJSONObject("result")==null?new JSONObject():a.optJSONObject("result")));LocalStore.get(c).markCommandAckSent(id,state);sent++;}if(sent>0)AppLogger.i(c,"ApiClient","Uploaded command acknowledgements count="+sent);}
-    public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
+    public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");cfg.recordCommandFetch(arr==null?0:arr.length());if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
     public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}
     public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("osVersion",Build.VERSION.RELEASE));}
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}

@@ -30,12 +30,22 @@ public final class EnergyPolicy {
         return pm != null && pm.isPowerSaveMode() ? ECO : mode(c);
     }
     public static long commandIntervalMs(Context c) {
-        return commandIntervalMs(effectiveMode(c));
+        String mode=effectiveMode(c);
+        PowerManager pm=c.getSystemService(PowerManager.class);
+        return commandIntervalMs(mode,pm!=null&&pm.isInteractive());
+    }
+    /** Pure scheduling rule, testable without an Android device. */
+    public static long commandIntervalMs(String mode,boolean interactive) {
+        return BALANCED.equals(mode)&&interactive?45_000L:commandIntervalMs(mode);
+    }
+    /** Best effort only: JobScheduler/Doze do not promise exact deadlines. */
+    public static long commandFallbackIntervalMs(Context c) {
+        return ECO.equals(effectiveMode(c)) ? 14L*60*1000 : 2L*60*1000;
     }
     public static long commandIntervalMs(String mode) {
         if (REALTIME.equals(mode)) return 15000L; // Server-side long-poll blocks at most 15 s.
         if (ECO.equals(mode)) return 14L * 60 * 1000;
-        return 2L * 60 * 1000;
+        return 2L * 60 * 1000; // Noninteractive background cadence.
     }
     public static long maintenanceIntervalMs() { return 15L * 60 * 1000; }
     public static long reconciliationIntervalMs() { return 30L * 60 * 1000; }

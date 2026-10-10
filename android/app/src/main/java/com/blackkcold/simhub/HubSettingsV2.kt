@@ -1,6 +1,10 @@
 package com.blackkcold.simhub
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +26,7 @@ import androidx.compose.ui.unit.sp
  */
 class HubToolsState {
     var energyMode by mutableStateOf(EnergyPolicy.BALANCED)
+    var relayAlive by mutableStateOf(false)
     var developer by mutableStateOf(false)
     var logs by mutableStateOf("")
     var diagnostics by mutableStateOf("")
@@ -154,36 +159,80 @@ private fun PermissionsCard(state:HubSnapshot?,controller:HubController,modifier
     }
 }
 
+/** Whole-surface radio cards; never truncate the profile label on narrow phones. */
+@Composable
+private fun EnergyModeChoice(
+    value:String,title:String,summary:String,cadence:String,icon:Int,
+    selected:Boolean,onSelect:()->Unit
+){
+    val scheme=MaterialTheme.colorScheme
+    Surface(
+        onClick=onSelect,
+        modifier=Modifier.fillMaxWidth().heightIn(min=108.dp).semantics { this.selected=selected },
+        shape=RoundedCornerShape(18.dp),
+        color=if(selected)scheme.secondaryContainer else scheme.surface,
+        border=BorderStroke(if(selected)2.dp else 1.dp,
+            if(selected)scheme.primary else scheme.outlineVariant)
+    ){
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=14.dp),
+            horizontalArrangement=Arrangement.spacedBy(12.dp),
+            verticalAlignment=Alignment.CenterVertically
+        ){
+            Box(
+                Modifier.size(48.dp).background(
+                    if(selected)scheme.primary.copy(alpha=0.10f) else scheme.surfaceVariant,
+                    RoundedCornerShape(14.dp)),
+                contentAlignment=Alignment.Center
+            ){
+                HubIcon(icon,Modifier.size(26.dp),
+                    tint=if(selected)scheme.primary else scheme.onSurfaceVariant)
+            }
+            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                Text(title,style=MaterialTheme.typography.titleSmall,
+                    fontWeight=FontWeight.SemiBold)
+                Text(summary,style=MaterialTheme.typography.bodySmall,
+                    color=scheme.onSurfaceVariant)
+                Text(cadence,style=MaterialTheme.typography.labelSmall,
+                    color=if(selected)scheme.primary else scheme.onSurfaceVariant)
+            }
+            RadioButton(selected=selected,onClick=null)
+        }
+    }
+}
+
 @Composable
 private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:HubToolsState,modifier:Modifier){
     ToolSection(hubLabel("运行与短信同步","Runtime & synchronization"),modifier){
-        Text(hubLabel("后台能耗管理","Background energy policy"),fontWeight=FontWeight.Medium)
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement=Arrangement.spacedBy(6.dp),modifier=Modifier.fillMaxWidth()){
-            val options=listOf(
-                EnergyPolicy.ECO to hubLabel("极致省电","Eco"),
-                EnergyPolicy.BALANCED to hubLabel("智能均衡","Balanced"),
-                EnergyPolicy.REALTIME to hubLabel("实时优先","Realtime"))
-            for((value,label) in options){
-                FilterChip(selected=tools.energyMode==value,
-                    onClick={controller.setEnergyMode(value)},
-                    label={Text(label,maxLines=1,overflow=TextOverflow.Ellipsis)},
-                    modifier=Modifier.weight(1f))
-            }
-        }
-        Text(when(tools.energyMode){
-            EnergyPolicy.ECO->hubLabel(
-                "后台命令检查约 14 分钟一次；无推送时，短时效远程命令可能过期。短信事件仍单独调度。",
-                "Commands are checked approximately every 14 minutes. Without push, short-lived remote commands may expire. Incoming SMS still schedules upload.")
-            EnergyPolicy.REALTIME->hubLabel(
-                "前台常驻时启用 15 秒长轮询，仅用于命令，不重复扫描短信。耗电相对较高。",
-                "With foreground relay enabled, 15-second long polling handles commands only. Battery use is higher.")
-            else->hubLabel(
-                "默认约 2 分钟检查远程命令，普通设备状态每 15 分钟维护，短信按事件上传。省电模式下自动降频。",
-                "Commands checked about every 2 minutes; state maintenance every 15 minutes. SMS is event-triggered; battery saver throttles polling.")
-        },style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(hubLabel("后台能耗管理","Background energy policy"),
+            fontWeight=FontWeight.SemiBold)
+        Text(hubLabel(
+            "选择能耗与远程控制响应策略。短信接收始终优先处理；具体执行时间仍受 Android 后台限制。",
+            "Choose a battery/remote-command strategy. SMS ingestion stays prioritized; Android may delay background work."),
+            style=MaterialTheme.typography.bodySmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
-
+        Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            EnergyModeChoice(
+                EnergyPolicy.ECO,hubLabel("极致省电","Eco"),
+                hubLabel("降低后台网络频率，适合备用手机。","Minimize background network work."),
+                hubLabel("远程命令约每 14 分钟检查","Commands about every 14 minutes"),
+                R.drawable.ic_hub_eco,tools.energyMode==EnergyPolicy.ECO,
+                {controller.setEnergyMode(EnergyPolicy.ECO)})
+            EnergyModeChoice(
+                EnergyPolicy.BALANCED,hubLabel("智能均衡","Balanced"),
+                hubLabel("短信按事件上传，远程命令根据屏幕状态调整。","Event-driven SMS, adaptive remote command checks."),
+                hubLabel("活动约 45 秒 · 待机约 2 分钟","Active ~45s · Idle ~2min"),
+                R.drawable.ic_hub_balanced,tools.energyMode==EnergyPolicy.BALANCED,
+                {controller.setEnergyMode(EnergyPolicy.BALANCED)})
+            EnergyModeChoice(
+                EnergyPolicy.REALTIME,hubLabel("实时优先","Realtime"),
+                hubLabel("保持命令长轮询，响应更快，但耗电较高。","Long-poll commands for lower latency at higher power cost."),
+                hubLabel("约 15 秒长轮询","Up to 15s long polling"),
+                R.drawable.ic_hub_realtime,tools.energyMode==EnergyPolicy.REALTIME,
+                {controller.setEnergyMode(EnergyPolicy.REALTIME)})
+        }
+        Spacer(Modifier.height(14.dp))
         Row(verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
                 Text(hubLabel("低延迟前台连接","Low-latency foreground relay"),fontWeight=FontWeight.Medium)
@@ -193,6 +242,44 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
             Switch(checked=state?.realtime==true,onCheckedChange=controller::setRealtime,
                 enabled=state?.enrolled==true)
         }
+        if(state?.enrolled==true){
+            val connected=tools.relayAlive
+            val requested=state.realtime
+            val transportText=when{
+                connected->hubLabel("前台命令监听运行中","Foreground command listener running")
+                requested->hubLabel("已启用但服务未运行；可重新启用前台连接","Enabled but service not running; retry foreground connection")
+                else->hubLabel("前台连接已关闭，指令由系统后台任务检查","Foreground connection off; commands rely on OS background jobs")
+            }
+            Text(transportText,
+                style=MaterialTheme.typography.bodySmall,
+                color=if(requested&&!connected)MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(10.dp))
+        Button(onClick=controller::syncNow,
+            enabled=state?.enrolled==true,modifier=Modifier.fillMaxWidth()){
+            HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(hubLabel("立即检查命令并同步短信","Check commands & sync SMS"))
+        }
+        val commandAt=state?.state?.optLong("lastCommandFetchAt",0L)?:0L
+        InfoRow(hubLabel("上次成功检查命令","Last successful command check"),
+            if(commandAt>0)java.text.DateFormat.getDateTimeInstance()
+                .format(java.util.Date(commandAt*1000)) else "—")
+        InfoRow(hubLabel("上次获取命令数","Commands fetched last check"),
+            (state?.state?.optInt("lastCommandFetchCount",0)?:0).toString())
+        val commandError=state?.state?.optString("lastCommandFetchError","").orEmpty()
+        if(commandError.isNotBlank())
+            Text(hubLabel("命令连接错误：","Command connection error: ")+commandError,
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.error)
+        val receivedGeneration=state?.state?.optLong("smsChangeGeneration",0L)?:0L
+        val scannedGeneration=state?.state?.optLong("smsScannedGeneration",0L)?:0L
+        if(receivedGeneration>scannedGeneration)
+            Text(hubLabel("有尚未确认扫描的短信变化，后台将自动重试。",
+                "SMS Provider changes are awaiting a confirmed scan."),
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
         val energy=state?.state?.optJSONObject("energyStats")
         if(energy!=null){
             InfoRow(hubLabel("有效运行档位","Effective power mode"),

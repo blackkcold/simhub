@@ -1,12 +1,17 @@
 package com.blackkcold.simhub;
 
 import android.content.Context;
+import android.content.Intent;
 import android.net.Uri;
 import org.json.JSONObject;
 import java.net.URI;
 import java.util.Arrays;
 
 public final class EnrollmentManager {
+    public static final String ACTION_ENROLLMENT_CHANGED="com.blackkcold.simhub.ENROLLMENT_CHANGED";
+    static void notifyStateChanged(Context c){
+        c.sendBroadcast(new Intent(ACTION_ENROLLMENT_CHANGED).setPackage(c.getPackageName()));
+    }
     public static void enroll(Context c,String link)throws Exception{
         AgentConfig existing=new AgentConfig(c);if(existing.isEnrolled()||existing.resetPending())throw new IllegalStateException("This node is already enrolled. Reset enrollment before pairing it to another vault or relay.");
         AppLogger.i(c,"Enrollment","Validating enrollment package");
@@ -51,6 +56,7 @@ public final class EnrollmentManager {
         LocalStore.get(c).resetForReenrollment();
         new AgentConfig(c).clearEnrollment();
         AppLogger.i(c,"Enrollment","Node enrollment and pool secrets cleared");
+        notifyStateChanged(c);
     }
     private EnrollmentManager(){}
 }

@@ -484,10 +484,18 @@ function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevi
 function renderCommandActivity(commands){
   const box=$('commandActivity');if(!box||!vaultKey)return;
   const zh=getLocale()==='zh-CN';
-  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation'};
+  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation','ota.install':zh?'远程 APK 更新':'Remote APK update'};
   const statuses={queued:zh?'已排队':'Queued',dispatched:zh?'已下发':'Dispatched',submitted:zh?'已提交运营商':'Submitted',sent:zh?'已发送':'Sent',delivered:zh?'已送达':'Delivered',succeeded:zh?'节点已执行':'Executed',failed:zh?'失败':'Failed',rejected:zh?'已拒绝':'Rejected',expired:zh?'已过期':'Expired'};
   box.innerHTML=commands.length?commands.map(c=>{
-    const detail=c.result||{},status=statuses[c.state]||c.state||'—';
+    const detail=c.result||{};
+    const status=c.type==='ota.install'
+      ?({queued:zh?'等待设备领取':'Queued',dispatched:zh?'设备已领取':'Dispatched',
+          submitted:zh?'设备正在处理更新':'Device updating',
+          succeeded:zh?'更新已确认':'Update confirmed',
+          failed:zh?'更新失败':'Update failed',
+          rejected:zh?'设备拒绝':'Rejected',
+          expired:zh?'命令过期':'Expired'}[c.state]||c.state||'—')
+      :(statuses[c.state]||c.state||'—');
     const progress=c.type.startsWith('sms.sync_')&&c.state==='succeeded'
       ?' · '+(zh?'扫描':'Scanned')+' '+escapeHtml(detail.scanned??'—')+', '+(zh?'新排队':'New queued')+' '+escapeHtml(detail.queued??'—'):'';
     const reason=detail.reason?' · '+escapeHtml(detail.reason):'';
@@ -676,6 +684,26 @@ async function revokePoolDevice(deviceId){
 
 
 function deviceButtons(d) {
+  const ota=d.state||{},sdk=Number(ota.sdk||0);
+  const otaVisible=d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.13.3')&&
+    ota.remoteOtaSupported===true&&(sdk>=36 || ota.remoteOtaDeveloperOverride===true);
+  const otaReady=otaVisible&&ota.remoteOtaAuthorized===true&&
+    ota.remoteOtaInstallPermission===true;
+  const zh=getLocale()==='zh-CN';
+  const otaStage={checking:'检查版本',downloading:'下载中',verified:'已校验',
+    installing:'安装中',awaiting_confirmation:'等待手机确认',
+    succeeded:'已更新',failed:'更新失败',idle:'空闲'}[ota.remoteOtaStage]||'待检测';
+  const otaLabel=zh?otaStage:(ota.remoteOtaStage||'idle');
+  const otaDetails=otaVisible?'<div class="action-group"><h4>'+
+    (zh?'应用远程更新':'Remote app updates')+'</h4><p class="hint">'+
+    escapeHtml(sdk<36?(zh?'开发者测试模式 · 无法保证免确认安装':'Developer test mode · silent install not guaranteed'):
+      (zh?'Android 16+ · 系统决定是否需要确认安装':'Android 16+ · Android may request confirmation'))+
+    ' · '+escapeHtml(otaLabel)+(ota.remoteOtaError?' · '+escapeHtml(ota.remoteOtaError):'')+
+    '</p>'+(otaReady?action('ota-install',zh?'更新到最新正式版':'Update to latest stable'):'<p class="hint">'+
+       escapeHtml(ota.remoteOtaAuthorized!==true
+         ?(zh?'请先在安卓设备设置中允许远程应用更新':'Enable remote updates on the Android device first')
+         :(zh?'请先在安卓设备上授权安装未知来源应用':'Grant the Android install-sources permission first'))+
+    '</p>')+'</div>':'';
   const action=(key,label,danger=false)=>'<button class="'+(danger?'danger':'ghost')+' mini" type="button" data-action="'+key+'" data-id="'+escapeHtml(d.id)+'">'+escapeHtml(label)+'</button>';
   return '<div class="detail-actions">'+
     '<div class="action-group"><h4>'+escapeHtml(tr('ux_sms_actions'))+'</h4><div class="row wrap">'+
@@ -1000,7 +1028,7 @@ async function sendConversationReply(){
     }
   }finally{btn.disabled=false;}
 }
-async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
+async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
   const energy=power.effectiveEnergyMode||power.energyMode||'balanced';
   // A compact background policy must not make remote commands expire before
   // the next eligible fetch. Preserve a finite expiry and the encrypted AAD.
@@ -1218,6 +1246,21 @@ async function handleDeviceAction(btn){
   const d=devices.find(x=>x.id===id);
   if(!d)return;
   const zh=getLocale()==='zh-CN';
+  if(action==='ota-install'){
+    const state=d.state||{};
+    if(d.nodeType!=='android'||!versionAtLeast(d.appVersion,'0.13.3')||
+       state.remoteOtaSupported!==true||
+       (Number(state.sdk||0)<36&&state.remoteOtaDeveloperOverride!==true)||
+       state.remoteOtaAuthorized!==true||state.remoteOtaInstallPermission!==true)
+      throw new Error(zh?'该设备未满足远程更新授权条件':'Remote update is not authorized on this device');
+    if(!confirm(zh
+      ?'只会安装 SIM Hub 官方 GitHub Release 的更高签名版本。Android 仍可能要求设备端确认；升级后将尝试恢复中继。立即向 '+d.name+' 下发更新？'
+      :'Only a newer signed SIM Hub GitHub Release will be installed. Android may require device confirmation. Update '+d.name+'?'))return;
+    await queueCommand(id,'ota.install',{targetVersion:'latest'},3600);
+    toast(zh?'远程更新已排队；并不代表安装完成':'Remote update queued, not yet installed');
+    await loadCommandActivity();
+    return;
+  }
   if(action==='purge-sms'){
     if(!confirm(zh?'仅清除该设备在服务器中的短信和未完成短信指令，不会清除 Android 手机上的原始短信。确认继续？':'Delete only relay-hosted SMS and queued SMS commands, not messages on the phone?'))return;
     await ensureStepUp();

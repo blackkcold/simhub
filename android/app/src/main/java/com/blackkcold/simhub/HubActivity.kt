@@ -192,6 +192,9 @@ class HubActivity: ComponentActivity(), HubController {
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         handleComposeIntent(intent)
         setContent { HubApp(snapshot,loading,pairing,fold,this,tools,incomingId,incomingRecipient,incomingBody) }
+        if(intent?.action==Intent.ACTION_MAIN && HubModes.configured(this) && HubModes.surface(this)=="controller") {
+            startActivity(Intent(this,ControllerActivity::class.java))
+        }
         // ACTION_VIEW is delivered to onCreate for a cold-start browser QR link;
         // onNewIntent only handles an already running Activity.
         if(intent?.action==Intent.ACTION_VIEW &&

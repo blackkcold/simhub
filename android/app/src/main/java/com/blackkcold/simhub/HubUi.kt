@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +79,33 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
            controller:HubController,tools:HubToolsState,incomingId:Int=0,incomingRecipient:String="",incomingBody:String=""){
     val ui:HubViewModel=viewModel()
     val context=LocalContext.current
+    var configured by remember { mutableStateOf(HubModes.configured(context)) }
+    if(!configured) {
+        HubTheme {
+            Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,
+                horizontalAlignment=Alignment.CenterHorizontally) {
+                Text("SIM Hub",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                Text("选择这台手机的用途",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(30.dp))
+                listOf(Triple("node","作为 SIM 节点","收发及同步本机 SIM 短信"),
+                    Triple("controller","作为管理控制台","管理其他设备，不需要短信权限"),
+                    Triple("both","同时使用","本机节点与远程管理随时切换")).forEach { (role,label,hint) ->
+                    ElevatedCard(onClick={
+                        HubModes.select(context,role);configured=true
+                        if(role=="controller")context.startActivity(android.content.Intent(context,ControllerActivity::class.java))
+                    },modifier=Modifier.fillMaxWidth().padding(vertical=6.dp)) {
+                        Column(Modifier.padding(19.dp)) {
+                            Text(label,fontWeight=FontWeight.SemiBold)
+                            Text(hint,color=MaterialTheme.colorScheme.onSurfaceVariant,
+                                style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
     LaunchedEffect(incomingId){
         if(incomingId>0 && SmsSendPolicy.canSend(context)){
             ui.tab=1;ui.thread="__new__";ui.newRecipient=incomingRecipient
@@ -112,6 +141,12 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                             }
                         }},
                         actions={
+                            IconButton(onClick={
+                                HubModes.surface(context,"controller")
+                                context.startActivity(android.content.Intent(context,ControllerActivity::class.java))
+                            }) {
+                                Icon(Icons.Default.Dashboard,contentDescription="打开管理控制台")
+                            }
                             IconButton(onClick=controller::refresh){
                                 HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),description=stringResource(R.string.hub_refresh))
                             }

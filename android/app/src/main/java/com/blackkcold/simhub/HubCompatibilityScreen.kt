@@ -64,9 +64,11 @@ fun HubCompatibilityScreen(
                 "${status?.optInt("sdk",Build.VERSION.SDK_INT)} / ${status?.optInt("targetSdk",37)}")
             CompatibilityValue(hubLabel("默认信息角色","Default SMS role"),
                 if(status?.optBoolean("defaultSmsRole")==true)hubLabel("SIM Hub 已接管","SIM Hub handles SMS") else hubLabel("原厂 / 其他信息应用","OEM / other SMS app"))
+            val permitted=hubLabel("允许","Yes")
+            val missing=hubLabel("未允许","No")
             CompatibilityValue("READ_SMS / RECEIVE_SMS / SEND_SMS",
                 listOf("readSms","receiveSms","sendSms").joinToString(" / "){
-                    if(status?.optBoolean(it)==true)hubLabel("允许","Yes") else hubLabel("未允许","No")
+                    if(status?.optBoolean(it)==true)permitted else missing
                 })
             CompatibilityValue(hubLabel("最近短信广播","Last SMS broadcast"),
                 compatibilityTime(status?.optLong("lastSmsBroadcastAt",0) ?: 0L))

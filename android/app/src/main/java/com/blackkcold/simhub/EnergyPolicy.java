@@ -51,6 +51,9 @@ public final class EnergyPolicy {
     public static void stageProviderFollowup(Context c, long delayMs) {
         prefs(c).edit().putLong("provider_followup",System.currentTimeMillis()+delayMs).apply();
     }
+    public static long providerFollowupAt(Context c) {
+        return prefs(c).getLong("provider_followup",0);
+    }
     public static boolean providerFollowupDue(Context c,long now) {
         long at=prefs(c).getLong("provider_followup",0);
         return at>0&&now>=at;

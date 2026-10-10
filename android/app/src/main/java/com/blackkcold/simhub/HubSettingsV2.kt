@@ -151,6 +151,17 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,modifie
         InfoRow(hubLabel("待上传事件","Queued events"),(state?.pending?:0).toString())
         InfoRow(hubLabel("已上传回执（本机）","Uploaded receipts on device"),
             (state?.state?.optInt("uploadedEventReceipts",0)?:0).toString())
+        val tasks=state?.state?.optJSONArray("pendingEventTasks")
+        if(tasks!=null&&tasks.length()>0){
+            Text(hubLabel("待处理事件预览（仅任务类型与入队时间）","Pending tasks (type and time only)"),
+                style=MaterialTheme.typography.labelMedium)
+            for(i in 0 until tasks.length()){
+                val t=tasks.optJSONObject(i)?:continue
+                val whenQueued=t.optLong("queuedAt",0L)
+                InfoRow(t.optString("kind","unknown"),
+                    if(whenQueued>0)java.text.DateFormat.getTimeInstance().format(java.util.Date(whenQueued*1000)) else "—")
+            }
+        }
         InfoRow(hubLabel("待上传命令 ACK","Pending command ACKs"),
             (state?.state?.optInt("pendingCommandAcks",0)?:0).toString())
         InfoRow(hubLabel("上次事件上传","Last event upload"),

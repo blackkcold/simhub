@@ -115,7 +115,8 @@ class HubActivity: ComponentActivity(), HubController {
     private val refreshAfterChange=Runnable { refresh() }
     private val poolObserver=object:BroadcastReceiver(){
         override fun onReceive(context:Context?,intent:Intent?){
-            if(intent?.action==SharedPoolClient.ACTION_CACHE_UPDATED){
+            if(intent?.action==SharedPoolClient.ACTION_CACHE_UPDATED ||
+                intent?.action==EnrollmentManager.ACTION_ENROLLMENT_CHANGED){
                 refreshHandler.removeCallbacks(refreshAfterChange)
                 refreshHandler.postDelayed(refreshAfterChange,350)
             }
@@ -202,6 +203,7 @@ class HubActivity: ComponentActivity(), HubController {
     override fun onStart(){
         super.onStart()
         val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
+        poolFilter.addAction(EnrollmentManager.ACTION_ENROLLMENT_CHANGED)
         if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(poolObserver,poolFilter)
         try{contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI,true,smsObserver)}

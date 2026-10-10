@@ -99,7 +99,7 @@ public final class ApiClient {
         try{
             JSONObject status=request("GET","/api/v1/devices/"+cfg.deviceId()+"/lifecycle",null);
             if(status.optBoolean("resetRequired",false)){
-                cfg.markRemoteResetPending();performPendingReset();return true;
+                cfg.markRemoteResetPending();EnrollmentManager.notifyStateChanged(c);performPendingReset();return true;
             }
             return false;
         }catch(ApiFailure error){
@@ -150,7 +150,7 @@ public final class ApiClient {
                     verifyLifecycleStillExists();
                     // A 200 lifecycle with a failing reset is a real protocol
                     // conflict. Surface recovery rather than hiding it behind UI.
-                    cfg.markResetRecoveryRequired();
+                    cfg.markResetRecoveryRequired();EnrollmentManager.notifyStateChanged(c);
                     cfg.recordSyncError("reset_recovery_required");
                     AppLogger.e(c,"Enrollment","Reset denied although lifecycle remains active",failure);
                 }catch(ApiFailure stateFailure){
@@ -159,7 +159,7 @@ public final class ApiClient {
                         return;
                     }
                     if(stateFailure.status==401||stateFailure.status==403||stateFailure.status==404){
-                        cfg.markResetRecoveryRequired();
+                        cfg.markResetRecoveryRequired();EnrollmentManager.notifyStateChanged(c);
                         cfg.recordSyncError("reset_recovery_required");
                         AppLogger.e(c,"Enrollment","Cannot verify reset; user recovery required",stateFailure);
                     }else retryPendingReset(stateFailure);

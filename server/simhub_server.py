@@ -842,6 +842,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(401,"unauthorized","Device token required"); return None
         row=device_for_token(device_id,auth[7:])
         if not row:
+            # A deleted node can safely acknowledge its own reset once more, but
+            # only with the exact revoked token retained in a bounded tombstone.
+            # Other endpoints and unknown tokens remain unauthorized.
+            if self.path.split("?",1)[0].endswith("/reset") and TOKEN_RE.fullmatch(auth[7:]):
+                with open_db() as con:
+                    receipt=con.execute(
+                        "SELECT 1 FROM device_reset_tombstones WHERE device_id=? AND token_hash=? AND expires_at>?",
+                        (device_id,sha256_text(auth[7:]),now())
+                    ).fetchone()
+                if receipt:
+                    self.send_json(410,{"resetRequired":True,"status":"deleted"}); return None
             audit("auth.device",device_id,"denied",self.ip)
             self.send_error_json(401,"unauthorized","Invalid or revoked device token"); return None
         if row["reset_requested_at"] and not self.path.split("?",1)[0].endswith("/reset"):

@@ -114,11 +114,18 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                 }
             }
         }else {
-            val display=threads.filter {
+            val filteredSms=if(ui.simFilter.isBlank())state?.sms.orEmpty() else
+                state?.sms.orEmpty().filter { HubSnapshot.simSourceKey(it)==ui.simFilter }
+            val latestByKey=filteredSms.groupBy {
+                HubSnapshot.keyFor(it.from,it.subscription,it.sourceDeviceId,it.channelId,it.channelRevision)
+            }.mapValues { (_,items)-> items.maxByOrNull { it.date }!! }
+            val display=threads.mapNotNull { thread ->
+                val latest=latestByKey[thread.key] ?: return@mapNotNull null
                 val search=ui.search.trim()
-                (search.isEmpty() || it.address.contains(search,true) || it.latest.text.contains(search,true)) &&
-                    (!ui.otpOnly || OtpParser.parse(it.latest.text).detected)
-            }
+                if((search.isEmpty() || thread.address.contains(search,true) || latest.text.contains(search,true)) &&
+                    (!ui.otpOnly || OtpParser.parse(latest.text).detected)) thread.copy(latest=latest)
+                else null
+            }.sortedByDescending { it.latest.date }
             if(display.isEmpty())Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center){
                 Text(stringResource(R.string.hub_empty_sms),
                     color=MaterialTheme.colorScheme.onSurfaceVariant)

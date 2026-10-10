@@ -182,6 +182,7 @@ public final class ApiClient {
                 if(response.optBoolean("accepted")){store.markEventSent(e.getString("eventId"));sent++;}
             }
         }
+        cfg.clearUploadError();
         }catch(Exception uploadError){
             String reason=uploadError instanceof ApiFailure f?"HTTP_"+f.status+"_"+f.code:uploadError.getClass().getSimpleName();
             cfg.recordUploadError(reason);

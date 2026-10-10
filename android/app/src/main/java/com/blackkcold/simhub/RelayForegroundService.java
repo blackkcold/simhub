@@ -121,6 +121,9 @@ public final class RelayForegroundService extends Service {
                 }
             }catch(Exception error){
                 EnergyPolicy.increment(this,"commandPollErrors");
+                new AgentConfig(this).recordCommandFetchError(
+                    error instanceof ApiClient.ApiFailure failure ?
+                        "HTTP_"+failure.status+"_"+failure.code:error.getClass().getSimpleName());
                 AppLogger.e(this,"RelayService","Command check failed",error);
                 commandFailures=Math.min(8,commandFailures+1);
                 long backoff=Math.min(15L*60*1000,30000L*(1L<<Math.min(5,commandFailures-1)));

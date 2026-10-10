@@ -100,3 +100,6 @@ The relay cannot read SMS or Vault plaintext; Passkeys authenticate users but do
 ## Documentation
 
 [Quick deployment](docs/QUICKSTART.zh-CN.md) · [Installation](docs/INSTALLATION.md) · [Android setup](docs/ANDROID_SETUP.md) · [Security](docs/SECURITY_ARCHITECTURE.md) · [Shared SMS](docs/SHARED_SMS.md) · [Architecture](docs/ARCHITECTURE.md) · [License](LICENSE)
+
+
+Android 16+ opt-in remote OTA (developer-only override on older Android versions) is documented in [Remote OTA](docs/REMOTE_OTA.md). Silent installation is not guaranteed; PackageInstaller may require user approval.

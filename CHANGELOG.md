@@ -1,3 +1,12 @@
+## v0.13.3 — Android 16+ Remote OTA
+
+- Android 16 (API 36) and later: explicit device-authorized remote APK self-update via encrypted relay commands and administrator step-up; earlier platforms have a developer-only test override.
+- Preserve the existing verified GitHub Release signature/hash/package installer; Android may still require user confirmation.
+- Durable update state and post-install service recovery via `MY_PACKAGE_REPLACED`, with a best-effort JobScheduler fallback.
+- Device UI gates and Web capability-aware controls avoid claims of silent install or forced foreground launch.
+- Wi-Fi-only remote updates by default, low-battery guard and pre-commit cancellation; status reports are independent from regular SMS polling.
+- See [Remote OTA](docs/REMOTE_OTA.md).
+
 ## v0.13.2 — Read-only companion SMS, consolidated threads and updater restart resilience
 
 - Make non-default Android SMS companion mode receive/read-only by default. Hide SMS compose and reply actions in the Android UI and Web/PWA. Allow explicit developer-only testing for up to one hour; the real Android SMS sender and encrypted remote command executor enforce the same policy.

@@ -56,9 +56,10 @@ public final class ApiClient {
         long changedAt=cfg.lastSmsProviderChangeAt()*1000L;
         long lastScan=c.getSharedPreferences("simhub_energy_v1",Context.MODE_PRIVATE).getLong("provider_scan",0L);
         boolean providerDirty=changedAt>0 && changedAt>=lastScan;
+        boolean providerFollowup=EnergyPolicy.providerFollowupDue(c,now);
         boolean outstanding=pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
-        if(!maintenance&&!reconciliation&&!providerDirty&&!outstanding){SYNC_BUSY.set(false);return;}
+        if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding){SYNC_BUSY.set(false);return;}
         try{
             PairingManager.completePending(c);
             if(maintenance&&checkServerReset())return;
@@ -76,9 +77,12 @@ public final class ApiClient {
             try{
                 flushEvents();
                 if(store.pendingEventCount()<200){
-                    if(providerDirty||maintenance){
+                    if(providerDirty||providerFollowup||maintenance){
                         scanned=SmsHistorySync.sync(c,30);
-                        if(scanned>=0)EnergyPolicy.mark(c,"provider_scan",System.currentTimeMillis());
+                        if(scanned>=0){
+                            EnergyPolicy.mark(c,"provider_scan",System.currentTimeMillis());
+                            if(providerFollowup)EnergyPolicy.finishProviderFollowup(c);
+                        }
                     }
                     if(reconciliation){
                         reconciled=SmsHistorySync.reconcileRecent(c,100);

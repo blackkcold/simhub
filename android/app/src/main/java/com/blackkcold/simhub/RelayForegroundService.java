@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class RelayForegroundService extends Service {
     private static volatile RelayForegroundService ACTIVE;
     private final AtomicBoolean urgentQueued=new AtomicBoolean(false);
+    private final AtomicBoolean urgentAgain=new AtomicBoolean(false);
     // Only two bounded workers: command transport and periodic maintenance.
     // No continuous short-interval full synchronization or busy loop.
     private final ScheduledExecutorService exec=Executors.newScheduledThreadPool(2);
@@ -57,11 +58,14 @@ public final class RelayForegroundService extends Service {
     public static void kick(Context c){
         RelayForegroundService live=ACTIVE;
         if(live==null||live.exec.isShutdown()){SyncJobService.scheduleNow(c);return;}
-        if(!live.urgentQueued.compareAndSet(false,true))return;
+        if(!live.urgentQueued.compareAndSet(false,true)){live.urgentAgain.set(true);return;}
         try{
             live.exec.execute(()->{
                 try{new ApiClient(live).syncCycle();}
-                finally{live.urgentQueued.set(false);}
+                finally{
+                    live.urgentQueued.set(false);
+                    if(live.urgentAgain.getAndSet(false))RelayForegroundService.kick(live);
+                }
             });
         }catch(java.util.concurrent.RejectedExecutionException shutdown){
             live.urgentQueued.set(false);

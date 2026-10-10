@@ -4,11 +4,11 @@
 |---|---|
 | Minimum Android | 10 / API 29 |
 | Target / compile | Android 17 / API 37 |
-| Default SMS role | Required for intended operation |
+| Default SMS role | Optional; full handler mode uses ROLE_SMS, companion mode uses RECEIVE_SMS + READ_SMS |
 | Dual SIM | Stable Channel ID/revision maps to current Android `subscriptionId`; stale mappings fail closed |
 | eSIM | Active subscriptions surfaced via `SubscriptionInfo.isEmbedded()` |
-| SMS receive | `SMS_DELIVER` default-handler path |
-| SMS send | Android: `SmsManager.createForSubscriptionId()` after Channel validation; Linux: ModemManager or DJI adapter |
+| SMS receive | Default: `SMS_DELIVER`; companion: `SMS_RECEIVED` wakes SMS Provider reconciliation |
+| SMS send | Android: `SEND_SMS` + `SmsManager.createForSubscriptionId()`; only default handler writes to SMS Provider directly; Linux: ModemManager or DJI adapter |
 | Linux / DJI modem | Generic Node + Channel model; ModemManager and DJI Gen1/QDC507 adapter paths |
 | History | Android incremental sync plus recent 100 rescan and older 100 backfill |
 | SIM phone number | Android operator APIs when available; local encrypted manual override; encrypted Node Key inventory |
@@ -17,7 +17,7 @@
 | Contacts | Optional `READ_CONTACTS`, encrypted before relay |
 | Low-latency command relay | User-started foreground service; optional external FCM/OEM push-tickle adapter can wake HTTPS command fetch |
 | Recovery sync | JobScheduler, 15-minute periodic + best-effort immediate job |
-| Android 17 OTP | Design assumes real default SMS handler, not generic OTP listener |
+| Android 17 OTP | Non-exempt companion apps may see protected OTP SMS after ~3 hours; 6-hour rolling rescan recovers later-visible rows |
 | MMS | Metadata/push observation only; full carrier transport not implemented |
 | Phone calls | Explicitly unsupported and absent from permissions/API |
 

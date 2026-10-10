@@ -648,7 +648,11 @@ function renderDeviceDetail(id) {
   const previousScroll=content.scrollTop;
   content.innerHTML='<div class="detail-intro"><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(deviceStatusText(d))+'</span><span>'+escapeHtml(d.model||d.nodeType||'Android')+' · v'+escapeHtml(d.appVersion||'—')+'</span></div>'+
     '<section class="detail-section"><h3>'+escapeHtml(tr('ux_overview'))+'</h3><div class="detail-stats">'+
-    stat('SMS 状态',s.smsOperational===true?tr('sms_ready'):s.smsOperational===false?tr('sms_unavailable'):tr('sms_unverified'))+
+    stat(tr('sms_status_label'),s.smsOperational===true?tr('sms_ready'):s.smsOperational===false?tr('sms_unavailable'):tr('sms_unverified'))+
+     stat(tr('sms_mode_label'),s.smsMode==='default'?tr('sms_mode_default'):s.smsMode==='companion'?tr('sms_mode_companion'):'—')+
+     stat(tr('sms_read_permission'),s.smsReadPermission===true?tr('permission_yes'):s.smsReadPermission===false?tr('permission_no'):'—')+
+     stat(tr('sms_receive_permission'),s.smsReceivePermission===true?tr('permission_yes'):s.smsReceivePermission===false?tr('permission_no'):'—')+
+     stat(tr('sms_send_permission'),s.smsSendPermission===true?tr('permission_yes'):s.smsSendPermission===false?tr('permission_no'):'—')+
     stat(tr('battery'),s.batteryPct==null?'—':s.batteryPct+'%')+
     stat(tr('network'),s.network||'—')+
     stat(tr('pending'),s.pendingEvents)+

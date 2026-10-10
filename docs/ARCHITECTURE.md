@@ -8,7 +8,7 @@ SIM Hub is a **personal, self-hosted multi-node SIM/SMS management system**. And
 ┌──────────────────────────┐
 │ Android / Modem Node(s)  │
 │                          │
-│ Default SMS handler      │
+│ SMS role / companion     │
 │ SMS Provider             │
 │ OTP parser               │
 │ Generic Channel state    │
@@ -60,8 +60,8 @@ Android stores only its independent Node Key using Android Keystore-backed stora
 
 ```text
 Carrier / SIM
-  → Android default SMS handler
-  → write to SMS Provider
+  → Android SMS default handler writes to SMS Provider
+  → SIM Hub SMS_DELIVER (default) or SMS_RECEIVED wake + Provider scan (companion)
   → OTP parsing + normalization
   → AES-256-GCM encrypt payload
   → durable local queue
@@ -97,7 +97,7 @@ Controller
 
 ## Android model
 
-The app targets API 37 with minSdk 29. It is designed to hold `ROLE_SMS`, which is important for reliable arbitrary SMS/OTP handling on modern Android rather than depending on a generic background SMS listener. Android `subscriptionId` is treated as a local adapter identifier only; remote routing uses a stable Channel ID plus revision and rejects stale commands after SIM replacement.
+The app targets API 37 with minSdk 29. It supports both `ROLE_SMS` (default handler) and a non-default companion receiver backed by `SMS_RECEIVED` plus `READ_SMS` Provider polling. The latter preserves the OEM default SMS app but is subject to Android 17 OTP access delays and ROM permission restrictions. Android `subscriptionId` is treated as a local adapter identifier only; remote routing uses a stable Channel ID plus revision and rejects stale commands after SIM replacement.
 
 The app deliberately requests no dialer role and contains no call-control or call-log path.
 

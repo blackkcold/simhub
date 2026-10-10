@@ -30,7 +30,7 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
                 Spacer(Modifier.height(12.dp))
                 val now=System.currentTimeMillis()/1000
                 val ttl=if(state?.realtime==true)180L else 3600L
-                val online=state?.enrolled==true&&state.smsRole&&state.smsRead&&
+                val online=state?.enrolled==true&&state.smsRead&&state.smsReceive&&
                     state.transportError.isBlank()&&state.lastSync>0&&now>=state.lastSync&&
                     now-state.lastSync<=ttl
                 StatePill(if(online)hubLabel("Relay 已连接","Relay connected") else hubLabel("需要检查","Needs attention"),online)
@@ -115,7 +115,7 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                if(state?.smsRead!=true||state?.smsRole!=true){
+                if(state?.smsRead!=true||state.smsReceive!=true){
                     Button(onClick=controller::requestAccess,modifier=Modifier.fillMaxWidth()){
                         Text(hubLabel("检查短信权限","Check SMS permissions"))
                     }

@@ -1,3 +1,14 @@
+## v0.11.2 — Non-default Android SMS companion mode
+
+- Receive `SMS_RECEIVED` broadcasts to wake encrypted SMS Provider synchronization without replacing vivo/OriginOS or other OEM Messages apps; preserve the `SMS_DELIVER` default-handler path.
+- Reconcile a rolling six-hour window in bounded batches so messages withheld by Android OTP protections can appear when the OS permits access; deduplicate Provider IDs before encryption/upload.
+- Support `SEND_SMS` remote and local sending without SMS-role ownership; the non-default handler must not write the SMS Provider.
+- Preserve modem delivery acknowledgments when the SMS role or Provider write privileges change during an in-flight send.
+- Show actual READ/RECEIVE/SEND permissions, companion/default runtime mode and Android 17 OTP restrictions in the native Android UI.
+- Add JVM reconciliation-policy regression tests and update bilingual documentation.
+
+**Platform limitation:** Android 17 may withhold protected OTP SMS from non-exempt companion applications for approximately three hours. OEM/installer SMS permission restrictions and unattended background behavior need physical-device validation; no system protection is bypassed.
+
 ## v0.11.1 — Rootless systemd user service compatibility
 
 - Fix Ubuntu 24.04 rootless Docker `docker.sock` EACCES: remove `PrivateTmp=true` and `ProtectSystem=full` from the generated **user** service to prevent implicit user namespace/GID remapping.

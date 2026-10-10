@@ -29,11 +29,16 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                 boolean ok=resultCode==Activity.RESULT_OK;
                 LocalStore.PendingStatus st=store.recordSentPart(id,partIndex,ok,resultCode);
                 if(st.exists&&(st.complete||st.failed)){
-                    Uri u=Uri.parse(st.providerUri);long pid=ContentUris.parseId(u);
-                    ContentValues v=new ContentValues();v.put(Telephony.Sms.TYPE,st.failed?Telephony.Sms.MESSAGE_TYPE_FAILED:Telephony.Sms.MESSAGE_TYPE_SENT);c.getContentResolver().update(u,v,null,null);
+                    long pid=providerId(st.providerUri);
+                    if(pid>=0){
+                        Uri u=Uri.parse(st.providerUri);
+                        ContentValues v=new ContentValues();v.put(Telephony.Sms.TYPE,st.failed?Telephony.Sms.MESSAGE_TYPE_FAILED:Telephony.Sms.MESSAGE_TYPE_SENT);
+                        try{c.getContentResolver().update(u,v,null,null);}
+                        catch(SecurityException denied){AppLogger.w(c,"SmsStatus","Provider write denied after SMS role changed");}
+                    }
                     JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
                     String state=st.failed?"failed":"sent";
-                    EventQueue.queue(c,"sms-provider-"+pid+"-"+state,st.failed?"sms.failed":"sms.sent",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage",st.failed?"modem_failed":"modem_sent").put("resultCode",resultCode).put("partIndex",partIndex));
+                    EventQueue.queue(c,eventId(pid,id,state),st.failed?"sms.failed":"sms.sent",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage",st.failed?"modem_failed":"modem_sent").put("resultCode",resultCode).put("partIndex",partIndex));
                     store.finishCommand(id,state);
                     store.queueCommandAck(id,state,new JSONObject().put("modemAccepted",!st.failed).put("resultCode",resultCode));
                     if(st.failed)store.removePendingSms(id);
@@ -43,22 +48,29 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                 boolean ok=resultCode==Activity.RESULT_OK;
                 LocalStore.PendingStatus st=store.recordDeliveredPart(id,partIndex,ok,resultCode);
                 if(!st.exists)return;
-                Uri u=Uri.parse(st.providerUri);long pid=ContentUris.parseId(u);
+                long pid=providerId(st.providerUri);
                 JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
                 if(st.deliveryFailed){
-                    EventQueue.queue(c,"sms-provider-"+pid+"-delivery-failed","sms.failed",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage","delivery_failed").put("resultCode",resultCode).put("partIndex",partIndex));
+                    EventQueue.queue(c,eventId(pid,id,"delivery-failed"),"sms.failed",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage","delivery_failed").put("resultCode",resultCode).put("partIndex",partIndex));
                     store.finishCommand(id,"failed");
                     store.queueCommandAck(id,"failed",new JSONObject().put("reason","delivery_failed").put("resultCode",resultCode));
                     store.removePendingSms(id);
                     SyncJobService.scheduleNow(c);
                 }else if(st.delivered){
-                    EventQueue.queue(c,"sms-provider-"+pid+"-delivered","sms.delivered",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("delivery",true));
+                    EventQueue.queue(c,eventId(pid,id,"delivered"),"sms.delivered",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("delivery",true));
                     store.finishCommand(id,"delivered");
                     store.queueCommandAck(id,"delivered",new JSONObject().put("delivered",true));
                     store.removePendingSms(id);
                     SyncJobService.scheduleNow(c);
                 }
             }
-        }catch(Exception ignored){}
+        }catch(Exception error){AppLogger.e(c,"SmsStatus","SMS status processing failed",error);SyncJobService.scheduleNow(c);}
+    }
+    private static long providerId(String value){
+        if(value==null||value.isBlank())return -1L;
+        try{return ContentUris.parseId(Uri.parse(value));}catch(Exception invalid){return -1L;}
+    }
+    private static String eventId(long providerId,String commandId,String stage){
+        return providerId>=0?"sms-provider-"+providerId+"-"+stage:"sms-command-"+commandId+"-"+stage;
     }
 }

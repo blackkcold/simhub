@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.11.1.trigger'
+      - '.github/release/v0.11.2.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.11.1.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.11.2.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -71,6 +71,7 @@ jobs:
           node-version: '22'
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates
       - run: python3 scripts/test_updater.py
@@ -275,7 +276,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Verified service and Android update support",
+              "notes":"Non-default Android SMS companion mode, bounded provider reconciliation, Android 17 OTP limits",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -298,15 +299,17 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub now supports end-to-end safe update flows for Docker relay and Android.
+          SIM Hub supports an optional non-default SMS companion mode alongside its existing default-handler mode.
 
           ## Highlights
-          - Add GitHub stable Release discovery and a machine-readable checksum-pinned update manifest.
-          - Publish a Sigstore keyless signed OCI image to GHCR; deploy through a non-root rootless-only updater with SQLite backup, digest verification and rollback.
-          - Provide Web settings with update checks, ignored versions, installation stages, and step-up protected deployment.
-          - Add Android daily background checks, opt-in automatic APK download, certificate and SHA-256 verification and PackageInstaller handoff.
-          - Retain existing SIM identities, credentials, ciphertext and app data across normal upgrades.
-          - Add archive validation, update policy tests and clear one-time host bootstrap documentation.
+          - Add SMS_RECEIVED wake-ups and six-hour paged SMS Provider reconciliation while keeping vivo/OriginOS Messages as the default app.
+          - Retain SMS_DELIVER full-handler mode; enable SEND_SMS without default-role ownership and preserve carrier send/delivery ACKs.
+          - Present permission state and Android 17 OTP access-delay caveats in Android settings.
+          - Deduplicate already-synchronized Provider messages before encrypting or staging them, with JVM tests.
+          - Keep signed APK, digest-pinned OCI relay, offline queues, E2EE and OTA verification.
+
+          ## Compatibility
+          Android 17 may withhold protected OTP SMS from non-exempt apps for roughly three hours; manufacturer permission and background limits remain device-specific. No bypass is provided.
 
           ## Host activation
           After migrating the Docker engine to rootless mode, run \`bash scripts/install-updater.sh\`

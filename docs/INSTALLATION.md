@@ -16,7 +16,7 @@ This guide installs the personal relay server, opens the PWA controller, and enr
 
 - Android 10 / API 29 or newer
 - Physical SIM/eSIM telephony capability
-- Ability to set SIM Hub as the default SMS app
+- OEM/installer allows READ_SMS, RECEIVE_SMS and SEND_SMS for companion mode, or ability to select SIM Hub as the full default SMS handler
 
 ## 2. Install the relay (recommended v0.4.0+ workflow)
 
@@ -72,8 +72,8 @@ See `ANDROID_SETUP.md` for Android build requirements.
 1. In the PWA, create a new enrollment link.
 2. Open the generated `simhub://enroll?...` link on the Android phone, or paste it into the Agent.
 3. Tap **Enroll this SIM Node**.
-4. Tap **Make default SMS app** and approve Android's system role dialog.
-5. Grant SMS/SIM permissions.
+4. Keep the system Messages app as default for non-default companion mode. Only select **Make default SMS app** if you prefer SIM Hub to be the full handler.
+5. Grant READ_SMS, RECEIVE_SMS, SEND_SMS and SIM permissions. OEM/installer restrictions can deny these permissions in companion mode.
 6. Optionally grant Contacts access if you want local contact-name mapping.
 7. Enable **always-on relay** for the lowest-latency personal remote operation.
 8. Optionally choose **简体中文 / English / Follow system** from the Android Settings section.
@@ -103,7 +103,7 @@ On vivo/OPPO/Xiaomi/HONOR/Huawei and other aggressive battery-management ROMs, a
 1. Verify **both** HTTPS hostnames work for their intended surfaces. The node host must not expose the management UI or public health endpoints.
 2. Sign in, unlock the Vault and refresh the **same active browser tab**. Confirm it resumes while the session remains valid; manually lock and refresh to ensure decrypted content stays hidden.
 3. Verify devices, charging/network state and each SIM's phone number. If Android does not provide a number, set a **browser-local encrypted override** in Devices.
-4. Receive an SMS from each SIM, test OTP copy, direct conversation reply and **+ New message** with the intended SIM/channel.
+4. Receive an ordinary SMS from each SIM, test OTP copy, direct conversation reply and **+ New message** with the intended SIM/channel. Android 17 can delay protected OTP visibility for non-default apps by about three hours; do not use a regular-SMS test to infer instant OTP access.
 5. On Android v0.5.0, independently test **Sync latest 100**, **Sync 100 older**, and **Inbox → Load older**. The last one only pages already-uploaded relay messages. Request queued or scanned is not proof that upload completed.
 6. Click **Devices → Diagnostics**, then refresh diagnostic history. Detailed Android logs remain local behind Developer Mode.
 7. Test cellular fallback only after setting the **default mobile-data SIM** and enabling cellular data in Android system settings. The Agent cannot forcibly switch default SIM as an ordinary application.

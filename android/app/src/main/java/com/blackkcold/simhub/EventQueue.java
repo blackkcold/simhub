@@ -13,6 +13,7 @@ public final class EventQueue {
         try{
             AgentConfig cfg=new AgentConfig(c);
             if(!cfg.isEnrolled())return false;
+            if("sms.history".equals(kind) && LocalStore.get(c).hasSeenEvent(id))return true;
             String sub=String.valueOf(subId);
             if(kind.startsWith("sms.")){
                 payload.put("sourceDeviceName",cfg.deviceName());

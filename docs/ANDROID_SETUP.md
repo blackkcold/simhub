@@ -24,8 +24,8 @@ Install the resulting APK with Android Studio or `adb install`.
 2. In Settings, create an Android enrollment link. It contains only a short-lived enrollment token and Bootstrap Secret; the independent long-term Node Key is delivered encrypted after successful enrollment, never as plaintext in the link.
 3. Open the `simhub://enroll?...` link on the Android SIM Node, or paste it into the Agent.
 4. Tap **Enroll this SIM Node / 注册此 SIM 节点**.
-5. Tap **Set as default SMS app / 设为默认短信应用** and approve Android's system role dialog.
-6. Grant SMS/SIM permissions.
+5. Keep the OEM/system Messages app as default for **companion mode** (recommended on vivo/OriginOS); or optionally request **Set as default SMS app / 设为默认短信应用** for full handler mode.
+6. Grant `READ_SMS`, `RECEIVE_SMS`, `SEND_SMS` and SIM access. Companion mode requires the ROM/installer to allow these restricted permissions; a permission denial is not fixed by network settings.
 7. Optionally grant Contacts permission for contact-name mapping.
 8. Start **always-on relay** for the built-in lowest-latency mode. The server also exposes an optional metadata-only push/tickle adapter hook for FCM/OEM integrations; JobScheduler and SMS Provider reconciliation remain recovery paths.
 
@@ -37,7 +37,13 @@ On OEM ROMs (vivo/OPPO/Xiaomi/HONOR/Huawei), also allow autostart and remove agg
 
 ## Android 17 / OTP
 
-The Agent is designed to hold the SMS role instead of depending on a generic `SMS_RECEIVED` background listener. Incoming SMS is persisted into the Android SMS Provider by the default handler and then encrypted for relay upload.
+The Agent supports two runtime-selected modes:
+- **Companion (non-default):** keeps vivo/OEM Messages as the default handler, receives `SMS_RECEIVED` as a wake signal, reads SMS rows from the system SMS Provider, encrypts and uploads. It never inserts or updates provider SMS rows. For sending, `SmsManager` submits through the selected SIM and Android is responsible for recording non-default-app sent SMS. Foreground relay, provider history scans and JobScheduler provide recovery paths.
+- **Full/default handler:** retains `SMS_DELIVER` and writes incoming rows to SMS Provider. SMS Provider updates for outgoing status only occur while SIM Hub holds the role.
+
+**Android 17 / API 37:** for most non-exempt apps, protected OTP SMS may not be delivered via `SMS_RECEIVED` or Provider queries until **three hours after arrival**. WebOTP format protection applies regardless of target SDK. A six-hour bounded rolling rescan eventually revisits newly visible rows; it cannot accelerate protected OTP delivery. OEM restricted-permission allowlisting may also prevent companion mode entirely. Never claim that receiving an ordinary text guarantees immediate OTP delivery.
+
+**Important:** Do not disable OEM Messages, spoof an assistant/companion role, or use Accessibility/notification scraping to evade Android OTP protections. Test plain SMS, OTP, dual SIM, locked screen, reboot and battery optimization on the actual handset before relying on unattended sync.
 
 ## MMS limitation
 

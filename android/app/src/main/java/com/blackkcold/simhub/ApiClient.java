@@ -49,7 +49,7 @@ public final class ApiClient {
         if(!cfg.isEnrolled())return;
         // Nodes without a foreground relay require an independent, durable
         // command check. Android may defer this work in Doze.
-        if(!cfg.alwaysOn())SyncJobService.scheduleAfter(c,EnergyPolicy.commandFallbackIntervalMs(c));
+        if(!RelayForegroundService.isRunning())SyncJobService.scheduleAfter(c,EnergyPolicy.commandFallbackIntervalMs(c));
         if(!SYNC_BUSY.compareAndSet(false,true)){
             // A concurrent command request must not cause SMS upload to be lost.
             SyncJobService.scheduleAfter(c,12000L);
@@ -70,7 +70,7 @@ public final class ApiClient {
         if(followupAt>now)SyncJobService.scheduleAfter(c,followupAt-now);
         boolean providerFollowup=followupAt>0&&followupAt<=now;
         boolean poolRetry=new SharedPoolClient(c).retryDue();
-        boolean commandFallback=!cfg.alwaysOn() &&
+        boolean commandFallback=!RelayForegroundService.isRunning() &&
                 EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
         boolean outstanding=poolRetry || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
@@ -139,7 +139,8 @@ public final class ApiClient {
                 EnergyPolicy.increment(c,"maintenanceRuns");
             }
             cfg.recordSyncSuccess();cfg.resetSyncBackoff();
-            if(scanned>=30||reconciled>=100||store.pendingEventCount()>0)
+            boolean unscannedProvider=providerDirty&&cfg.smsScannedGeneration()<providerGeneration;
+            if(scanned>=30||reconciled>=100||store.pendingEventCount()>0||unscannedProvider)
                 SyncJobService.scheduleAfter(c,reconciled>=100?30000:5000);
             if(pendingBefore>0)
                 AppLogger.i(c,"ApiClient","Sync cycle pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());

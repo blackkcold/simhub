@@ -246,6 +246,26 @@ try {
   await sibling.locator("#passphrase").fill("session-resume-test-passphrase");
   await sibling.locator("#unlockBtn").click();
   await sibling.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
+  // Exercise the real ES-module application through a synthetic Relay API
+  // response, not inaccessible module-local browser variables. The final item
+  // has an old provider timestamp but a newer Relay sequence.
+  const synthetic=Array.from({length:32},(_,i)=>({
+    deviceId:"synthetic-node",eventId:"synthetic-event-"+i,
+    kind:"sms.history",seq:50000+i,
+    occurredAt:i===31?100:1790000000+i,
+    subscriptionId:"-1",hasOtp:false,
+    ciphertext:{v:2,kid:"synthetic-wrong-key",iv:"AA",ct:"AA"}
+  }));
+  await p.route("**/api/v1/events?since=*",route=>route.fulfill({
+    status:200,contentType:"application/json",
+    body:JSON.stringify({events:synthetic})
+  }));
+  await p.locator("#refreshBtn").click();
+  await p.waitForFunction(()=>document.getElementById("decryptNotice").textContent.includes("32"),null,{timeout:15000});
+  assert.equal(await p.locator("#decryptNotice").isVisible(),true);
+  const warning=await p.locator("#decryptNotice").textContent();
+  assert.ok(!warning.includes("synthetic-wrong-key"),"Do not display ciphertext key material");
+  await p.unroute("**/api/v1/events?since=*");
   // Use synthetic secrets only: test that hidden DOM, fields, links and even
   // diagnostic dialogs are destroyed when locking one of two active tabs.
   await p.evaluate(()=>{

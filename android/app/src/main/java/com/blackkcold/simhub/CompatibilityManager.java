@@ -42,6 +42,15 @@ public final class CompatibilityManager {
             state.put("lastSmsBroadcastAt",cfg.lastSmsBroadcastAt());
             state.put("lastReconcileAt",cfg.lastReconcileAt());
             state.put("lastReconcileCount",cfg.lastReconcileCount());
+            state.put("lastSmsProviderChangeAt",cfg.lastSmsProviderChangeAt());
+            state.put("lastUploadAttemptAt",cfg.lastUploadAttemptAt());
+            state.put("lastEventUploadAt",cfg.lastUploadAt());
+            state.put("lastEventUploadCount",cfg.lastUploadCount());
+            state.put("uploadedEventTotal",cfg.uploadedTotal());
+            state.put("lastUploadError",cfg.lastUploadError());
+            state.put("lastEventQueueError",cfg.lastEventQueueError());
+            state.put("pendingEncryptedEvents",LocalStore.get(context).pendingEventCount());
+            state.put("uploadedEventReceipts",LocalStore.get(context).uploadedEventCount());
             state.put("lastRelaySyncAt",cfg.lastSyncSuccessAt());
             state.put("lastRelaySyncError",cfg.lastSyncError());
             try{

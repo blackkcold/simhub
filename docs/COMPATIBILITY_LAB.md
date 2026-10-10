@@ -58,3 +58,18 @@ The app intentionally does not offer an automated `pm disable-user`, `cmd appops
 ## Limitations
 
 A controlled emulator/JVM/CI build cannot establish that a specific OriginOS/ColorOS device honors Android 17 SMS exemption conditions. **The feature is a diagnostic and opt-in integration**, not a guarantee that Shizuku or CDM makes all OTPs real-time. Keep the v0.11.2 non-default receiver/Provider sync behavior as the reliable baseline.
+
+## v0.12.1 SMS ingestion / decryption troubleshooting
+
+The diagnostic ZIP from a vivo Android 16 device showed SMS permissions granted, Shizuku running, a successful recent 100-row scan, a 3-row rolling reconciliation, and zero pending encrypted events. It did **not** show receipt of new SMS_RECEIVED broadcasts. **Zero pending** does not prove failure: after a successful Relay acknowledgement, each queued event is removed and its stable Provider ID retained in an uploaded-receipt index. Always check receipts and last upload timestamp.
+
+**Diagnostic checkpoints in v0.12.1:**
+- `lastSmsBroadcastAt` — a delivered SMS_RECEIVED broadcast to SIM Hub (may stay zero with OEM filtering).
+- `lastSmsProviderChangeAt` — ContentObserver saw the system SMS database change while SIM Hub was in foreground or its optional always-on Relay service was running.
+- `lastReconcileAt`, `lastReconcileCount` — bounded provider rescan occurred (records inspected, not necessarily newly uploaded).
+- `pendingEvents`, `uploadedEventReceipts`, `uploadedEventTotal`, `lastEventUploadAt`, `lastEventUploadCount`, `lastUploadError`, `lastEventQueueError` — local encrypted upload pipeline.
+- `lastSyncSuccessAt`, `lastSyncError` — entire Relay cycle result, which is **not** equivalent to confirmed fresh SMS upload.
+
+**To test fresh ordinary SMS:** keep the OEM Messages app active, allow SIM Hub SMS permissions, enable always-on Relay and exempt it from OEM battery optimization. Send one test SMS from another number and compare OEM receive time against the Provider change, pending queue and Relay ACK timestamps. If the OEM inbox gets the SMS and SIM Hub Provider never changes, this is an OEM/provider access issue; Shizuku authorization alone does not resolve it. For remote UI visibility, ensure the browser Vault was unlocked using the same original recovery key as the enrollment.
+
+**If Web/PWA displays `[无法解密]`:** v0.12.1 now distinguishes the server/Android key ID mismatch, unavailable retired Node Key, missing original Vault, and generic ciphertext integrity errors. Imported/old messages are preserved. First verify you are using the **original Vault recovery key** for that node, not a freshly generated Vault from another browser; confirm `cryptoKeyId` from Android matches the Relay's active `keyId`. Do not clear device history, reset enrollment or purge ciphertext as a troubleshooting shortcut. If the cryptographic keys are lost, the self-hosted Relay cannot derive them from encrypted events.

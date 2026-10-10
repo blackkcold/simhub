@@ -31,7 +31,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.12.0"
+APP_VERSION = "0.12.1"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -614,12 +614,23 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
         if isinstance(v,(str,int,float,bool)) or v is None:
             out[k]=v
+    # Queue visibility is metadata-only; never accept task IDs, numbers or bodies.
+    tasks=[]
+    for item in body.get("pendingEventTasks",[]) if isinstance(body.get("pendingEventTasks"),list) else []:
+        if not isinstance(item,dict):
+            continue
+        kind=item.get("kind"); queued=item.get("queuedAt")
+        if isinstance(kind,str) and re.fullmatch(r"[a-z0-9._-]{1,64}",kind) and type(queued) is int and 0<=queued<=now()+300:
+            tasks.append({"kind":kind,"queuedAt":queued})
+        if len(tasks)>=10:
+            break
+    out["pendingEventTasks"]=tasks
     capabilities=[]
     for cap in body.get("capabilities",[]) if isinstance(body.get("capabilities"),list) else []:
         if isinstance(cap,str) and re.fullmatch(r"[a-z0-9._-]{1,64}",cap):

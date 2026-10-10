@@ -87,6 +87,28 @@ public final class AgentConfig {
         prefs.edit().putLong("last_sms_broadcast_at",System.currentTimeMillis()/1000).apply();
     }
     public long lastSmsBroadcastAt(){return prefs.getLong("last_sms_broadcast_at",0L);}
+    // Metadata-only pipeline checkpoints. Counts never include SMS body or number.
+    public void recordSmsProviderChange(){prefs.edit().putLong("last_sms_provider_change",System.currentTimeMillis()/1000).apply();}
+    public long lastSmsProviderChangeAt(){return prefs.getLong("last_sms_provider_change",0L);}
+    public void recordUploadAttempt(){prefs.edit().putLong("last_upload_attempt_at",System.currentTimeMillis()/1000).apply();}
+    public long lastUploadAttemptAt(){return prefs.getLong("last_upload_attempt_at",0L);}
+    public synchronized void recordUploadSuccess(int uploaded){
+        if(uploaded<=0)return;
+        prefs.edit().putLong("last_upload_at",System.currentTimeMillis()/1000)
+            .putInt("last_upload_count",uploaded)
+            .putLong("uploaded_total",prefs.getLong("uploaded_total",0L)+uploaded)
+            .remove("last_upload_error").apply();
+    }
+    public long lastUploadAt(){return prefs.getLong("last_upload_at",0L);}
+    public int lastUploadCount(){return prefs.getInt("last_upload_count",0);}
+    public long uploadedTotal(){return prefs.getLong("uploaded_total",0L);}
+    public void recordUploadError(String code){prefs.edit().putString("last_upload_error",safeError(code)).apply();}
+    public String lastUploadError(){return prefs.getString("last_upload_error","");}
+    public void clearUploadError(){prefs.edit().remove("last_upload_error").apply();}
+    public void recordEventQueueError(String code){prefs.edit().putString("last_queue_error",safeError(code)).apply();}
+    public String lastEventQueueError(){return prefs.getString("last_queue_error","");}
+    private static String safeError(String code){return code==null?"unknown":code.replaceAll("[^A-Za-z0-9_.-]","_").substring(0,Math.min(64,code.length()));}
+
     public void recordSmsReconcile(int scanned){
         prefs.edit().putLong("last_reconcile_at",System.currentTimeMillis()/1000)
                 .putInt("last_reconcile_count",Math.max(0,scanned)).apply();

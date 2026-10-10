@@ -130,6 +130,8 @@ public final class SmsHistorySync {
         if(!canRead(c))return -1;
         AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
         int limit=Math.max(1,Math.min(PAGE,requested)),count=0;
+        LocalStore store=LocalStore.get(c);
+        int queueBefore=store.pendingEventCount();
         try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,
                 null,null,Telephony.Sms.DATE+" DESC, "+BaseColumns._ID+" DESC")){
             if(cur==null){cfg.recordSyncError("SMS provider query returned null");return -1;}
@@ -140,7 +142,7 @@ public final class SmsHistorySync {
                 count++;
             }
             cfg.clearSmsProviderError();
-            if(count>0)AppLogger.i(c,"SmsSync","Recent history rescan queued="+count);
+            if(count>0){int newQueued=Math.max(0,store.pendingEventCount()-queueBefore);AppLogger.i(c,"SmsSync","Recent history inspected="+count+" newlyQueued="+newQueued+" previouslyQueuedOrUploaded="+Math.max(0,count-newQueued));}
         }catch(Exception error){scanFailed(c,error,"Recent history");return -1;}
         return count;
     }

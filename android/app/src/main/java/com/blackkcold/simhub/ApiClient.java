@@ -124,11 +124,19 @@ public final class ApiClient {
     }
     /** Remote command transport never performs an SMS Provider scan or full-state upload. */
     public void pollCommands(boolean longPoll)throws Exception{
-        if(!cfg.isEnrolled()||cfg.resetPending()||!SYNC_BUSY.compareAndSet(false,true))return;
+        if(!cfg.isEnrolled()||cfg.resetPending())return;
+        if(longPoll){
+            // Never hold the global sync lease during a 15-second network wait;
+            // otherwise a newly received SMS could be skipped until the next Job.
+            boolean received=waitForCommands();
+            if(received||LocalStore.get(c).pendingCommandAckCount()>0)
+                SyncJobService.scheduleNow(c);
+            return;
+        }
+        if(!SYNC_BUSY.compareAndSet(false,true))return;
         try{
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
-            if(longPoll)waitForCommands();
-            else fetchCommands();
+            fetchCommands();
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
         }finally{SYNC_BUSY.set(false);}
     }

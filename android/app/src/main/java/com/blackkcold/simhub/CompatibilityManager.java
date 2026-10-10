@@ -47,7 +47,14 @@ public final class CompatibilityManager {
             try{
                 AppOpsManager ops=context.getSystemService(AppOpsManager.class);
                 int mode=ops.unsafeCheckOpNoThrow("android:read_otp_sms",Process.myUid(),context.getPackageName());
-                state.put("otpAppOp",AppOpsManager.modeToName(mode));
+                state.put("otpAppOp",switch(mode){
+                    case AppOpsManager.MODE_ALLOWED -> "allowed";
+                    case AppOpsManager.MODE_IGNORED -> "ignored";
+                    case AppOpsManager.MODE_ERRORED -> "errored";
+                    case AppOpsManager.MODE_DEFAULT -> "default";
+                    case AppOpsManager.MODE_FOREGROUND -> "foreground";
+                    default -> "unknown";
+                });
             }catch(Exception notSupported){state.put("otpAppOp","not_queryable");}
             state.put("shizukuInstalled",isInstalled(context,"moe.shizuku.privileged.api"));
             boolean binder=false;

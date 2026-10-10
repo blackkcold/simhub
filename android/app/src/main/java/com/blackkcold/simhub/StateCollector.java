@@ -67,8 +67,10 @@ public final class StateCollector {
             RoleManager role=c.getSystemService(RoleManager.class);
             boolean smsRole=role!=null&&role.isRoleAvailable(RoleManager.ROLE_SMS)&&role.isRoleHeld(RoleManager.ROLE_SMS);
             boolean recvPermission=c.checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED;
+            boolean readPermission=c.checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED;
             boolean sendPermission=c.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED;
-            o.put("smsRoleHeld",smsRole).put("smsReceivePermission",recvPermission)
+            o.put("smsRoleHeld",smsRole).put("smsMode",smsRole?"default":"companion")
+                    .put("smsReceivePermission",recvPermission).put("smsReadPermission",readPermission)
                     .put("smsSendPermission",sendPermission);
             JSONArray subscriptions=new JSONArray(),channels=new JSONArray(),phoneNumbers=new JSONArray();
             if(c.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)==PackageManager.PERMISSION_GRANTED){
@@ -107,7 +109,7 @@ public final class StateCollector {
                     channels.put(new JSONObject(x.toString()).put("id",ch.channelId).put("localId",String.valueOf(sub)).put("kind","android-sim").put("revision",ch.revision));
                 }
             }
-            o.put("smsOperational",smsRole&&recvPermission&&sendPermission&&subscriptions.length()>0);
+            o.put("smsOperational",readPermission&&recvPermission&&sendPermission&&subscriptions.length()>0);
             o.put("subscriptions",subscriptions)
                     .put("channels",channels)
                     .put("nodeType","android")

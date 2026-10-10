@@ -775,15 +775,38 @@ function messageChannel(e){
   if(!id||!revision)return 'unverified:'+String(e.subscriptionId||'');
   return id;
 }
-function threadKey(e){
-  const phone=messageAddress(e).replace(/[\s()-]/g,'');
-  const revision=e.payload?.channelRevision||'historical';
-  return e.deviceId+'|'+messageChannel(e)+'|'+revision+'|'+phone;
+function canonicalAddress(value){
+  const clean=String(value||'').trim().replace(/[\s()\-]/g,'').toLowerCase();
+  const intl=clean.startsWith('00')?'+'+clean.slice(2):clean;
+  return /^\+861[3-9]\d{9}$/.test(intl)?intl.slice(3):intl;
+}
+function threadKey(e){return canonicalAddress(messageAddress(e));}
+function eventSimKey(e){
+  const p=e.payload||{},ch=String(p.channelId||''),rev=Number(p.channelRevision||0);
+  return e.deviceId+'|'+(ch&&rev?ch+'|'+rev:'unverified:'+String(p.subscriptionId??e.subscriptionId??-1));
+}
+function refreshSimFilter(){
+  const el=$('simFilter'),prior=el.value;
+  const known=new Map();
+  for(const e of decryptedEvents){
+    if(!e.kind.startsWith('sms.'))continue;
+    const key=eventSimKey(e);
+    if(!known.has(key))known.set(key,deviceName(e.deviceId)+' · '+messageChannelLabel(e));
+  }
+  el.innerHTML='<option value="">'+escapeHtml(tr('all_sims'))+'</option>'+
+    [...known.entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([key,label])=>
+      '<option value="'+escapeHtml(key)+'">'+escapeHtml(label)+'</option>').join('');
+  if([...el.options].some(o=>o.value===prior))el.value=prior;
 }
 function filteredEvents(){
-  const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,kind=$('kindFilter').value;
-  return collapseMessageEvents(decryptedEvents).filter(e=>e.kind.startsWith('sms.')&&(!dev||e.deviceId===dev)&&(!kind||e.kind===kind))
-    .filter(e=>{if(!q)return true;const p=e.payload||{};return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)].some(v=>String(v||'').toLowerCase().includes(q));});
+  const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,
+    sim=$('simFilter').value,kind=$('kindFilter').value;
+  return collapseMessageEvents(decryptedEvents).filter(e=>
+    e.kind.startsWith('sms.')&&(!dev||e.deviceId===dev)&&(!sim||eventSimKey(e)===sim)&&
+    (!kind||e.kind===kind))
+    .filter(e=>{if(!q)return true;const p=e.payload||{};
+      return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)]
+        .some(v=>String(v||'').toLowerCase().includes(q));});
 }
 function buildThreads(source){
   const threads=new Map();
@@ -798,6 +821,8 @@ function buildThreads(source){
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
 function renderInbox(){
+  refreshSimFilter();
+  syncSendControls();
   renderDecryptNotice();
   const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
   const list=$('inboxList'),previousTop=list.scrollTop;
@@ -812,9 +837,10 @@ function renderInbox(){
     return '<button type="button" class="message'+(activeConversationKey===t.key?' active':'')+
       '" data-thread="'+escapeHtml(t.key)+'"><span class="avatar">'+escapeHtml(who.slice(0,1).toUpperCase())+
       '</span><span class="message-body"><span class="message-title"><strong>'+escapeHtml(who)+
-      '</strong><small class="meta">'+fmtTime(e.occurredAt)+'</small></span>'+
+      '</strong><span class="message-meta-right"><span class="message-sim-tag" title="'+escapeHtml(messageChannelLabel(e))+'">'+
+      escapeHtml(messageChannelLabel(e))+'</span><small class="meta">'+fmtTime(e.occurredAt)+'</small></span></span>'+
       '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
-      escapeHtml(deviceName(e.deviceId))+' · '+escapeHtml(messageChannelLabel(e))+'</small></span></button>';
+      escapeHtml(deviceName(e.deviceId))+'</small></span></button>';
   }).join('');
   list.scrollTop=previousTop;
   renderConversation();
@@ -1252,6 +1278,7 @@ function wire(){
   $('search').oninput=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('deviceFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('kindFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
+  $('simFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('sendDevice').onchange=updateSubscriptionSelector;
   $('sendBody').oninput=updateCharCount;
   $('newSmsBtn').onclick=openNewMessage;

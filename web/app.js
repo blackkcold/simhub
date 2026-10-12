@@ -1415,7 +1415,8 @@ async function approveAndroidController(req,pairingCode){
     key,vaultCopy));}finally{vaultCopy.fill(0);}
   const epk=new Uint8Array(await crypto.subtle.exportKey('spki',local.publicKey));
   await api('/api/v1/controllers/approve',{method:'POST',body:{
-    requestId,pairingCode,vaultEnvelope:{v:1,epk:b64u(epk),salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}
+    requestId,pairingCode,vaultId:globalVault?.vaultId,vaultKeyId:await globalKeyId(vaultRaw),
+    vaultEnvelope:{v:1,epk:b64u(epk),salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}
   }});
   toast('管理终端已授权，可在手机继续连接');
 }

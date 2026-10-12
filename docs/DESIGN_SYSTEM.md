@@ -14,6 +14,24 @@ SIM Hub uses one visual identity across the Web/PWA and the native Android agent
 | Brand banner | `docs/assets/brand-banner.svg` |
 | Interface previews | `docs/assets/ui-{desktop,devices,mobile,android}.svg` |
 
+### Android workspace semantic palettes (v0.16.0)
+
+The App Shell uses a shared hierarchy and neutral surfaces, but each role has a
+distinct accent:
+
+| Workspace | Light primary | Dark primary | Role |
+|---|---|---|---|
+| SIM Node | `#087F74` teal | `#7BE3D3` mint | Local collection, pairing, SIM state |
+| Controller | `#574FEA` indigo | `#ACA9FF` lavender | Remote multi-node control, encrypted inbox, administrative actions |
+
+A status color represents success, warning or failure regardless of role.
+The four icons/labels are role-dependent: Node uses status/SMS/SIM/settings;
+Controller uses dashboard/inbox/devices/security-settings.
+Management cards include SVG-backed metric, task, network, device and battery
+glyphs. Editable SVG source lives in `design/icons/`; Android consumes equivalent
+VectorDrawables from `android/app/src/main/res/drawable/`.
+Keep the controller's single Compose navigation shell without a nested PWA dock.
+
 ### Color tokens
 
 | Role | Light | Dark |

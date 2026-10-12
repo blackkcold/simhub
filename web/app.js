@@ -1449,7 +1449,7 @@ function openControllerConnect(){
   if(samePhoneControllerApproval && !dialog.querySelector('.controller-return-to-app')){
     const back=document.createElement('a');
     back.className='ghost controller-return-to-app';
-    back.href='simhub://controller';
+    back.href='simhub://controller?resume=1';
     back.textContent='返回 SIM Hub 管理中心';
     back.style.display='inline-block';
     back.style.padding='12px 0';

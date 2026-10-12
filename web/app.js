@@ -980,6 +980,32 @@ function buildThreads(source){
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
 
+function renderInbox(){
+  refreshSimFilter();
+  syncSendControls();
+  renderDecryptNotice();
+  const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
+  const list=$('inboxList'),previousTop=list.scrollTop;
+  $('emptyInbox').hidden=!!show.length;
+  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleCount;
+  $('loadNewerBtn').hidden=true;
+  const otpCount=threads.reduce((n,t)=>n+t.messages.filter(e=>eventIsInbound(e)&&e.payload?.otp?.value).length,0);
+  $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
+  $('inboxItems').innerHTML=show.map(t=>{
+    const e=t.latest,p=e.payload||{},who=p.contactName||messageAddress(e)||tr('unknown');
+    const body=e.decryptError?'['+tr('decrypt_failed')+']':p.body||'';
+    return '<button type="button" class="message'+(activeConversationKey===t.key?' active':'')+
+      '" data-thread="'+escapeHtml(t.key)+'"><span class="avatar">'+escapeHtml(who.slice(0,1).toUpperCase())+
+      '</span><span class="message-body"><span class="message-title"><strong>'+escapeHtml(who)+
+      '</strong><span class="message-meta-right"><span class="message-sim-tag" title="'+escapeHtml(messageChannelLabel(e))+'">'+
+      escapeHtml(messageChannelLabel(e))+'</span><small class="meta">'+fmtTime(e.occurredAt)+'</small></span></span>'+
+      '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
+      escapeHtml(deviceName(e.deviceId))+'</small></span></button>';
+  }).join('');
+  list.scrollTop=previousTop;
+  renderConversation();
+  publishAndroidInbox();
+}
 // Native Android receives only a bounded, already decrypted SMS snapshot. The
 // Master Vault Key and Node Keys never enter the native bridge. Native data
 // lives in process memory and is wiped by a Vault lock message.
@@ -1022,32 +1048,6 @@ if(androidShell){
     loadOlder:()=>loadOlder().catch(e=>toast(e.message)),
     snapshot:()=>publishAndroidInbox(),
   };
-}
-function renderInbox(){
-  refreshSimFilter();
-  syncSendControls();
-  renderDecryptNotice();
-  const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
-  const list=$('inboxList'),previousTop=list.scrollTop;
-  $('emptyInbox').hidden=!!show.length;
-  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleCount;
-  $('loadNewerBtn').hidden=true;
-  const otpCount=threads.reduce((n,t)=>n+t.messages.filter(e=>eventIsInbound(e)&&e.payload?.otp?.value).length,0);
-  $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
-  $('inboxItems').innerHTML=show.map(t=>{
-    const e=t.latest,p=e.payload||{},who=p.contactName||messageAddress(e)||tr('unknown');
-    const body=e.decryptError?'['+tr('decrypt_failed')+']':p.body||'';
-    return '<button type="button" class="message'+(activeConversationKey===t.key?' active':'')+
-      '" data-thread="'+escapeHtml(t.key)+'"><span class="avatar">'+escapeHtml(who.slice(0,1).toUpperCase())+
-      '</span><span class="message-body"><span class="message-title"><strong>'+escapeHtml(who)+
-      '</strong><span class="message-meta-right"><span class="message-sim-tag" title="'+escapeHtml(messageChannelLabel(e))+'">'+
-      escapeHtml(messageChannelLabel(e))+'</span><small class="meta">'+fmtTime(e.occurredAt)+'</small></span></span>'+
-      '<span class="message-preview">'+escapeHtml(body)+'</span><small class="meta">'+
-      escapeHtml(deviceName(e.deviceId))+'</small></span></button>';
-  }).join('');
-  list.scrollTop=previousTop;
-  renderConversation();
-  publishAndroidInbox();
 }
 function updateReplyDevices(){
   const el=$('replyDevice'),chosen=el.value;

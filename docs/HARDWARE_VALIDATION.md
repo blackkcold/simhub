@@ -63,3 +63,26 @@ Do not assume Gen1 compatibility. First establish whether the host exposes a usa
 - **Supply chain:** require CodeQL coverage for Python, JavaScript/TypeScript and Android Java plus signed APK provenance before release.
 
 Physical SIM, cellular modem, screen-off/Doze and vendor ROM behavior **cannot be certified by CI alone**; run the device matrix above before treating an installation as production-grade.
+
+## v0.15.8 controller acceptance: record before unattended deployment
+
+These are **manual gates**, not claims that CI or this patch has passed real-device testing. Capture device model, Android build, relay version, sanitized diagnostics, exact event and command IDs, and pass/fail for each case.
+
+| Case | Acceptance |
+| --- | --- |
+| v0.15.6 pairing on v0.15.8 Relay | Same-IP pairing succeeds before legacy sunset; changed-IP polling fails; v0.15.8 token polling survives network handover; legacy path rejects after sunset |
+| 300 / 1,000 / 2,000 consecutive events | Paginated batches eventually display all valid decryptable SMS exactly once, with no cursor skip after injected errors |
+| Payload limits | Oversized encoded JSON splits into smaller native batches; rejected pages preserve the last acknowledged cursor |
+| >1,200 historical messages | Repeated older paging continues beyond 1,200 and returns to latest with correct source metadata |
+| Two devices sharing a contact number | Source-scoped threads are not mixed; replacing one SIM does not reassign older Channel revisions |
+| Eco delayed sync command (2–15 min) | Queued/dispatched/expired/final ACK stays available through the remote task center and app restart |
+| Network change, VPN, process kill | Controller identity survives, unauthorized content is never shown after local lock |
+| Screenshot and Recents snapshot | Android management center contents are hidden; switching to node-only screen restores ordinary screenshot behavior |
+| Signed APK OTA | Normal APK verification and install/update passes on vivo and a second OEM |
+| SMS composer retry | Closing page preserves unsent draft and idempotency ID; uncertain retry does not submit a duplicate SMS |
+
+### Deferred engineering and security gates
+
+- Auth-bound hardware Keystore rewrap must have a tested recovery/rollback path and be explicitly verified via CryptoObject; the existing biometric application gate does not meet that condition.
+- Large-scale Relay concurrency, SQLite write-contention, stream wakeup latency and restore drills require reproducible load benchmarks before selecting a Rust or service modularization strategy.
+- Test failure blocks a production-readiness claim even if signed CI Release assets are successfully published.

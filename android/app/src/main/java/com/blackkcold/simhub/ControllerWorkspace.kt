@@ -573,6 +573,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         var message by remember{mutableStateOf("")}
         var sendError by remember{mutableStateOf("")}
         var sending by remember{mutableStateOf(false)}
+        var submittedDraft by remember{mutableStateOf("")}
         // Reuse this ID across uncertain retries to avoid accidental duplicate sends.
         val messageCommandId=remember{UUID.randomUUID().toString()}
         var deviceIdx by remember{mutableIntStateOf(0)}
@@ -585,11 +586,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         }
         val current=possible.getOrNull(deviceIdx)
         val channels=current?.optJSONObject("state")?.optJSONArray("channels")?:JSONArray()
+        val currentDraft=(current?.optString("id")?:"")+"|"+deviceIdx+"|"+channelIdx+"|"+recipient+"|"+message
         var stepUp by remember{mutableStateOf("")}
         AlertDialog(onDismissRequest={showWrite=false},title={Text(hubLabel("发送加密短信","Send encrypted SMS"))},
             text={Column(Modifier.heightIn(max=430.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement=Arrangement.spacedBy(8.dp)){
                 if(sendError.isNotEmpty())Text(sendError,color=MaterialTheme.colorScheme.error)
+                if(submittedDraft.isNotEmpty() && currentDraft!=submittedDraft)
+                    Text(hubLabel("重试需保留原收件人、SIM 与短信内容；修改内容请新建发送任务。",
+                        "For an idempotent retry, restore the original recipient, SIM and message."),
+                        color=MaterialTheme.colorScheme.error)
                 if(possible.isEmpty())Text("当前没有允许发送短信的在线 SIM 节点。")
                 else{
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)
@@ -608,8 +614,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
                         singleLine=true,visualTransformation=PasswordVisualTransformation())
                 }
-            }},confirmButton={TextButton(enabled=!sending && current!=null && recipient.isNotBlank() && message.isNotBlank(),
+            }},confirmButton={TextButton(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
+                    if(submittedDraft.isEmpty())submittedDraft=currentDraft
                     sending=true;sendError=""
                     scope.launch{
                         try {

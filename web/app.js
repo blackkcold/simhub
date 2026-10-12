@@ -984,7 +984,7 @@ function buildThreads(source){
 // Master Vault Key and Node Keys never enter the native bridge. Native data
 // lives in process memory and is wiped by a Vault lock message.
 function publishAndroidInbox(){
-  if(!androidShell || !window.SimHubNativeInbox?.postMessage)return;
+  if(typeof androidShell==='undefined'||!androidShell||!window.SimHubNativeInbox?.postMessage)return;
   if(!vaultKey){
     window.SimHubNativeInbox.postMessage(JSON.stringify({type:'locked'}));return;
   }

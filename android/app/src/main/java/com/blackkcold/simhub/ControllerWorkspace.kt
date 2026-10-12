@@ -571,6 +571,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     if(showWrite){
         var recipient by remember{mutableStateOf("")}
         var message by remember{mutableStateOf("")}
+        var sendError by remember{mutableStateOf("")}
+        var sending by remember{mutableStateOf(false)}
+        // Reuse this ID across uncertain retries to avoid accidental duplicate sends.
+        val messageCommandId=remember{UUID.randomUUID().toString()}
         var deviceIdx by remember{mutableIntStateOf(0)}
         var channelIdx by remember{mutableIntStateOf(0)}
         val possible=devices.filter{d->
@@ -585,6 +589,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         AlertDialog(onDismissRequest={showWrite=false},title={Text(hubLabel("发送加密短信","Send encrypted SMS"))},
             text={Column(Modifier.heightIn(max=430.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement=Arrangement.spacedBy(8.dp)){
+                if(sendError.isNotEmpty())Text(sendError,color=MaterialTheme.colorScheme.error)
                 if(possible.isEmpty())Text("当前没有允许发送短信的在线 SIM 节点。")
                 else{
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)
@@ -603,8 +608,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
                         singleLine=true,visualTransformation=PasswordVisualTransformation())
                 }
-            }},confirmButton={TextButton(enabled=current!=null && recipient.isNotBlank() && message.isNotBlank(),
+            }},confirmButton={TextButton(enabled=!sending && current!=null && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
+                    sending=true;sendError=""
                     scope.launch{
                         try {
                             val queuedId=withContext(Dispatchers.IO){
@@ -612,7 +618,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 if(stepUp.isNotEmpty())client!!.api("/api/v1/auth/elevate","POST",
                                     JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",stepUp))
                                 val channel=channels.optJSONObject(channelIdx)?:throw IllegalStateException("SIM 未选择")
-                                val id=UUID.randomUUID().toString()
+                                val id=messageCommandId
                                 val now=System.currentTimeMillis()/1000
                                 val expires=now+1200
                                 val payload=JSONObject().put("v",2).put("action","sms.send")
@@ -631,7 +637,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             lastCommandDevice=current?.optString("name").orEmpty()
                             lastCommandState="等待设备连接并领取任务"
                             showWrite=false;error=""
-                        }catch(e:Exception){error=e.message?:"发送失败";showWrite=false}
+                        }catch(e:Exception){
+                            sendError=(e.message?:"请求失败")+
+                                "。若请求状态不明，请先查看命令执行状态再重试。"
+                        }finally{sending=false}
                     }
                 }){Text(hubLabel("确认发送","Confirm send"))}},dismissButton={TextButton(onClick={showWrite=false}){Text(hubLabel("取消","Cancel"))}})
     }

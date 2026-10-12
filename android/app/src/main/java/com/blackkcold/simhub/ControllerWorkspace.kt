@@ -86,7 +86,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 if(node==null)throw SecurityException("Unknown node")
                                 plaintext=api.decryptEvent(item,node,vault)
                             }catch(_:Exception){failed=true;failure++}
-                            val inbound=item.optString("kind")=="sms.received"
+                            val kind=item.optString("kind")
+                            val direction=plaintext.optString("direction")
+                            val inbound=kind=="sms.received"||direction=="in"||
+                                (kind=="sms.history"&&direction!="out")
                             val sender=if(inbound)plaintext.optString("sender") else plaintext.optString("recipient")
                             val address=sender.ifBlank{plaintext.optString("sender",plaintext.optString("recipient","未知"))}
                             val ch=plaintext.optString("channelId")
@@ -200,11 +203,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     if(pairing!=null){
                         Text("配对码  ${pairing!!.code}",
                             style=MaterialTheme.typography.headlineMedium)
+                        Text("终端指纹：${client?.identityFingerprint()}",
+                            style=MaterialTheme.typography.labelSmall)
                         Text("在网页：连接管理手机 → 待授权管理终端，核对配对码后确认。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant)
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }else{
-                        Button(enabled=!busy,onClick={
+                        if(client?.hasGrant()==true)OutlinedButton(onClick={
+                            authorized=true;load(newer=true)
+                        },modifier=Modifier.fillMaxWidth()){Text("重试已授权终端连接")}
+                        Button(enabled=!busy && client?.hasGrant()!=true,onClick={
                             busy=true;scope.launch {
                                 try{pairing=withContext(Dispatchers.IO){
                                     client!!.beginPairing(android.os.Build.MANUFACTURER+" "+android.os.Build.MODEL)
@@ -221,7 +229,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 modifier=Modifier.padding(horizontal=16.dp,vertical=6.dp))
             if(tab==0){
                 Box(Modifier.weight(1f)){
-                    NativeControllerInbox(inbox,
+                    if(!inbox.unlocked && busy){
+                        Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+                            Column(horizontalAlignment=Alignment.CenterHorizontally){
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(12.dp))
+                                Text("正在验证终端并加载加密短信")
+                            }
+                        }
+                    }else NativeControllerInbox(inbox,
                         onRefresh={load(newer=true)},
                         onOlder={load(older=true)},
                         onNewer={load(newer=true)},
@@ -403,7 +419,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                         .put("type","sms.send").put("createdAt",now)
                                         .put("expiresAt",expires).put("ciphertext",cipher))
                             }
-                            showWrite=false;error="已提交加密发送任务，等待节点 ACK"
+                            showWrite=false;error=""
                         }catch(e:Exception){error=e.message?:"发送失败";showWrite=false}
                     }
                 }){Text("确认发送")}},dismissButton={TextButton(onClick={showWrite=false}){Text("取消")}})

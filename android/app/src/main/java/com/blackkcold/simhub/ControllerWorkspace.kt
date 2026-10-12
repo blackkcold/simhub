@@ -52,6 +52,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
     var error by remember { mutableStateOf("") }
     var passkeyAvailable by remember { mutableStateOf(false) }
     var tab by remember(selected) { mutableIntStateOf(0) }
+    // The retained WebView callbacks must observe current profile/tab rather than
+    // stale closure values captured when AndroidView.factory first ran.
+    val currentOrigin=rememberUpdatedState(selected)
+    val currentTab=rememberUpdatedState(tab)
     val main=Handler(Looper.getMainLooper())
 
     fun callPage(expression:String) { web?.evaluateJavascript(expression,null) }
@@ -171,10 +175,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                                 WebViewCompat.WebMessageListener { _,message,sourceOrigin,isMainFrame,_->
                                     val origin=sourceOrigin.toString().trimEnd('/')
                                     val payload=message.data
-                                    if(!isMainFrame || origin!=selected || payload==null)return@WebMessageListener
+                                    if(!isMainFrame || origin!=currentOrigin.value || payload==null)return@WebMessageListener
                                     if(payload.length>450_000)return@WebMessageListener
                                     main.post {
-                                        if(selected==origin)inbox.accept(payload)
+                                        if(currentOrigin.value==origin)inbox.accept(payload)
                                     }
                                 })
                         } else {
@@ -183,7 +187,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                         webChromeClient=WebChromeClient()
                         webViewClient=object:WebViewClient(){
                             private fun approved(request:Uri):Boolean {
-                                val approvedOrigin=ControllerLinks.normalize(selected?:"")?:return false
+                                val approvedOrigin=ControllerLinks.normalize(currentOrigin.value?:"")?:return false
                                 val parsed=Uri.parse(approvedOrigin)
                                 return request.scheme=="https" &&
                                     request.host.equals(parsed.host,true) &&
@@ -208,9 +212,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                             }
                             override fun onPageFinished(view:WebView,url:String){
                                 canGoBack=view.canGoBack()
-                                if(url.startsWith(selected?:"\u0000")){
+                                val actual=Uri.parse(url)
+                                val expected=Uri.parse(currentOrigin.value?:"")
+                                val trusted=actual.scheme=="https" &&
+                                    actual.host.equals(expected.host,true) &&
+                                    (if(actual.port==-1)443 else actual.port)==
+                                      (if(expected.port==-1)443 else expected.port)
+                                if(trusted){
                                     main.postDelayed({
-                                        val target=when(tab){1->"devices";2->"settings";4->"send";else->"inbox"}
+                                        val target=when(currentTab.value){1->"devices";2->"settings";4->"send";else->"inbox"}
                                         view.evaluateJavascript("window.SimHubNativeShell?.openView('"+target+"')",null)
                                         view.evaluateJavascript("window.SimHubNativeShell?.snapshot()",null)
                                     },250)

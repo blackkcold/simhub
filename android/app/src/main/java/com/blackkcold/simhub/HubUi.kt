@@ -202,6 +202,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                     // the local node. Android View is hidden, not recreated, on switching.
                     ControllerWorkspace(visible=!isNode,revision=controllerRevision,
                         onScan=controller::scanController,onSwitchNode={chooseSurface("node")},
+                        expanded=rail,
                         modifier=Modifier.fillMaxSize())
                     if(isNode){
                         Surface(Modifier.fillMaxSize(),

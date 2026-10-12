@@ -570,3 +570,31 @@ input,select,textarea { min-width:0; min-height:44px; }
  .device-connect-actions button{min-width:0;min-height:44px}
  .controller-connect-dialog{padding:18px}
 }
+
+
+/* Native Compose owns the sole Android bottom navigation. Web content is
+   restricted to the active controller page, without a second floating dock. */
+html.simhub-android-shell .sidebar,
+html.simhub-android-shell .topbar{display:none!important}
+html.simhub-android-shell body,
+html.simhub-android-shell .shell{display:block!important;min-height:100%;height:100%;overflow:auto}
+html.simhub-android-shell main{
+  display:block!important;width:100%!important;max-width:none!important;
+  height:auto!important;max-height:none!important;min-height:100%!important;
+  padding:12px 14px 28px!important;overflow:visible!important;margin:0!important
+}
+html.simhub-android-shell #appContent{display:block!important;min-height:0!important;overflow:visible!important;height:auto!important}
+html.simhub-android-shell #lockedPanel{width:min(100%,520px);margin:24px auto}
+html.simhub-android-shell .view.active{display:block}
+html.simhub-android-shell .settings-shell{min-width:0}
+html.simhub-android-shell .sms-layout{height:auto;max-height:none}
+html.simhub-android-shell #newSmsBtn{display:none!important}
+@media(max-width:760px){
+  html.simhub-android-shell .sidebar{display:none!important}
+  html.simhub-android-shell main:has(#appContent:not([hidden]) #view-inbox.active){
+    display:block!important;height:auto!important;max-height:none!important;
+    padding-bottom:20px!important;overflow:visible!important
+  }
+  html.simhub-android-shell .conversation-panel{height:auto!important;max-height:none!important}
+  html.simhub-android-shell .settings-workspace{min-width:0}
+}

@@ -583,7 +583,7 @@ html.simhub-android-shell main{
   height:auto!important;max-height:none!important;min-height:100%!important;
   padding:12px 14px 28px!important;overflow:visible!important;margin:0!important
 }
-html.simhub-android-shell #appContent{display:block!important;min-height:0!important;overflow:visible!important;height:auto!important}
+html.simhub-android-shell #appContent:not([hidden]){display:block!important;min-height:0!important;overflow:visible!important;height:auto!important}
 html.simhub-android-shell #lockedPanel{width:min(100%,520px);margin:24px auto}
 html.simhub-android-shell .view.active{display:block}
 html.simhub-android-shell .settings-shell{min-width:0}
@@ -598,3 +598,5 @@ html.simhub-android-shell #newSmsBtn{display:none!important}
   html.simhub-android-shell .conversation-panel{height:auto!important;max-height:none!important}
   html.simhub-android-shell .settings-workspace{min-width:0}
 }
+
+html.simhub-android-shell #appContent[hidden]{display:none!important}

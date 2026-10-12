@@ -1,6 +1,11 @@
 package com.blackkcold.simhub
 
 import android.net.Uri
+import android.app.Activity
+import android.hardware.biometrics.BiometricPrompt
+import android.os.CancellationSignal
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -59,17 +64,57 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var actionError by remember{mutableStateOf("")}
     var serverVersion by remember{mutableStateOf("—")}
     var secondFactorTotp by remember(selected){mutableStateOf(true)}
+    var requireLocalUnlock by remember(selected){mutableStateOf(client?.requireLocalUnlock()==true)}
+    var localUnlocked by remember(selected){mutableStateOf(!requireLocalUnlock)}
+    var localAuthError by remember(selected){mutableStateOf("")}
     var lastCommandId by remember(selected){mutableStateOf("")}
     var lastCommandState by remember(selected){mutableStateOf("")}
     var lastCommandDevice by remember(selected){mutableStateOf("")}
 
+    // Optional OS-level app gate. This is not a cryptographically authentication-bound
+    // Keystore key; such a migration requires a separate rewrap and recovery protocol.
+    fun authenticateLocal(enable:Boolean=false){
+        val activity=context as? Activity
+        if(activity==null){localAuthError="当前设备无法打开系统身份验证";return}
+        try{
+            val builder=BiometricPrompt.Builder(activity)
+                .setTitle("SIM Hub 管理中心")
+                .setSubtitle("使用指纹、人脸或系统锁屏验证")
+            if(Build.VERSION.SDK_INT>=30)
+                builder.setAllowedAuthenticators(
+                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            else builder.setDeviceCredentialAllowed(true)
+            builder.build().authenticate(CancellationSignal(),activity.mainExecutor,
+                object:BiometricPrompt.AuthenticationCallback(){
+                    override fun onAuthenticationSucceeded(result:BiometricPrompt.AuthenticationResult){
+                        localAuthError=""
+                        if(enable){client?.setRequireLocalUnlock(true);requireLocalUnlock=true}
+                        localUnlocked=true
+                    }
+                    override fun onAuthenticationError(errorCode:Int,errString:CharSequence){
+                        localAuthError=errString.toString()
+                    }
+                })
+        }catch(e:Exception){localAuthError=e.message?:"系统身份验证不可用"}
+    }
+    val activity=context as? androidx.activity.ComponentActivity
+    DisposableEffect(activity,selected,requireLocalUnlock){
+        val observer=LifecycleEventObserver{_,event->
+            if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
+                localUnlocked=false;inbox.clear();lastEventSeq=0L
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose{activity?.lifecycle?.removeObserver(observer)}
+    }
     fun chooseOrigin(value:String){
         ControllerProfiles.select(context,value)
         selected=value;onSelectTab(0)
     }
     fun load(older:Boolean=false,newer:Boolean=false){
         val api=client?:return
-        if(!api.hasGrant())return
+        if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
         if(busy)return
         busy=true
         scope.launch {
@@ -159,11 +204,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             finally{busy=false}
         }
     }
-    LaunchedEffect(selected,visible){
-        if(visible && client?.hasGrant()==true){authorized=true;load(newer=true)}
+    LaunchedEffect(selected,visible,localUnlocked,requireLocalUnlock){
+        if(visible && (!requireLocalUnlock || localUnlocked) && client?.hasGrant()==true){
+            authorized=true;load(newer=true)
+        }
     }
     LaunchedEffect(selected,visible,authorized){
-        if(visible && authorized)while(true){
+        if(visible && authorized && (!requireLocalUnlock || localUnlocked))while(true){
             delay(60000)
             if(!busy)load(newer=true)
         }
@@ -180,7 +227,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             }catch(e:Exception){error=e.message?:"配对失败";pairing=null;break}
         }
     }
-    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized)load(newer=true)}
+    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized && (!requireLocalUnlock || localUnlocked))load(newer=true)}
     // Queue acceptance is not device execution. Poll the Relay's immutable ACK state.
     LaunchedEffect(selected,lastCommandId,visible){
         if(!visible || lastCommandId.isBlank())return@LaunchedEffect
@@ -216,6 +263,24 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         }
     }
     if(!visible)return
+    if(requireLocalUnlock && !localUnlocked && authorized){
+        Box(modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+            Column(Modifier.padding(24.dp).widthIn(max=430.dp),
+                verticalArrangement=Arrangement.spacedBy(14.dp),
+                horizontalAlignment=Alignment.CenterHorizontally){
+                HubIcon(R.drawable.ic_hub_shield,Modifier.size(44.dp))
+                Text(hubLabel("管理中心已锁定","Management center locked"),
+                    style=MaterialTheme.typography.titleLarge)
+                Text(hubLabel("使用系统身份验证继续访问加密短信与设备管理。",
+                    "Authenticate with your device to view encrypted messages and manage nodes."))
+                if(localAuthError.isNotEmpty())Text(localAuthError,color=MaterialTheme.colorScheme.error)
+                Button(onClick={authenticateLocal()},modifier=Modifier.fillMaxWidth()){
+                    Text(hubLabel("使用系统指纹或锁屏解锁","Unlock with device authentication"))
+                }
+            }
+        }
+        return
+    }
     Column(modifier.fillMaxSize()) {
         if(selected==null){
             Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
@@ -386,6 +451,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         Text("解除本地授权会清除该管理空间的本机身份密钥与加密 Vault。服务器端撤销请在网页管理后台完成。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant,
                             style=MaterialTheme.typography.bodySmall)
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){
+                                Text(hubLabel("重新进入时验证身份","Require authentication on return"))
+                                Text(hubLabel("使用安卓系统生物识别或锁屏；这是应用访问保护，并非密钥的硬件认证绑定。",
+                                    "Android biometrics or device credential. App access gate, not a hardware-bound Vault key."),
+                                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked=requireLocalUnlock,onCheckedChange={enabled->
+                                if(enabled)authenticateLocal(enable=true)
+                                else{client?.setRequireLocalUnlock(false);requireLocalUnlock=false;localUnlocked=true}
+                            })
+                        }
                         OutlinedButton(onClick={showReset=true}){Text(hubLabel("清除此手机的管理授权","Remove authorization from this phone"))}
                     }
                     item{

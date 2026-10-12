@@ -1,33 +1,36 @@
-# Android unified workspace and on-device administrator authentication
+# Android Controller UI and same-device approval — decision record
 
-Status: implementation branch; not released.
+## Selected implementation
 
-## Existing findings (v0.15.5)
+The requirement permits authentication on the Android device **or by navigating to a web
+page on the same device**. This release implements the **same-device HTTPS browser route**
+and reuses the existing WebAuthn/Passkey + server-side step-up and E2EE Global Vault
+approval. Native Credential Manager registration is not claimed or required by this route.
 
-- HubApp owns the node Scaffold while ControllerWorkspace owns another top bar, NavigationBar and NavigationRail.
-- ControllerSecureClient has Android Keystore P-256 identity and AES-GCM Vault wrapping, but neither key requires local user authentication.
-- First-time controller enrollment requires an already unlocked web administrator to approve and ECDH-wrap the existing singleton Vault.
-- server/passkeys.py implements WebAuthn verification; Android dependencies include Credential Manager but no native controller credential flow is wired.
-- Global Vault must remain singleton; Passkey authentication must not be treated as a Vault decryption key.
+The Android application itself is native Compose and has one shared top bar, mode selector,
+four bottom navigation tabs, and one navigation rail. The controller does not embed WebView.
 
-## Required implementation
+## Completed changes in this branch
 
-1. Move top bar, mode switch, adaptive bottom/rail navigation into HubApp shared Scaffold. ControllerWorkspace must become a content-only workspace, with four destinations (Home, Messages, Devices, Settings). Preserve each workspace's navigation state.
-2. Build reusable node-derived cards, status rows, empty/error/loading views and responsive layouts. Preserve SMS source provenance and per-node key epochs.
-3. Integrate Android Credential Manager get/create public key credentials. Bind the Android package and release/debug signing certificates to the HTTPS RP using Digital Asset Links; verify Android origin strictly on the server. Do not bypass origin or user verification.
-4. Allow same-phone first enrollment: authenticate administrator using an existing passkey or password plus applicable TOTP, register the local controller public key under that authenticated session, download the existing password-wrapped singleton Vault, locally unwrap with its existing passphrase, verify vaultId/keyId, and seal in Android Keystore. Never create a second Vault.
-5. Require user-authentication-bound Keystore protection for foreground Vault unlock. Keep background node SMS synchronization independent of foreground prompts. Server must continue enforcing step-up for sensitive actions.
-6. Offer same-device Custom Tabs authentication fallback with one-time, challenge-bound callback; no credentials, Vault key or session cookie in URLs.
-7. Preserve server-side revocation, recovery, node role, PWA, existing E2EE history and release upgrade compatibility.
+- Shared SIM Node / Management Center navigation shell and controller overview tab.
+- Local same-device browser entry with optional Passkey/biometrics via the browser's own
+  WebAuthn provider; manual secure resume deep link without credentials in its URL.
+- Short-lived pairing state persisted as AES-GCM sealed state under Android Keystore, allowing
+  recovery after operating-system process eviction while the browser is foregrounded.
+- Regression source-contract test added to GitHub Actions CI.
 
-## Security gates
+## Security properties preserved
 
-- No passkey-only recovery of the Vault without the Vault passphrase or a separately designed secure recovery envelope.
-- No local biometric result alone grants server admin privileges.
-- No acceptance of arbitrary RP origins, unverified app signatures, insecure HTTP, or cross-origin redirects.
-- Keystore invalidation, device theft, stale grants, TOTP step-up, challenge replay, revoked sessions and incompatible credential providers must be covered.
-- Manual verification on supported physical Android versions and foldable layouts is required before a production release.
+- The singleton Global Vault password and Master Key are never sent to Relay in plaintext.
+- Signed controller identity, 6-digit pairing-code confirmation, trusted HTTPS origin,
+  TOTP step-up and Vault ID/key ID verification remain mandatory.
+- Server-side revocation and key-history / SIM provenance remain unchanged.
+- The browser's Passkey authentication is **not** an authentication-bound Android Keystore
+  decrypt operation and should never be represented as such.
 
-## Release gate
+## Production verification
 
-Increment version only after changes are implemented, CI and unit/integration tests pass, and actual device passkey enrollment, Vault unlock and controller UI smoke tests are confirmed. Do not tag or publish an incomplete implementation.
+Release gating requires Android/Relay/Web CI, OTA checks and security scan passing at
+the exact merged commit. Physical browser Passkey experience, different OEM biometric
+providers, foldable layout and real device process-death recovery require separate
+real-device validation.

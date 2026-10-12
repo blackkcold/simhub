@@ -8,6 +8,8 @@ import android.content.Context
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -51,6 +53,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var unreadable by remember(selected){mutableIntStateOf(0)}
     var showWrite by remember{mutableStateOf(false)}
     var showReset by remember{mutableStateOf(false)}
+    var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
     var actionError by remember{mutableStateOf("")}
     var serverVersion by remember{mutableStateOf("—")}
@@ -406,15 +409,44 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         }){Text("添加")}},dismissButton={TextButton(onClick={add=false}){Text("取消")}})
     if(showReset)AlertDialog(onDismissRequest={showReset=false},
         title={Text("清除本机授权？")},
-        text={Text("删除本机授权密钥与缓存。服务器仍保留该终端记录，建议同时在网页撤销。不会影响 SIM 节点的本地短信。")},
-        confirmButton={TextButton(onClick={
-            client?.localReset();authorized=false;inbox.clear();devices=emptyList();showReset=false
-        }){Text("清除")}},
-        dismissButton={TextButton(onClick={showReset=false}){Text("取消")}})
+        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Text("建议先撤销云端管理终端，再删除此手机的本地密钥。不会影响 SIM 节点短信。")
+            OutlinedTextField(resetCredential,{resetCredential=it},
+                label={Text(if(secondFactorTotp)"二次验证 TOTP（云端撤销）" else "管理员令牌（云端撤销）")},
+                singleLine=true,visualTransformation=PasswordVisualTransformation())
+            if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
+        }},
+        confirmButton={
+            TextButton(enabled=!busy,onClick={
+                val api=client?:return@TextButton
+                busy=true
+                scope.launch{
+                    try{
+                        withContext(Dispatchers.IO){
+                            if(resetCredential.isNotBlank())api.api("/api/v1/auth/elevate","POST",
+                                JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",resetCredential))
+                            api.api("/api/v1/controllers/revoke","POST",
+                                JSONObject().put("controllerId",api.controllerId()))
+                        }
+                        api.localReset();authorized=false;inbox.clear();devices=emptyList()
+                        lastCommandId="";showReset=false;resetCredential="";error=""
+                    }catch(e:Exception){error="无法撤销云端授权："+(e.message?:"请检查网络或二次验证")}
+                    finally{busy=false}
+                }
+            }){Text("撤销云端并清除本机")}
+        },
+        dismissButton={
+            TextButton(onClick={
+                // Explicit offline-only fallback; this does not revoke Relay access.
+                client?.localReset();authorized=false;inbox.clear();devices=emptyList()
+                lastCommandId="";resetCredential="";showReset=false
+            }){Text("仅清除此手机")}
+        })
     selectedDevice?.let{d->
         AlertDialog(onDismissRequest={selectedDevice=null},
             title={Text(d.optString("name","设备详情"))},
-            text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            text={Column(Modifier.heightIn(max=450.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement=Arrangement.spacedBy(10.dp)){
                 Text("设备 ID：${d.optString("id")}")
                 Text("版本：${d.optString("appVersion")}")
                 Text("连接：${if(d.optBoolean("online"))"在线" else "离线"}")
@@ -466,7 +498,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val channels=current?.optJSONObject("state")?.optJSONArray("channels")?:JSONArray()
         var stepUp by remember{mutableStateOf("")}
         AlertDialog(onDismissRequest={showWrite=false},title={Text("发送加密短信")},
-            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+            text={Column(Modifier.heightIn(max=430.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement=Arrangement.spacedBy(8.dp)){
                 if(possible.isEmpty())Text("当前没有允许发送短信的在线 SIM 节点。")
                 else{
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)

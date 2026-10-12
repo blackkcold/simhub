@@ -31,7 +31,7 @@ public class ControllerInboxStateTest {
         state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"old\",\"timestamp\":100,\"body\":\"older\"}],\"hasMore\":false}",true);
         assertEquals(2,state.getMessages().size());
     }
-    @Test public void batchAckRejectedWhenOversizedAndNeverMutatesExistingMessages() {
+    @Test public void batchAckRejectedWhenOversizedAndNeverMutatesExistingMessages() throws Exception {
         ControllerInboxState state=new ControllerInboxState();
         assertTrue(state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"one\",\"timestamp\":100}]}"));
         assertFalse(state.accept("x".repeat(450001)));
@@ -43,7 +43,7 @@ public class ControllerInboxStateTest {
         assertFalse(state.accept(oversized));
         assertEquals("one",state.getMessages().get(0).getId());
     }
-    @Test public void deepHistoryWindowRetainsOlderMessagesAndCanNavigateToLatest() {
+    @Test public void deepHistoryWindowRetainsOlderMessagesAndCanNavigateToLatest() throws Exception {
         ControllerInboxState state=new ControllerInboxState();
         for(int batch=0;batch<14;batch++) {
             org.json.JSONArray rows=new org.json.JSONArray();

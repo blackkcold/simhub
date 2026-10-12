@@ -28,6 +28,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import android.view.WindowManager
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -98,6 +100,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var unreadable by remember(selected){mutableIntStateOf(0)}
     var lastEventSeq by remember(selected){mutableLongStateOf(0L)}
     var showWrite by remember{mutableStateOf(false)}
+    var composeRecipient by remember(selected){mutableStateOf("")}
+    var composeMessage by remember(selected){mutableStateOf("")}
+    var composeSubmittedDraft by remember(selected){mutableStateOf("")}
+    var composeCommandId by remember(selected){mutableStateOf(UUID.randomUUID().toString())}
+    var composeDeviceIdx by remember(selected){mutableIntStateOf(0)}
+    var composeChannelIdx by remember(selected){mutableIntStateOf(0)}
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
@@ -699,15 +707,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             confirmButton={TextButton(onClick={selectedDevice=null;actionError=""}){Text(hubLabel("关闭","Close"))}})
     }
     if(showWrite){
-        var recipient by remember{mutableStateOf("")}
-        var message by remember{mutableStateOf("")}
         var sendError by remember{mutableStateOf("")}
         var sending by remember{mutableStateOf(false)}
-        var submittedDraft by remember{mutableStateOf("")}
-        // Reuse this ID across uncertain retries to avoid accidental duplicate sends.
-        val messageCommandId=remember{UUID.randomUUID().toString()}
-        var deviceIdx by remember{mutableIntStateOf(0)}
-        var channelIdx by remember{mutableIntStateOf(0)}
+        // Draft, SIM choice and idempotency key survive closing the compose page.
+        val recipient=composeRecipient
+        val message=composeMessage
+        val submittedDraft=composeSubmittedDraft
+        val messageCommandId=composeCommandId
+        val deviceIdx=composeDeviceIdx
+        val channelIdx=composeChannelIdx
         val possible=devices.filter{d->
             val st=d.optJSONObject("state")?:JSONObject()
             val channels=st.optJSONArray("channels")
@@ -718,9 +726,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val channels=current?.optJSONObject("state")?.optJSONArray("channels")?:JSONArray()
         val currentDraft=(current?.optString("id")?:"")+"|"+deviceIdx+"|"+channelIdx+"|"+recipient+"|"+message
         var stepUp by remember{mutableStateOf("")}
-        AlertDialog(onDismissRequest={showWrite=false},title={Text(hubLabel("发送加密短信","Send encrypted SMS"))},
-            text={Column(Modifier.heightIn(max=430.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Dialog(onDismissRequest={showWrite=false},
+            properties=DialogProperties(usePlatformDefaultWidth=false)){
+            Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
+                Column(Modifier.fillMaxSize().imePadding().padding(18.dp)){
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                        Text(hubLabel("发送加密短信","Send encrypted SMS"),
+                            modifier=Modifier.weight(1f),style=MaterialTheme.typography.titleLarge)
+                        TextButton(onClick={showWrite=false}){Text(hubLabel("关闭","Close"))}
+                    }
+                    HorizontalDivider()
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                        verticalArrangement=Arrangement.spacedBy(12.dp)){
                 if(sendError.isNotEmpty())Text(sendError,color=MaterialTheme.colorScheme.error)
                 if(submittedDraft.isNotEmpty() && currentDraft!=submittedDraft)
                     Text(hubLabel("重试需保留原收件人、SIM 与短信内容；修改内容请新建发送任务。",
@@ -730,23 +747,25 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 else{
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)
                     possible.forEachIndexed{i,d->
-                        FilterChip(selected=i==deviceIdx,onClick={deviceIdx=i;channelIdx=0},
+                        FilterChip(selected=i==deviceIdx,onClick={composeDeviceIdx=i;composeChannelIdx=0},
                             label={Text(d.optString("name"))})
                     }
                     Text("来源 SIM",style=MaterialTheme.typography.labelLarge)
                     for(i in 0 until channels.length()){
                         val ch=channels.optJSONObject(i)?:continue
-                        FilterChip(selected=i==channelIdx,onClick={channelIdx=i},
+                        FilterChip(selected=i==channelIdx,onClick={composeChannelIdx=i},
                             label={Text(ch.optString("displayName").ifBlank{ch.optString("id")})})
                     }
-                    OutlinedTextField(recipient,{recipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
-                    OutlinedTextField(message,{message=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
+                    OutlinedTextField(recipient,{composeRecipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
+                    OutlinedTextField(message,{composeMessage=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
                     OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
                         singleLine=true,visualTransformation=PasswordVisualTransformation())
                 }
-            }},confirmButton={TextButton(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && recipient.isNotBlank() && message.isNotBlank(),
+                    }
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+                        Button(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
-                    if(submittedDraft.isEmpty())submittedDraft=currentDraft
+                    if(submittedDraft.isEmpty())composeSubmittedDraft=currentDraft
                     sending=true;sendError=""
                     scope.launch{
                         try {
@@ -774,11 +793,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             lastCommandDevice=current?.optString("name").orEmpty()
                             lastCommandState="等待设备连接并领取任务"
                             showWrite=false;error=""
+                            composeRecipient="";composeMessage=""
+                            composeSubmittedDraft=""
+                            composeCommandId=UUID.randomUUID().toString()
                         }catch(e:Exception){
                             sendError=(e.message?:"请求失败")+
                                 "。若请求状态不明，请先查看命令执行状态再重试。"
                         }finally{sending=false}
                     }
-                }){Text(hubLabel("确认发送","Confirm send"))}},dismissButton={TextButton(onClick={showWrite=false}){Text(hubLabel("取消","Cancel"))}})
+                        }){Text(hubLabel("确认发送","Confirm send"))}
+                    }
+                }
+            }
+        }
     }
 }

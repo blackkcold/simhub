@@ -46,7 +46,8 @@ ADMIN_USERNAME = os.getenv("SIMHUB_ADMIN_USERNAME", "admin").strip()
 # Public, non-secret certificate fingerprints for Android Credential Manager.
 _CERT_PATTERN = re.compile(r"^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$")
 ANDROID_CERT_SHA256 = tuple(dict.fromkeys(
-    value for raw in os.getenv("SIMHUB_ANDROID_CERT_SHA256", "").split(",")
+    value for raw in os.getenv("SIMHUB_ANDROID_CERT_SHA256",
+        "63:3F:60:0F:7E:C0:AC:5C:DC:DC:FF:B5:36:AD:E4:BE:EC:83:12:CC:08:34:87:A2:25:C8:C3:08:77:1F:D8:D3").split(",")
     if (value := raw.strip().upper()) and _CERT_PATTERN.fullmatch(value)
 ))
 

@@ -1,56 +1,77 @@
-# Android 原生管理中心 · v0.15.5
+# Android 统一工作区与同机授权 · v0.15.6
 
-## 架构
+## 单一 Compose App Shell
 
-Android 管理端使用独立的 Jetpack Compose UI 与 Android Keystore 终端身份，
-不再通过 WebView 承载短信、设备或设置页面。SIM 节点和管理端独立配置，
-共用 Material 3 视觉组件与各自的单层导航。
+Android SIM 节点与原生管理中心共用 **HubApp** 顶部品牌栏、SIM 节点／管理中心
+模式切换、四个标准底部导航入口及大屏 NavigationRail。两种模式共用
+Material 3 的 HubCard、StatePill、InfoRow 及自适应布局：
 
-- 管理中心：短信、设备、设置底部导航；窄屏单列、无重复顶部栏。
-- 通信：同源 HTTPS Relay API，禁止跳转到其他 origin。
-- 登录：Android Keystore P-256 ECDSA 签名 challenge，一次性挑战会话；
-  服务器签发 HttpOnly、Secure、SameSite=Strict 的管理员 Session Cookie。
-- Vault：通过已解锁网页管理员以 P-256 ECDH / HKDF-SHA256 / AES-256-GCM
-  加密封装至新终端，不经 Relay 明文传送；手机仅持久保存 Android Keystore
-  AES-GCM 保护的 Vault 封装。仍严格按密文 kid 获取当前、待轮换与历史 Node Key。
-- 控制指令：由终端本地构建、加密，再提交现有命令与 ACK 状态机。
-- 兼容：保留网页 PWA 与原有 SIM 节点，不覆盖节点的配对密钥。
+| 位置 | SIM 节点 | 管理中心 |
+| --- | --- | --- |
+| 首页 | 本机节点状态 | 管理连接、节点统计与快捷操作 |
+| 短信 | 本机短信 | 经客户端 E2EE 解密的远程会话 |
+| 设备 | 本机 SIM | 已连接 SIM 节点 |
+| 设置 | 节点配置 | 管理空间及授权、诊断 |
 
-## 首次连接
+ControllerWorkspace 是**纯内容组件**，不再自行创建 TopAppBar、
+NavigationBar、NavigationRail 或 WebView。手机只有一套底栏，大屏只有一套侧边导航；
+切换模式保留各自的分页状态。远程历史短信来源继续使用 Channel ID 和 Revision，
+并通过匹配 Node Key 的 kid 来判断能否解密。
 
-1. 在 Android 管理中心扫描网页的「连接管理手机」二维码或输入 HTTPS 域名。
-   配置二维码仅保存公开地址，不包含管理员密码或 Vault Key。
-2. Android 点击「申请管理终端授权」，生成随机单次 ECDH 公钥、
-   Keystore 签名身份公钥与 6 位配对码。
-3. 在已登录、已解锁 Vault 的网页管理端，打开「连接管理手机」，
-   刷新待授权列表；比对手机和网页显示的 6 位配对码及终端指纹。
-4. 完成原有管理员二次验证并批准。网页端通过 ECDH 加密 Vault，
-   服务端仅转发密文和登记经管理员批准的公钥身份。
-5. Android 收到加密封装，解密并由 Keystore 保护，再通过签名挑战建立会话。
-   后续正常打开无需输入 Vault 密码。
+## 首次授权：同一台手机即可完成
+
+选择 **通过手机自带浏览器完成管理员验证**，而不是依赖 Android WebView
+代理通行密钥，也不自建一个不完整的原生 Passkey 服务端验证协议。
+这条路径是刻意选用用户要求的“跳转网页”模式，直接复用经过验证的网页
+WebAuthn、TOTP、管理员会话及 Global Vault 授权逻辑。
+
+1. Android 扫描配置二维码或输入可信 HTTPS Relay 地址。二维码**不含密钥**。
+2. 点击「申请管理终端授权」，生成 Keystore P-256 身份、短期 ECDH 公钥和
+   6 位配对码；临时 ECDH 私钥连同配对申请通过本机 Keystore AES-GCM
+   加密封装，并设置 10 分钟过期时间，允许从浏览器回来时恢复流程。
+3. 在同一台手机上点击「在本机浏览器认证并批准」，访问当前已验证的
+   HTTPS 域名根路径，附带**只有界面导航作用**的 `?controller=local`。
+   在浏览器登录管理员，可选用**已注册的 Passkey/系统生物识别**，
+   或按服务端现有要求使用管理员密码及 TOTP。
+4. 在本机浏览器解锁**现有唯一 Global Vault**，进入「连接管理手机」，
+   粘贴本机显示的 6 位配对码，核对终端指纹并通过现有二次验证。
+   浏览器对已有 Vault Master Key 做 ECDH/HKDF/AES-GCM 加密授权；
+   Relay 只收发封装数据、不取得明文。
+5. 手动点击「返回 SIM Hub 管理中心」（`simhub://controller?resume=1`），
+   它**不包含账号、密码、密钥、配对码或会话 Token**；Android 检测到
+   已保存的可信管理域名后只切换本机管理工作区，并通过原有
+   `pair/{requestId}` 接口接收单次授权。
+6. 后续使用 Keystore P-256 签名登录，验证 Global Vault ID/keyId，
+   不再重复创建 Vault。服务器撤销或 Vault 身份不匹配时拒绝连接。
+
+> 设备指纹/Passkey 的用户验证发生在**同一台手机的浏览器**中；
+> Keystore ECDSA 是后续设备身份认证，两者不是一回事。
+> **本版本不声称 Android 原生 Credential Manager 已集成，也不声称
+> 每次打开 App 均需生物识别**。这需要独立的 Keystore 用户认证绑定与
+> 真机兼容性验证，不可以只显示一个假指纹按钮。
 
 ## 安全边界
 
-- 不得将 Master Vault 明文、Node Key 或管理员 Token 发给服务器。
-- 只能在明确管理员批准时增加可信终端；扫码域名本身不授予任何权限。
-- 管理端被盗、Keystore 损毁后应从网页撤销终端并重新配对。
-- 撤销立即使该终端无法重新认证，且删除其会话；已经下载到终端的旧明文无法远程擦除。
-- 短信明文仅用于当前应用内存渲染，不写入系统短信数据库或诊断日志。
-- 密码轮换将使旧 controller 的管理员指纹失效，需要重新授权。
-- 删除本机管理授权不影响 SIM 节点的短信或节点配对，但必须另在网页撤销服务器权限。
-- 短信发送、Node Key 轮换、删除设备等敏感操作继续由 Relay 强制二次验证。
+- 不允许跳转 HTTP 或非当前可信 HTTPS Origin；管理地址严格规范化。
+- 浏览器 Passkey 由实际部署域名的 WebAuthn RP 验证，不绕过 Origin / RP ID 校验；
+  不要求额外的 Android Asset Links，因认证发生在正常 HTTPS 浏览器。
+- 未创建 Passkey 的管理员必须使用已有合规认证方式；单独指纹解锁
+  **不能代替**初次管理员身份确认或恢复丢失的 Vault 密码。
+- 配对码须经服务器匹配且请求必须仍有效，服务端依赖登录会话及敏感操作
+  二次验证。浏览器和手机分开持有临时 ECDH 交换私钥。
+- Global Vault 仍是唯一的 Master Key；每个 SIM Node 的独立 Key 和历史
+  `v1/v2` 消息密文不变。不迁移、覆盖或重新初始化原有 Vault。
+- 本地重置不等于撤销服务端授权；用户应在网页后台撤销管理设备。
+  撤销无法远程擦除已下载的旧明文。
+- 本机控制器敏感操作仍由 Relay 执行 TOTP / step-up 验证。
+- 当前本地 Vault 封装仍采用 Android Keystore AES-GCM；它**尚未**
+  改为对每次解密强制要求生物识别的 Keystore Key。不能把首次网页指纹验证
+  误当成持续的 Vault 本地生物识别保护。
 
-## 密钥与历史短信
+## 验收要求
 
-显示已解密与解密失败条数，禁止将失败密文计入成功解密。
-旧 v1 密文沿用原 Master Vault；v2 按 kid 匹配当前、待轮换及历史
-Node Key，校验 AES-GCM AAD 与历史 SIM 的 Channel ID、Revision。
-不存在历史密钥时不可能重新生成明文，需原 Vault 的恢复密钥和历史节点封装。
-
-## 验收
-
-- 检查 server/test_controller_auth.py（配对码、签名、挑战重放、撤销）。
-- CI 编译 Android debug/release 并运行 JVM 测试。
-- 手动测试 Android 10–17、折叠屏、不同网络、锁屏恢复、密钥删除、
-  管理终端撤销、TOTP step-up、服务端升级和 145 条历史短信。
-- 不得将尚未完成的设备端到端测试描述成已通过。
+CI 必须通过 Android 编译与 JVM 测试、服务器和浏览器回归，以及
+`scripts/test_controller_same_phone.py` 架构与同机路径安全检查。
+上线前还需实机验证 Android 10–17、多供应商浏览器／Passkey 提供方、
+竖屏／折叠屏、后台进程重建、配对过期、管理员 TOTP 和 Vault 密码恢复、
+已授权终端删除和服务端撤销。未验证项目不得宣称已测试成功。

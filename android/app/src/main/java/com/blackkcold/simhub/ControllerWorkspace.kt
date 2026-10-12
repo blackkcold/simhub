@@ -170,7 +170,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         // 50 bounded ciphertext events per batch. Up to eight batches
                         // each refresh; remaining events resume from the ACKed cursor.
                         val rounds=if(delta)8 else 1
-                        repeat(rounds) {
+                        for(batchIndex in 0 until rounds){
                             val events=if(delta)
                                 api.api("/api/v1/events?since=$sequence&limit=50")
                             else api.api("/api/v1/events?order=occurred&limit=50"+suffix)
@@ -223,7 +223,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             result.add(ControllerLoadBatch(payload.toString(),highest,
                                 events.optLong("nextBeforeTime"),events.optLong("nextBeforeSeq"),failures))
                             sequence=highest
-                            if(!delta || rows.length()<50)return@repeat
+                            if(!delta || rows.length()<50)break
                         }
                     }finally{vault.fill(0)}
                     ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater)

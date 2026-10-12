@@ -1,3 +1,14 @@
+## v0.15.8 — Reliable controller sync and compatibility
+
+- Negotiate pairing protocols: pre-v0.15.7 Android clients use temporary IP-bound v1 polling; v2 requires a separate high-entropy polling token. Legacy v1 expires 2027-02-11 UTC.
+- Fetch E2EE SMS events in batches of at most 50, split encoded oversized JSON, and advance sequence cursors only after each native Inbox ACK. Malformed pages are rejected rather than silently discarded.
+- Separate delta refresh, older pages and latest navigation; keep a movable 1,200-message in-memory window for deep history and source-isolate conversations by Node/Channel/Revision.
+- Continuously read durable command ACK history from Relay (including Eco wake delays); queued/dispatched cannot be mistaken for successful execution.
+- Prevent Android management screenshots and Recents previews with FLAG_SECURE. Automatic API polling no longer renews administrator idle activity.
+- Replace SMS compose AlertDialog with full-screen native UI retaining draft/SIM/idempotency keys across dismissals.
+- Add legacy pairing regression, 2,050-event HTTP pagination, native overflow/history/source tests.
+- Remaining external validation: physical SIM/OEM power behavior, biometric CryptoObject/Keystore rewrap security migration and high-connection relay performance. CI cannot certify these.
+
 ## v0.15.7 — Native controller audit remediation
 
 - Fix controller pairing across Wi-Fi/mobile-data or VPN egress changes with a separate high-entropy polling credential. The Relay stores only a hash; Android seals the pending pairing token using Keystore AES-GCM. Pending pre-upgrade pairing requests retain temporary IP-bound compatibility.

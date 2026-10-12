@@ -648,6 +648,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             }
                         }
                     }
+                    item{
+                        OutlinedButton(onClick={
+                            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                Uri.parse(selected+"/")))
+                        },modifier=Modifier.fillMaxWidth()){
+                            HubIcon(R.drawable.ic_hub_add,Modifier.size(19.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(hubLabel("添加 SIM 节点（网页安全配对）","Add SIM node (secure Web enrollment)"))
+                        }
+                    }
                     if(devices.isEmpty())item{
                         HubCard(Modifier.fillMaxWidth()){
                             Text(hubLabel("暂无已配对设备","No enrolled devices"))

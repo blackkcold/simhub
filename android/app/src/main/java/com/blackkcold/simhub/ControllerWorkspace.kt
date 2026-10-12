@@ -643,56 +643,99 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                 }
             }else{
-                LazyColumn(Modifier.weight(1f),
-                    contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(16.dp),
+                    verticalArrangement=Arrangement.spacedBy(12.dp)){
                     item{
-                        Text("管理空间",style=MaterialTheme.typography.titleMedium)
-                        ListItem(headlineContent={Text(Uri.parse(selected).host?:selected.orEmpty())},
-                            supportingContent={Text("终端签名已授权 · 加密密钥仅存于本机")},
-                            leadingContent={HubIcon(R.drawable.ic_hub_shield)})
-                        Text("终端标识：${client?.controllerId()?.take(12)}…",
-                            style=MaterialTheme.typography.bodySmall)
+                        Text(hubLabel("管理设置","Management settings"),
+                            style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
                     }
                     item{
-                        HubSectionTitle("管理空间")
-                        OutlinedButton(onClick={add=true},
-                            modifier=Modifier.fillMaxWidth()) { Text(hubLabel("添加管理地址","Add management URL")) }
-                        profiles.forEach { origin ->
-                            TextButton(onClick={chooseOrigin(origin)},
-                                modifier=Modifier.fillMaxWidth()) {
-                                Text(Uri.parse(origin).host?:origin)
-                            }
-                        }
-                    }
-                    item {
-                        Text("安全与权限",style=MaterialTheme.typography.titleMedium)
-                        Text("可在本机完成云端授权撤销及本地密钥清除；离线时也可仅清除本机身份，但云端授权不会因此撤销。",
-                            color=MaterialTheme.colorScheme.onSurfaceVariant,
-                            style=MaterialTheme.typography.bodySmall)
-                        Row(verticalAlignment=Alignment.CenterVertically){
-                            Column(Modifier.weight(1f)){
-                                Text(hubLabel("重新进入时验证身份","Require authentication on return"))
-                                Text(hubLabel("使用安卓系统生物识别或锁屏；这是应用访问保护，并非密钥的硬件认证绑定。",
-                                    "Android biometrics or device credential. App access gate, not a hardware-bound Vault key."),
-                                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Switch(checked=requireLocalUnlock,onCheckedChange={enabled->
-                                if(enabled)authenticateLocal(enable=true)
-                                else{client?.setRequireLocalUnlock(false);requireLocalUnlock=false;localUnlocked=true}
-                            })
-                        }
-                        OutlinedButton(onClick={showReset=true}){Text(hubLabel("清除此手机的管理授权","Remove authorization from this phone"))}
-                    }
-                    item{
-                        Text("版本及诊断",style=MaterialTheme.typography.titleMedium)
-                        Text("Android ${BuildConfig.VERSION_NAME} · 原生管理端")
-                        OutlinedButton(onClick={
-                            scope.launch{try{
-                                serverVersion=withContext(Dispatchers.IO){
-                                    client!!.api("/api/v1/version").optString("version","未知")
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(11.dp)){
+                                HubIcon(R.drawable.ic_hub_dashboard,Modifier.size(28.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                Column(Modifier.weight(1f)){
+                                    Text(hubLabel("管理空间","Workspace"),fontWeight=FontWeight.SemiBold)
+                                    Text(Uri.parse(selected).host?:selected.orEmpty(),
+                                        style=MaterialTheme.typography.bodySmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                            }catch(e:Exception){error=e.message?:"版本检查失败"}}
-                        }){Text("服务器版本：$serverVersion")}
+                                StatePill(hubLabel("已授权","Authorized"),true)
+                            }
+                            InfoRow(hubLabel("设备身份","Controller ID"),client?.controllerId()?.take(12).orEmpty()+"…")
+                            HorizontalDivider(Modifier.padding(vertical=10.dp))
+                            OutlinedButton(onClick={add=true},modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("添加管理地址","Add management URL"))
+                            }
+                            profiles.forEach{origin->
+                                TextButton(onClick={chooseOrigin(origin)},
+                                    modifier=Modifier.fillMaxWidth()){
+                                    Text(Uri.parse(origin).host?:origin)
+                                }
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(9.dp)){
+                                HubIcon(R.drawable.ic_hub_shield,Modifier.size(24.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                Text(hubLabel("安全与访问","Security & access"),
+                                    style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                Column(Modifier.weight(1f)){
+                                    Text(hubLabel("返回时验证身份","Require unlock on return"),
+                                        fontWeight=FontWeight.Medium)
+                                    Text(hubLabel("系统生物识别/锁屏是应用门禁，不是硬件认证绑定的 Vault 密钥。",
+                                        "System unlock is an app gate, not an auth-bound Vault key."),
+                                        style=MaterialTheme.typography.bodySmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(checked=requireLocalUnlock,onCheckedChange={enabled->
+                                    if(enabled)authenticateLocal(enable=true)
+                                    else{
+                                        client?.setRequireLocalUnlock(false)
+                                        requireLocalUnlock=false;localUnlocked=true
+                                    }
+                                })
+                            }
+                            HorizontalDivider(Modifier.padding(vertical=10.dp))
+                            OutlinedButton(onClick={showReset=true},modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("撤销此手机的管理授权…","Revoke this controller…"))
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(9.dp)){
+                                HubIcon(R.drawable.ic_hub_tasks,Modifier.size(24.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                Text(hubLabel("系统与版本","System & updates"),
+                                    style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                            }
+                            InfoRow(hubLabel("Android 版本","Android app"),BuildConfig.VERSION_NAME)
+                            InfoRow(hubLabel("Relay 版本","Relay version"),serverVersion)
+                            OutlinedButton(onClick={
+                                scope.launch{
+                                    try{serverVersion=withContext(Dispatchers.IO){
+                                        client!!.api("/api/v1/version").optString("version","未知")
+                                    }}catch(e:Exception){error=e.message?:"版本检查失败"}
+                                }
+                            },modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("检查服务器版本","Check Relay version"))
+                            }
+                            OutlinedButton(onClick={
+                                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                    Uri.parse(selected+"/")))
+                            },modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("打开网页高级管理","Open advanced Web management"))
+                            }
+                        }
                     }
                 }
             }

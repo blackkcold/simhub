@@ -596,7 +596,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                 }
             }else if(tab==1){
-            }else if(tab==1){
                 Box(Modifier.weight(1f)){
                     if(!inbox.unlocked && busy){
                         Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
@@ -643,7 +642,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         ControllerDeviceCard(device){selectedDevice=device;actionError=""}
                     }
                 }
-            }else{
             }else{
                 LazyColumn(Modifier.weight(1f),
                     contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){

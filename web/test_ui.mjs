@@ -181,6 +181,25 @@ try {
     assert.deepEqual(jsErrors,[],`Responsive JS errors at ${width}`);
   }
   await responsiveContext.close();
+  // Android shell retains the Vault gate but removes the PWA's duplicated dock.
+  {
+    const nativeContext=await browser.newContext({viewport:{width:390,height:844}});
+    const nativePage=await nativeContext.newPage();
+    const errors=[];
+    nativePage.on("pageerror",e=>errors.push(e.message));
+    await nativePage.goto("http://127.0.0.1:"+port+"/?native=1",{waitUntil:"domcontentloaded"});
+    await nativePage.waitForFunction(()=>document.documentElement.classList.contains('simhub-android-shell'));
+    assert.equal(await nativePage.locator(".sidebar").isVisible(),false,
+      "Native shell must not show the PWA navigation");
+    assert.equal(await nativePage.locator(".topbar").isVisible(),false,
+      "Native shell must not show a second app header");
+    assert.equal(await nativePage.locator("#appContent").isVisible(),false,
+      "Vault-gated SMS content must stay hidden before authentication");
+    assert.equal(await nativePage.locator("#loginForm").isVisible(),true,
+      "Android login must be reachable");
+    assert.deepEqual(errors,[],"Android shell JavaScript errors");
+    await nativeContext.close();
+  }
   // Reopening an active browser tab must not demand the Vault passphrase again.
   const c=await browser.newContext({viewport:{width:1120,height:800}});
   const p=await c.newPage();

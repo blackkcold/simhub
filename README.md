@@ -14,7 +14,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 [![Release](https://img.shields.io/github/v/release/blackkcold/simhub)](https://github.com/blackkcold/simhub/releases/latest)
 [![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
 
-Android v0.15.6 unifies SIM node and native controller navigation. First-time management authorization can be completed on the **same phone** using the HTTPS browser's Passkey/biometric support (or password/TOTP), with E2EE Global Vault approval and secure return to the app.
+Android v0.15.7 builds on the unified SIM node and native controller navigation. First-time management authorization can be completed on the **same phone** using the HTTPS browser's Passkey/biometric support (or password/TOTP), with E2EE Global Vault approval and secure return to the app.
 
 **[Download Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[Quick deployment](docs/QUICKSTART.zh-CN.md)** · [Installation guide](docs/INSTALLATION.md)
 

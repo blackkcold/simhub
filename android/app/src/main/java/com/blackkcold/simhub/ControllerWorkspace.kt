@@ -234,6 +234,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                         NativeControllerInbox(inbox,
                             onRefresh={callPage("window.SimHubNativeShell?.refresh()")},
                             onOlder={callPage("window.SimHubNativeShell?.loadOlder()")},
+                            onNewer={callPage("window.SimHubNativeShell?.loadNewer()")},
                             onOpenLogin={changeTab(3)},
                             onWrite={changeTab(4)})
                     }

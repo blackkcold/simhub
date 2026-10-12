@@ -36,10 +36,12 @@ class ControllerInboxState {
         private set
     var hasMore by mutableStateOf(false)
         private set
+    var hasNewer by mutableStateOf(false)
+        private set
     var warning by mutableStateOf("")
         private set
     fun clear() {
-        messages.clear();unlocked=false;hasMore=false;warning=""
+        messages.clear();unlocked=false;hasMore=false;hasNewer=false;warning=""
     }
     fun accept(raw:String) {
         if(raw.length>450_000)return
@@ -64,6 +66,7 @@ class ControllerInboxState {
                     }
                     messages.clear();messages.addAll(fresh)
                     unlocked=true;hasMore=obj.optBoolean("hasMore")
+                    hasNewer=obj.optBoolean("hasNewer")
                     warning=if(obj.optInt("unreadable")>0)
                         "部分短信无法解密，请检查历史 Node Key 或 Vault 密钥" else ""
                 }
@@ -74,7 +77,7 @@ class ControllerInboxState {
 
 @Composable
 fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
-                          onOlder:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit) {
+                          onOlder:()->Unit,onNewer:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit) {
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var otpOnly by remember { mutableStateOf(false) }
@@ -151,6 +154,11 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                         }
                     }
                 }
+                if(state.hasNewer)item{
+                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){
+                        Text("查看较新短信")
+                    }
+                }
                 if(state.hasMore)item{
                     TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}
                 }
@@ -195,6 +203,9 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                             }
                         }
                     }
+                }
+                if(state.hasNewer)item{
+                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){Text("查看较新短信")}
                 }
                 if(state.hasMore)item{
                     TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}

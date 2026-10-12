@@ -587,7 +587,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                     item {
                         Text("安全与权限",style=MaterialTheme.typography.titleMedium)
-                        Text("解除本地授权会清除该管理空间的本机身份密钥与加密 Vault。服务器端撤销请在网页管理后台完成。",
+                        Text("可在本机完成云端授权撤销及本地密钥清除；离线时也可仅清除本机身份，但云端授权不会因此撤销。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant,
                             style=MaterialTheme.typography.bodySmall)
                         Row(verticalAlignment=Alignment.CenterVertically){

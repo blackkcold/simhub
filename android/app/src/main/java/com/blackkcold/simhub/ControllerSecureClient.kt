@@ -183,7 +183,15 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     }
     fun api(path:String,method:String="GET",body:JSONObject?=null):JSONObject {
         if(cookie.isEmpty())login()
-        return request(path,method,body,true)
+        return try{request(path,method,body,true)}
+        catch(failure:Exception){
+            // Retry reads after an expired cookie using signed reauthentication;
+            // never replay a non-idempotent SMS or enrollment mutation.
+            if(method=="GET" && cookie.isEmpty()){
+                login()
+                request(path,method,body,true)
+            }else throw failure
+        }
     }
     fun localReset(){
         cookie="";csrf="";exchange=null;requestedId=null

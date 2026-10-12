@@ -59,10 +59,12 @@ class ControllerInboxState {
                     if(rows.length()>260)return false
                     val fresh=ArrayList<ControllerSms>(rows.length())
                     for(i in 0 until rows.length()){
-                        val row=rows.optJSONObject(i)?:continue
+                        val row=rows.optJSONObject(i)?:return false
                         fun str(name:String,max:Int)=row.optString(name,"").take(max)
+                        val eventId=str("id",180)
+                        if(eventId.isBlank() || str("thread",160).isBlank())return false
                         fresh.add(ControllerSms(
-                            str("id",180),str("thread",160),str("sender",100),
+                            eventId,str("thread",160),str("sender",100),
                             str("body",4000),row.optLong("timestamp",0),
                             row.optBoolean("inbound",true),str("device",100),
                             str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false)

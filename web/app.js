@@ -307,6 +307,9 @@ async function establishSession(){
   const password=$('adminToken').value,username=$('username').value.trim();
   if(!username||!password)throw Error('请输入用户名和密码');
   const start=await api('/api/v1/auth/start',{method:'POST',body:{username,password}});
+  // First-login responses may not include totpRequired. Bind step-up UX
+  // to the server's actual challenge stage, not the initial default.
+  secondFactorIsTotp=!!start.requiresTotp;
   $('adminToken').value='';
   let result=start;
   if(start.requiresTotp) {

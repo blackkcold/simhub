@@ -35,6 +35,29 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+private data class ControllerLoadBatch(
+    val payload:String,val sequence:Long,val nextTime:Long,val nextSeq:Long,val unreadable:Int
+)
+private data class ControllerLoadResult(
+    val devices:List<JSONObject>,val totpRequired:Boolean,
+    val batches:List<ControllerLoadBatch>,val highWater:Long
+)
+/** Stable conversation identity and conservative phone normalization. */
+internal object ControllerConversation {
+    fun key(device:String,channel:String,revision:Int,address:String):String {
+        val digits=address.filter{it.isDigit()}
+        val number=when {
+            digits.length==15 && digits.startsWith("0086")->digits.drop(4)
+            digits.length==13 && digits.startsWith("86")->digits.drop(2)
+            digits.length==11 && digits.startsWith("1")->digits
+            address.trim().startsWith("+")->"+$digits"
+            digits.isNotBlank()->digits
+            else->address.trim().lowercase()
+        }
+        return "$device|$channel|$revision|$number"
+    }
+}
+
 /** Single Jetpack Compose surface: no WebView, nested browser shell or duplicate navigation. */
 @Composable
 fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
@@ -112,91 +135,122 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         ControllerProfiles.select(context,value)
         selected=value;onSelectTab(0)
     }
-    fun load(older:Boolean=false,newer:Boolean=false){
+    // Exactly one load at a time. A second user request is queued, never discarded.
+    var pendingLoad by remember(selected){mutableStateOf("")}
+    fun load(mode:String="delta"){
         val api=client?:return
         if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
-        if(busy)return
+        if(mode=="delta" && page>0)return // Historical browsing is a stable window.
+        if(busy){pendingLoad=mode;return}
         busy=true
         scope.launch {
-            try{
+            try {
                 val data=withContext(Dispatchers.IO){
                     val d=api.api("/api/v1/devices")
                     val auth=api.api("/api/v1/auth/check")
                     val all=d.optJSONArray("devices")?:JSONArray()
-                    val list=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
-                    val incremental=newer && lastEventSeq>0
-                    val requested=if(newer)0 else if(older)page+1 else page
+                    val nodes=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
+                    val byId=nodes.associateBy{it.optString("id")}
+                    val delta=mode=="delta" && lastEventSeq>0
+                    // Read the sequence watermark *before* the latest-time page.
+                    // Concurrent uploads can then safely be replayed as delta.
+                    val highWater=if(mode=="latest" || (mode=="delta" && !delta))
+                        api.api("/api/v1/events?latest=1&limit=1").optLong("nextSince",0L)
+                        else 0L
+                    val requested=if(mode=="older")page+1 else 0
                     val cursor=if(requested>0)cursors.getOrNull(requested-1) else null
+                    if(mode=="older" && cursor==null)
+                        throw IllegalStateException("历史游标已失效，请返回最新短信重试")
                     val suffix=if(cursor!=null)
                         "&beforeTime=${cursor.first}&beforeSeq=${cursor.second}" else ""
-                    val events=if(incremental)
-                        api.api("/api/v1/events?since=$lastEventSeq&limit=1000")
-                        else api.api("/api/v1/events?order=occurred&limit=100"+suffix)
-                    val rows=events.optJSONArray("events")?:JSONArray()
-                    val newestSeq=(0 until rows.length()).maxOfOrNull{rows.optJSONObject(it)?.optLong("seq",0L)?:0L}?:0L
+                    val result=ArrayList<ControllerLoadBatch>()
+                    var sequence=lastEventSeq
                     val vault=api.vault()
-                    val messages=JSONArray()
-                    var failure=0
-                    try{
-                        val byId=list.associateBy{it.optString("id")}
-                        for(i in 0 until rows.length()){
-                            val item=rows.optJSONObject(i)?:continue
-                            if(!item.optString("kind").startsWith("sms."))continue
-                            val node=byId[item.optString("deviceId")]
-                            var plaintext=JSONObject()
-                            var failed=false
-                            try{
-                                if(node==null)throw SecurityException("Unknown node")
-                                plaintext=api.decryptEvent(item,node,vault)
-                            }catch(_:Exception){failed=true;failure++}
-                            val kind=item.optString("kind")
-                            val direction=plaintext.optString("direction")
-                            val inbound=kind=="sms.received"||direction=="in"||
-                                (kind=="sms.history"&&direction!="out")
-                            val sender=if(inbound)plaintext.optString("sender") else plaintext.optString("recipient")
-                            val address=sender.ifBlank{plaintext.optString("sender",plaintext.optString("recipient","未知"))}
-                            val ch=plaintext.optString("channelId")
-                            val rev=plaintext.optInt("channelRevision")
-                            val provenance=if(ch.isEmpty()||rev==0)"历史 SIM · 来源待确认"
-                                else (plaintext.optString("simTag").ifBlank{ch})+" · r"+rev
-                            // Preserve source identity for traceability; never assign a
-                            // historical record to the currently inserted SIM.
-                            val otp=plaintext.optJSONObject("otp")?.optString("value").orEmpty()
-                            val thread=address.trim().replace(" ","").lowercase()
-                            messages.put(JSONObject().put("id",item.optString("deviceId")+":"+item.optString("eventId"))
-                                .put("thread",thread).put("sender",plaintext.optString("contactName").ifBlank{address})
-                                .put("body",if(failed)"" else plaintext.optString("body"))
-                                .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
-                                .put("device",node?.optString("name")?:"未知设备")
-                                .put("sim",provenance)
-                                .put("sourceId",item.optString("deviceId")+"|"+ch+"|"+rev).put("otp",otp).put("failed",failed))
+                    try {
+                        // 50 bounded ciphertext events per batch. Up to eight batches
+                        // each refresh; remaining events resume from the ACKed cursor.
+                        val rounds=if(delta)8 else 1
+                        repeat(rounds) {
+                            val events=if(delta)
+                                api.api("/api/v1/events?since=$sequence&limit=50")
+                            else api.api("/api/v1/events?order=occurred&limit=50"+suffix)
+                            val rows=events.optJSONArray("events")?:JSONArray()
+                            if(rows.length()>50)throw IllegalStateException("Relay batch exceeds negotiated limit")
+                            val messages=JSONArray()
+                            var failures=0
+                            var highest=sequence
+                            for(i in 0 until rows.length()){
+                                val item=rows.optJSONObject(i)?:throw IllegalStateException("Malformed event")
+                                val eventSeq=item.optLong("seq",0)
+                                if(eventSeq<=0)throw IllegalStateException("Invalid event sequence")
+                                if(delta && eventSeq<=highest)
+                                    throw IllegalStateException("Non-monotonic delta sequence")
+                                highest=maxOf(highest,eventSeq)
+                                if(!item.optString("kind").startsWith("sms."))continue
+                                val node=byId[item.optString("deviceId")]
+                                var plaintext=JSONObject()
+                                var failed=false
+                                try{
+                                    if(node==null)throw SecurityException("Unknown node")
+                                    plaintext=api.decryptEvent(item,node,vault)
+                                }catch(_:Exception){failed=true;failures++}
+                                val kind=item.optString("kind")
+                                val direction=plaintext.optString("direction")
+                                val inbound=kind=="sms.received"||direction=="in"||
+                                    (kind=="sms.history"&&direction!="out")
+                                val sender=if(inbound)plaintext.optString("sender") else plaintext.optString("recipient")
+                                val address=sender.ifBlank{plaintext.optString("sender",plaintext.optString("recipient","未知"))}
+                                val ch=plaintext.optString("channelId")
+                                val rev=plaintext.optInt("channelRevision")
+                                val provenance=if(ch.isEmpty()||rev==0)"历史 SIM · 来源待确认"
+                                    else (plaintext.optString("simTag").ifBlank{ch})+" · r"+rev
+                                val otp=plaintext.optJSONObject("otp")?.optString("value").orEmpty()
+                                // Do not coalesce separate devices/SIM revisions
+                                // merely because their phone number is the same.
+                                val thread=ControllerConversation.key(item.optString("deviceId"),ch,rev,address)
+                                messages.put(JSONObject().put("id",item.optString("deviceId")+":"+item.optString("eventId"))
+                                    .put("thread",thread).put("sender",plaintext.optString("contactName").ifBlank{address}.take(100))
+                                    .put("body",if(failed)"" else plaintext.optString("body").take(4000))
+                                    .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
+                                    .put("device",node?.optString("name")?.take(100)?:"未知设备")
+                                    .put("sim",provenance.take(90))
+                                    .put("sourceId",(item.optString("deviceId")+"|"+ch+"|"+rev).take(160))
+                                    .put("otp",otp.take(20)).put("failed",failed))
+                            }
+                            val payload=JSONObject().put("type","snapshot").put("v",1).put("messages",messages)
+                                .put("unreadable",failures).put("hasMore",events.optBoolean("hasMore"))
+                                .put("hasNewer",requested>0).put("incremental",delta)
+                            result.add(ControllerLoadBatch(payload.toString(),highest,
+                                events.optLong("nextBeforeTime"),events.optLong("nextBeforeSeq"),failures))
+                            sequence=highest
+                            if(!delta || rows.length()<50)return@repeat
                         }
                     }finally{vault.fill(0)}
-                    val nextTime=events.optLong("nextBeforeTime",0)
-                    val nextSeq=events.optLong("nextBeforeSeq",0)
-                    val response=JSONObject().put("type","snapshot").put("v",1).put("messages",messages)
-                        .put("unreadable",failure).put("hasMore",events.optBoolean("hasMore"))
-                        .put("hasNewer",requested>0).put("incremental",incremental)
-                    arrayOf(d,list,events,response,requested,nextTime,nextSeq,auth.optBoolean("totpRequired",true),newestSeq,incremental)
+                    ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater)
                 }
-                // A background/lock transition may occur while ciphertext is decrypting.
-                // Never repopulate native plaintext after the local OS gate has locked.
                 if(requireLocalUnlock && !localUnlocked)return@launch
-                @Suppress("UNCHECKED_CAST")
-                devices=data[1] as List<JSONObject>
-                secondFactorTotp=data[7] as Boolean
-                if(!(data[9] as Boolean)) unreadable=(data[3] as JSONObject).optInt("unreadable")
-                else unreadable+=(data[3] as JSONObject).optInt("unreadable")
-                lastEventSeq=maxOf(lastEventSeq,data[8] as Long)
-                inbox.accept((data[3] as JSONObject).toString(),append=older || (data[9] as Boolean))
-                val loaded=data[4] as Int
-                val nextTime=data[5] as Long
-                val nextSeq=data[6] as Long
-                if(newer && !(data[9] as Boolean)){page=0;cursors=emptyList()}
-                else if(older){page=loaded}
-                if(!(data[9] as Boolean) && nextTime>0&&nextSeq>0){
-                    cursors=cursors.take(page)+listOf(nextTime to nextSeq)
+                // Main-thread ACK: only successfully accepted decrypted content
+                // allows an event cursor or historical-page index to move.
+                for(batch in data.batches){
+                    if(!inbox.accept(batch.payload,append=mode=="older" || mode=="delta",
+                                     preferOlder=mode=="older"))
+                        throw IllegalStateException("短信批次未接收；游标未推进，可安全重试")
+                    if(mode=="delta")lastEventSeq=maxOf(lastEventSeq,batch.sequence)
+                    else if(mode=="older"){
+                        page+=1
+                        if(batch.nextTime>0 && batch.nextSeq>0)
+                            cursors=cursors.take(page)+listOf(batch.nextTime to batch.nextSeq)
+                    }else{
+                        page=0
+                        cursors=if(batch.nextTime>0 && batch.nextSeq>0)
+                            listOf(batch.nextTime to batch.nextSeq) else emptyList()
+                        lastEventSeq=maxOf(lastEventSeq,data.highWater)
+                    }
+                    if(mode=="latest")unreadable=batch.unreadable
+                    else unreadable+=batch.unreadable
                 }
+                devices=data.devices
+                secondFactorTotp=data.totpRequired
                 authorized=true;error=""
             }catch(e:Exception){
                 error=e.message?:"无法连接管理中心"
@@ -204,19 +258,27 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     authorized=false;inbox.clear();devices=emptyList()
                     lastCommandId="";lastCommandState="";lastEventSeq=0
                 }
-            }
-            finally{busy=false}
+            }finally{busy=false}
+        }
+    }
+    fun refreshDelta(){load("delta")}
+    fun loadOlderPage(){load("older")}
+    fun navigateToLatest(){load("latest")}
+    LaunchedEffect(busy,pendingLoad){
+        if(!busy && pendingLoad.isNotBlank()){
+            val next=pendingLoad;pendingLoad=""
+            load(next)
         }
     }
     LaunchedEffect(selected,visible,localUnlocked,requireLocalUnlock){
         if(visible && (!requireLocalUnlock || localUnlocked) && client?.hasGrant()==true){
-            authorized=true;load(newer=true)
+            authorized=true;refreshDelta()
         }
     }
     LaunchedEffect(selected,visible,authorized){
         if(visible && authorized && (!requireLocalUnlock || localUnlocked))while(true){
             delay(60000)
-            if(!busy)load(newer=true)
+            if(!busy)refreshDelta()
         }
     }
     LaunchedEffect(pairing,selected,visible){
@@ -226,12 +288,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             delay(2400)
             try{
                 if(withContext(Dispatchers.IO){api.pollPairing()}){
-                    authorized=true;pairing=null;load(newer=true);break
+                    authorized=true;pairing=null;refreshDelta();break
                 }
             }catch(e:Exception){error=e.message?:"配对失败";pairing=null;break}
         }
     }
-    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized && (!requireLocalUnlock || localUnlocked))load(newer=true)}
+    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized && (!requireLocalUnlock || localUnlocked))refreshDelta()}
     // Queue acceptance is not device execution. Poll the Relay's immutable ACK state.
     LaunchedEffect(selected,lastCommandId,visible){
         if(!visible || lastCommandId.isBlank())return@LaunchedEffect
@@ -329,7 +391,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }else{
                         if(client?.hasGrant()==true)OutlinedButton(onClick={
-                            authorized=true;load(newer=true)
+                            authorized=true;refreshDelta()
                         },modifier=Modifier.fillMaxWidth()){Text("重试已授权终端连接")}
                         Button(enabled=!busy && client?.hasGrant()!=true,onClick={
                             busy=true;scope.launch {
@@ -369,7 +431,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 modifier=Modifier.fillMaxWidth()) { Text(hubLabel("查看短信","View messages")) }
                             FilledTonalButton(onClick={onSelectTab(2)},
                                 modifier=Modifier.fillMaxWidth()) { Text(hubLabel("管理设备","Manage devices")) }
-                            OutlinedButton(onClick={load(newer=true)},
+                            OutlinedButton(onClick={refreshDelta()},
                                 modifier=Modifier.fillMaxWidth()) { Text(hubLabel("刷新加密数据","Refresh encrypted data")) }
                         }
                     }
@@ -396,10 +458,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             }
                         }
                     }else NativeControllerInbox(inbox,
-                        onRefresh={load(newer=true)},
-                        onOlder={load(older=true)},
-                        onNewer={load(newer=true)},
-                        onOpenLogin={load(newer=true)},
+                        onRefresh={refreshDelta()},
+                        onOlder={loadOlderPage()},
+                        onNewer={navigateToLatest()},
+                        onOpenLogin={refreshDelta()},
                         onWrite={showWrite=true})
                     if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
                 }

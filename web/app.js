@@ -425,7 +425,7 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
+function showUnlocked(){if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.

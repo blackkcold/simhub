@@ -61,7 +61,7 @@ Android APK 同时提供 **SIM 节点（原生 Compose）** 和 **管理控制�
 
 Web/PWA 使用 **账号密码（Argon2id）→ TOTP 弹窗 → 按需 Vault 解锁** 的独立阶段。旧部署的 Admin Token 仍然保留作为应急登录/初始化方式；管理员登录后可在「设置 → 账户与安全」设置新密码，原始 Admin Token 不会被自动删除。密码修改会撤销所有管理员会话。管理员会话凭据仍使用 Secure/HttpOnly Cookie。
 
-Vault 保持原本的端到端加密。可选「在本设备有效期内免重复输入 Vault 密码」，仅通过受保护的本地 WebCrypto Key 解开缓存中的主密钥；不会发送给服务器。手动锁定、退出、会话失效或清除凭据时必须销毁缓存。**该缓存不等于硬件 Keystore，也不具备抵御恶意同源脚本读取已解锁数据的能力。**新设备必须用合法的 Vault 恢复密钥导入旧 Vault；新建 Vault 不能解密原有密文。
+Vault 保持原本的端到端加密。可选「在本设备有效期内免重复输入 Vault 密码」，仅通过受保护的本地 WebCrypto Key 解开缓存中的主密钥；不会发送给服务器。手动锁定、退出、会话失效或清除凭据时必须销毁缓存。**该缓存不等于硬件 Keystore，也不具备抵御恶意同源脚本读取已解锁数据的能力。**v0.15.5 起每个 Relay 只有一个共享 Vault，新浏览器只需输入既有 Vault 密码即可解锁，不用创建或导入恢复密钥；不同根密钥的历史密文仍需原密钥或从实际手机重新同步。
 
 首次配置独立登录密码可在服务器运行 `python3 scripts/hash_admin_password.py` 生成 Argon2id PHC Hash，并写入私有的 `SIMHUB_ADMIN_PASSWORD_HASH` 环境变量；也可先使用原 Admin Token 登录后在 UI 中设置。更新后旧 Node Key、SMS 密文和设备配对协议不变。
 
@@ -110,7 +110,7 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 向导检查 DNS / Docker / 端口，生成管理员 Token、TOTP、私有 `.env`，部署 Relay 与 Caddy HTTPS；**DNS 记录需自行在域名服务商处设置**。已有 Nginx / Caddy / Traefik 时，给命令增加 `--mode external` 并自行配置双域名 HTTPS 反代。
 
-然后打开管理域名，登录并创建/导入本地 Vault；下载正式签名 APK，通过扫码或 Android 发码完成配对并授权读取、接收和发送短信；**不必将 SIM Hub 设置为默认短信应用**，完整接管模式为可选项。
+然后打开管理域名，登录并首次初始化一个共享 Vault（以后只需输入原 Vault 密码）；下载正式签名 APK，通过扫码或 Android 发码完成配对并授权读取、接收和发送短信；**不必将 SIM Hub 设置为默认短信应用**，完整接管模式为可选项。
 
 ## Android 后台能耗管理（v0.13.0）
 

@@ -17,6 +17,7 @@ import java.security.SecureRandom
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.X509EncodedKeySpec
+import java.security.spec.PKCS8EncodedKeySpec
 import javax.crypto.Cipher
 import javax.crypto.KeyAgreement
 import javax.crypto.KeyGenerator
@@ -49,6 +50,56 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     fun hasGrant():Boolean=prefs.getString("controllerId",null)!=null &&
         prefs.getString("sealedVault",null)!=null
     fun controllerId():String=prefs.getString("controllerId","")?:""
+    /**
+     * Browser approval may background or kill this process. Persist only a
+     * short-lived, AES-GCM sealed copy of the ephemeral ECDH pairing identity.
+     * Never store the raw exchange private key or pairing code in preferences.
+     */
+    private fun pendingAad()=("simhub-controller-pair-v1|"+origin).toByteArray(StandardCharsets.UTF_8)
+
+    private fun rememberPending(id:String,code:String,key:KeyPair){
+        val expires=System.currentTimeMillis()+600_000L
+        val secret=JSONObject().put("requestId",id).put("code",code)
+            .put("expires",expires).put("private",enc(key.private.encoded))
+            .put("public",enc(key.public.encoded)).toString()
+                .toByteArray(StandardCharsets.UTF_8)
+        try {
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE,localWrappingKey())
+            cipher.updateAAD(pendingAad())
+            val saved=JSONObject().put("iv",enc(cipher.iv)).put("ct",enc(cipher.doFinal(secret)))
+            prefs.edit().putString("pendingPairing",saved.toString()).apply()
+        }finally{secret.fill(0)}
+    }
+    fun pendingPairing():PairStatus? {
+        val sealed=prefs.getString("pendingPairing",null)?:return null
+        return try{
+            val data=JSONObject(sealed)
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE,localWrappingKey(),
+                GCMParameterSpec(128,dec(data.getString("iv"))))
+            cipher.updateAAD(pendingAad())
+            val clear=cipher.doFinal(dec(data.getString("ct")))
+            try {
+                val json=JSONObject(String(clear,StandardCharsets.UTF_8))
+                if(json.getLong("expires")<=System.currentTimeMillis())
+                    throw SecurityException("Pairing expired")
+                val factory=KeyFactory.getInstance("EC")
+                exchange=KeyPair(factory.generatePublic(X509EncodedKeySpec(dec(json.getString("public")))),
+                    factory.generatePrivate(PKCS8EncodedKeySpec(dec(json.getString("private")))))
+                requestedId=json.getString("requestId")
+                PairStatus(requestedId!!,json.getString("code"))
+            }finally{clear.fill(0)}
+        }catch(_:Exception){
+            clearPending()
+            null
+        }
+    }
+    private fun clearPending(){
+        exchange=null;requestedId=null
+        prefs.edit().remove("pendingPairing").apply()
+    }
+
     fun identityFingerprint():String=MessageDigest.getInstance("SHA-256")
         .digest(identity().public.encoded).take(8).joinToString(""){"%02x".format(it.toInt() and 255)}
 
@@ -137,13 +188,18 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
             .put("exchangePublic",enc(key.public.encoded)))
         exchange=key
         requestedId=data.getString("requestId")
-        return PairStatus(requestedId!!,data.getString("pairingCode"))
+        val code=data.getString("pairingCode")
+        rememberPending(requestedId!!,code,key)
+        return PairStatus(requestedId!!,code)
     }
     /** Returns true only after the admin approved and key authentication succeeded. */
     fun pollPairing():Boolean {
-        val id=requestedId?:return false
+        val id=requestedId?:pendingPairing()?.requestId?:return false
         val result=request("/api/v1/controllers/pair/"+id)
-        if(result.optString("state")=="expired")throw IllegalStateException("Pairing request expired")
+        if(result.optString("state")=="expired"){
+            clearPending()
+            throw IllegalStateException("Pairing request expired")
+        }
         if(result.optString("state")!="approved")return false
         val keypair=exchange?:throw IllegalStateException("Pairing expired after app restart")
         val envelope=result.getJSONObject("vaultEnvelope")
@@ -170,7 +226,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
             prefs.edit().putString("controllerId",result.getString("controllerId"))
                 .putString("sealedVault",saved)
                 .putString("vaultId",result.optString("grantVaultId")).apply()
-        }finally{raw.fill(0);exchange=null;requestedId=null}
+        }finally{raw.fill(0);clearPending()}
         return true
     }
     fun login() {
@@ -217,7 +273,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         }
     }
     fun localReset(){
-        cookie="";csrf="";exchange=null;requestedId=null
+        cookie="";csrf="";clearPending()
         prefs.edit().clear().apply()
         val ks=KeyStore.getInstance("AndroidKeyStore").apply{load(null)}
         ks.deleteEntry(identityAlias);ks.deleteEntry(wrappingAlias)

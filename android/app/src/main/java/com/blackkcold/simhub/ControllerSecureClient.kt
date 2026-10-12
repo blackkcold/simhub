@@ -262,7 +262,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
             mac.init(SecretKeySpec(salt,"HmacSHA256"))
             val prk=mac.doFinal(ikm)
             mac.init(SecretKeySpec(prk,"HmacSHA256"))
-            mac.update(info);mac.update(1)
+            mac.update(info);mac.update(1.toByte())
             return mac.doFinal().also{prk.fill(0)}
         }
         fun decryptGcm(key:ByteArray,env:JSONObject,aad:String):ByteArray {

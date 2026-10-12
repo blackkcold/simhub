@@ -68,7 +68,8 @@ class ControllerHttpTest(unittest.TestCase):
         identity=ec.generate_private_key(ec.SECP256R1())
         exchange=ec.generate_private_key(ec.SECP256R1())
         s,pair,_=self.call("POST","/api/v1/controllers/pair",
-            {"label":"Test Pixel","identityPublic":pub(identity),"exchangePublic":pub(exchange)})
+            {"label":"Test Pixel","identityPublic":pub(identity),"exchangePublic":pub(exchange),
+             "pairingProtocolVersion":2})
         self.assertEqual(s,201)
         pair_id=pair["requestId"]
         s,pending,_=self.call("GET","/api/v1/controllers/pending",admin=True)

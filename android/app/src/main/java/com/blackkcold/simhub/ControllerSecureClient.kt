@@ -162,9 +162,14 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         val raw=cipher.doFinal(dec(envelope.getString("ct")))
         try {
             require(raw.size==32)
+            val expected=result.optString("grantVaultKeyId")
+            val actual=enc(MessageDigest.getInstance("SHA-256").digest(raw).copyOf(16))
+            if(expected.isNotEmpty() && actual!=expected)
+                throw SecurityException("管理端收到的 Vault 密钥与云端身份不一致")
             val saved=sealVault(raw)
             prefs.edit().putString("controllerId",result.getString("controllerId"))
-                .putString("sealedVault",saved).apply()
+                .putString("sealedVault",saved)
+                .putString("vaultId",result.optString("grantVaultId")).apply()
         }finally{raw.fill(0);exchange=null;requestedId=null}
         return true
     }
@@ -180,6 +185,24 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         request("/api/v1/controllers/login/verify","POST",JSONObject()
             .put("controllerId",id).put("challenge",challenge)
             .put("signature",enc(signature.sign())))
+        // Signed authentication does not by itself validate the E2EE Vault.
+        // Reject a grant bound to another root, including older v0.15.1 grants.
+        try {
+            val status=request("/api/v1/vault/status",authenticated=true)
+            if(!status.optBoolean("initialized"))throw SecurityException("请先在网页初始化共享 Vault")
+            val storedId=prefs.getString("vaultId","").orEmpty()
+            if(storedId.isNotEmpty() && storedId!=status.getString("vaultId"))
+                throw SecurityException("共享 Vault 身份已改变，请重新授权管理终端")
+            val raw=vault()
+            val kid=try{enc(MessageDigest.getInstance("SHA-256").digest(raw).copyOf(16))}
+                finally{raw.fill(0)}
+            if(kid!=status.getString("keyId"))
+                throw SecurityException("当前管理终端的 Vault 与云端不一致，请清除旧授权并重新配对")
+            if(storedId.isEmpty())prefs.edit().putString("vaultId",status.getString("vaultId")).apply()
+        }catch(failure:Exception) {
+            cookie="";csrf=""
+            throw failure
+        }
     }
     fun api(path:String,method:String="GET",body:JSONObject?=null):JSONObject {
         if(cookie.isEmpty())login()

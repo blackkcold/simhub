@@ -63,4 +63,11 @@
 <label><span>管理端配置链接</span><textarea id="controllerConnectLink" rows="3" readonly aria-label="管理中心配置链接"></textarea></label>
 <div class="row wrap"><button id="controllerCopyLink" type="button" class="primary">复制链接</button><button id="controllerCopyAddress" type="button" class="ghost">复制 HTTPS 地址</button></div>
 <p id="controllerConnectHint" class="hint" role="status">请确认手机访问的是可信 HTTPS 管理域名，扫码仍需独立登录。</p>
+<section class="card" style="margin-top:16px">
+  <div class="row between"><h3>待授权管理终端</h3><button class="ghost mini" id="controllerApprovalRefresh" type="button">刷新</button></div>
+  <p class="hint">新手机扫码后会生成一次性申请。核对手机显示的 6 位配对码和终端指纹，再批准安全密钥传输。</p>
+  <div id="controllerPending" aria-live="polite"><p class="hint">暂无待授权请求</p></div>
+  <h3>已授权管理终端</h3>
+  <div id="controllerAuthorized" aria-live="polite"></div>
+</section>
 </dialog><dialog id="deviceDetailDialog" class="flow-dialog device-dialog" aria-labelledby="deviceDetailTitle"><div class="dialog-title"><h2 id="deviceDetailTitle" data-i18n="ux_device_detail">设备详情</h2><button id="deviceDetailClose" class="ghost icon-button" type="button" aria-label="关闭设备详情" data-i18n-aria-label="ux_close_detail">×</button></div><div id="deviceDetailContent" class="device-detail-content"></div></dialog><dialog id="stepupDialog" aria-labelledby="stepupTitle"><form id="stepupForm"><h2 id="stepupTitle" data-i18n="stepup_title">确认敏感操作</h2><p id="stepupPrompt"></p><label for="stepupValue">二次验证凭据</label><input id="stepupValue" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required><div class="row stepup-actions"><button id="stepupCancel" class="ghost" data-i18n="stepup_cancel" type="button">取消</button><button class="primary" data-i18n="stepup_confirm" type="submit">确认</button></div></form></dialog><dialog id="diagnosticsDialog" aria-labelledby="diagnosticsTitle"><h2 id="diagnosticsTitle">设备健康检查</h2><p class="hint">结果由 Android 设备加密上传，仅在本浏览器解密。不会上传完整开发者日志。</p><pre id="diagnosticsOutput" class="diagnostics-output">暂无诊断结果</pre><div class="row wrap stepup-actions"><button id="diagnosticsRefresh" class="ghost" type="button">刷新诊断结果</button><button id="diagnosticsClose" class="primary" type="button">关闭</button></div></dialog></body></html>

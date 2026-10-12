@@ -1,3 +1,13 @@
+## v0.15.1 — Native Android controller and independent encrypted grants
+
+- Replace the management-center WebView workspace with Jetpack Compose inbox, devices and settings, retaining a single shared top toolbar and native bottom navigation.
+- Add explicit first-use Android management-terminal approval to an already authenticated, unlocked PWA; the setup QR alone conveys no credentials.
+- Generate Keystore-backed P-256 controller identity, transfer Master Vault only as an ECDH/HKDF/AES-256-GCM sealed envelope, and sign fresh challenges for subsequent passwordless administrator sessions. Vault plaintext remains off the Relay.
+- Add server-side controller registry, grant expiry, one-time signature challenge, revocation and session invalidation; database schema migrates in place to 13.
+- Keep existing node pairing keys, encrypted messages, SMS sources, Relay API, PWA and Docker updater intact.
+- Fix native SMS decryption counters; preserve current/pending/history Node Key ciphertext compatibility and mark unverified historical SIM provenance.
+- Include pairing/replay/revocation regression tests and GitHub Actions Android/Relay builds. Physical Android/OEM, real SMS sends, passkey-provider behavior and deployment-specific proxy conditions still require live verification.
+
 ## v0.15.0 — Native controller inbox, Android WebAuthn and unified navigation
 
 - Management center SMS threads and messages now render as **native Jetpack Compose**, with search, OTP filtering/copy, device and SIM labels, conversation history, and paged refresh. The existing browser-side E2EE implementation decrypts SMS in the verified WebView before forwarding bounded, key-free read-only snapshots to Android process memory. SMS plaintext is not persisted by the native UI.

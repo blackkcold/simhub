@@ -141,7 +141,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                 containerColor=MaterialTheme.colorScheme.background,
                 contentWindowInsets=WindowInsets.safeDrawing,
                 topBar={
-                    Column {
+                    if(isNode) Column {
                         TopAppBar(
                             title={
                                 Row(verticalAlignment=Alignment.CenterVertically,
@@ -201,7 +201,8 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                     // Keep this WebView and its sessionStorage alive while users inspect
                     // the local node. Android View is hidden, not recreated, on switching.
                     ControllerWorkspace(visible=!isNode,revision=controllerRevision,
-                        onScan=controller::scanController,
+                        onScan=controller::scanController,onSwitchNode={chooseSurface("node")},
+                        expanded=rail,
                         modifier=Modifier.fillMaxSize())
                     if(isNode){
                         Surface(Modifier.fillMaxSize(),

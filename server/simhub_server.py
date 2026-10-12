@@ -27,12 +27,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import passkeys
+import controller_auth
 from argon2 import PasswordHasher, exceptions as argon2_errors
 import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.15.0"
+APP_VERSION = "0.15.1"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -432,7 +433,9 @@ def init_db() -> None:
         _migrate_v8(con)
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         shared_pool.init(con)
-        con.execute("PRAGMA user_version=12")
+        controller_auth.init(con)
+        _add_column(con,"admin_sessions","controller_id","TEXT NOT NULL DEFAULT ''")
+        con.execute("PRAGMA user_version=13")
     run_maintenance()
 
 
@@ -446,6 +449,7 @@ def run_maintenance() -> dict[str,int]:
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         con.execute("DELETE FROM admin_login_challenges WHERE expires_at<=?",(ts,))
+        controller_auth.maintenance(con,ts)
         result["enrollments"]=con.execute("DELETE FROM enrollment_tokens WHERE expires_at<?",(ts-86400,)).rowcount
         con.execute("DELETE FROM pairing_requests WHERE expires_at<?",(ts-86400,))
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
@@ -594,15 +598,15 @@ def auth_rate_success(ip: str) -> None:
         _auth_failures.pop(ip, None)
 
 
-def create_session(ip: str) -> tuple[str,int]:
+def create_session(ip: str, controller_id: str = "") -> tuple[str,int]:
     token = new_token(48)
     ts = now()
     exp = ts + SESSION_TTL
     with open_db() as con:
         con.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
         con.execute(
-            "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint) VALUES(?,?,?,?,?,?)",
-            (sha256_text(token),ts,exp,ts,ip[:80],session_fingerprint()),
+            "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint,controller_id) VALUES(?,?,?,?,?,?,?)",
+            (sha256_text(token),ts,exp,ts,ip[:80],session_fingerprint(),controller_id),
         )
     return token, exp
 
@@ -1014,7 +1018,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 with open_db() as con:
                     version=con.execute("PRAGMA user_version").fetchone()[0]
                     con.execute("SELECT 1").fetchone()
-                if version<12:
+                if version<13:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
@@ -1043,6 +1047,21 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]
             self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None,
                 "passwordConfigured":bool(admin_password_hash())}); return
+        if path=="/api/v1/controllers/pending":
+            if not self.require_admin():return
+            with open_db() as con: result=controller_auth.pending(con,now())
+            self.send_json(200,{"pending":result});return
+        if path=="/api/v1/controllers":
+            if not self.require_admin():return
+            with open_db() as con: result=controller_auth.list_controllers(con)
+            self.send_json(200,{"controllers":result});return
+        if len(p)==5 and p[:3]==["api","v1","controllers"] and p[3]=="pair":
+            try:
+                with open_db() as con:
+                    result=controller_auth.poll(con,p[4],self.ip,now())
+                self.send_json(200,result)
+            except ValueError as exc:self.send_error_json(404,"pairing_unavailable",str(exc))
+            return
         if path=="/api/v1/auth/passkeys":
             if not self.require_admin(): return
             with open_db() as con:
@@ -1123,6 +1142,44 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path,p,q=self.route()
         if not self.preflight("POST", path): return
+        if path in {"/api/v1/controllers/pair","/api/v1/controllers/approve",
+                    "/api/v1/controllers/revoke","/api/v1/controllers/login/challenge",
+                    "/api/v1/controllers/login/verify"}:
+            privileged=path in {"/api/v1/controllers/approve","/api/v1/controllers/revoke"}
+            if privileged and not self.require_stepup():return
+            if not privileged and not auth_rate_allowed(self.ip):
+                self.send_error_json(429,"rate_limited","Too many controller authentication requests");return
+            body=self.read_json()
+            if body is None:return
+            try:
+                with open_db() as con:
+                    if path.endswith("/pair"):
+                        result=controller_auth.start(con,body,self.ip,now())
+                    elif path.endswith("/approve"):
+                        result=controller_auth.approve(con,body,now(),session_fingerprint())
+                    elif path.endswith("/revoke"):
+                        result={"ok":controller_auth.revoke(con,str(body.get("controllerId","")),now())}
+                    elif path.endswith("/challenge"):
+                        result=controller_auth.challenge(con,str(body.get("controllerId","")),now(),session_fingerprint())
+                    else:
+                        controller_id=controller_auth.verify_login(con,body,now(),session_fingerprint())
+                        result={"_controller_id":controller_id}
+                if "_controller_id" in result:
+                    session,exp=create_session(self.ip,result["_controller_id"])
+                    auth_rate_success(self.ip)
+                    audit("auth.controller.login",result["_controller_id"],"ok",self.ip)
+                    cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
+                    self.send_json(201,{"ok":True,"expiresAt":exp,"csrfToken":csrf_for_session(session)},
+                                   {"Set-Cookie":cookie})
+                else:
+                    audit("auth.controller."+path.rsplit("/",1)[-1],
+                          str(result.get("controllerId",""))[:40],"ok",self.ip)
+                    self.send_json(201 if path.endswith("/pair") else 200,result)
+            except (ValueError,TypeError) as exc:
+                if not privileged:auth_rate_fail(self.ip)
+                audit("auth.controller",path.rsplit("/",1)[-1],"denied",self.ip)
+                self.send_error_json(400 if privileged else 401,"controller_rejected",str(exc))
+            return
         if path.startswith("/api/v1/auth/passkeys/"):
             body=self.read_json()
             if body is None: return

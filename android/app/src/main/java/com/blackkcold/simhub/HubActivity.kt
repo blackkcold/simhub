@@ -338,7 +338,7 @@ class HubActivity: ComponentActivity(), HubController {
         if(origin==null){toast("二维码或链接无效：仅支持 HTTPS 管理地址");return}
         val host=Uri.parse(origin).host ?:return
         AlertDialog.Builder(this).setTitle("连接管理中心")
-            .setMessage("添加可信管理服务器："+host+"\\n\\n二维码不提供登录权限。进入后仍需账号及 Vault 验证。")
+            .setMessage("添加可信管理服务器："+host+"\\n\\n二维码仅导入管理地址。请在网页端批准本机授权，之后使用本机安全密钥直接登录，无需重复输入 Vault 密码。")
             .setNegativeButton("取消",null)
             .setPositiveButton("添加并打开"){_,_->
                 if(ControllerProfiles.add(this,origin)!=null){

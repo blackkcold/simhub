@@ -168,7 +168,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 .put("body",if(failed)"" else plaintext.optString("body"))
                                 .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
                                 .put("device",node?.optString("name")?:"未知设备")
-                                .put("sim",provenance).put("otp",otp).put("failed",failed))
+                                .put("sim",provenance)
+                                .put("sourceId",item.optString("deviceId")+"|"+ch+"|"+rev).put("otp",otp).put("failed",failed))
                         }
                     }finally{vault.fill(0)}
                     val nextTime=events.optLong("nextBeforeTime",0)

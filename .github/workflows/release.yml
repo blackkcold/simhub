@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.15.7.trigger'
+      - '.github/release/v0.15.8.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.15.7.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.15.8.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -72,7 +72,7 @@ jobs:
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
       - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening server.test_controller_auth server.test_controller_http server.test_global_vault
       - run: PYTHONPATH=server python3 server/test_auth_stages.py
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
       - run: python3 scripts/test_updater.py
@@ -278,7 +278,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Global zero-knowledge Vault registry, cross-device password unlock, native controller identity validation, and one-time legacy migration",
+              "notes":"Reliable bounded E2EE SMS sync, deep history window, v1/v2 pairing compatibility, durable command progress and secure native composer",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -301,35 +301,38 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub v0.15.7 hardens native controller reliability, security and
-          message management after the v0.15.6 shared Compose shell migration.
+          SIM Hub v0.15.8 fixes reliability gaps found after the v0.15.7
+          native-controller audit.
 
           ## Changes
-          - Secure same-phone controller pairing across Wi-Fi/cellular IP changes
-            using a separate hash-verified short-lived pairing poll credential.
-          - Incremental encrypted SMS fetching and append-only, deduplicated native
-            history with source filters based on Node/Channel/Revision.
-          - Correct SMS-send TOTP / admin-token step-up and mask credentials.
-          - Track durable ACK state for native sync and SMS send commands.
-          - Retain uncertain SMS drafts and stable command idempotency keys.
-          - Offer cloud-first controller revocation plus clearly labeled local reset.
-          - Optional system biometric/device-credential app access gate; native
-            decrypted SMS views are cleared on app backgrounding.
-          - Native UX scroll fixes, bilingual actions and expanded regression tests.
+          - Explicit pairing v1/v2 negotiation: legacy Android clients use
+            short-lived same-IP polling through 2027-02-10; v2 clients
+            require a high-entropy hashed polling token.
+          - Bound incremental SMS synchronization to 50 events per fetch,
+            split encoded payloads by size, and advance sequence cursors only
+            after successful native-inbox acceptance.
+          - Distinct latest, older and delta operations, stable deep-history
+            window, and source-isolated per SIM revision conversations.
+          - Persist task history on Relay and keep checking queued/dispatched
+            ACK states beyond Eco wakeup delays.
+          - Block native management screenshots and recents previews; stop
+            counting automatic refreshes as user session activity.
+          - Replace the SMS send modal with a full-screen native composer
+            retaining draft and idempotency keys across close/reopen.
+          - Add bulk (2050-event) HTTP pagination and native history tests.
 
-          ## Security and platform boundaries
-          - The optional Android system unlock is an application visibility gate,
-            NOT a per-use biometric-authenticated Keystore Vault unwrap.
-          - Existing single Global Vault, independent Node Keys, signed sessions
-            and server-side step-up remain mandatory.
-          - Real device/OEM/Passkey/SIM background behavior requires live-device
-            validation; CI does not certify cellular radio hardware behavior.
+          ## Security and validation boundaries
+          - Existing encrypted Global Vault, signed sessions and independent
+            Node Keys remain unchanged.
+          - The biometric app gate is not an authentication-bound hardware
+            Keystore unwrap. That migration remains separately gated.
+          - OEM, real SIM, Doze and device biometric behavior still requires
+            manual hardware acceptance; CI cannot certify them.
 
           ## Upgrade
-          Existing Docker volumes and native controller grants migrate in place.
-          Pending pairings initiated by v0.15.6 can expire normally; new pairings
-          use independent polling credentials. The original Global Vault password
-          and Node Key history remain unchanged.
+          Existing Relay volumes and authorized controllers are retained.
+          Legacy pairing v1 is IP-bound and scheduled for retirement on
+          2027-02-11 UTC; update older clients before that date.
 
           Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_NATIVE.md.
           EOF

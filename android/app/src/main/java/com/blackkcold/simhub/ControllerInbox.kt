@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,6 +79,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
     var query by remember { mutableStateOf("") }
     var otpOnly by remember { mutableStateOf(false) }
     var activeThread by remember { mutableStateOf<String?>(null) }
+    BackHandler(enabled=activeThread!=null){ activeThread=null }
     val filtered=state.messages.filter { m ->
         (!otpOnly||m.otp.isNotBlank()) &&
         (query.isBlank() || listOf(m.sender,m.body,m.device,m.sim).any{it.contains(query,true)})

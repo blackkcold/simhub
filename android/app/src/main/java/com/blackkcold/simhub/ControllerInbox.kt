@@ -6,6 +6,8 @@ import android.content.Context
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -43,7 +45,7 @@ class ControllerInboxState {
     fun clear() {
         messages.clear();unlocked=false;hasMore=false;hasNewer=false;warning=""
     }
-    fun accept(raw:String) {
+    fun accept(raw:String, append:Boolean=false) {
         if(raw.length>450_000)return
         try {
             val obj=JSONObject(raw)
@@ -64,8 +66,16 @@ class ControllerInboxState {
                             str("sim",90),str("otp",20),row.optBoolean("failed",false)
                         ))
                     }
-                    messages.clear();messages.addAll(fresh)
-                    unlocked=true;hasMore=obj.optBoolean("hasMore")
+                    // Stable IDs keep loaded conversation history across refreshes and
+                    // older-page loads; old pages never replace the visible conversation.
+                    val merged=LinkedHashMap<String,ControllerSms>()
+                    if(append && unlocked)for(item in messages)merged[item.id]=item
+                    for(item in fresh)if(item.id.isNotEmpty())merged[item.id]=item
+                    val ordered=merged.values.sortedWith(compareByDescending<ControllerSms>{it.timestamp}.thenByDescending{it.id})
+                        .take(1200)
+                    messages.clear();messages.addAll(ordered)
+                    unlocked=true
+                    hasMore=obj.optBoolean("hasMore")
                     hasNewer=obj.optBoolean("hasNewer")
                     warning=if(obj.optInt("unreadable")>0)
                         "部分短信无法解密，请检查历史 Node Key 或 Vault 密钥" else ""
@@ -81,12 +91,15 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var otpOnly by remember { mutableStateOf(false) }
+    var sourceFilter by remember { mutableStateOf("") }
     var activeThread by remember { mutableStateOf<String?>(null) }
     BackHandler(enabled=activeThread!=null){ activeThread=null }
     val filtered=state.messages.filter { m ->
         (!otpOnly||m.otp.isNotBlank()) &&
+        (sourceFilter.isEmpty() || sourceFilter==m.device+"|"+m.sim) &&
         (query.isBlank() || listOf(m.sender,m.body,m.device,m.sim).any{it.contains(query,true)})
     }
+    val sources=state.messages.distinctBy{it.device+"|"+it.sim}.map{it.device+"|"+it.sim to (it.device+" · "+it.sim)}
     val threads=filtered.groupBy{it.thread}.values.mapNotNull{items->
         items.maxByOrNull{it.timestamp}?.let{latest->latest to items.size}
     }.sortedByDescending{it.first.timestamp}
@@ -122,6 +135,15 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
             Text(state.warning,modifier=Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
         }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+            .padding(horizontal=16.dp,vertical=4.dp),
+            horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            FilterChip(selected=sourceFilter.isEmpty(),onClick={sourceFilter=""},label={Text("全部来源")})
+            sources.forEach{(key,label)->
+                FilterChip(selected=sourceFilter==key,onClick={sourceFilter=key;activeThread=null},
+                    label={Text(label,maxLines=1)})
+            }
+        }
         val key=activeThread
         if(key!=null){
             val conversation=state.messages.filter{it.thread==key}.sortedBy{it.timestamp}
@@ -144,7 +166,13 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                             if(sms.inbound && sms.otp.isNotBlank()){
                                 TextButton(onClick={
                                     val clip=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clip.setPrimaryClip(ClipData.newPlainText("OTP",sms.otp))
+                                    val clip=ClipData.newPlainText("OTP",sms.otp)
+                                    if(android.os.Build.VERSION.SDK_INT>=33){
+                                        clip.description.extras=android.os.PersistableBundle().apply{
+                                            putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true)
+                                        }
+                                    }
+                                    clip.setPrimaryClip(clip)
                                 }){Text("复制验证码 · "+sms.otp)}
                             }
                             Text("${sms.device} · ${sms.sim} · "+
@@ -165,7 +193,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
             }
         }else{
             OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
-                label={Text("搜索号码、短信与来源设备")},singleLine=true)
+                label={Text("搜索已加载短信、号码与来源")},singleLine=true)
             Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text("全部短信")})

@@ -47,7 +47,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var showWrite by remember{mutableStateOf(false)}
     var showReset by remember{mutableStateOf(false)}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
-    var actionCode by remember{mutableStateOf("")}
     var actionError by remember{mutableStateOf("")}
     var serverVersion by remember{mutableStateOf("—")}
 
@@ -133,6 +132,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     LaunchedEffect(selected,visible){
         if(visible && client?.hasGrant()==true){authorized=true;load(newer=true)}
     }
+    LaunchedEffect(selected,visible,authorized){
+        if(visible && authorized)while(true){
+            delay(60000)
+            if(!busy)load(newer=true)
+        }
+    }
     LaunchedEffect(pairing,selected,visible){
         if(!visible)return@LaunchedEffect
         val api=client?:return@LaunchedEffect
@@ -176,8 +181,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         if(selected==null){
             Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
                 Column(Modifier.padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
-                    Icon(androidx.compose.material.icons.Icons.Default.Shield,contentDescription=null,
-                        modifier=Modifier.size(44.dp))
+                    HubIcon(R.drawable.ic_hub_shield,Modifier.size(44.dp))
                     Spacer(Modifier.height(18.dp))
                     Text("连接管理中心",style=MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(12.dp))
@@ -189,8 +193,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
                 Column(Modifier.padding(22.dp).widthIn(max=460.dp),
                     verticalArrangement=Arrangement.spacedBy(14.dp)){
-                    Icon(androidx.compose.material.icons.Icons.Default.Shield,contentDescription=null,
-                        tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(40.dp))
+                    HubIcon(R.drawable.ic_hub_shield,Modifier.size(40.dp))
                     Text("安全授权管理终端",style=MaterialTheme.typography.titleLarge)
                     Text("首次需要在已解锁的网页管理后台确认手机指纹并授权。以后将使用本机密钥直接连接，不需要 Vault 密码。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)

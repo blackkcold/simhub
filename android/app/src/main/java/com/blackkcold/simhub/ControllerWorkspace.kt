@@ -18,6 +18,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -632,9 +636,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             }else if(tab==2){
-                LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(16.dp),
+                LazyVerticalGrid(columns=GridCells.Adaptive(300.dp),modifier=Modifier.weight(1f),
+                    contentPadding=PaddingValues(16.dp),
+                    horizontalArrangement=Arrangement.spacedBy(12.dp),
                     verticalArrangement=Arrangement.spacedBy(12.dp)){
-                    item{
+                    item(span={GridItemSpan(maxLineSpan)}){
                         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                             Column(Modifier.weight(1f)){
                                 Text(hubLabel("已连接设备","Connected devices"),
@@ -648,7 +654,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             }
                         }
                     }
-                    item{
+                    item(span={GridItemSpan(maxLineSpan)}){
                         OutlinedButton(onClick={
                             context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
                                 Uri.parse(selected+"/")))
@@ -658,14 +664,14 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             Text(hubLabel("添加 SIM 节点（网页安全配对）","Add SIM node (secure Web enrollment)"))
                         }
                     }
-                    if(devices.isEmpty())item{
+                    if(devices.isEmpty())item(span={GridItemSpan(maxLineSpan)}){
                         HubCard(Modifier.fillMaxWidth()){
                             Text(hubLabel("暂无已配对设备","No enrolled devices"))
                             Text(hubLabel("请在网页管理后台添加 SIM 节点。","Enroll SIM nodes in the web console."),
                                 style=MaterialTheme.typography.bodySmall)
                         }
                     }
-                    items(devices,key={it.optString("id")}){device->
+                    gridItems(devices,key={it.optString("id")}){device->
                         ControllerDeviceCard(device){selectedDevice=device;actionError=""}
                     }
                 }

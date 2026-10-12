@@ -209,8 +209,27 @@ try {
   await p.locator("#unlockBtn").click();
   await p.locator("#passphrase").fill("session-resume-test-passphrase");
   p.once("dialog",d=>d.accept());
+  const setupProblems=[];
+  p.on("pageerror",e=>setupProblems.push("page: "+e.message));
+  p.on("response",r=>{if(r.url().includes("/api/")&&r.status()>=400)
+    setupProblems.push("HTTP "+r.status()+" "+r.url());});
   await p.locator("#createVaultBtn").click();
-  await p.waitForFunction(()=>!!sessionStorage.getItem("simhub_session_vault_v1"),null,{timeout:12000});
+  await p.locator("#stepupValue").fill("A".repeat(48));
+  await p.locator("#stepupForm").evaluate(form=>form.requestSubmit());
+  try {await p.waitForFunction(()=>!!sessionStorage.getItem("simhub_session_vault_v1"),null,{timeout:12000});}
+  catch(e){
+    const detail=await p.evaluate(()=>({
+      toast:document.querySelector("#toast")?.textContent,
+      gate:document.querySelector("#gateHint")?.textContent,
+      vaultShown:!document.querySelector("#vaultStage")?.hidden,
+      createShown:!document.querySelector("#createVaultBtn")?.hidden,
+      hasSnapshot:!!sessionStorage.getItem("simhub_session_vault_v1"),
+      status:document.querySelector("#vaultStatus")?.textContent
+    }));
+    console.error("GLOBAL-VAULT-INIT-FAILED",JSON.stringify({detail,setupProblems}));
+    throw e;
+  }
+  assert.equal(await p.locator("#createVaultBtn").isVisible(),false,"Global Vault must not offer creation after initialization");
   const loginErrors=[];
   p.on("response",response=>{if(response.url().includes("/api/")&&response.status()>=400)loginErrors.push({url:response.url(),status:response.status()});});
   p.on("pageerror",error=>loginErrors.push({pageError:error.message}));
@@ -273,6 +292,21 @@ try {
   await sibling.locator("#passphrase").fill("session-resume-test-passphrase");
   await sibling.locator("#vaultUnlockBtn").click();
   await sibling.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
+  // A completely separate browser profile has no old local Vault; it must
+  // unlock the one Relay-registered root using the existing password.
+  const fresh=await browser.newContext({viewport:{width:1100,height:800}});
+  const freshPage=await fresh.newPage();
+  await freshPage.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
+  await freshPage.locator("#username").fill("admin");
+  await freshPage.locator("#adminToken").fill("A".repeat(48));
+  await freshPage.locator("#unlockBtn").click();
+  await freshPage.locator("#vaultUnlockBtn").waitFor({state:"visible"});
+  assert.equal(await freshPage.locator("#createVaultBtn").isVisible(),false);
+  assert.equal(await freshPage.evaluate(()=>localStorage.getItem("simhub_vault_v1")),null);
+  await freshPage.locator("#passphrase").fill("session-resume-test-passphrase");
+  await freshPage.locator("#vaultUnlockBtn").click();
+  await freshPage.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
+  await fresh.close();
   // Exercise the real ES-module application through a synthetic Relay API
   // response, not inaccessible module-local browser variables. The final item
   // has an old provider timestamp but a newer Relay sequence.

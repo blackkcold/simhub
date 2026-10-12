@@ -1,3 +1,12 @@
+## v0.15.5 — One Global Vault across Web, PWA and native controllers
+
+- Introduce a singleton, zero-knowledge Master Vault registry: the Relay stores only a password-wrapped AES-GCM envelope, not plaintext keys.
+- New Web/PWA clients use the existing Vault password to unlock the same cloud-held encrypted envelope without creating another Vault or importing a recovery key.
+- Migrate a browser-local pre-v0.15.5 Vault into the singleton once; reject unrelated recovery keys and competing initializations.
+- Allow administrator step-up rewrap of Vault password, preserving all independent SIM Node Keys and encrypted SMS; bind native Android controller grants to the unique Vault ID and fingerprint.
+- Maintain the separate, opt-in device-to-device Shared SMS Pool and current v1/v2 history decryption compatibility; users may re-enroll test devices and re-sync original SMS.
+- Add API, unit and isolated-browser regression tests. Physical Android validation and deployment testing are still required.
+
 ## v0.15.1 — Native Android controller and independent encrypted grants
 
 - Replace the management-center WebView workspace with Jetpack Compose inbox, devices and settings, retaining a single shared top toolbar and native bottom navigation.

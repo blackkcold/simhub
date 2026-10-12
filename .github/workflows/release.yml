@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.15.1.trigger'
+      - '.github/release/v0.15.5.trigger'
 
 permissions:
   contents: read
@@ -278,7 +278,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Native Compose Android controller with explicit encrypted device grants, Keystore identity, passwordless return sessions and one-layer navigation",
+              "notes":"Global zero-knowledge Vault registry, cross-device password unlock, native controller identity validation, and one-time legacy migration",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -301,18 +301,17 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub v0.15.1 upgrades the Android management center to a native
-          Jetpack Compose client with independently authorized device credentials.
+          SIM Hub v0.15.5 establishes one encrypted Global Vault across every
+          authorized Web, PWA and native Android management controller.
 
           ## Core changes
-          - Remove WebView-based controller pages and redundant nested app bars.
-          - Native SMS conversations, device overview, settings and encrypted SMS sending.
-          - Explicit one-time controller pairing in unlocked administrator PWA.
-          - Zero-knowledge ECDH/HKDF/AES-GCM grant of Master Vault to the handset.
-          - Android Keystore protects the management controller signing identity
-            and sealed local Vault; returning sessions use signed challenges.
-          - Server-side controller revocation and legacy PWA/Node compatibility.
-          - Separate decryption-success and failed-history counters; database schema v13.
+          - Single encrypted Master Vault registered once per Relay installation.
+          - Web/PWA retrieve the shared encrypted envelope; no per-browser Vault creation.
+          - Password changes rewrap the same root without re-encrypting SMS or Node Keys.
+          - Existing local Vault can be adopted once; offline recovery keys must match.
+          - Native Android controllers verify Global Vault ID and key fingerprint.
+          - Independent per-device Node Keys and Keystore grants remain unchanged.
+          - No Relay access to plaintext Master Key, Node Keys or SMS; schema v13.
 
           ## Security and platform limitations
           - Initial trust grant requires a separately authenticated and unlocked PWA.
@@ -323,11 +322,13 @@ jobs:
           - Existing Relay ciphertext and SIM node keys are not re-encrypted.
 
           ## Upgrade
-          Existing Docker volumes are migrated in place. Retain the same management
-          HTTPS origin and original Vault recovery key. Pair each Android controller
-          once from the web management panel. Restore old historical keys if needed.
+          Existing Docker volumes migrate in place. First unlock and adopt the original
+          local Vault from the oldest active PWA, then use the same Vault passphrase
+          on other browsers. Existing controllers with mismatched local root keys must
+          be reauthorized. If older encrypted records cannot be recovered, re-pair
+          the SIM node and re-sync original SMS stored in its Android SMS Provider.
 
-          Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_NATIVE.md.
+          Details: CHANGELOG.md, docs/GLOBAL_VAULT.md.
           EOF
           ASSETS=(
             "release/simhub-agent-v${VERSION}-release.apk"

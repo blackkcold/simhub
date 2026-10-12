@@ -1,5 +1,8 @@
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 const $ = (id) => document.getElementById(id);
+const androidShell = new URLSearchParams(location.search).get('native') === '1';
+if(androidShell)document.documentElement.classList.add('simhub-android-shell');
+
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const VAULT_STORE = 'simhub_vault_v1';
@@ -393,7 +396,9 @@ function purgeSensitiveUI(){
   const badge=$('otpBadge');if(badge){badge.textContent='';badge.hidden=true;}
 }
 function lockVault(broadcast=true){
-  securityEpoch++;
+  securityEpoch++;androidNativePage=0;
+  if(androidShell&&window.SimHubNativeInbox?.postMessage)
+    window.SimHubNativeInbox.postMessage(JSON.stringify({type:'locked'}));
   phoneOverrides={};clearTabVault();activeConversationKey=null;diagnosticsDeviceId=null;
   $('smsLayout').classList.remove('conversation-open');
   purgeSensitiveUI();
@@ -974,6 +979,7 @@ function buildThreads(source){
     return {key,messages,latest:messages[messages.length-1]};
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
+
 function renderInbox(){
   refreshSimFilter();
   syncSendControls();
@@ -998,6 +1004,69 @@ function renderInbox(){
   }).join('');
   list.scrollTop=previousTop;
   renderConversation();
+  publishAndroidInbox();
+}
+// Native Android receives only a bounded, already decrypted SMS snapshot. The
+// Master Vault Key and Node Keys never enter the native bridge. Native data
+// lives in process memory and is wiped by a Vault lock message.
+let androidNativePage=0;
+const ANDROID_NATIVE_PAGE_SIZE=160;
+function allNativeEventsCount(){return collapseMessageEvents(decryptedEvents).filter(e=>e.kind.startsWith('sms.')).length;}
+function publishAndroidInbox(){
+  if(typeof androidShell==='undefined'||!androidShell||!window.SimHubNativeInbox?.postMessage)return;
+  if(!vaultKey){
+    window.SimHubNativeInbox.postMessage(JSON.stringify({type:'locked'}));return;
+  }
+  const allNativeEvents=collapseMessageEvents(decryptedEvents)
+    .filter(e=>e.kind.startsWith('sms.'))
+    .sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
+  const rows=allNativeEvents.slice(androidNativePage*ANDROID_NATIVE_PAGE_SIZE,
+      (androidNativePage+1)*ANDROID_NATIVE_PAGE_SIZE).map(e=>{
+      const p=e.payload||{};
+      return {id:String(e.deviceId||'')+':'+String(e.eventId||''),
+        thread:String(threadKey(e)).slice(0,160),
+        sender:String(p.contactName||messageAddress(e)||tr('unknown')).slice(0,100),
+        body:String(p.body||'').slice(0,4000),
+        timestamp:Number(e.occurredAt||0),inbound:eventIsInbound(e),
+        device:String(deviceName(e.deviceId)||'').slice(0,100),
+        sim:String(messageChannelLabel(e)||'').slice(0,90),
+        otp:String(eventIsInbound(e)?p.otp?.value||'':'').slice(0,20),
+        failed:!!e.decryptError};
+    });
+  const payload={type:'snapshot',v:1,messages:rows,
+    hasMore:!!historyHasMore || allNativeEvents.length>(androidNativePage+1)*ANDROID_NATIVE_PAGE_SIZE,
+    hasNewer:androidNativePage>0,
+    unreadable:decryptedEvents.filter(e=>e.decryptError&&e.kind.startsWith('sms.')).length};
+  try{
+    // Bound Android IPC payload size; large SMS histories load incrementally.
+    while(rows.length>0 && JSON.stringify(payload).length>400000){rows.pop();payload.hasMore=true;}
+    window.SimHubNativeInbox.postMessage(JSON.stringify(payload));
+  }catch(e){console.warn('Native inbox synchronization unavailable',e.name);}
+}
+if(androidShell){
+  window.SimHubNativeShell={
+    openView:(view)=>{
+      if(view==='send')switchView('send');
+      else if(['devices','settings','inbox'].includes(view))switchView(view);
+    },
+    refresh:()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));else publishAndroidInbox();},
+    loadOlder:async()=>{
+      try{
+        const needed=(androidNativePage+1)*ANDROID_NATIVE_PAGE_SIZE;
+        if(allNativeEventsCount()<=needed && historyHasMore){
+          for(let i=0;i<8 && allNativeEventsCount()<=needed && historyHasMore;i++){
+            const prevCount=decryptedEvents.length,prevVisible=visibleCount;
+            await loadOlder();
+            if(prevCount===decryptedEvents.length && prevVisible===visibleCount)break;
+          }
+        }
+        if(allNativeEventsCount()>needed)androidNativePage++;
+        publishAndroidInbox();
+      }catch(e){toast(e.message);}
+    },
+    loadNewer:()=>{androidNativePage=Math.max(0,androidNativePage-1);publishAndroidInbox();},
+    snapshot:()=>publishAndroidInbox(),
+  };
 }
 function updateReplyDevices(){
   const el=$('replyDevice'),chosen=el.value;

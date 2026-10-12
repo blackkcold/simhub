@@ -35,6 +35,7 @@ class SurfaceTest(unittest.TestCase):
             "SIMHUB_MANAGEMENT_ORIGIN":"https://admin.simhub.example.com",
             "SIMHUB_PUBLIC_BASE_URL":"https://node.simhub.example.com",
             "SIMHUB_SEPARATE_SURFACES":"true",
+            "SIMHUB_ANDROID_CERT_SHA256":":".join(["AB"]*32),
         })
         cls.proc=subprocess.Popen([sys.executable,str(ROOT/"server"/"simhub_server.py")],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(100):
@@ -69,6 +70,12 @@ class SurfaceTest(unittest.TestCase):
         node="node.simhub.example.com"
         self.assertEqual(self.request("GET","/",admin)[0],200)
         self.assertEqual(self.request("GET","/",node)[0],404)
+        code, dal=self.request("GET","/.well-known/assetlinks.json",admin,device=True)
+        self.assertEqual(code,200)
+        self.assertEqual(dal[0]["target"]["package_name"],"com.blackkcold.simhub")
+        self.assertEqual(dal[0]["relation"],["delegate_permission/common.get_login_creds"])
+        self.assertEqual(dal[0]["target"]["sha256_cert_fingerprints"],[":".join(["AB"]*32)])
+        self.assertEqual(self.request("GET","/.well-known/assetlinks.json",node,device=True)[0],404)
         self.assertEqual(self.request("GET","/api/v1/devices",node)[0],404)
         self.assertEqual(self.request("GET","/api/v1/devices",admin)[0],200)
         self.assertEqual(self.request("POST","/api/v1/enroll",node,{"token":"short"},device=True)[0],400)

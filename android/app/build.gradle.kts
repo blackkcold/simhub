@@ -13,8 +13,8 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
-        versionCode = 34
-        versionName = "0.14.1"
+        versionCode = 35
+        versionName = "0.15.0"
     }
     buildFeatures { buildConfig = true; compose = true }
     signingConfigs {
@@ -45,6 +45,11 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.webkit:webkit:1.15.0")
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    // Align transitive Fragment API for ActivityResult; keep release Lint enabled.
+    implementation("androidx.fragment:fragment:1.9.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")

@@ -1,3 +1,13 @@
+## v0.15.0 — Native controller inbox, Android WebAuthn and unified navigation
+
+- Management center SMS threads and messages now render as **native Jetpack Compose**, with search, OTP filtering/copy, device and SIM labels, conversation history, and paged refresh. The existing browser-side E2EE implementation decrypts SMS in the verified WebView before forwarding bounded, key-free read-only snapshots to Android process memory. SMS plaintext is not persisted by the native UI.
+- A single standard **Android Material 3 bottom navigation** (SMS / Devices / Settings) replaces the duplicate floating Web/PWA dock within the management workspace; native node mode retains its bottom navigation. Embedded web pages hide their own chrome and preserve the Vault gate.
+- Android WebView enables **system Credential Manager / WebAuthn** only on supported WebView versions; WebAuthn still uses the server's existing signed-challenge verifier and requires valid website-to-app Digital Asset Links. The administrator's HTTPS management origin serves `/.well-known/assetlinks.json` using the verified official APK signing certificate. Forked/self-signed packages require `SIMHUB_ANDROID_CERT_SHA256` override.
+- The native inbox channel accepts only bounded messages from the active, HTTPS, same-origin top-level page. Vault lock and profile removal clear the native decrypted list; the Master Vault Key and device secrets are never exposed to Kotlin.
+- Sending SMS retains the existing Web secure composer, channel validation, explicit confirmation and step-up authentication inside the **same Android shell**, accessible from the native inbox's Send action.
+- Existing SIM Node synchronization, device enrollment, Relay ciphertext, profiles, sessions, updater and database schema remain compatible. No data migration is required.
+- Verification includes server Digital Asset Links host separation, JavaScript SMS helpers, PWA session/lock regression and Android compile/unit tests. Actual passkey provider behavior varies by Android WebView/GMSCore/OEM and must additionally be tested on a linked HTTPS deployment and a physical device.
+
 ## v0.14.1 — Unified Android surfaces and QR management onboarding
 
 - Replace the independent Android Controller Activity chrome with one shared Material 3 Compose shell for both SIM node and management center; make mode switching a prominent in-app selection, with node-only navigation and manager-only PWA navigation.

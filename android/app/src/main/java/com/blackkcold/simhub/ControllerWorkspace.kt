@@ -179,6 +179,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         .put("hasNewer",requested>0).put("incremental",incremental)
                     arrayOf(d,list,events,response,requested,nextTime,nextSeq,auth.optBoolean("totpRequired",true),newestSeq,incremental)
                 }
+                // A background/lock transition may occur while ciphertext is decrypting.
+                // Never repopulate native plaintext after the local OS gate has locked.
+                if(requireLocalUnlock && !localUnlocked)return@launch
                 @Suppress("UNCHECKED_CAST")
                 devices=data[1] as List<JSONObject>
                 secondFactorTotp=data[7] as Boolean

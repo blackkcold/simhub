@@ -301,40 +301,36 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub v0.16.0 delivers a mode-aware native management workspace,
-          distinct node/controller themes and expanded device controls.
+          Android management UI/UX upgrade: mode-specific Material 3 themes,
+          a native dashboard, clearer navigation and expanded device management.
 
           ## Changes
-          - Explicit pairing v1/v2 negotiation: legacy Android clients use
-            short-lived same-IP polling through 2027-02-10; v2 clients
-            require a high-entropy hashed polling token.
-          - Bound incremental SMS synchronization to 50 events per fetch,
-            split encoded payloads by size, and advance sequence cursors only
-            after successful native-inbox acceptance.
-          - Distinct latest, older and delta operations, stable deep-history
-            window, and source-isolated per SIM revision conversations.
-          - Persist task history on Relay and keep checking queued/dispatched
-            ACK states beyond Eco wakeup delays.
-          - Block native management screenshots and recents previews; stop
-            counting automatic refreshes as user session activity.
-          - Replace the SMS send modal with a full-screen native composer
-            retaining draft and idempotency keys across close/reopen.
-          - Add bulk (2050-event) HTTP pagination and native history tests.
+          - Teal local SIM Node and indigo native Management Center with distinct
+            navigation SVG glyphs, compact metrics and remote task cards.
+          - Native full-screen device detail includes SIM status, role/permission
+            summaries, recent/older SMS sync, diagnostics and conditional OTA.
+          - Management settings are organized into workspace, security and system.
+          - Companion/non-default SMS mode remains read-only by default.
+            Normal send requires default SMS role and SEND_SMS authorization.
+          - A developer-only, temporary companion-mode send exception must be
+            explicitly reported and is visibly labeled as a test capability.
+          - Web/native controller message compose honors device send capability.
+            In-conversation replies require verifying the sending SIM.
+          - Preserve per-node E2EE, Global Vault, channel revision checks and
+            durable idempotent command status.
 
           ## Security and validation boundaries
-          - Existing encrypted Global Vault, signed sessions and independent
-            Node Keys remain unchanged.
-          - The biometric app gate is not an authentication-bound hardware
-            Keystore unwrap. That migration remains separately gated.
-          - OEM, real SIM, Doze and device biometric behavior still requires
-            manual hardware acceptance; CI cannot certify them.
+          - Passkey and Vault recovery still use trusted HTTPS web operations.
+          - Android local biometric gate does not yet bind unwrapping to the
+            user-authenticated Keystore key; do not claim that protection.
+          - Hardware SIM, OEM background and foldable acceptance require
+            separate device validation; CI does not certify these paths.
 
           ## Upgrade
-          Existing Relay volumes and authorized controllers are retained.
-          Legacy pairing v1 is IP-bound and scheduled for retirement on
-          2027-02-11 UTC; update older clients before that date.
+          Existing Relay volumes and controller identities are retained.
+          Legacy pairing v1 retirement remains 2027-02-11 UTC.
+          Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_UI_0.16.md.
 
-          Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_NATIVE.md.
           EOF
           ASSETS=(
             "release/simhub-agent-v${VERSION}-release.apk"

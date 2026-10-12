@@ -37,6 +37,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     private val wrappingAlias="simhub-controller-vault-"+hex(origin)
     private var exchange:KeyPair?=null
     private var requestedId:String?=null
+    private var pairPollToken:String?=null
     private var cookie=""
     private var csrf=""
     var lastError:String=""
@@ -57,10 +58,10 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
      */
     private fun pendingAad()=("simhub-controller-pair-v1|"+origin).toByteArray(StandardCharsets.UTF_8)
 
-    private fun rememberPending(id:String,code:String,key:KeyPair){
+    private fun rememberPending(id:String,code:String,key:KeyPair,token:String){
         val expires=System.currentTimeMillis()+600_000L
         val secret=JSONObject().put("requestId",id).put("code",code)
-            .put("expires",expires).put("private",enc(key.private.encoded))
+            .put("expires",expires).put("pollToken",token).put("private",enc(key.private.encoded))
             .put("public",enc(key.public.encoded)).toString()
                 .toByteArray(StandardCharsets.UTF_8)
         try {
@@ -88,6 +89,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
                 exchange=KeyPair(factory.generatePublic(X509EncodedKeySpec(dec(json.getString("public")))),
                     factory.generatePrivate(PKCS8EncodedKeySpec(dec(json.getString("private")))))
                 requestedId=json.getString("requestId")
+                pairPollToken=json.getString("pollToken")
                 PairStatus(requestedId!!,json.getString("code"))
             }finally{clear.fill(0)}
         }catch(_:Exception){
@@ -96,7 +98,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         }
     }
     private fun clearPending(){
-        exchange=null;requestedId=null
+        exchange=null;requestedId=null;pairPollToken=null
         prefs.edit().remove("pendingPairing").apply()
     }
 
@@ -143,13 +145,15 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         return cipher.doFinal(dec(saved.getString("ct"))).also{check(it.size==32)}
     }
     /** Blocking network; only call from Dispatchers.IO. Never follow external redirects. */
-    fun request(path:String,method:String="GET",body:JSONObject?=null,authenticated:Boolean=false):JSONObject {
+    fun request(path:String,method:String="GET",body:JSONObject?=null,authenticated:Boolean=false,pollToken:String?=null):JSONObject {
         require(path.startsWith("/api/v1/") && !path.contains("://"))
         val connection=(URL(origin+path).openConnection() as HttpURLConnection)
         connection.connectTimeout=10000;connection.readTimeout=15000
         connection.instanceFollowRedirects=false
         connection.requestMethod=method
         connection.setRequestProperty("Accept","application/json")
+        if(!pollToken.isNullOrEmpty())connection.setRequestProperty("X-SimHub-Pair-Token",pollToken)
+        if(authenticated && cookie.isNotEmpty())connection.setRequestProperty("X-SimHub-Activity","1")
         if(authenticated && cookie.isNotEmpty())connection.setRequestProperty("Cookie",cookie)
         if(authenticated && method!="GET" && csrf.isNotEmpty())connection.setRequestProperty("X-SimHub-CSRF",csrf)
         if(body!=null){
@@ -189,13 +193,14 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         exchange=key
         requestedId=data.getString("requestId")
         val code=data.getString("pairingCode")
-        rememberPending(requestedId!!,code,key)
+        pairPollToken=data.getString("pollToken")
+        rememberPending(requestedId!!,code,key,pairPollToken!!)
         return PairStatus(requestedId!!,code)
     }
     /** Returns true only after the admin approved and key authentication succeeded. */
     fun pollPairing():Boolean {
         val id=requestedId?:pendingPairing()?.requestId?:return false
-        val result=request("/api/v1/controllers/pair/"+id)
+        val result=request("/api/v1/controllers/pair/"+id,pollToken=pairPollToken ?: throw SecurityException("配对凭据已失效，请重新申请"))
         if(result.optString("state")=="expired"){
             clearPending()
             throw IllegalStateException("Pairing request expired")

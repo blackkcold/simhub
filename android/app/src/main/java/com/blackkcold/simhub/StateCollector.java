@@ -101,7 +101,8 @@ public final class StateCollector {
             o.put("smsRoleHeld",smsRole).put("smsMode",smsRole?"default":"companion")
                     .put("smsReceivePermission",recvPermission).put("smsReadPermission",readPermission)
                     .put("smsSendPermission",sendPermission)
-                    .put("smsSendAllowed",SmsSendPolicy.canSend(c));
+                    .put("smsSendAllowed",SmsSendPolicy.canSend(c))
+                    .put("smsDeveloperOverride",DeveloperSettings.isForceSmsEnabled(c));
             JSONArray subscriptions=new JSONArray(),channels=new JSONArray(),phoneNumbers=new JSONArray();
             if(c.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)==PackageManager.PERMISSION_GRANTED){
                 SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);

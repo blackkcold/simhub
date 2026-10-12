@@ -43,6 +43,13 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 PUBLIC_BASE_URL = os.getenv("SIMHUB_PUBLIC_BASE_URL", "").rstrip("/")
 ADMIN_TOKEN = os.getenv("SIMHUB_ADMIN_TOKEN", "")
 ADMIN_USERNAME = os.getenv("SIMHUB_ADMIN_USERNAME", "admin").strip()
+# Public, non-secret certificate fingerprints for Android Credential Manager.
+_CERT_PATTERN = re.compile(r"^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$")
+ANDROID_CERT_SHA256 = tuple(dict.fromkeys(
+    value for raw in os.getenv("SIMHUB_ANDROID_CERT_SHA256", "").split(",")
+    if (value := raw.strip().upper()) and _CERT_PATTERN.fullmatch(value)
+))
+
 ADMIN_PASSWORD_HASH = os.getenv("SIMHUB_ADMIN_PASSWORD_HASH", "").strip()
 _password_hasher = PasswordHasher(time_cost=3,memory_cost=65536,parallelism=2,hash_len=32,salt_len=16)
 TOTP_SECRET = os.getenv("SIMHUB_TOTP_SECRET", "").strip().replace(" ", "")
@@ -1011,6 +1018,16 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
             except Exception:
                 self.send_error_json(503,"database_not_ready","Database is not ready"); return
+        if path=="/.well-known/assetlinks.json":
+            if not ANDROID_CERT_SHA256:
+                self.send_error_json(404,"assetlinks_not_configured",
+                    "Android signing certificate fingerprint is not configured");return
+            self.send_json(200,[{
+                "relation":["delegate_permission/common.get_login_creds"],
+                "target":{"namespace":"android_app",
+                    "package_name":"com.blackkcold.simhub",
+                    "sha256_cert_fingerprints":list(ANDROID_CERT_SHA256)}
+            }]);return
         if path=="/api/v1/auth/check":
             # Passive browser session probes are not password guesses. Never
             # increase the authentication-failure bucket for an absent or expired

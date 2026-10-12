@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.15.0.trigger'
+      - '.github/release/v0.15.1.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.15.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.15.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -278,7 +278,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Native Compose management SMS, one Android bottom navigation, system Credential Manager WebAuthn and verified app-site association",
+              "notes":"Native Compose Android controller with explicit encrypted device grants, Keystore identity, passwordless return sessions and one-layer navigation",
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -301,34 +301,33 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub v0.13.3 adds opt-in remote signed APK updates on Android 16+, with developer-only eligibility override for testing older versions.
+          SIM Hub v0.15.1 upgrades the Android management center to a native
+          Jetpack Compose client with independently authorized device credentials.
 
-          ## Highlights
-          - Remote controller-initiated Android self-updates require explicit local opt-in and administrator step-up.
-          - Android 16+ gating; developer override below Android 16 never bypasses installer permissions or confirmation.
-          - Track download, verification, installation, confirmation and verified post-replacement recovery states.
-          - Enforce original APK signature, release metadata and SHA-256; never install third-party packages.
-          - Restore enabled relay/job transport using ACTION_MY_PACKAGE_REPLACED without forcing a background Activity.
-          - Default to Wi-Fi downloads and pause on battery under 25% unless charging; cancellation before installer commit.
-          - Persist SMS Provider change generations, catch same-second updates and late Provider writes.
-          - Encrypt and queue new SMS before Relay network checks, even during retry backoff.
-          - Decouple remote command retrieval from 15-minute maintenance; Balanced command checks use ~45s interactive and ~120s idle cadences with best-effort background recovery.
-          - Expose actual foreground listener health, command-check times/errors and a manual check-and-sync action.
-          - Expire stale controller commands even if their device never polls again.
-          - Replace narrow three-way chips with full-width accessible power cards and icon assets.
-          - Preserve v0.13.0 encrypted storage, queue idempotency, v0.12.2 unpair recovery and pairing-independent APK updates.
+          ## Core changes
+          - Remove WebView-based controller pages and redundant nested app bars.
+          - Native SMS conversations, device overview, settings and encrypted SMS sending.
+          - Explicit one-time controller pairing in unlocked administrator PWA.
+          - Zero-knowledge ECDH/HKDF/AES-GCM grant of Master Vault to the handset.
+          - Android Keystore protects the management controller signing identity
+            and sealed local Vault; returning sessions use signed challenges.
+          - Server-side controller revocation and legacy PWA/Node compatibility.
+          - Separate decryption-success and failed-history counters; database schema v13.
 
-          ## Platform limits
-          Doze and OEM restrictions may delay background jobs. Configured FCM/push delivery
-          is not bundled. No Android OTP protection is bypassed; confirm real-device
-          receive latency and background survival independently from CI.
+          ## Security and platform limitations
+          - Initial trust grant requires a separately authenticated and unlocked PWA.
+          - Sensitive actions retain server-side step-up; manager QR only imports an origin.
+          - Historical records without a valid Vault or Node Key cannot be recovered.
+          - Android OEM/biometric behavior and real SIM delivery require testing on
+            physical devices; CI validates software build and crypto regression tests.
+          - Existing Relay ciphertext and SIM node keys are not re-encrypted.
 
-          ## Host activation
-          After migrating the Docker engine to rootless mode, run \`bash scripts/install-updater.sh\`
-          on the Docker host to enable one-click future upgrades from Web settings.
-          Android may still ask for system installation permission or confirmation.
+          ## Upgrade
+          Existing Docker volumes are migrated in place. Retain the same management
+          HTTPS origin and original Vault recovery key. Pair each Android controller
+          once from the web management panel. Restore old historical keys if needed.
 
-          Full details are in CHANGELOG.md and the documentation bundle.
+          Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_NATIVE.md.
           EOF
           ASSETS=(
             "release/simhub-agent-v${VERSION}-release.apk"

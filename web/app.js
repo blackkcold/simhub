@@ -341,6 +341,8 @@ function askStepUp(label){
     const dialog=$('stepupDialog'),form=$('stepupForm'),input=$('stepupValue'),cancel=$('stepupCancel');
     $('stepupPrompt').textContent=label;
     input.value='';input.type=secondFactorIsTotp?'text':'password';
+    input.maxLength=secondFactorIsTotp?6:1024;
+    input.inputMode=secondFactorIsTotp?'numeric':'text';
     input.autocomplete=secondFactorIsTotp?'one-time-code':'off';
     const finish=(value)=>{form.removeEventListener('submit',submit);cancel.removeEventListener('click',dismiss);dialog.removeEventListener('cancel',dismiss);dialog.close();if(value)resolve(value);else reject(new Error('已取消二次验证'));};
     const submit=e=>{e.preventDefault();finish(input.value.trim());};

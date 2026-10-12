@@ -170,6 +170,8 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
             val json=JSONObject(response)
             if(status !in 200..299) {
                 if(status==401 && authenticated){cookie="";csrf=""}
+                if(status==401 && path.startsWith("/api/v1/controllers/login/"))
+                    throw SecurityException("管理终端授权已失效，请在网页重新批准")
                 throw IllegalStateException(json.optString("message","HTTP $status").take(180))
             }
             if(path=="/api/v1/controllers/login/verify"){

@@ -111,6 +111,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
     var actionError by remember{mutableStateOf("")}
     var actionBusy by remember{mutableStateOf(false)}
+    var pendingSensitiveTask by remember { mutableStateOf<Pair<JSONObject,String>?>(null) }
+    var sensitiveCredential by remember { mutableStateOf("") }
     var serverVersion by remember{mutableStateOf("—")}
     var secondFactorTotp by remember(selected){mutableStateOf(true)}
     var requireLocalUnlock by remember(selected){mutableStateOf(client?.requireLocalUnlock()==true)}
@@ -324,7 +326,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     fun loadOlderPage(){load("older")}
     fun navigateToLatest(){load("latest")}
     /** Remote commands are E2EE encrypted, idempotent and acknowledged asynchronously. */
-    fun queueDeviceAction(device:JSONObject,action:String){
+    fun queueDeviceAction(device:JSONObject,action:String,credential:String?=null){
+        if(action.startsWith("ota-") && credential==null){
+            pendingSensitiveTask=device to action
+            sensitiveCredential=""
+            return
+        }
         if(actionBusy || !authorized || (requireLocalUnlock && !localUnlocked))return
         val commandType=when(action){
             "sync-recent"->"sms.sync_recent"
@@ -349,9 +356,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             try{
                 val commandId=withContext(Dispatchers.IO){
                     val api=client?:throw SecurityException("管理授权已失效")
+                    if(action.startsWith("ota-")){
+                        if(credential.isNullOrBlank())throw SecurityException("此操作要求管理员二次验证")
+                        api.api("/api/v1/auth/elevate","POST",JSONObject()
+                            .put(if(secondFactorTotp)"totp" else "adminToken",credential))
+                    }
                     val id=UUID.randomUUID().toString()
                     val now=System.currentTimeMillis()/1000
-                    val end=now+if(action=="ota-install")3600L else 900L
+                    val energy=state.optString("effectiveEnergyMode",
+                        state.optString("energyMode","balanced"))
+                    val minTtl=if(!state.optBoolean("foregroundRelay") || energy=="eco")1200L
+                        else if(energy=="balanced")300L else 180L
+                    val end=now+maxOf(if(action=="ota-install")3600L else 900L,minTtl)
                     val payload=JSONObject().put("v",2).put("action",commandType)
                         .put("commandId",id).put("issuedAt",now).put("expiresAt",end)
                     if(action=="sync-recent" || action=="sync-older")payload.put("maxMessages",100)
@@ -789,7 +805,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             }){Text(hubLabel("仅清除此手机","Remove only from this phone"))}
         })
     selectedDevice?.let{device->
-        Dialog(onDismissRequest={selectedDevice=null},
+        if(pendingSensitiveTask==null)Dialog(onDismissRequest={selectedDevice=null},
             properties=DialogProperties(usePlatformDefaultWidth=false)){
             Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
                 ControllerDeviceDetails(device,busy=actionBusy,
@@ -803,6 +819,36 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     })
             }
         }
+    }
+    pendingSensitiveTask?.let{pending->
+        val (device,action)=pending
+        AlertDialog(onDismissRequest={pendingSensitiveTask=null;sensitiveCredential=""},
+            icon={HubIcon(R.drawable.ic_hub_shield,Modifier.size(28.dp),
+                MaterialTheme.colorScheme.primary)},
+            title={Text(if(action=="ota-install")hubLabel("确认远程安装","Confirm remote installation")
+                else hubLabel("取消待处理更新","Cancel pending update"))},
+            text={
+                Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    Text(if(action=="ota-install")
+                        hubLabel("仅请求安装最新签名版本；安卓系统仍可能要求在设备上确认。任务入队不等于更新成功。",
+                            "Only a newer signed build is requested. Android may still require confirmation; queued is not installed.")
+                        else hubLabel("仅能取消尚未提交系统安装器的更新。","Cancellation is limited to updates not yet committed to Android."),
+                        style=MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(sensitiveCredential,{sensitiveCredential=it},
+                        label={Text(if(secondFactorTotp)hubLabel("二次验证 TOTP","TOTP")
+                            else hubLabel("管理员令牌","Admin token"))},
+                        singleLine=true,visualTransformation=PasswordVisualTransformation(),
+                        modifier=Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton={TextButton(enabled=sensitiveCredential.isNotBlank()&&!actionBusy,onClick={
+                val auth=sensitiveCredential
+                pendingSensitiveTask=null;sensitiveCredential=""
+                queueDeviceAction(device,action,auth)
+            }){Text(hubLabel("确认提交","Confirm"))}},
+            dismissButton={TextButton(onClick={pendingSensitiveTask=null;sensitiveCredential=""}){
+                Text(hubLabel("取消","Cancel"))
+            }})
     }
     if(showWrite){
         var sendError by remember{mutableStateOf("")}

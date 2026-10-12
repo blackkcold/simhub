@@ -36,7 +36,8 @@ import org.json.JSONObject
 import java.util.UUID
 
 private data class ControllerLoadBatch(
-    val payload:String,val sequence:Long,val nextTime:Long,val nextSeq:Long,val unreadable:Int
+    val payload:String,val sequence:Long,val nextTime:Long,val nextSeq:Long,
+    val unreadable:Int,val finalFragment:Boolean,val appendFragment:Boolean
 )
 private data class ControllerLoadResult(
     val devices:List<JSONObject>,val totpRequired:Boolean,
@@ -217,11 +218,33 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     .put("sourceId",(item.optString("deviceId")+"|"+ch+"|"+rev).take(160))
                                     .put("otp",otp.take(20)).put("failed",failed))
                             }
-                            val payload=JSONObject().put("type","snapshot").put("v",1).put("messages",messages)
-                                .put("unreadable",failures).put("hasMore",events.optBoolean("hasMore"))
-                                .put("hasNewer",requested>0).put("incremental",delta)
-                            result.add(ControllerLoadBatch(payload.toString(),highest,
-                                events.optLong("nextBeforeTime"),events.optLong("nextBeforeSeq"),failures))
+                            // A single SMS may contain many escapable characters.
+                            // Split after JSON encoding, not just by event count.
+                            // Only the final fragment may advance the event cursor.
+                            val fragments=ArrayList<JSONArray>()
+                            var fragment=JSONArray()
+                            var encodedSize=256
+                            for(j in 0 until messages.length()){
+                                val entry=messages.getJSONObject(j)
+                                val length=entry.toString().length+1
+                                if(fragment.length()>0 && encodedSize+length>400_000){
+                                    fragments.add(fragment);fragment=JSONArray();encodedSize=256
+                                }
+                                fragment.put(entry);encodedSize+=length
+                            }
+                            fragments.add(fragment)
+                            for(j in fragments.indices){
+                                val final=j==fragments.lastIndex
+                                val payload=JSONObject().put("type","snapshot").put("v",1)
+                                    .put("messages",fragments[j])
+                                    .put("unreadable",if(final)failures else 0)
+                                    .put("hasMore",events.optBoolean("hasMore"))
+                                    .put("hasNewer",requested>0).put("incremental",delta)
+                                result.add(ControllerLoadBatch(payload.toString(),
+                                    if(final)highest else sequence,
+                                    events.optLong("nextBeforeTime"),events.optLong("nextBeforeSeq"),
+                                    if(final)failures else 0,final,j>0))
+                            }
                             sequence=highest
                             if(!delta || rows.length()<50)break
                         }
@@ -232,15 +255,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 // Main-thread ACK: only successfully accepted decrypted content
                 // allows an event cursor or historical-page index to move.
                 for(batch in data.batches){
-                    if(!inbox.accept(batch.payload,append=mode=="older" || mode=="delta",
+                    if(!inbox.accept(batch.payload,append=mode=="older" || mode=="delta" || batch.appendFragment,
                                      preferOlder=mode=="older"))
                         throw IllegalStateException("短信批次未接收；游标未推进，可安全重试")
                     if(mode=="delta")lastEventSeq=maxOf(lastEventSeq,batch.sequence)
-                    else if(mode=="older"){
+                    else if(mode=="older" && batch.finalFragment){
                         page+=1
                         if(batch.nextTime>0 && batch.nextSeq>0)
                             cursors=cursors.take(page)+listOf(batch.nextTime to batch.nextSeq)
-                    }else{
+                    }else if(mode=="latest" && batch.finalFragment){
                         page=0
                         cursors=if(batch.nextTime>0 && batch.nextSeq>0)
                             listOf(batch.nextTime to batch.nextSeq) else emptyList()

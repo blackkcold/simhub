@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.15.5.trigger'
+      - '.github/release/v0.15.6.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.15.5.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.15.6.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -301,34 +301,40 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub v0.15.5 establishes one encrypted Global Vault across every
-          authorized Web, PWA and native Android management controller.
+          SIM Hub v0.15.6 unifies the Android management center and SIM node UI
+          and allows initial controller authorization entirely on the same phone.
 
-          ## Core changes
-          - Single encrypted Master Vault registered once per Relay installation.
-          - Web/PWA retrieve the shared encrypted envelope; no per-browser Vault creation.
-          - Password changes rewrap the same root without re-encrypting SMS or Node Keys.
-          - Existing local Vault can be adopted once; offline recovery keys must match.
-          - Native Android controllers verify Global Vault ID and key fingerprint.
-          - Independent per-device Node Keys and Keystore grants remain unchanged.
-          - No Relay access to plaintext Master Key, Node Keys or SMS; schema v13.
+          ## Changes
+          - One native Compose top bar, role switch, four-tab bottom navigation and
+            responsive navigation rail shared across node and controller modes.
+          - Native controller overview, SMS, devices and settings use common
+            Material 3 layout components without an embedded WebView.
+          - Same-phone HTTPS browser verification using the existing WebAuthn
+            Passkey/biometric provider or administrator password/TOTP fallback.
+          - Browser unlocks the existing Global Vault and grants controller
+            access using code-confirmed ECDH/HKDF/AES-GCM; no second terminal.
+          - The browser-to-app resume link transports no credentials or Vault
+            material; short-lived pairing survives process restart with a
+            Keystore-encrypted temporary state.
+          - Existing Node Keys, shared Vault, history, PWA and Relay APIs remain
+            backwards compatible.
 
-          ## Security and platform limitations
-          - Initial trust grant requires a separately authenticated and unlocked PWA.
-          - Sensitive actions retain server-side step-up; manager QR only imports an origin.
-          - Historical records without a valid Vault or Node Key cannot be recovered.
-          - Android OEM/biometric behavior and real SIM delivery require testing on
-            physical devices; CI validates software build and crypto regression tests.
-          - Existing Relay ciphertext and SIM node keys are not re-encrypted.
+          ## Security and platform boundaries
+          - The Passkey biometric prompt happens in the phone browser. This
+            release does not implement native Credential Manager Passkey flows
+            or biometric-gated Keystore Vault unsealing.
+          - Existing admin challenge, TOTP step-up, revocation and Vault ID/key
+            fingerprint matching continue to be enforced server-side.
+          - Physical OEM/Passkey compatibility, folding behavior and real SMS
+            transport require live-device checks in addition to CI.
 
           ## Upgrade
-          Existing Docker volumes migrate in place. First unlock and adopt the original
-          local Vault from the oldest active PWA, then use the same Vault passphrase
-          on other browsers. Existing controllers with mismatched local root keys must
-          be reauthorized. If older encrypted records cannot be recovered, re-pair
-          the SIM node and re-sync original SMS stored in its Android SMS Provider.
+          Existing Docker volumes and Android profiles migrate in place.
+          Use the same HTTPS management domain and original Global Vault
+          passphrase. Approve a new controller through the same phone's
+          browser; reauthorize any controller whose Vault ID has changed.
 
-          Details: CHANGELOG.md, docs/GLOBAL_VAULT.md.
+          Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_NATIVE.md.
           EOF
           ASSETS=(
             "release/simhub-agent-v${VERSION}-release.apk"

@@ -83,7 +83,7 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 The installer checks DNS / Docker / ports, creates the Admin Token, TOTP and owner-only `.env`, then starts Relay and Caddy HTTPS. **You must create DNS records at your provider.** For an existing Nginx / Caddy / Traefik proxy, add `--mode external` and configure dual-host TLS routing yourself.
 
-Open the management URL, log in, create/import your local Vault, then install the signed Android APK, enroll by QR/code and grant SMS receive/read/send permissions. Keeping the built-in Messages app as default is supported; switching to SIM Hub as the default SMS handler is optional.
+Open the management URL, log in, initialize the single encrypted Global Vault once (or unlock it with the existing Vault password), then install the signed Android APK, enroll by QR/code and grant SMS receive/read/send permissions. Keeping the built-in Messages app as default is supported; switching to SIM Hub as the default SMS handler is optional.
 
 ## Android system compatibility lab (v0.12.0)
 

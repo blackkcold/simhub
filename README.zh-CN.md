@@ -39,6 +39,14 @@
 
 <sub>均为依据当前 UI 绘制的模拟数据示意图，非真实短信或已登录设备截图。</sub>
 
+## v0.15.0 Android 原生短信与系统通行密钥
+
+管理中心的短信会话、正文、来源 SIM 标签、搜索和验证码复制使用 Android 原生 Compose 页面；底部为统一的 Android 导航栏。短信仍由当前可信管理域名的 WebCrypto Vault 解密，然后通过受限且不落盘的内存通道传给原生视图。管理短信的发送仍使用已存在的 Web 加密发送逻辑和二次验证，在 Android 的统一底栏内打开，不会绕过发送权限与确认。
+
+通行密钥使用 Android System WebView 的 WebAuthn → Credential Manager 支持，并非跳转到独立浏览器。正式签名 APK 的公钥签名指纹已作为默认值，管理域名通过 `/.well-known/assetlinks.json` 提供关联信息。需要使用 HTTPS，且设备 WebView 支持该特性；若设备或环境未通过关联验证，使用账户密码及 OTP 备用登录。自定义签名包请自行配置 `SIMHUB_ANDROID_CERT_SHA256`。
+
+完整说明见 [Android 原生管理中心](docs/ANDROID_CONTROLLER_NATIVE.md)。
+
 ## Android 统一界面和管理端扫码配置
 
 Android v0.14.1 起，SIM 节点与管理中心采用同一套 Material 3 主界面，通过顶部「SIM 节点 / 管理中心」切换；切换不重建已打开的管理 WebView 会话。本机短信服务、配对及后台同步独立运行。

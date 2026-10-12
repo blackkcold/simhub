@@ -205,7 +205,7 @@ class HubActivity: ComponentActivity(), HubController {
         }
         if(intent?.action==Intent.ACTION_VIEW &&
             intent.data?.scheme=="simhub" && intent.data?.host=="controller"){
-            confirmControllerLink(intent.data.toString())
+            handleControllerDeepLink(intent.data.toString())
         }
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -273,7 +273,7 @@ class HubActivity: ComponentActivity(), HubController {
         super.onNewIntent(intent)
         handleComposeIntent(intent)
         if(intent.action==Intent.ACTION_VIEW && intent.data?.scheme=="simhub") {
-            if(intent.data?.host=="controller")confirmControllerLink(intent.data.toString())
+            if(intent.data?.host=="controller")handleControllerDeepLink(intent.data.toString())
             else enrollLink(intent.data.toString())
         }
     }
@@ -333,12 +333,28 @@ class HubActivity: ComponentActivity(), HubController {
             .setPrompt("扫描网页管理中心配置二维码").setBeepEnabled(false)
             .setOrientationLocked(false).initiateScan()
     }
+    private fun handleControllerDeepLink(value:String){
+        val uri=runCatching{Uri.parse(value)}.getOrNull()
+        // This same-phone return link carries no administrator credential,
+        // one-time pairing code, or new server enrollment address.
+        if(uri?.scheme=="simhub" && uri.host=="controller" &&
+            uri.getQueryParameter("resume")=="1" &&
+            ControllerProfiles.selected(this)!=null){
+            if(HubModes.configured(this)){
+                if(HubModes.role(this)=="node")HubModes.select(this,"both")
+                HubModes.surface(this,"controller")
+                controllerRevision+=1
+            }
+            return
+        }
+        confirmControllerLink(value)
+    }
     private fun confirmControllerLink(value:String){
         val origin=ControllerLinks.decode(value)
         if(origin==null){toast("二维码或链接无效：仅支持 HTTPS 管理地址");return}
         val host=Uri.parse(origin).host ?:return
         AlertDialog.Builder(this).setTitle("连接管理中心")
-            .setMessage("添加可信管理服务器："+host+"\\n\\n二维码仅导入管理地址。请在网页端批准本机授权，之后使用本机安全密钥直接登录，无需重复输入 Vault 密码。")
+            .setMessage("添加可信管理服务器："+host+"\\n\\n二维码仅导入管理地址。可在此手机浏览器中使用 Passkey（支持时可使用指纹）或管理员密码/OTP 登录，解锁共享 Vault 后批准本终端。以后使用本机密钥登录。")
             .setNegativeButton("取消",null)
             .setPositiveButton("添加并打开"){_,_->
                 if(ControllerProfiles.add(this,origin)!=null){

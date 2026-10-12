@@ -195,6 +195,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         val data=request("/api/v1/controllers/pair","POST",JSONObject()
             .put("label",label.take(64))
             .put("identityPublic",enc(identity().public.encoded))
+            .put("pairingProtocolVersion",2)
             .put("exchangePublic",enc(key.public.encoded)))
         exchange=key
         requestedId=data.getString("requestId")

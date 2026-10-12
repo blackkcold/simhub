@@ -62,9 +62,10 @@ class ControllerInboxState {
                         val row=rows.optJSONObject(i)?:return false
                         fun str(name:String,max:Int)=row.optString(name,"").take(max)
                         val eventId=str("id",180)
-                        if(eventId.isBlank() || str("thread",160).isBlank())return false
+                        if(eventId.isBlank())return false
+                        val threadId=str("thread",160).ifBlank{eventId}
                         fresh.add(ControllerSms(
-                            eventId,str("thread",160),str("sender",100),
+                            eventId,threadId,str("sender",100),
                             str("body",4000),row.optLong("timestamp",0),
                             row.optBoolean("inbound",true),str("device",100),
                             str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false)

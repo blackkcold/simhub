@@ -1068,7 +1068,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if len(p)==5 and p[:3]==["api","v1","controllers"] and p[3]=="pair":
             try:
                 with open_db() as con:
-                    result=controller_auth.poll(con,p[4],self.ip,now())
+                    result=controller_auth.poll(con,p[4],self.ip,now(),self.headers.get("X-SimHub-Pair-Token",""))
                 self.send_json(200,result)
             except ValueError as exc:self.send_error_json(404,"pairing_unavailable",str(exc))
             return

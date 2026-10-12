@@ -30,7 +30,7 @@ import org.json.JSONObject
  */
 data class ControllerSms(
     val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,
-    val inbound:Boolean,val device:String,val sim:String,val otp:String,val failed:Boolean
+    val inbound:Boolean,val device:String,val sim:String,val sourceId:String,val otp:String,val failed:Boolean
 )
 class ControllerInboxState {
     val messages=mutableStateListOf<ControllerSms>()
@@ -63,7 +63,7 @@ class ControllerInboxState {
                             str("id",180),str("thread",160),str("sender",100),
                             str("body",4000),row.optLong("timestamp",0),
                             row.optBoolean("inbound",true),str("device",100),
-                            str("sim",90),str("otp",20),row.optBoolean("failed",false)
+                            str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false)
                         ))
                     }
                     // Stable IDs keep loaded conversation history across refreshes and
@@ -99,10 +99,10 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
     BackHandler(enabled=activeThread!=null){ activeThread=null }
     val filtered=state.messages.filter { m ->
         (!otpOnly||m.otp.isNotBlank()) &&
-        (sourceFilter.isEmpty() || sourceFilter==m.device+"|"+m.sim) &&
+        (sourceFilter.isEmpty() || sourceFilter==(m.sourceId.ifBlank{m.device+"|"+m.sim})) &&
         (query.isBlank() || listOf(m.sender,m.body,m.device,m.sim).any{it.contains(query,true)})
     }
-    val sources=state.messages.distinctBy{it.device+"|"+it.sim}.map{it.device+"|"+it.sim to (it.device+" · "+it.sim)}
+    val sources=state.messages.distinctBy{it.sourceId.ifBlank{it.device+"|"+it.sim}}.map{(it.sourceId.ifBlank{it.device+"|"+it.sim}) to (it.device+" · "+it.sim)}
     val threads=filtered.groupBy{it.thread}.values.mapNotNull{items->
         items.maxByOrNull{it.timestamp}?.let{latest->latest to items.size}
     }.sortedByDescending{it.first.timestamp}

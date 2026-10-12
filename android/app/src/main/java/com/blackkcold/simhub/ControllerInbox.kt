@@ -45,16 +45,18 @@ class ControllerInboxState {
     fun clear() {
         messages.clear();unlocked=false;hasMore=false;hasNewer=false;warning=""
     }
-    @JvmOverloads fun accept(raw:String, append:Boolean=false) {
-        if(raw.length>450_000)return
+    /** Returns false on *any* rejected payload. Callers must never advance an
+     * event cursor until this method has accepted the complete batch. */
+    @JvmOverloads fun accept(raw:String, append:Boolean=false, preferOlder:Boolean=false):Boolean {
+        if(raw.length>450_000)return false
         try {
             val obj=JSONObject(raw)
             when(obj.optString("type")){
-                "locked" -> clear()
+                "locked" -> { clear();return true }
                 "snapshot" -> {
-                    if(obj.optInt("v")!=1)return
-                    val rows=obj.optJSONArray("messages")?:return
-                    if(rows.length()>260)return
+                    if(obj.optInt("v")!=1)return false
+                    val rows=obj.optJSONArray("messages")?:return false
+                    if(rows.length()>260)return false
                     val fresh=ArrayList<ControllerSms>(rows.length())
                     for(i in 0 until rows.length()){
                         val row=rows.optJSONObject(i)?:continue
@@ -71,8 +73,11 @@ class ControllerInboxState {
                     val merged=LinkedHashMap<String,ControllerSms>()
                     if(append && unlocked)for(item in messages)merged[item.id]=item
                     for(item in fresh)if(item.id.isNotEmpty())merged[item.id]=item
-                    val ordered=merged.values.sortedWith(compareByDescending<ControllerSms>{it.timestamp}.thenByDescending{it.id})
-                        .take(1200)
+                    val sorted=merged.values.sortedWith(compareByDescending<ControllerSms>{it.timestamp}.thenByDescending{it.id})
+                    // When reading deep history, evict newer entries rather than the
+                    // older page the user explicitly requested. Latest navigation
+                    // restores the recent window without an unbounded SMS cache.
+                    val ordered=if(preferOlder)sorted.takeLast(1200) else sorted.take(1200)
                     messages.clear();messages.addAll(ordered)
                     unlocked=true
                     if(!obj.optBoolean("incremental")){
@@ -82,9 +87,11 @@ class ControllerInboxState {
                     if(obj.optInt("unreadable")>0)
                         warning="部分短信无法解密，请检查历史 Node Key 或 Vault 密钥"
                     else if(!obj.optBoolean("incremental"))warning=""
+                    return true
                 }
             }
         }catch(_:Exception){ /* Malformed page data is ignored, not logged. */ }
+        return false
     }
 }
 
@@ -149,7 +156,9 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
         }
         val key=activeThread
         if(key!=null){
-            val conversation=state.messages.filter{it.thread==key}.sortedBy{it.timestamp}
+            // Keep the same source and OTP/search constraints in the detail view.
+            // Do not silently reveal messages from a different SIM or controller.
+            val conversation=filtered.filter{it.thread==key}.sortedBy{it.timestamp}
             Row(Modifier.padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically){
                 TextButton(onClick={activeThread=null}){Text("‹ 返回")}
                 Text(conversation.lastOrNull()?.sender.orEmpty(),fontWeight=FontWeight.SemiBold)

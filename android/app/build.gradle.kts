@@ -48,6 +48,8 @@ dependencies {
     implementation("androidx.webkit:webkit:1.15.0")
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    // Align transitive Fragment API for ActivityResult; keep release Lint enabled.
+    implementation("androidx.fragment:fragment:1.9.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")

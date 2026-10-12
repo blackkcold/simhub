@@ -101,7 +101,7 @@ class ControllerInboxState {
 @Composable
 fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                           onOlder:()->Unit,onNewer:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit,
-                           canCompose:Boolean) {
+                           onReply:(String)->Unit,canCompose:Boolean) {
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var otpOnly by remember { mutableStateOf(false) }
@@ -184,7 +184,13 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
             val conversation=filtered.filter{it.thread==key}.sortedBy{it.timestamp}
             Row(Modifier.padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically){
                 TextButton(onClick={activeThread=null}){Text("‹ 返回")}
-                Text(conversation.lastOrNull()?.sender.orEmpty(),fontWeight=FontWeight.SemiBold)
+                Text(conversation.lastOrNull()?.sender.orEmpty(),modifier=Modifier.weight(1f),
+                    fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                if(canCompose && conversation.isNotEmpty())
+                    IconButton(onClick={onReply(conversation.last().sender)}){
+                        HubIcon(R.drawable.ic_hub_send,Modifier.size(20.dp),
+                            description=hubLabel("回复此会话","Reply in conversation"))
+                    }
             }
             if(conversation.isEmpty())LaunchedEffect(key){activeThread=null}
             LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),

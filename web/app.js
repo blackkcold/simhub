@@ -193,7 +193,7 @@ async function editSimPhone(deviceId,channelId){
   if(number)phoneOverrides[key]=number;else delete phoneOverrides[key];
   await savePhoneOverrides();renderDevices();renderDeviceSelectors();renderInbox();updateReplyChannels();
 }
-async function deriveWrapKey(passphrase,salt){const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations:PBKDF2_ITER,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}
+async function deriveWrapKey(passphrase,salt,iterations=PBKDF2_ITER){const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}
 async function wrapVaultRaw(raw,passphrase){if(passphrase.length<10)throw new Error('Use a vault passphrase of at least 10 characters.');const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),wrapKey=await deriveWrapKey(passphrase,salt);const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,raw));localStorage.setItem(VAULT_STORE,JSON.stringify({v:1,kdf:'PBKDF2-SHA256',iterations:PBKDF2_ITER,salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}));}
 async function importVault(raw){if(globalVault?.initialized && await globalKeyId(raw)!==globalVault.keyId)throw Error('Vault 密钥与服务器登记身份不一致');vaultRaw=new Uint8Array(raw);vaultKey=await crypto.subtle.importKey('raw',vaultRaw,{name:'AES-GCM'},false,['encrypt','decrypt']);deviceKeyCache.clear();resetAutoLock();await cacheTabVault();}
 async function globalKeyId(raw){return b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)).slice(0,16));}
@@ -210,13 +210,14 @@ async function initGlobalVault(raw,passphrase){
   const vaultId=crypto.randomUUID(),keyId=await globalKeyId(raw);
   const envelope=await makeGlobalEnvelope(raw,passphrase);
   await ensureStepUp();
-  globalVault=await api('/api/v1/vault/initialize',{method:'POST',body:{vaultId,keyId,envelope}});
+  await api('/api/v1/vault/initialize',{method:'POST',body:{vaultId,keyId,envelope}});
+  await loadGlobalVault();
   localStorage.removeItem(VAULT_STORE);
 }
 async function unwrapLegacyVault(passphrase){
   const old=JSON.parse(localStorage.getItem(VAULT_STORE)||'null');
   if(!old?.ct)throw Error('本机没有待迁移的旧 Vault');
-  const key=await deriveWrapKey(passphrase,unb64u(old.salt));
+  const key=await deriveWrapKey(passphrase,unb64u(old.salt),old.iterations);
   try{return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(old.iv),
     additionalData:enc.encode('simhub-vault-wrap-v1')},key,unb64u(old.ct)));}
   catch{throw Error('旧 Vault 密码不正确，无法自动迁移');}
@@ -238,7 +239,7 @@ async function importRecoveryFlow(){
 async function unlockVault(passphrase){
   if(!globalVault)await loadGlobalVault();
   if(!globalVault.initialized)throw Error('尚未初始化共享 Vault');
-  const e=globalVault.envelope,wrapKey=await deriveWrapKey(passphrase,unb64u(e.salt));
+  const e=globalVault.envelope,wrapKey=await deriveWrapKey(passphrase,unb64u(e.salt),e.iterations);
   let raw;
   try{raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(e.iv),
     additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,unb64u(e.ct)));}
@@ -531,9 +532,10 @@ async function changeGlobalVaultPassphrase(){
   try{
     const envelope=await makeGlobalEnvelope(raw,password);
     await ensureStepUp();
-    globalVault=await api('/api/v1/vault/rewrap',{method:'POST',body:{
+    await api('/api/v1/vault/rewrap',{method:'POST',body:{
       vaultId:globalVault.vaultId,keyId:globalVault.keyId,
       expectedGeneration:globalVault.generation,envelope}});
+    await loadGlobalVault();
     localStorage.removeItem(VAULT_STORE);
     $('newVaultPassphrase').value='';$('confirmVaultPassphrase').value='';
     toast('共享 Vault 密码已更新；所有管理终端将使用新密码解锁');

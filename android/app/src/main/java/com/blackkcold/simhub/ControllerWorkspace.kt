@@ -259,7 +259,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     item{
                         Text("管理空间",style=MaterialTheme.typography.titleMedium)
-                        ListItem(headlineContent={Text(Uri.parse(selected).host?:selected)},
+                        ListItem(headlineContent={Text(Uri.parse(selected).host?:selected.orEmpty())},
                             supportingContent={Text("终端签名已授权 · 加密密钥仅存于本机")},
                             leadingContent={HubIcon(R.drawable.ic_hub_shield)})
                         Text("终端标识：${client?.controllerId()?.take(12)}…",

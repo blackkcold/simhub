@@ -51,6 +51,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var page by remember(selected){mutableIntStateOf(0)}
     var cursors by remember(selected){mutableStateOf(listOf<Pair<Long,Long>>())}
     var unreadable by remember(selected){mutableIntStateOf(0)}
+    var lastEventSeq by remember(selected){mutableLongStateOf(0L)}
     var showWrite by remember{mutableStateOf(false)}
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
@@ -78,12 +79,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     val auth=api.api("/api/v1/auth/check")
                     val all=d.optJSONArray("devices")?:JSONArray()
                     val list=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
+                    val incremental=newer && lastEventSeq>0
                     val requested=if(newer)0 else if(older)page+1 else page
                     val cursor=if(requested>0)cursors.getOrNull(requested-1) else null
                     val suffix=if(cursor!=null)
                         "&beforeTime=${cursor.first}&beforeSeq=${cursor.second}" else ""
-                    val events=api.api("/api/v1/events?order=occurred&limit=100"+suffix)
+                    val events=if(incremental)
+                        api.api("/api/v1/events?since=$lastEventSeq&limit=1000")
+                        else api.api("/api/v1/events?order=occurred&limit=100"+suffix)
                     val rows=events.optJSONArray("events")?:JSONArray()
+                    val newestSeq=(0 until rows.length()).maxOfOrNull{rows.optJSONObject(it)?.optLong("seq",0L)?:0L}?:0L
                     val vault=api.vault()
                     val messages=JSONArray()
                     var failure=0
@@ -125,20 +130,22 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     val nextSeq=events.optLong("nextBeforeSeq",0)
                     val response=JSONObject().put("type","snapshot").put("v",1).put("messages",messages)
                         .put("unreadable",failure).put("hasMore",events.optBoolean("hasMore"))
-                        .put("hasNewer",requested>0)
-                    arrayOf(d,list,events,response,requested,nextTime,nextSeq,auth.optBoolean("totpRequired",true))
+                        .put("hasNewer",requested>0).put("incremental",incremental)
+                    arrayOf(d,list,events,response,requested,nextTime,nextSeq,auth.optBoolean("totpRequired",true),newestSeq,incremental)
                 }
                 @Suppress("UNCHECKED_CAST")
                 devices=data[1] as List<JSONObject>
                 secondFactorTotp=data[7] as Boolean
-                unreadable=(data[3] as JSONObject).optInt("unreadable")
-                inbox.accept((data[3] as JSONObject).toString(),append=older)
+                if(!(data[9] as Boolean)) unreadable=(data[3] as JSONObject).optInt("unreadable")
+                else unreadable+=(data[3] as JSONObject).optInt("unreadable")
+                lastEventSeq=maxOf(lastEventSeq,data[8] as Long)
+                inbox.accept((data[3] as JSONObject).toString(),append=older || (data[9] as Boolean))
                 val loaded=data[4] as Int
                 val nextTime=data[5] as Long
                 val nextSeq=data[6] as Long
-                if(newer){page=0;cursors=emptyList()}
+                if(newer && !(data[9] as Boolean)){page=0;cursors=emptyList()}
                 else if(older){page=loaded}
-                if(nextTime>0&&nextSeq>0){
+                if(!(data[9] as Boolean) && nextTime>0&&nextSeq>0){
                     cursors=cursors.take(page)+listOf(nextTime to nextSeq)
                 }
                 authorized=true;error=""
@@ -146,7 +153,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 error=e.message?:"无法连接管理中心"
                 if(e is SecurityException){
                     authorized=false;inbox.clear();devices=emptyList()
-                    lastCommandId="";lastCommandState=""
+                    lastCommandId="";lastCommandState="";lastEventSeq=0
                 }
             }
             finally{busy=false}

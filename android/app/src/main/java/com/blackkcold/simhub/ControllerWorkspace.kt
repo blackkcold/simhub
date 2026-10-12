@@ -37,7 +37,7 @@ import java.io.ByteArrayInputStream
  * There is no JS-to-native SMS Provider, filesystem, or Node Key API.
  */
 @Composable
-fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Modifier=Modifier) {
+fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,onSwitchNode:()->Unit,modifier:Modifier=Modifier) {
     val context=LocalContext.current
     val inbox=remember { ControllerInboxState() }
     var profiles by remember(revision) { mutableStateOf(ControllerProfiles.list(context)) }
@@ -79,23 +79,50 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
         if(web?.canGoBack()==true && tab==3)web?.goBack() else changeTab(0)
     }
     Column(modifier.fillMaxSize()) {
+        // Exactly one toolbar is rendered for the controller. The parent
+        // Scaffold omits its top bar in this mode to preserve reading space.
         if(visible) {
-            Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=5.dp),
-                verticalAlignment=Alignment.CenterVertically,
-                horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement=Arrangement.spacedBy(8.dp),
-                    verticalAlignment=Alignment.CenterVertically){
-                    profiles.forEach{origin->
-                        FilterChip(selected=selected==origin,onClick={openOrigin(origin)},
-                            label={Text(Uri.parse(origin).host?:origin,maxLines=1,
-                                overflow=TextOverflow.Ellipsis)})
+            var menuExpanded by remember { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth().padding(start=16.dp,end=8.dp,top=4.dp,bottom=4.dp),
+                verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(when(tab){1->"设备";2->"设置";else->"短信"},
+                        style=MaterialTheme.typography.titleLarge)
+                    Text(selected?.let { Uri.parse(it).host } ?: "尚未连接管理中心",
+                        style=MaterialTheme.typography.labelSmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines=1,overflow=TextOverflow.Ellipsis)
+                }
+                if(selected!=null){
+                    IconButton(onClick={
+                        if(tab==0)callPage("window.SimHubNativeShell?.refresh()")
+                        else web?.reload()
+                    }) { HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),description="刷新") }
+                }
+                Box {
+                    IconButton(onClick={menuExpanded=true}) {
+                        Text("⋮",style=MaterialTheme.typography.titleLarge)
+                    }
+                    DropdownMenu(expanded=menuExpanded,onDismissRequest={menuExpanded=false}) {
+                        DropdownMenuItem(text={Text("切换到 SIM 节点")},onClick={
+                            menuExpanded=false;onSwitchNode()
+                        })
+                        profiles.forEach { origin ->
+                            DropdownMenuItem(text={Text(Uri.parse(origin).host?:origin,
+                                maxLines=1,overflow=TextOverflow.Ellipsis)},onClick={
+                                menuExpanded=false;openOrigin(origin)
+                            })
+                        }
+                        DropdownMenuItem(text={Text("添加管理空间")},onClick={
+                            menuExpanded=false;showAdd=true
+                        })
+                        if(selected!=null)DropdownMenuItem(text={Text("移除当前管理空间")},onClick={
+                            menuExpanded=false;confirmRemove=true
+                        })
                     }
                 }
-                IconButton(onClick={showAdd=true},modifier=Modifier.size(44.dp)){
-                    HubIcon(R.drawable.ic_hub_add,Modifier.size(22.dp),description="添加管理中心")
-                }
             }
+            HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
         }
         if(selected==null) {
             if(visible)Box(Modifier.weight(1f).fillMaxWidth().padding(16.dp),
@@ -117,20 +144,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                 }
             }else Spacer(Modifier.weight(1f))
         } else {
-            if(visible)Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=1.dp),
-                verticalAlignment=Alignment.CenterVertically,
-                horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                Text("管理空间 · "+(Uri.parse(selected).host?:""),
-                    modifier=Modifier.weight(1f),maxLines=1,
-                    overflow=TextOverflow.Ellipsis,
-                    style=MaterialTheme.typography.labelMedium,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick={
-                    if(tab==0)callPage("window.SimHubNativeShell?.refresh()")
-                    else web?.reload()
-                }) {Text("刷新")}
-                TextButton(onClick={confirmRemove=true}) {Text("移除")}
-            }
             if(visible && tab==3){
                 Text(if(passkeyAvailable)
                     "已接入 Android 系统通行密钥；管理域名还需配置签名证书关联"

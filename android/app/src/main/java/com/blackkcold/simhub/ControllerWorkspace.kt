@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +55,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var actionError by remember{mutableStateOf("")}
     var serverVersion by remember{mutableStateOf("—")}
     var secondFactorTotp by remember(selected){mutableStateOf(true)}
+    var lastCommandId by remember(selected){mutableStateOf("")}
+    var lastCommandState by remember(selected){mutableStateOf("")}
+    var lastCommandDevice by remember(selected){mutableStateOf("")}
 
     fun chooseOrigin(value:String){
         ControllerProfiles.select(context,value)
@@ -135,7 +139,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     cursors=cursors.take(page)+listOf(nextTime to nextSeq)
                 }
                 authorized=true;error=""
-            }catch(e:Exception){error=e.message?:"无法连接管理中心"}
+            }catch(e:Exception){
+                error=e.message?:"无法连接管理中心"
+                if(e is SecurityException){
+                    authorized=false;inbox.clear();devices=emptyList()
+                    lastCommandId="";lastCommandState=""
+                }
+            }
             finally{busy=false}
         }
     }
@@ -161,6 +171,40 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         }
     }
     LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized)load(newer=true)}
+    // Queue acceptance is not device execution. Poll the Relay's immutable ACK state.
+    LaunchedEffect(selected,lastCommandId,visible){
+        if(!visible || lastCommandId.isBlank())return@LaunchedEffect
+        val api=client?:return@LaunchedEffect
+        repeat(40){
+            delay(3000)
+            try {
+                val statuses=withContext(Dispatchers.IO){
+                    api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")
+                }?:JSONArray()
+                val found=(0 until statuses.length()).mapNotNull{statuses.optJSONObject(it)}
+                    .firstOrNull{it.optString("commandId")==lastCommandId}
+                if(found!=null){
+                    val state=found.optString("state","queued")
+                    lastCommandState=when(state){
+                        "queued"->"等待设备连接并领取任务"
+                        "dispatched"->"设备已领取任务，等待执行确认"
+                        "submitted"->"已提交到系统短信服务"
+                        "sent"->"系统已发送，等待运营商回执"
+                        "delivered"->"运营商已确认送达"
+                        "succeeded"->"任务执行成功"
+                        "failed"->"任务执行失败："+found.optJSONObject("result")?.optString("reason").orEmpty()
+                        "rejected"->"任务被设备拒绝"
+                        "expired"->"任务已过期，没有执行"
+                        else->"当前状态：$state"
+                    }
+                    if(state in setOf("delivered","succeeded","failed","rejected","expired"))
+                        return@LaunchedEffect
+                }
+            }catch(e:Exception){
+                lastCommandState="无法更新任务进度："+(e.message?:"网络不可用")
+            }
+        }
+    }
     if(!visible)return
     Column(modifier.fillMaxSize()) {
         if(selected==null){
@@ -248,6 +292,14 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 modifier=Modifier.fillMaxWidth()) { Text("管理设备") }
                             OutlinedButton(onClick={load(newer=true)},
                                 modifier=Modifier.fillMaxWidth()) { Text("刷新加密数据") }
+                        }
+                    }
+                    if(lastCommandId.isNotBlank())item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            HubSectionTitle("最近下发的指令")
+                            Text(lastCommandState.ifBlank{"状态查询中"},style=MaterialTheme.typography.bodyMedium)
+                            Text("设备：$lastCommandDevice · 命令："+lastCommandId.take(8),
+                                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if(error.isNotEmpty())item {
@@ -371,10 +423,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     style=MaterialTheme.typography.bodySmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                 if(actionError.isNotEmpty())Text(actionError,color=MaterialTheme.colorScheme.error)
+                if(lastCommandId.isNotBlank() && lastCommandDevice==d.optString("name"))
+                    Text(lastCommandState.ifBlank{"查询任务状态中"},style=MaterialTheme.typography.bodySmall)
                 Button(onClick={
                     scope.launch{
                         try{
-                            withContext(Dispatchers.IO){
+                            val queuedId=withContext(Dispatchers.IO){
                                 val id=UUID.randomUUID().toString()
                                 val now=System.currentTimeMillis()/1000
                                 val end=now+1200
@@ -385,8 +439,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     JSONObject().put("commandId",id).put("idempotencyKey",id)
                                     .put("type","sms.sync_recent").put("createdAt",now)
                                     .put("expiresAt",end).put("ciphertext",cipher))
+                                id
                             }
-                            actionError="同步任务已入队，等待设备执行"
+                            lastCommandId=queuedId
+                            lastCommandDevice=d.optString("name")
+                            lastCommandState="等待设备连接并领取任务"
+                            actionError="同步任务已入队，可在首页跟踪执行结果"
                         }catch(e:Exception){actionError=e.message?:"指令失败"}
                     }
                 }){Text("下发同步最近短信")}
@@ -425,13 +483,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     OutlinedTextField(recipient,{recipient=it},label={Text("收件人号码")})
                     OutlinedTextField(message,{message=it},label={Text("短信内容")},minLines=3)
                     OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
-                        singleLine=true)
+                        singleLine=true,visualTransformation=PasswordVisualTransformation())
                 }
             }},confirmButton={TextButton(enabled=current!=null && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
                     scope.launch{
                         try {
-                            withContext(Dispatchers.IO){
+                            val queuedId=withContext(Dispatchers.IO){
                                 // Server always independently enforces second factor for sms.send.
                                 if(stepUp.isNotEmpty())client!!.api("/api/v1/auth/elevate","POST",
                                     JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",stepUp))
@@ -449,7 +507,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     JSONObject().put("commandId",id).put("idempotencyKey",id)
                                         .put("type","sms.send").put("createdAt",now)
                                         .put("expiresAt",expires).put("ciphertext",cipher))
+                                id
                             }
+                            lastCommandId=queuedId
+                            lastCommandDevice=current?.optString("name").orEmpty()
+                            lastCommandState="等待设备连接并领取任务"
                             showWrite=false;error=""
                         }catch(e:Exception){error=e.message?:"发送失败";showWrite=false}
                     }

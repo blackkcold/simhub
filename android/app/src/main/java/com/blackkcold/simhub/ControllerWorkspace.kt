@@ -224,8 +224,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     Spacer(Modifier.height(18.dp))
                     Text("连接管理中心",style=MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick=onScan){Text("扫描配置二维码")}
-                    TextButton(onClick={add=true}){Text("输入管理地址")}
+                    Button(onClick=onScan){Text(hubLabel("扫描配置二维码","Scan configuration QR"))}
+                    TextButton(onClick={add=true}){Text(hubLabel("输入管理地址","Enter management URL"))}
                 }
             }
         }else if(!authorized){
@@ -256,7 +256,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         Button(onClick={
                             context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
                                 Uri.parse(selected + "/?controller=local")))
-                        },modifier=Modifier.fillMaxWidth()) { Text("在本机浏览器认证并批准") }
+                        },modifier=Modifier.fillMaxWidth()) { Text(hubLabel("在本机浏览器认证并批准","Approve in browser")) }
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }else{
                         if(client?.hasGrant()==true)OutlinedButton(onClick={
@@ -269,7 +269,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 };error=""}catch(e:Exception){error=e.message?:"无法发起配对"}
                                 finally{busy=false}
                             }
-                        },modifier=Modifier.fillMaxWidth()){Text("申请管理终端授权")}
+                        },modifier=Modifier.fillMaxWidth()){Text(hubLabel("申请管理终端授权","Request device authorization"))}
                     }
                     if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
                 }
@@ -297,11 +297,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         HubCard(Modifier.fillMaxWidth()) {
                             HubSectionTitle("快捷操作")
                             FilledTonalButton(onClick={onSelectTab(1)},
-                                modifier=Modifier.fillMaxWidth()) { Text("查看短信") }
+                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("查看短信","View messages")) }
                             FilledTonalButton(onClick={onSelectTab(2)},
-                                modifier=Modifier.fillMaxWidth()) { Text("管理设备") }
+                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("管理设备","Manage devices")) }
                             OutlinedButton(onClick={load(newer=true)},
-                                modifier=Modifier.fillMaxWidth()) { Text("刷新加密数据") }
+                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("刷新加密数据","Refresh encrypted data")) }
                         }
                     }
                     if(lastCommandId.isNotBlank())item{
@@ -354,7 +354,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     style=MaterialTheme.typography.bodySmall)
                                 Text("电量：${state.optString("batteryPct","—")}%  · ${state.optString("network","—")}",
                                     style=MaterialTheme.typography.bodySmall)
-                                TextButton(onClick={selectedDevice=d}){Text("设备详情与操作")}
+                                TextButton(onClick={selectedDevice=d}){Text(hubLabel("设备详情与操作","Device details and actions"))}
                             }
                         }
                     }
@@ -373,7 +373,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     item{
                         HubSectionTitle("管理空间")
                         OutlinedButton(onClick={add=true},
-                            modifier=Modifier.fillMaxWidth()) { Text("添加管理地址") }
+                            modifier=Modifier.fillMaxWidth()) { Text(hubLabel("添加管理地址","Add management URL")) }
                         profiles.forEach { origin ->
                             TextButton(onClick={chooseOrigin(origin)},
                                 modifier=Modifier.fillMaxWidth()) {
@@ -386,7 +386,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         Text("解除本地授权会清除该管理空间的本机身份密钥与加密 Vault。服务器端撤销请在网页管理后台完成。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant,
                             style=MaterialTheme.typography.bodySmall)
-                        OutlinedButton(onClick={showReset=true}){Text("清除此手机的管理授权")}
+                        OutlinedButton(onClick={showReset=true}){Text(hubLabel("清除此手机的管理授权","Remove authorization from this phone"))}
                     }
                     item{
                         Text("版本及诊断",style=MaterialTheme.typography.titleMedium)
@@ -404,18 +404,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
 
         }
     }
-    if(add)AlertDialog(onDismissRequest={add=false},title={Text("添加管理空间")},
+    if(add)AlertDialog(onDismissRequest={add=false},title={Text(hubLabel("添加管理空间","Add management space"))},
         text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
             OutlinedTextField(addUrl,{addUrl=it},label={Text("HTTPS 管理地址")},
                 singleLine=true,modifier=Modifier.fillMaxWidth())
-            TextButton(onClick={add=false;onScan()}){Text("扫描配置二维码")}
+            TextButton(onClick={add=false;onScan()}){Text(hubLabel("扫描配置二维码","Scan configuration QR"))}
         }},confirmButton={TextButton(onClick={
             val origin=ControllerProfiles.add(context,addUrl)
             if(origin==null)error="请输入合法的 HTTPS 管理地址"
             else{profiles=ControllerProfiles.list(context);chooseOrigin(origin);addUrl="";add=false}
-        }){Text("添加")}},dismissButton={TextButton(onClick={add=false}){Text("取消")}})
+        }){Text(hubLabel("添加","Add"))}},dismissButton={TextButton(onClick={add=false}){Text(hubLabel("取消","Cancel"))}})
     if(showReset)AlertDialog(onDismissRequest={showReset=false},
-        title={Text("清除本机授权？")},
+        title={Text(hubLabel("清除本机授权？","Remove local authorization?"))},
         text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
             Text("建议先撤销云端管理终端，再删除此手机的本地密钥。不会影响 SIM 节点短信。")
             OutlinedTextField(resetCredential,{resetCredential=it},
@@ -440,14 +440,14 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }catch(e:Exception){error="无法撤销云端授权："+(e.message?:"请检查网络或二次验证")}
                     finally{busy=false}
                 }
-            }){Text("撤销云端并清除本机")}
+            }){Text(hubLabel("撤销云端并清除本机","Revoke on server and remove locally"))}
         },
         dismissButton={
             TextButton(onClick={
                 // Explicit offline-only fallback; this does not revoke Relay access.
                 client?.localReset();authorized=false;inbox.clear();devices=emptyList()
                 lastCommandId="";resetCredential="";showReset=false
-            }){Text("仅清除此手机")}
+            }){Text(hubLabel("仅清除此手机","Remove only from this phone"))}
         })
     selectedDevice?.let{d->
         AlertDialog(onDismissRequest={selectedDevice=null},
@@ -486,9 +486,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             actionError="同步任务已入队，可在首页跟踪执行结果"
                         }catch(e:Exception){actionError=e.message?:"指令失败"}
                     }
-                }){Text("下发同步最近短信")}
+                }){Text(hubLabel("下发同步最近短信","Sync recent messages"))}
             }},
-            confirmButton={TextButton(onClick={selectedDevice=null;actionError=""}){Text("关闭")}})
+            confirmButton={TextButton(onClick={selectedDevice=null;actionError=""}){Text(hubLabel("关闭","Close"))}})
     }
     if(showWrite){
         var recipient by remember{mutableStateOf("")}
@@ -504,7 +504,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val current=possible.getOrNull(deviceIdx)
         val channels=current?.optJSONObject("state")?.optJSONArray("channels")?:JSONArray()
         var stepUp by remember{mutableStateOf("")}
-        AlertDialog(onDismissRequest={showWrite=false},title={Text("发送加密短信")},
+        AlertDialog(onDismissRequest={showWrite=false},title={Text(hubLabel("发送加密短信","Send encrypted SMS"))},
             text={Column(Modifier.heightIn(max=430.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement=Arrangement.spacedBy(8.dp)){
                 if(possible.isEmpty())Text("当前没有允许发送短信的在线 SIM 节点。")
@@ -520,8 +520,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         FilterChip(selected=i==channelIdx,onClick={channelIdx=i},
                             label={Text(ch.optString("displayName").ifBlank{ch.optString("id")})})
                     }
-                    OutlinedTextField(recipient,{recipient=it},label={Text("收件人号码")})
-                    OutlinedTextField(message,{message=it},label={Text("短信内容")},minLines=3)
+                    OutlinedTextField(recipient,{recipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
+                    OutlinedTextField(message,{message=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
                     OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
                         singleLine=true,visualTransformation=PasswordVisualTransformation())
                 }
@@ -555,6 +555,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             showWrite=false;error=""
                         }catch(e:Exception){error=e.message?:"发送失败";showWrite=false}
                     }
-                }){Text("确认发送")}},dismissButton={TextButton(onClick={showWrite=false}){Text("取消")}})
+                }){Text(hubLabel("确认发送","Confirm send"))}},dismissButton={TextButton(onClick={showWrite=false}){Text(hubLabel("取消","Cancel"))}})
     }
 }

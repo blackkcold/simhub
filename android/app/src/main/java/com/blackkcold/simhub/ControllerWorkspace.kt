@@ -611,6 +611,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         onNewer={navigateToLatest()},
                         onOpenLogin={refreshDelta()},
                         onWrite={showWrite=true},
+                         onReply={address->composeRecipient=address;showWrite=true},
                          canCompose=devices.any{ControllerNodePolicy.canSend(it)})
                     if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
@@ -838,6 +839,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 if(possible.isEmpty())Text(hubLabel("当前没有具备发送能力的在线节点。不接管模式默认只读，完全接管模式需取得发送权限。",
                         "No send-capable online node. Companion mode is read-only; default SMS mode requires permission."))
                 else{
+                    Text(hubLabel("核对发送节点和 SIM，系统不会因会话来源自动替换路由。",
+                        "Verify node and SIM; the conversation does not automatically change routing."),
+                        style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)
                     possible.forEachIndexed{i,d->
                         FilterChip(selected=i==deviceIdx,onClick={composeDeviceIdx=i;composeChannelIdx=0},

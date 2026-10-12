@@ -25,7 +25,7 @@ import java.util.UUID
 /** Single Jetpack Compose surface: no WebView, nested browser shell or duplicate navigation. */
 @Composable
 fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
-                        onSwitchNode:()->Unit,modifier:Modifier=Modifier){
+                        onSwitchNode:()->Unit,expanded:Boolean=false,modifier:Modifier=Modifier){
     val context=LocalContext.current
     val scope=rememberCoroutineScope()
     var profiles by remember(revision){mutableStateOf(ControllerProfiles.list(context))}
@@ -155,7 +155,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     }
     BackHandler(visible && tab!=0){tab=0}
     if(!visible)return
-    Column(modifier.fillMaxSize()){
+    Row(modifier.fillMaxSize()){
+        if(expanded && authorized)NavigationRail(
+            containerColor=MaterialTheme.colorScheme.surface){
+            Spacer(Modifier.height(12.dp))
+            listOf(Triple(0,R.drawable.ic_hub_messages,"短信"),
+                Triple(1,R.drawable.ic_hub_sim,"设备"),
+                Triple(2,R.drawable.ic_hub_settings,"设置")).forEach{(index,icon,label)->
+                NavigationRailItem(selected=tab==index,onClick={tab=index},
+                    icon={HubIcon(icon,Modifier.size(24.dp))},label={Text(label)})
+            }
+        }
+    Column(Modifier.weight(1f).fillMaxHeight()){
         Row(Modifier.fillMaxWidth().padding(start=16.dp,end=8.dp,top=4.dp,bottom=4.dp),
             verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
@@ -301,7 +312,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                 }
             }
-            NavigationBar(containerColor=MaterialTheme.colorScheme.surface){
+            if(!expanded)NavigationBar(containerColor=MaterialTheme.colorScheme.surface){
                 listOf(Triple(0,R.drawable.ic_hub_messages,"短信"),
                     Triple(1,R.drawable.ic_hub_sim,"设备"),
                     Triple(2,R.drawable.ic_hub_settings,"设置")).forEach{(index,icon,label)->
@@ -310,6 +321,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 }
             }
         }
+    }
     }
     if(add)AlertDialog(onDismissRequest={add=false},title={Text("添加管理空间")},
         text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){

@@ -292,7 +292,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     if(!inbox.accept(batch.payload,append=mode=="older" || mode=="delta" || batch.appendFragment,
                                      preferOlder=mode=="older"))
                         throw IllegalStateException("短信批次未接收；游标未推进，可安全重试")
-                    if(mode=="delta")lastEventSeq=maxOf(lastEventSeq,batch.sequence)
+                    if(mode=="delta" && batch.finalFragment)
+                        lastEventSeq=maxOf(lastEventSeq,batch.sequence,data.highWater)
                     else if(mode=="older" && batch.finalFragment){
                         page+=1
                         if(batch.nextTime>0 && batch.nextSeq>0)

@@ -25,15 +25,14 @@ import java.util.UUID
 /** Single Jetpack Compose surface: no WebView, nested browser shell or duplicate navigation. */
 @Composable
 fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
-                        onSwitchNode:()->Unit,expanded:Boolean=false,modifier:Modifier=Modifier){
+                        onSwitchNode:()->Unit,tab:Int,onSelectTab:(Int)->Unit,
+                        refreshTick:Int=0,modifier:Modifier=Modifier){
     val context=LocalContext.current
     val scope=rememberCoroutineScope()
     var profiles by remember(revision){mutableStateOf(ControllerProfiles.list(context))}
     var selected by remember(revision){mutableStateOf(ControllerProfiles.selected(context))}
     val client=remember(selected){selected?.let{ControllerSecureClient(context.applicationContext,it)}}
     val inbox=remember(selected){ControllerInboxState()}
-    var tab by remember(selected){mutableIntStateOf(0)}
-    var menu by remember{mutableStateOf(false)}
     var add by remember{mutableStateOf(false)}
     var addUrl by remember{mutableStateOf("")}
     var pairing by remember(selected){mutableStateOf<ControllerSecureClient.PairStatus?>(null)}
@@ -52,7 +51,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
 
     fun chooseOrigin(value:String){
         ControllerProfiles.select(context,value)
-        selected=value;tab=0
+        selected=value;onSelectTab(0)
     }
     fun load(older:Boolean=false,newer:Boolean=false){
         val api=client?:return
@@ -153,45 +152,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             }catch(e:Exception){error=e.message?:"配对失败";pairing=null;break}
         }
     }
-    BackHandler(visible && tab!=0){tab=0}
+    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized)load(newer=true)}
     if(!visible)return
-    Row(modifier.fillMaxSize()){
-        if(expanded && authorized)NavigationRail(
-            containerColor=MaterialTheme.colorScheme.surface){
-            Spacer(Modifier.height(12.dp))
-            listOf(Triple(0,R.drawable.ic_hub_messages,"短信"),
-                Triple(1,R.drawable.ic_hub_sim,"设备"),
-                Triple(2,R.drawable.ic_hub_settings,"设置")).forEach{(index,icon,label)->
-                NavigationRailItem(selected=tab==index,onClick={tab=index},
-                    icon={HubIcon(icon,Modifier.size(24.dp))},label={Text(label)})
-            }
-        }
-    Column(Modifier.weight(1f).fillMaxHeight()){
-        Row(Modifier.fillMaxWidth().padding(start=16.dp,end=8.dp,top=4.dp,bottom=4.dp),
-            verticalAlignment=Alignment.CenterVertically){
-            Column(Modifier.weight(1f)){
-                Text(when(tab){1->"设备";2->"设置";else->"短信"},
-                    style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold)
-                Text(selected?.let{Uri.parse(it).host}?:"尚未连接管理中心",
-                    style=MaterialTheme.typography.labelSmall,maxLines=1,
-                    overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if(authorized)IconButton(onClick={load(newer=true)}){
-                HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),description="刷新")
-            }
-            Box{
-                IconButton(onClick={menu=true}){Text("⋮",style=MaterialTheme.typography.titleLarge)}
-                DropdownMenu(expanded=menu,onDismissRequest={menu=false}){
-                    DropdownMenuItem(text={Text("切换至 SIM 节点")},onClick={menu=false;onSwitchNode()})
-                    profiles.forEach{origin->
-                        DropdownMenuItem(text={Text(Uri.parse(origin).host?:origin)},
-                            onClick={menu=false;chooseOrigin(origin)})
-                    }
-                    DropdownMenuItem(text={Text("添加管理空间")},onClick={menu=false;add=true})
-                }
-            }
-        }
-        HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+    Column(modifier.fillMaxSize()) {
         if(selected==null){
             Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
                 Column(Modifier.padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
@@ -209,15 +172,19 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     verticalArrangement=Arrangement.spacedBy(14.dp)){
                     HubIcon(R.drawable.ic_hub_shield,Modifier.size(40.dp))
                     Text("安全授权管理终端",style=MaterialTheme.typography.titleLarge)
-                    Text("首次需要在已解锁的网页管理后台确认手机指纹并授权。以后将使用本机密钥直接连接，不需要 Vault 密码。",
+                    Text("在本机浏览器中登录管理后台（可使用已注册的 Passkey/指纹），解锁共享 Vault 后批准此手机。无需第二台设备。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     if(pairing!=null){
                         Text("配对码  ${pairing!!.code}",
                             style=MaterialTheme.typography.headlineMedium)
                         Text("终端指纹：${client?.identityFingerprint()}",
                             style=MaterialTheme.typography.labelSmall)
-                        Text("在网页：连接管理手机 → 待授权管理终端，核对配对码后确认。",
+                        Text("请在本机浏览器打开后台：连接管理手机 → 待授权终端，核对本页配对码并批准。返回 App 后会自动完成加密授权。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(onClick={
+                            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                Uri.parse(selected)))
+                        },modifier=Modifier.fillMaxWidth()) { Text("在本机浏览器认证并批准") }
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }else{
                         if(client?.hasGrant()==true)OutlinedButton(onClick={
@@ -239,6 +206,37 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error,
                 modifier=Modifier.padding(horizontal=16.dp,vertical=6.dp))
             if(tab==0){
+                LazyColumn(Modifier.weight(1f),
+                    contentPadding=PaddingValues(16.dp),
+                    verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    item {
+                        HubCard(Modifier.fillMaxWidth()) {
+                            Text("管理中心",style=MaterialTheme.typography.titleLarge,
+                                fontWeight=FontWeight.SemiBold)
+                            Spacer(Modifier.height(10.dp))
+                            StatePill("已授权 · 端到端加密",true)
+                            Spacer(Modifier.height(12.dp))
+                            InfoRow("服务器",Uri.parse(selected).host?:selected)
+                            InfoRow("已加载 SIM 节点",devices.size.toString())
+                            InfoRow("无法解密消息",unreadable.toString())
+                        }
+                    }
+                    item {
+                        HubCard(Modifier.fillMaxWidth()) {
+                            HubSectionTitle("快捷操作")
+                            FilledTonalButton(onClick={onSelectTab(1)},
+                                modifier=Modifier.fillMaxWidth()) { Text("查看短信") }
+                            FilledTonalButton(onClick={onSelectTab(2)},
+                                modifier=Modifier.fillMaxWidth()) { Text("管理设备") }
+                            OutlinedButton(onClick={load(newer=true)},
+                                modifier=Modifier.fillMaxWidth()) { Text("刷新加密数据") }
+                        }
+                    }
+                    if(error.isNotEmpty())item {
+                        Text(error,color=MaterialTheme.colorScheme.error)
+                    }
+                }
+            }else if(tab==1){
                 Box(Modifier.weight(1f)){
                     if(!inbox.unlocked && busy){
                         Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
@@ -256,11 +254,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         onWrite={showWrite=true})
                     if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
-            }else if(tab==1){
+            }else if(tab==2){
                 LazyColumn(Modifier.weight(1f),
                     contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                     items(devices,key={it.optString("id")}){d->
-                        ElevatedCard(Modifier.fillMaxWidth()){
+                        HubCard(Modifier.fillMaxWidth()){
                             Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                                 Row(verticalAlignment=Alignment.CenterVertically){
                                     Column(Modifier.weight(1f)){
@@ -293,6 +291,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             style=MaterialTheme.typography.bodySmall)
                     }
                     item{
+                        HubSectionTitle("管理空间")
+                        OutlinedButton(onClick={add=true},
+                            modifier=Modifier.fillMaxWidth()) { Text("添加管理地址") }
+                        profiles.forEach { origin ->
+                            TextButton(onClick={chooseOrigin(origin)},
+                                modifier=Modifier.fillMaxWidth()) {
+                                Text(Uri.parse(origin).host?:origin)
+                            }
+                        }
+                    }
+                    item {
                         Text("安全与权限",style=MaterialTheme.typography.titleMedium)
                         Text("解除本地授权会清除该管理空间的本机身份密钥与加密 Vault。服务器端撤销请在网页管理后台完成。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant,
@@ -312,16 +321,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                 }
             }
-            if(!expanded)NavigationBar(containerColor=MaterialTheme.colorScheme.surface){
-                listOf(Triple(0,R.drawable.ic_hub_messages,"短信"),
-                    Triple(1,R.drawable.ic_hub_sim,"设备"),
-                    Triple(2,R.drawable.ic_hub_settings,"设置")).forEach{(index,icon,label)->
-                    NavigationBarItem(selected=tab==index,onClick={tab=index},
-                        icon={HubIcon(icon,Modifier.size(24.dp))},label={Text(label)},alwaysShowLabel=true)
-                }
-            }
+
         }
-    }
     }
     if(add)AlertDialog(onDismissRequest={add=false},title={Text("添加管理空间")},
         text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){

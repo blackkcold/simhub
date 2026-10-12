@@ -1008,7 +1008,7 @@ function publishAndroidInbox(){
     unreadable:decryptedEvents.filter(e=>e.decryptError&&e.kind.startsWith('sms.')).length};
   try{
     // Bound Android IPC payload size; large SMS histories load incrementally.
-    while(rows.length>0 && JSON.stringify(payload).length>400000)rows.pop();
+    while(rows.length>0 && JSON.stringify(payload).length>400000){rows.pop();payload.hasMore=true;}
     window.SimHubNativeInbox.postMessage(JSON.stringify(payload));
   }catch(e){console.warn('Native inbox synchronization unavailable',e.name);}
 }

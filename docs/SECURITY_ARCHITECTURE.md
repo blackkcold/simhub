@@ -12,9 +12,11 @@ New v2 AES-GCM envelopes authenticate immutable routing metadata as AAD. Event A
 
 Legacy v1 envelopes remain supported for rolling upgrades and old stored events.
 
-## Local browser vault
+## Global encrypted Vault (v0.15.5)
 
-The PWA creates a random 32-byte Master Vault Key. The browser stores only a wrapped copy:
+The first authenticated administrator initializes one random 32-byte Master Vault Key for the Relay deployment. All authorized Web/PWA managers retrieve the **same password-wrapped ciphertext** from the singleton Global Vault registry, then decrypt it locally; the Relay cannot decrypt it. Existing browser-local Vault data can be adopted into the global registry once. A browser cannot create a different Vault when one is already registered.
+
+The client-side passphrase derivation and key wrapping are:
 
 ```text
 passphrase
@@ -23,7 +25,7 @@ passphrase
   -> encrypted 32-byte Master Vault Key
 ```
 
-After unlock, the raw Master Vault Key is held in page memory. The Vault inactivity deadline follows the server administrator idle deadline (8 hours by default, never beyond session expiry); actual user actions, not background polls, renew idle activity. A browser tab may persist a short-lived encrypted Vault snapshot in `sessionStorage`, wrapped by a non-extractable origin-bound WebCrypto key stored in IndexedDB. A successful server session check is required before any page-reload recovery. Lock, logout, expiration, and credential-forget clear the tab snapshot. **This is a usability feature, not hardware-backed isolation:** malicious same-origin JavaScript or a compromised unlocked browser can use the IndexedDB CryptoKey and access plaintext. Do not place the unwrapped Master Vault Key or Admin Token in localStorage. The wrapped passphrase Vault remains the recovery path.
+After unlock, the raw Master Vault Key is held in page memory. The Vault inactivity deadline follows the server administrator idle deadline (8 hours by default, never beyond session expiry); actual user actions, not background polls, renew idle activity. A browser tab may persist a short-lived encrypted Vault snapshot in `sessionStorage`, wrapped by a non-extractable origin-bound WebCrypto key stored in IndexedDB. A successful server session check is required before any page-reload recovery. Lock, logout, expiration, and credential-forget clear the tab snapshot. **This is a usability feature, not hardware-backed isolation:** malicious same-origin JavaScript or a compromised unlocked browser can use the IndexedDB CryptoKey and access plaintext. Do not place the unwrapped Master Vault Key or Admin Token in localStorage. The Relay-persisted wrapped passphrase Vault is the normal cross-device unlock path; the offline original Master Key is the recovery path. See [Global Vault](GLOBAL_VAULT.md).
 
 ## Android local secrets
 

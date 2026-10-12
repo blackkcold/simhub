@@ -216,7 +216,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             Spacer(Modifier.height(10.dp))
                             StatePill("已授权 · 端到端加密",true)
                             Spacer(Modifier.height(12.dp))
-                            InfoRow("服务器",Uri.parse(selected).host?:selected)
+                            InfoRow("服务器",Uri.parse(selected.orEmpty()).host?:selected.orEmpty())
                             InfoRow("已加载 SIM 节点",devices.size.toString())
                             InfoRow("无法解密消息",unreadable.toString())
                         }

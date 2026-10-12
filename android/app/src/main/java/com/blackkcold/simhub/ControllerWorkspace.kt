@@ -53,6 +53,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
     var actionError by remember{mutableStateOf("")}
     var serverVersion by remember{mutableStateOf("—")}
+    var secondFactorTotp by remember(selected){mutableStateOf(true)}
 
     fun chooseOrigin(value:String){
         ControllerProfiles.select(context,value)
@@ -67,6 +68,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             try{
                 val data=withContext(Dispatchers.IO){
                     val d=api.api("/api/v1/devices")
+                    val auth=api.api("/api/v1/auth/check")
                     val all=d.optJSONArray("devices")?:JSONArray()
                     val list=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
                     val requested=if(newer)0 else if(older)page+1 else page
@@ -117,12 +119,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     val response=JSONObject().put("type","snapshot").put("v",1).put("messages",messages)
                         .put("unreadable",failure).put("hasMore",events.optBoolean("hasMore"))
                         .put("hasNewer",requested>0)
-                    arrayOf(d,list,events,response,requested,nextTime,nextSeq)
+                    arrayOf(d,list,events,response,requested,nextTime,nextSeq,auth.optBoolean("totpRequired",true))
                 }
                 @Suppress("UNCHECKED_CAST")
                 devices=data[1] as List<JSONObject>
+                secondFactorTotp=data[7] as Boolean
                 unreadable=(data[3] as JSONObject).optInt("unreadable")
-                inbox.accept((data[3] as JSONObject).toString())
+                inbox.accept((data[3] as JSONObject).toString(),append=older)
                 val loaded=data[4] as Int
                 val nextTime=data[5] as Long
                 val nextSeq=data[6] as Long
@@ -421,7 +424,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                     OutlinedTextField(recipient,{recipient=it},label={Text("收件人号码")})
                     OutlinedTextField(message,{message=it},label={Text("短信内容")},minLines=3)
-                    OutlinedTextField(stepUp,{stepUp=it},label={Text("二次验证 OTP（敏感操作）")},
+                    OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
                         singleLine=true)
                 }
             }},confirmButton={TextButton(enabled=current!=null && recipient.isNotBlank() && message.isNotBlank(),
@@ -431,7 +434,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             withContext(Dispatchers.IO){
                                 // Server always independently enforces second factor for sms.send.
                                 if(stepUp.isNotEmpty())client!!.api("/api/v1/auth/elevate","POST",
-                                    JSONObject().put("totp",stepUp))
+                                    JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",stepUp))
                                 val channel=channels.optJSONObject(channelIdx)?:throw IllegalStateException("SIM 未选择")
                                 val id=UUID.randomUUID().toString()
                                 val now=System.currentTimeMillis()/1000

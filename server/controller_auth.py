@@ -17,6 +17,9 @@ import global_vault
 
 PAIR_TTL = 600
 LOGIN_TTL = 90
+# Explicit, time-limited bridge for pre-v0.15.7 Android pairing clients.
+# Existing approved controllers continue to use their signed session protocol.
+LEGACY_PAIR_SUNSET = 1802304000  # 2027-02-11 UTC
 
 def b64decode(value: str, maximum: int = 2048) -> bytes:
     if not isinstance(value, str) or not value or len(value) > maximum:
@@ -84,15 +87,27 @@ def start(con: sqlite3.Connection, body: dict, ip: str, now: int) -> dict:
                     (ip,)).fetchone()[0]
     if n >= 3:
         raise ValueError("Too many pending controller pairings")
+    # Legacy Android v0.15.6 sends no protocol field and cannot return a poll
+    # token. Keep it bound to the initiating IP until its short expiry; v2
+    # requests always require an independently generated high-entropy token.
+    version = body.get("pairingProtocolVersion", 1)
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError("Unsupported controller pairing protocol")
+    if version == 1 and now >= LEGACY_PAIR_SUNSET:
+        raise ValueError("Legacy pairing retired; update the Android client")
     request_id = str(uuid.uuid4())
     code = f"{secrets.randbelow(1000000):06d}"
-    poll_token = secrets.token_urlsafe(32)
+    poll_token = secrets.token_urlsafe(32) if version == 2 else ""
     import hashlib
     digest = hashlib.sha256((request_id + "|" + code).encode()).hexdigest()
     con.execute("""INSERT INTO controller_requests(id,label,client_ip,identity_public,exchange_public,
                   code_hash,poll_token_hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)""",
-                (request_id,label,ip,identity,exchange,digest,hashlib.sha256(poll_token.encode()).hexdigest(),now,now+PAIR_TTL))
-    return {"requestId":request_id,"pairingCode":code,"pollToken":poll_token,"expiresIn":PAIR_TTL}
+                (request_id,label,ip,identity,exchange,digest,hashlib.sha256(poll_token.encode()).hexdigest() if poll_token else "",now,now+PAIR_TTL))
+    response = {"requestId":request_id,"pairingCode":code,"expiresIn":PAIR_TTL,
+                "pairingProtocolVersion":version}
+    if poll_token:
+        response["pollToken"] = poll_token
+    return response
 
 def pending(con: sqlite3.Connection, now: int) -> list[dict]:
     rows = con.execute("""SELECT id,label,identity_public,exchange_public,created_at,expires_at
@@ -137,7 +152,7 @@ def approve(con: sqlite3.Connection, body: dict, now: int, admin_fingerprint: st
 def poll(con: sqlite3.Connection, request_id: str, ip: str, now: int, poll_token: str = "") -> dict:
     row=con.execute("SELECT * FROM controller_requests WHERE id=?",(request_id,)).fetchone()
     # A separate high-entropy polling credential survives Wi-Fi / mobile data handover.
-    # Pre-migration requests (without a poll token) retain their original IP restriction.
+    # Explicit legacy-v1 or pre-migration requests retain their original IP restriction.
     import hashlib, hmac
     if not row or (row["poll_token_hash"] and not (poll_token and hmac.compare_digest(
             row["poll_token_hash"],hashlib.sha256(poll_token.encode()).hexdigest()))) or (

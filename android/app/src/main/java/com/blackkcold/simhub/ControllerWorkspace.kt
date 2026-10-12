@@ -1,6 +1,11 @@
 package com.blackkcold.simhub
 
 import android.net.Uri
+import android.app.Activity
+import android.hardware.biometrics.BiometricPrompt
+import android.os.CancellationSignal
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -8,6 +13,8 @@ import android.content.Context
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -48,33 +56,84 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var page by remember(selected){mutableIntStateOf(0)}
     var cursors by remember(selected){mutableStateOf(listOf<Pair<Long,Long>>())}
     var unreadable by remember(selected){mutableIntStateOf(0)}
+    var lastEventSeq by remember(selected){mutableLongStateOf(0L)}
     var showWrite by remember{mutableStateOf(false)}
     var showReset by remember{mutableStateOf(false)}
+    var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
     var actionError by remember{mutableStateOf("")}
     var serverVersion by remember{mutableStateOf("—")}
+    var secondFactorTotp by remember(selected){mutableStateOf(true)}
+    var requireLocalUnlock by remember(selected){mutableStateOf(client?.requireLocalUnlock()==true)}
+    var localUnlocked by remember(selected){mutableStateOf(!requireLocalUnlock)}
+    var localAuthError by remember(selected){mutableStateOf("")}
+    var lastCommandId by remember(selected){mutableStateOf("")}
+    var lastCommandState by remember(selected){mutableStateOf("")}
+    var lastCommandDevice by remember(selected){mutableStateOf("")}
 
+    // Optional OS-level app gate. This is not a cryptographically authentication-bound
+    // Keystore key; such a migration requires a separate rewrap and recovery protocol.
+    fun authenticateLocal(enable:Boolean=false){
+        val activity=context as? Activity
+        if(activity==null){localAuthError="当前设备无法打开系统身份验证";return}
+        try{
+            val builder=BiometricPrompt.Builder(activity)
+                .setTitle("SIM Hub 管理中心")
+                .setSubtitle("使用指纹、人脸或系统锁屏验证")
+            if(Build.VERSION.SDK_INT>=30)
+                builder.setAllowedAuthenticators(
+                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            else builder.setDeviceCredentialAllowed(true)
+            builder.build().authenticate(CancellationSignal(),activity.mainExecutor,
+                object:BiometricPrompt.AuthenticationCallback(){
+                    override fun onAuthenticationSucceeded(result:BiometricPrompt.AuthenticationResult){
+                        localAuthError=""
+                        if(enable){client?.setRequireLocalUnlock(true);requireLocalUnlock=true}
+                        localUnlocked=true
+                    }
+                    override fun onAuthenticationError(errorCode:Int,errString:CharSequence){
+                        localAuthError=errString.toString()
+                    }
+                })
+        }catch(e:Exception){localAuthError=e.message?:"系统身份验证不可用"}
+    }
+    val activity=context as? androidx.activity.ComponentActivity
+    DisposableEffect(activity,selected,requireLocalUnlock){
+        val observer=LifecycleEventObserver{_,event->
+            if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
+                localUnlocked=false;inbox.clear();lastEventSeq=0L
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose{activity?.lifecycle?.removeObserver(observer)}
+    }
     fun chooseOrigin(value:String){
         ControllerProfiles.select(context,value)
         selected=value;onSelectTab(0)
     }
     fun load(older:Boolean=false,newer:Boolean=false){
         val api=client?:return
-        if(!api.hasGrant())return
+        if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
         if(busy)return
         busy=true
         scope.launch {
             try{
                 val data=withContext(Dispatchers.IO){
                     val d=api.api("/api/v1/devices")
+                    val auth=api.api("/api/v1/auth/check")
                     val all=d.optJSONArray("devices")?:JSONArray()
                     val list=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
+                    val incremental=newer && lastEventSeq>0
                     val requested=if(newer)0 else if(older)page+1 else page
                     val cursor=if(requested>0)cursors.getOrNull(requested-1) else null
                     val suffix=if(cursor!=null)
                         "&beforeTime=${cursor.first}&beforeSeq=${cursor.second}" else ""
-                    val events=api.api("/api/v1/events?order=occurred&limit=100"+suffix)
+                    val events=if(incremental)
+                        api.api("/api/v1/events?since=$lastEventSeq&limit=1000")
+                        else api.api("/api/v1/events?order=occurred&limit=100"+suffix)
                     val rows=events.optJSONArray("events")?:JSONArray()
+                    val newestSeq=(0 until rows.length()).maxOfOrNull{rows.optJSONObject(it)?.optLong("seq",0L)?:0L}?:0L
                     val vault=api.vault()
                     val messages=JSONArray()
                     var failure=0
@@ -109,38 +168,53 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 .put("body",if(failed)"" else plaintext.optString("body"))
                                 .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
                                 .put("device",node?.optString("name")?:"未知设备")
-                                .put("sim",provenance).put("otp",otp).put("failed",failed))
+                                .put("sim",provenance)
+                                .put("sourceId",item.optString("deviceId")+"|"+ch+"|"+rev).put("otp",otp).put("failed",failed))
                         }
                     }finally{vault.fill(0)}
                     val nextTime=events.optLong("nextBeforeTime",0)
                     val nextSeq=events.optLong("nextBeforeSeq",0)
                     val response=JSONObject().put("type","snapshot").put("v",1).put("messages",messages)
                         .put("unreadable",failure).put("hasMore",events.optBoolean("hasMore"))
-                        .put("hasNewer",requested>0)
-                    arrayOf(d,list,events,response,requested,nextTime,nextSeq)
+                        .put("hasNewer",requested>0).put("incremental",incremental)
+                    arrayOf(d,list,events,response,requested,nextTime,nextSeq,auth.optBoolean("totpRequired",true),newestSeq,incremental)
                 }
+                // A background/lock transition may occur while ciphertext is decrypting.
+                // Never repopulate native plaintext after the local OS gate has locked.
+                if(requireLocalUnlock && !localUnlocked)return@launch
                 @Suppress("UNCHECKED_CAST")
                 devices=data[1] as List<JSONObject>
-                unreadable=(data[3] as JSONObject).optInt("unreadable")
-                inbox.accept((data[3] as JSONObject).toString())
+                secondFactorTotp=data[7] as Boolean
+                if(!(data[9] as Boolean)) unreadable=(data[3] as JSONObject).optInt("unreadable")
+                else unreadable+=(data[3] as JSONObject).optInt("unreadable")
+                lastEventSeq=maxOf(lastEventSeq,data[8] as Long)
+                inbox.accept((data[3] as JSONObject).toString(),append=older || (data[9] as Boolean))
                 val loaded=data[4] as Int
                 val nextTime=data[5] as Long
                 val nextSeq=data[6] as Long
-                if(newer){page=0;cursors=emptyList()}
+                if(newer && !(data[9] as Boolean)){page=0;cursors=emptyList()}
                 else if(older){page=loaded}
-                if(nextTime>0&&nextSeq>0){
+                if(!(data[9] as Boolean) && nextTime>0&&nextSeq>0){
                     cursors=cursors.take(page)+listOf(nextTime to nextSeq)
                 }
                 authorized=true;error=""
-            }catch(e:Exception){error=e.message?:"无法连接管理中心"}
+            }catch(e:Exception){
+                error=e.message?:"无法连接管理中心"
+                if(e is SecurityException){
+                    authorized=false;inbox.clear();devices=emptyList()
+                    lastCommandId="";lastCommandState="";lastEventSeq=0
+                }
+            }
             finally{busy=false}
         }
     }
-    LaunchedEffect(selected,visible){
-        if(visible && client?.hasGrant()==true){authorized=true;load(newer=true)}
+    LaunchedEffect(selected,visible,localUnlocked,requireLocalUnlock){
+        if(visible && (!requireLocalUnlock || localUnlocked) && client?.hasGrant()==true){
+            authorized=true;load(newer=true)
+        }
     }
     LaunchedEffect(selected,visible,authorized){
-        if(visible && authorized)while(true){
+        if(visible && authorized && (!requireLocalUnlock || localUnlocked))while(true){
             delay(60000)
             if(!busy)load(newer=true)
         }
@@ -157,8 +231,60 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             }catch(e:Exception){error=e.message?:"配对失败";pairing=null;break}
         }
     }
-    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized)load(newer=true)}
+    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized && (!requireLocalUnlock || localUnlocked))load(newer=true)}
+    // Queue acceptance is not device execution. Poll the Relay's immutable ACK state.
+    LaunchedEffect(selected,lastCommandId,visible){
+        if(!visible || lastCommandId.isBlank())return@LaunchedEffect
+        val api=client?:return@LaunchedEffect
+        repeat(40){
+            delay(3000)
+            try {
+                val statuses=withContext(Dispatchers.IO){
+                    api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")
+                }?:JSONArray()
+                val found=(0 until statuses.length()).mapNotNull{statuses.optJSONObject(it)}
+                    .firstOrNull{it.optString("commandId")==lastCommandId}
+                if(found!=null){
+                    val state=found.optString("state","queued")
+                    lastCommandState=when(state){
+                        "queued"->"等待设备连接并领取任务"
+                        "dispatched"->"设备已领取任务，等待执行确认"
+                        "submitted"->"已提交到系统短信服务"
+                        "sent"->"系统已发送，等待运营商回执"
+                        "delivered"->"运营商已确认送达"
+                        "succeeded"->"任务执行成功"
+                        "failed"->"任务执行失败："+found.optJSONObject("result")?.optString("reason").orEmpty()
+                        "rejected"->"任务被设备拒绝"
+                        "expired"->"任务已过期，没有执行"
+                        else->"当前状态：$state"
+                    }
+                    if(state in setOf("delivered","succeeded","failed","rejected","expired"))
+                        return@LaunchedEffect
+                }
+            }catch(e:Exception){
+                lastCommandState="无法更新任务进度："+(e.message?:"网络不可用")
+            }
+        }
+    }
     if(!visible)return
+    if(requireLocalUnlock && !localUnlocked && authorized){
+        Box(modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+            Column(Modifier.padding(24.dp).widthIn(max=430.dp),
+                verticalArrangement=Arrangement.spacedBy(14.dp),
+                horizontalAlignment=Alignment.CenterHorizontally){
+                HubIcon(R.drawable.ic_hub_shield,Modifier.size(44.dp))
+                Text(hubLabel("管理中心已锁定","Management center locked"),
+                    style=MaterialTheme.typography.titleLarge)
+                Text(hubLabel("使用系统身份验证继续访问加密短信与设备管理。",
+                    "Authenticate with your device to view encrypted messages and manage nodes."))
+                if(localAuthError.isNotEmpty())Text(localAuthError,color=MaterialTheme.colorScheme.error)
+                Button(onClick={authenticateLocal()},modifier=Modifier.fillMaxWidth()){
+                    Text(hubLabel("使用系统指纹或锁屏解锁","Unlock with device authentication"))
+                }
+            }
+        }
+        return
+    }
     Column(modifier.fillMaxSize()) {
         if(selected==null){
             Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
@@ -167,8 +293,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     Spacer(Modifier.height(18.dp))
                     Text("连接管理中心",style=MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick=onScan){Text("扫描配置二维码")}
-                    TextButton(onClick={add=true}){Text("输入管理地址")}
+                    Button(onClick=onScan){Text(hubLabel("扫描配置二维码","Scan configuration QR"))}
+                    TextButton(onClick={add=true}){Text(hubLabel("输入管理地址","Enter management URL"))}
                 }
             }
         }else if(!authorized){
@@ -199,7 +325,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         Button(onClick={
                             context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
                                 Uri.parse(selected + "/?controller=local")))
-                        },modifier=Modifier.fillMaxWidth()) { Text("在本机浏览器认证并批准") }
+                        },modifier=Modifier.fillMaxWidth()) { Text(hubLabel("在本机浏览器认证并批准","Approve in browser")) }
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }else{
                         if(client?.hasGrant()==true)OutlinedButton(onClick={
@@ -212,7 +338,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 };error=""}catch(e:Exception){error=e.message?:"无法发起配对"}
                                 finally{busy=false}
                             }
-                        },modifier=Modifier.fillMaxWidth()){Text("申请管理终端授权")}
+                        },modifier=Modifier.fillMaxWidth()){Text(hubLabel("申请管理终端授权","Request device authorization"))}
                     }
                     if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
                 }
@@ -240,11 +366,19 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         HubCard(Modifier.fillMaxWidth()) {
                             HubSectionTitle("快捷操作")
                             FilledTonalButton(onClick={onSelectTab(1)},
-                                modifier=Modifier.fillMaxWidth()) { Text("查看短信") }
+                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("查看短信","View messages")) }
                             FilledTonalButton(onClick={onSelectTab(2)},
-                                modifier=Modifier.fillMaxWidth()) { Text("管理设备") }
+                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("管理设备","Manage devices")) }
                             OutlinedButton(onClick={load(newer=true)},
-                                modifier=Modifier.fillMaxWidth()) { Text("刷新加密数据") }
+                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("刷新加密数据","Refresh encrypted data")) }
+                        }
+                    }
+                    if(lastCommandId.isNotBlank())item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            HubSectionTitle("最近下发的指令")
+                            Text(lastCommandState.ifBlank{"状态查询中"},style=MaterialTheme.typography.bodyMedium)
+                            Text("设备：$lastCommandDevice · 命令："+lastCommandId.take(8),
+                                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if(error.isNotEmpty())item {
@@ -289,7 +423,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     style=MaterialTheme.typography.bodySmall)
                                 Text("电量：${state.optString("batteryPct","—")}%  · ${state.optString("network","—")}",
                                     style=MaterialTheme.typography.bodySmall)
-                                TextButton(onClick={selectedDevice=d}){Text("设备详情与操作")}
+                                TextButton(onClick={selectedDevice=d}){Text(hubLabel("设备详情与操作","Device details and actions"))}
                             }
                         }
                     }
@@ -308,7 +442,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     item{
                         HubSectionTitle("管理空间")
                         OutlinedButton(onClick={add=true},
-                            modifier=Modifier.fillMaxWidth()) { Text("添加管理地址") }
+                            modifier=Modifier.fillMaxWidth()) { Text(hubLabel("添加管理地址","Add management URL")) }
                         profiles.forEach { origin ->
                             TextButton(onClick={chooseOrigin(origin)},
                                 modifier=Modifier.fillMaxWidth()) {
@@ -321,7 +455,19 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         Text("解除本地授权会清除该管理空间的本机身份密钥与加密 Vault。服务器端撤销请在网页管理后台完成。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant,
                             style=MaterialTheme.typography.bodySmall)
-                        OutlinedButton(onClick={showReset=true}){Text("清除此手机的管理授权")}
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){
+                                Text(hubLabel("重新进入时验证身份","Require authentication on return"))
+                                Text(hubLabel("使用安卓系统生物识别或锁屏；这是应用访问保护，并非密钥的硬件认证绑定。",
+                                    "Android biometrics or device credential. App access gate, not a hardware-bound Vault key."),
+                                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked=requireLocalUnlock,onCheckedChange={enabled->
+                                if(enabled)authenticateLocal(enable=true)
+                                else{client?.setRequireLocalUnlock(false);requireLocalUnlock=false;localUnlocked=true}
+                            })
+                        }
+                        OutlinedButton(onClick={showReset=true}){Text(hubLabel("清除此手机的管理授权","Remove authorization from this phone"))}
                     }
                     item{
                         Text("版本及诊断",style=MaterialTheme.typography.titleMedium)
@@ -339,27 +485,56 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
 
         }
     }
-    if(add)AlertDialog(onDismissRequest={add=false},title={Text("添加管理空间")},
+    if(add)AlertDialog(onDismissRequest={add=false},title={Text(hubLabel("添加管理空间","Add management space"))},
         text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
             OutlinedTextField(addUrl,{addUrl=it},label={Text("HTTPS 管理地址")},
                 singleLine=true,modifier=Modifier.fillMaxWidth())
-            TextButton(onClick={add=false;onScan()}){Text("扫描配置二维码")}
+            TextButton(onClick={add=false;onScan()}){Text(hubLabel("扫描配置二维码","Scan configuration QR"))}
         }},confirmButton={TextButton(onClick={
             val origin=ControllerProfiles.add(context,addUrl)
             if(origin==null)error="请输入合法的 HTTPS 管理地址"
             else{profiles=ControllerProfiles.list(context);chooseOrigin(origin);addUrl="";add=false}
-        }){Text("添加")}},dismissButton={TextButton(onClick={add=false}){Text("取消")}})
+        }){Text(hubLabel("添加","Add"))}},dismissButton={TextButton(onClick={add=false}){Text(hubLabel("取消","Cancel"))}})
     if(showReset)AlertDialog(onDismissRequest={showReset=false},
-        title={Text("清除本机授权？")},
-        text={Text("删除本机授权密钥与缓存。服务器仍保留该终端记录，建议同时在网页撤销。不会影响 SIM 节点的本地短信。")},
-        confirmButton={TextButton(onClick={
-            client?.localReset();authorized=false;inbox.clear();devices=emptyList();showReset=false
-        }){Text("清除")}},
-        dismissButton={TextButton(onClick={showReset=false}){Text("取消")}})
+        title={Text(hubLabel("清除本机授权？","Remove local authorization?"))},
+        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Text("建议先撤销云端管理终端，再删除此手机的本地密钥。不会影响 SIM 节点短信。")
+            OutlinedTextField(resetCredential,{resetCredential=it},
+                label={Text(if(secondFactorTotp)"二次验证 TOTP（云端撤销）" else "管理员令牌（云端撤销）")},
+                singleLine=true,visualTransformation=PasswordVisualTransformation())
+            if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
+        }},
+        confirmButton={
+            TextButton(enabled=!busy,onClick={
+                val api=client?:return@TextButton
+                busy=true
+                scope.launch{
+                    try{
+                        withContext(Dispatchers.IO){
+                            if(resetCredential.isNotBlank())api.api("/api/v1/auth/elevate","POST",
+                                JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",resetCredential))
+                            api.api("/api/v1/controllers/revoke","POST",
+                                JSONObject().put("controllerId",api.controllerId()))
+                        }
+                        api.localReset();authorized=false;inbox.clear();devices=emptyList()
+                        lastCommandId="";showReset=false;resetCredential="";error=""
+                    }catch(e:Exception){error="无法撤销云端授权："+(e.message?:"请检查网络或二次验证")}
+                    finally{busy=false}
+                }
+            }){Text(hubLabel("撤销云端并清除本机","Revoke on server and remove locally"))}
+        },
+        dismissButton={
+            TextButton(onClick={
+                // Explicit offline-only fallback; this does not revoke Relay access.
+                client?.localReset();authorized=false;inbox.clear();devices=emptyList()
+                lastCommandId="";resetCredential="";showReset=false
+            }){Text(hubLabel("仅清除此手机","Remove only from this phone"))}
+        })
     selectedDevice?.let{d->
         AlertDialog(onDismissRequest={selectedDevice=null},
             title={Text(d.optString("name","设备详情"))},
-            text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            text={Column(Modifier.heightIn(max=450.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement=Arrangement.spacedBy(10.dp)){
                 Text("设备 ID：${d.optString("id")}")
                 Text("版本：${d.optString("appVersion")}")
                 Text("连接：${if(d.optBoolean("online"))"在线" else "离线"}")
@@ -368,10 +543,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     style=MaterialTheme.typography.bodySmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                 if(actionError.isNotEmpty())Text(actionError,color=MaterialTheme.colorScheme.error)
+                if(lastCommandId.isNotBlank() && lastCommandDevice==d.optString("name"))
+                    Text(lastCommandState.ifBlank{"查询任务状态中"},style=MaterialTheme.typography.bodySmall)
                 Button(onClick={
                     scope.launch{
                         try{
-                            withContext(Dispatchers.IO){
+                            val queuedId=withContext(Dispatchers.IO){
                                 val id=UUID.randomUUID().toString()
                                 val now=System.currentTimeMillis()/1000
                                 val end=now+1200
@@ -382,17 +559,26 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     JSONObject().put("commandId",id).put("idempotencyKey",id)
                                     .put("type","sms.sync_recent").put("createdAt",now)
                                     .put("expiresAt",end).put("ciphertext",cipher))
+                                id
                             }
-                            actionError="同步任务已入队，等待设备执行"
+                            lastCommandId=queuedId
+                            lastCommandDevice=d.optString("name")
+                            lastCommandState="等待设备连接并领取任务"
+                            actionError="同步任务已入队，可在首页跟踪执行结果"
                         }catch(e:Exception){actionError=e.message?:"指令失败"}
                     }
-                }){Text("下发同步最近短信")}
+                }){Text(hubLabel("下发同步最近短信","Sync recent messages"))}
             }},
-            confirmButton={TextButton(onClick={selectedDevice=null;actionError=""}){Text("关闭")}})
+            confirmButton={TextButton(onClick={selectedDevice=null;actionError=""}){Text(hubLabel("关闭","Close"))}})
     }
     if(showWrite){
         var recipient by remember{mutableStateOf("")}
         var message by remember{mutableStateOf("")}
+        var sendError by remember{mutableStateOf("")}
+        var sending by remember{mutableStateOf(false)}
+        var submittedDraft by remember{mutableStateOf("")}
+        // Reuse this ID across uncertain retries to avoid accidental duplicate sends.
+        val messageCommandId=remember{UUID.randomUUID().toString()}
         var deviceIdx by remember{mutableIntStateOf(0)}
         var channelIdx by remember{mutableIntStateOf(0)}
         val possible=devices.filter{d->
@@ -403,9 +589,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         }
         val current=possible.getOrNull(deviceIdx)
         val channels=current?.optJSONObject("state")?.optJSONArray("channels")?:JSONArray()
+        val currentDraft=(current?.optString("id")?:"")+"|"+deviceIdx+"|"+channelIdx+"|"+recipient+"|"+message
         var stepUp by remember{mutableStateOf("")}
-        AlertDialog(onDismissRequest={showWrite=false},title={Text("发送加密短信")},
-            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+        AlertDialog(onDismissRequest={showWrite=false},title={Text(hubLabel("发送加密短信","Send encrypted SMS"))},
+            text={Column(Modifier.heightIn(max=430.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement=Arrangement.spacedBy(8.dp)){
+                if(sendError.isNotEmpty())Text(sendError,color=MaterialTheme.colorScheme.error)
+                if(submittedDraft.isNotEmpty() && currentDraft!=submittedDraft)
+                    Text(hubLabel("重试需保留原收件人、SIM 与短信内容；修改内容请新建发送任务。",
+                        "For an idempotent retry, restore the original recipient, SIM and message."),
+                        color=MaterialTheme.colorScheme.error)
                 if(possible.isEmpty())Text("当前没有允许发送短信的在线 SIM 节点。")
                 else{
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)
@@ -419,21 +612,23 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         FilterChip(selected=i==channelIdx,onClick={channelIdx=i},
                             label={Text(ch.optString("displayName").ifBlank{ch.optString("id")})})
                     }
-                    OutlinedTextField(recipient,{recipient=it},label={Text("收件人号码")})
-                    OutlinedTextField(message,{message=it},label={Text("短信内容")},minLines=3)
-                    OutlinedTextField(stepUp,{stepUp=it},label={Text("二次验证 OTP（敏感操作）")},
-                        singleLine=true)
+                    OutlinedTextField(recipient,{recipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
+                    OutlinedTextField(message,{message=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
+                    OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
+                        singleLine=true,visualTransformation=PasswordVisualTransformation())
                 }
-            }},confirmButton={TextButton(enabled=current!=null && recipient.isNotBlank() && message.isNotBlank(),
+            }},confirmButton={TextButton(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
+                    if(submittedDraft.isEmpty())submittedDraft=currentDraft
+                    sending=true;sendError=""
                     scope.launch{
                         try {
-                            withContext(Dispatchers.IO){
+                            val queuedId=withContext(Dispatchers.IO){
                                 // Server always independently enforces second factor for sms.send.
                                 if(stepUp.isNotEmpty())client!!.api("/api/v1/auth/elevate","POST",
-                                    JSONObject().put("totp",stepUp))
+                                    JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",stepUp))
                                 val channel=channels.optJSONObject(channelIdx)?:throw IllegalStateException("SIM 未选择")
-                                val id=UUID.randomUUID().toString()
+                                val id=messageCommandId
                                 val now=System.currentTimeMillis()/1000
                                 val expires=now+1200
                                 val payload=JSONObject().put("v",2).put("action","sms.send")
@@ -446,10 +641,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     JSONObject().put("commandId",id).put("idempotencyKey",id)
                                         .put("type","sms.send").put("createdAt",now)
                                         .put("expiresAt",expires).put("ciphertext",cipher))
+                                id
                             }
+                            lastCommandId=queuedId
+                            lastCommandDevice=current?.optString("name").orEmpty()
+                            lastCommandState="等待设备连接并领取任务"
                             showWrite=false;error=""
-                        }catch(e:Exception){error=e.message?:"发送失败";showWrite=false}
+                        }catch(e:Exception){
+                            sendError=(e.message?:"请求失败")+
+                                "。若请求状态不明，请先查看命令执行状态再重试。"
+                        }finally{sending=false}
                     }
-                }){Text("确认发送")}},dismissButton={TextButton(onClick={showWrite=false}){Text("取消")}})
+                }){Text(hubLabel("确认发送","Confirm send"))}},dismissButton={TextButton(onClick={showWrite=false}){Text(hubLabel("取消","Cancel"))}})
     }
 }

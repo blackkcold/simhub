@@ -34,7 +34,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.15.6"
+APP_VERSION = "0.15.7"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -1068,7 +1068,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if len(p)==5 and p[:3]==["api","v1","controllers"] and p[3]=="pair":
             try:
                 with open_db() as con:
-                    result=controller_auth.poll(con,p[4],self.ip,now())
+                    result=controller_auth.poll(con,p[4],self.ip,now(),self.headers.get("X-SimHub-Pair-Token",""))
                 self.send_json(200,result)
             except ValueError as exc:self.send_error_json(404,"pairing_unavailable",str(exc))
             return

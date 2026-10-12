@@ -1,3 +1,15 @@
+## v0.15.7 — Native controller audit remediation
+
+- Fix controller pairing across Wi-Fi/mobile-data or VPN egress changes with a separate high-entropy polling credential. The Relay stores only a hash; Android seals the pending pairing token using Keystore AES-GCM. Pending pre-upgrade pairing requests retain temporary IP-bound compatibility.
+- Replace Android native SMS page replacement with deduplicated, bounded in-memory history merging; use incremental server sequence fetching for new encrypted messages and stable Node/Channel/Revision source filters.
+- Match native send step-up parameters to the Relay's TOTP vs administrator-token policy, mask sensitive authentication inputs, and mark clipboard OTP content sensitive on supported Android versions.
+- Track native remote command states from the server's durable ACK records. Distinguish queued, dispatched, submitted, sent, delivered, succeeded, failed, rejected and expired states.
+- Preserve an uncertain SMS send draft and its idempotency key on retry, preventing duplicate remote commands. Require restoring the original recipient/SIM/body before retrying with the same ID.
+- Provide an explicit cloud-revoke-and-local-delete controller workflow, with an offline local-only fallback. Clear the native decrypted inbox if controller authorization is rejected.
+- Add optional Android system biometric/device-credential **application gate** on returning from background; clear displayed messages on backgrounding. This **does not** yet bind Vault Keystore unwrapping to per-use user authentication.
+- Improve native settings/compose dialog scrollability, copy source filters and localized core controller UI actions. Add pairing, pagination, source-contract and migration tests.
+- Existing Global Vault, per-node E2EE keys, signed release process, and existing deployment volumes remain unchanged. Real OEM, physical SIM and biometric-provider tests still require hardware validation.
+
 ## v0.15.6 — Unified Android controller UI and same-phone authorization
 
 - Consolidate the Android SIM node and controller into one Compose App Shell: consistent brand toolbar, role switch, four-tab navigation and adaptive large-screen navigation rail; no second controller-specific toolbar or embedded WebView.

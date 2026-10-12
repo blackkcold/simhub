@@ -6,6 +6,8 @@ import android.content.Context
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,7 +30,7 @@ import org.json.JSONObject
  */
 data class ControllerSms(
     val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,
-    val inbound:Boolean,val device:String,val sim:String,val otp:String,val failed:Boolean
+    val inbound:Boolean,val device:String,val sim:String,val sourceId:String,val otp:String,val failed:Boolean
 )
 class ControllerInboxState {
     val messages=mutableStateListOf<ControllerSms>()
@@ -43,7 +45,7 @@ class ControllerInboxState {
     fun clear() {
         messages.clear();unlocked=false;hasMore=false;hasNewer=false;warning=""
     }
-    fun accept(raw:String) {
+    @JvmOverloads fun accept(raw:String, append:Boolean=false) {
         if(raw.length>450_000)return
         try {
             val obj=JSONObject(raw)
@@ -61,14 +63,25 @@ class ControllerInboxState {
                             str("id",180),str("thread",160),str("sender",100),
                             str("body",4000),row.optLong("timestamp",0),
                             row.optBoolean("inbound",true),str("device",100),
-                            str("sim",90),str("otp",20),row.optBoolean("failed",false)
+                            str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false)
                         ))
                     }
-                    messages.clear();messages.addAll(fresh)
-                    unlocked=true;hasMore=obj.optBoolean("hasMore")
-                    hasNewer=obj.optBoolean("hasNewer")
-                    warning=if(obj.optInt("unreadable")>0)
-                        "部分短信无法解密，请检查历史 Node Key 或 Vault 密钥" else ""
+                    // Stable IDs keep loaded conversation history across refreshes and
+                    // older-page loads; old pages never replace the visible conversation.
+                    val merged=LinkedHashMap<String,ControllerSms>()
+                    if(append && unlocked)for(item in messages)merged[item.id]=item
+                    for(item in fresh)if(item.id.isNotEmpty())merged[item.id]=item
+                    val ordered=merged.values.sortedWith(compareByDescending<ControllerSms>{it.timestamp}.thenByDescending{it.id})
+                        .take(1200)
+                    messages.clear();messages.addAll(ordered)
+                    unlocked=true
+                    if(!obj.optBoolean("incremental")){
+                        hasMore=obj.optBoolean("hasMore")
+                        hasNewer=obj.optBoolean("hasNewer")
+                    }
+                    if(obj.optInt("unreadable")>0)
+                        warning="部分短信无法解密，请检查历史 Node Key 或 Vault 密钥"
+                    else if(!obj.optBoolean("incremental"))warning=""
                 }
             }
         }catch(_:Exception){ /* Malformed page data is ignored, not logged. */ }
@@ -81,12 +94,15 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var otpOnly by remember { mutableStateOf(false) }
+    var sourceFilter by remember { mutableStateOf("") }
     var activeThread by remember { mutableStateOf<String?>(null) }
     BackHandler(enabled=activeThread!=null){ activeThread=null }
     val filtered=state.messages.filter { m ->
         (!otpOnly||m.otp.isNotBlank()) &&
+        (sourceFilter.isEmpty() || sourceFilter==(m.sourceId.ifBlank{m.device+"|"+m.sim})) &&
         (query.isBlank() || listOf(m.sender,m.body,m.device,m.sim).any{it.contains(query,true)})
     }
+    val sources=state.messages.distinctBy{it.sourceId.ifBlank{it.device+"|"+it.sim}}.map{(it.sourceId.ifBlank{it.device+"|"+it.sim}) to (it.device+" · "+it.sim)}
     val threads=filtered.groupBy{it.thread}.values.mapNotNull{items->
         items.maxByOrNull{it.timestamp}?.let{latest->latest to items.size}
     }.sortedByDescending{it.first.timestamp}
@@ -101,7 +117,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     Text("管理端短信会在当前手机本地解密后呈现。未授权时不会读取或缓存短信。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick=onOpenLogin,modifier=Modifier.fillMaxWidth()){Text("登录 / 解锁管理空间")}
+                    Button(onClick=onOpenLogin,modifier=Modifier.fillMaxWidth()){Text(hubLabel("登录 / 解锁管理空间","Sign in / unlock"))}
                 }
             }
             return@Column
@@ -115,12 +131,21 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     style=MaterialTheme.typography.labelSmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick=onRefresh){Text("刷新")}
-            if(activeThread==null)TextButton(onClick=onWrite){Text("发送")}
+            TextButton(onClick=onRefresh){Text(hubLabel("刷新","Refresh"))}
+            if(activeThread==null)TextButton(onClick=onWrite){Text(hubLabel("发送","Send"))}
         }
         if(state.warning.isNotBlank()){
             Text(state.warning,modifier=Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+            .padding(horizontal=16.dp,vertical=4.dp),
+            horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            FilterChip(selected=sourceFilter.isEmpty(),onClick={sourceFilter=""},label={Text(hubLabel("全部来源","All sources"))})
+            sources.forEach{(key,label)->
+                FilterChip(selected=sourceFilter==key,onClick={sourceFilter=key;activeThread=null},
+                    label={Text(label,maxLines=1)})
+            }
         }
         val key=activeThread
         if(key!=null){
@@ -144,7 +169,13 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                             if(sms.inbound && sms.otp.isNotBlank()){
                                 TextButton(onClick={
                                     val clip=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clip.setPrimaryClip(ClipData.newPlainText("OTP",sms.otp))
+                                    val clipData=ClipData.newPlainText("OTP",sms.otp)
+                                    if(android.os.Build.VERSION.SDK_INT>=33){
+                                        clipData.description.extras=android.os.PersistableBundle().apply{
+                                            putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true)
+                                        }
+                                    }
+                                    clip.setPrimaryClip(clipData)
                                 }){Text("复制验证码 · "+sms.otp)}
                             }
                             Text("${sms.device} · ${sms.sim} · "+
@@ -156,20 +187,20 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 }
                 if(state.hasNewer)item{
                     TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){
-                        Text("查看较新短信")
+                        Text(hubLabel("查看较新短信","View newer messages"))
                     }
                 }
                 if(state.hasMore)item{
-                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}
+                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
                 }
             }
         }else{
             OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
-                label={Text("搜索号码、短信与来源设备")},singleLine=true)
+                label={Text("搜索已加载短信、号码与来源")},singleLine=true)
             Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text("全部短信")})
-                FilterChip(selected=otpOnly,onClick={otpOnly=true},label={Text("验证码")})
+                FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text(hubLabel("全部短信","All messages"))})
+                FilterChip(selected=otpOnly,onClick={otpOnly=true},label={Text(hubLabel("验证码","Verification codes"))})
             }
             if(threads.isEmpty()){
                 Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
@@ -205,10 +236,10 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     }
                 }
                 if(state.hasNewer)item{
-                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){Text("查看较新短信")}
+                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){Text(hubLabel("查看较新短信","View newer messages"))}
                 }
                 if(state.hasMore)item{
-                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}
+                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
                 }
             }
         }

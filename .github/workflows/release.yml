@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.15.6.trigger'
+      - '.github/release/v0.15.7.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.15.6.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.15.7.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -301,38 +301,35 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          SIM Hub v0.15.6 unifies the Android management center and SIM node UI
-          and allows initial controller authorization entirely on the same phone.
+          SIM Hub v0.15.7 hardens native controller reliability, security and
+          message management after the v0.15.6 shared Compose shell migration.
 
           ## Changes
-          - One native Compose top bar, role switch, four-tab bottom navigation and
-            responsive navigation rail shared across node and controller modes.
-          - Native controller overview, SMS, devices and settings use common
-            Material 3 layout components without an embedded WebView.
-          - Same-phone HTTPS browser verification using the existing WebAuthn
-            Passkey/biometric provider or administrator password/TOTP fallback.
-          - Browser unlocks the existing Global Vault and grants controller
-            access using code-confirmed ECDH/HKDF/AES-GCM; no second terminal.
-          - The browser-to-app resume link transports no credentials or Vault
-            material; short-lived pairing survives process restart with a
-            Keystore-encrypted temporary state.
-          - Existing Node Keys, shared Vault, history, PWA and Relay APIs remain
-            backwards compatible.
+          - Secure same-phone controller pairing across Wi-Fi/cellular IP changes
+            using a separate hash-verified short-lived pairing poll credential.
+          - Incremental encrypted SMS fetching and append-only, deduplicated native
+            history with source filters based on Node/Channel/Revision.
+          - Correct SMS-send TOTP / admin-token step-up and mask credentials.
+          - Track durable ACK state for native sync and SMS send commands.
+          - Retain uncertain SMS drafts and stable command idempotency keys.
+          - Offer cloud-first controller revocation plus clearly labeled local reset.
+          - Optional system biometric/device-credential app access gate; native
+            decrypted SMS views are cleared on app backgrounding.
+          - Native UX scroll fixes, bilingual actions and expanded regression tests.
 
           ## Security and platform boundaries
-          - The Passkey biometric prompt happens in the phone browser. This
-            release does not implement native Credential Manager Passkey flows
-            or biometric-gated Keystore Vault unsealing.
-          - Existing admin challenge, TOTP step-up, revocation and Vault ID/key
-            fingerprint matching continue to be enforced server-side.
-          - Physical OEM/Passkey compatibility, folding behavior and real SMS
-            transport require live-device checks in addition to CI.
+          - The optional Android system unlock is an application visibility gate,
+            NOT a per-use biometric-authenticated Keystore Vault unwrap.
+          - Existing single Global Vault, independent Node Keys, signed sessions
+            and server-side step-up remain mandatory.
+          - Real device/OEM/Passkey/SIM background behavior requires live-device
+            validation; CI does not certify cellular radio hardware behavior.
 
           ## Upgrade
-          Existing Docker volumes and Android profiles migrate in place.
-          Use the same HTTPS management domain and original Global Vault
-          passphrase. Approve a new controller through the same phone's
-          browser; reauthorize any controller whose Vault ID has changed.
+          Existing Docker volumes and native controller grants migrate in place.
+          Pending pairings initiated by v0.15.6 can expire normally; new pairings
+          use independent polling credentials. The original Global Vault password
+          and Node Key history remain unchanged.
 
           Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_NATIVE.md.
           EOF

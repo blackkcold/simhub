@@ -21,6 +21,16 @@ public class ControllerInboxStateTest {
         assertEquals(0,state.getMessages().size());
         assertFalse(state.getHasMore());
     }
+    @Test public void olderPagesMergeWithoutRemovingRecentMessages() {
+        ControllerInboxState state=new ControllerInboxState();
+        state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"new\",\"timestamp\":200,\"body\":\"recent\"}],\"hasMore\":true}");
+        state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"old\",\"timestamp\":100,\"body\":\"older\"}],\"hasMore\":false}",true);
+        assertEquals(2,state.getMessages().size());
+        assertEquals("new",state.getMessages().get(0).getId());
+        assertFalse(state.getHasMore());
+        state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"old\",\"timestamp\":100,\"body\":\"older\"}],\"hasMore\":false}",true);
+        assertEquals(2,state.getMessages().size());
+    }
     @Test public void unrecognizedOrOversizedMessagesDoNotUnlock() {
         ControllerInboxState state=new ControllerInboxState();
         state.accept("{\"type\":\"snapshot\",\"v\":2,\"messages\":[]}");

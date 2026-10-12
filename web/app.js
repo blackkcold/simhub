@@ -21,7 +21,7 @@ let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
 let olderCursor=null,historyHasMore=true,visibleCount=40,activeConversationKey=null,diagnosticsDeviceId=null;
 let historyFetchInFlight=null,loadObserver=null,lastAutoScroll=-1;
-let poolState=null;
+let poolState=null,globalVault=null;
 const expandedDeviceDetails=new Set();
 let enrollStep=1,enrollMode='package',nodeBaseUrl='',enrollStartingDevices=new Set();
 const eventIds=new Set();
@@ -101,14 +101,24 @@ async function updateTrustedOptions(){
   if(enabled)await storeTrustedVault();else clearTrustedVault();
   toast(enabled?'已允许本设备有效期内免重复解锁':'已关闭自动解锁');
 }
+async function loadGlobalVault(){
+  globalVault=await api('/api/v1/vault');
+  return globalVault;
+}
 function showVaultStage(){
   authenticated=true;
   $('authStage').hidden=true;$('vaultStage').hidden=false;
-  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?'请输入 Vault 密码，或使用已授权的可信设备解锁':'首次使用：请导入已有恢复密钥，或创建新 Vault';
+  const exists=!!globalVault?.initialized;
+  $('vaultGateTitle').textContent=exists?'解锁共享 Vault':'首次初始化共享 Vault';
+  $('createVaultBtn').hidden=exists;
+  $('vaultUnlockBtn').hidden=!exists;
+  $('gateHint').textContent=exists?'全局 Vault 已就绪。所有管理终端输入同一 Vault 密码即可访问已配对的短信。':
+    '首次部署只创建一次。已有本地 Vault 时会优先迁移原密钥，避免旧短信失效。';
 }
 async function finishLogin(){
+  await loadGlobalVault();
   showVaultStage();
-  await restoreTrustedVault();
+  if(globalVault.initialized)await restoreTrustedVault();
 }
 function promptLoginTotp(){
   return new Promise((resolve,reject)=>{
@@ -150,7 +160,8 @@ async function restoreTabVault(){
 async function resumeExistingSession(){
   try{
     await api('/api/v1/auth/check');authenticated=true;
-    if(await restoreTabVault())return;
+    await loadGlobalVault();
+    if(globalVault.initialized && await restoreTabVault())return;
     await finishLogin();
   }catch{authenticated=false;clearTabVault();}
 }
@@ -184,10 +195,59 @@ async function editSimPhone(deviceId,channelId){
 }
 async function deriveWrapKey(passphrase,salt){const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations:PBKDF2_ITER,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}
 async function wrapVaultRaw(raw,passphrase){if(passphrase.length<10)throw new Error('Use a vault passphrase of at least 10 characters.');const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),wrapKey=await deriveWrapKey(passphrase,salt);const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,raw));localStorage.setItem(VAULT_STORE,JSON.stringify({v:1,kdf:'PBKDF2-SHA256',iterations:PBKDF2_ITER,salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}));}
-async function importVault(raw){vaultRaw=new Uint8Array(raw);vaultKey=await crypto.subtle.importKey('raw',vaultRaw,{name:'AES-GCM'},false,['encrypt','decrypt']);deviceKeyCache.clear();resetAutoLock();await cacheTabVault();}
-async function createVault(passphrase){const raw=crypto.getRandomValues(new Uint8Array(32));await wrapVaultRaw(raw,passphrase);await importVault(raw);}
-async function importRecoveryFlow(){const text=$('recoveryKey').value.trim(),prefix='SIMHUB-RECOVERY-V1:';if(!text.startsWith(prefix))throw new Error('Recovery key format is invalid.');const raw=unb64u(text.slice(prefix.length));if(raw.length!==32)throw new Error('Recovery key length is invalid.');await wrapVaultRaw(raw,$('passphrase').value);await importVault(raw);$('recoveryKey').value='';toast('Recovery key imported and wrapped locally');}
-async function unlockVault(passphrase){const obj=JSON.parse(localStorage.getItem(VAULT_STORE)||'null');if(!obj||!obj.ct)throw new Error('No vault exists in this browser. Create or import one first.');const wrapKey=await deriveWrapKey(passphrase,unb64u(obj.salt));try{const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(obj.iv),additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,unb64u(obj.ct));await importVault(raw);}catch(e){throw new Error('Vault passphrase is incorrect or the local vault is damaged.');}}
+async function importVault(raw){if(globalVault?.initialized && await globalKeyId(raw)!==globalVault.keyId)throw Error('Vault 密钥与服务器登记身份不一致');vaultRaw=new Uint8Array(raw);vaultKey=await crypto.subtle.importKey('raw',vaultRaw,{name:'AES-GCM'},false,['encrypt','decrypt']);deviceKeyCache.clear();resetAutoLock();await cacheTabVault();}
+async function globalKeyId(raw){return b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)).slice(0,16));}
+async function makeGlobalEnvelope(raw,passphrase){
+  if(passphrase.length<10)throw Error('Vault 密码至少 10 位');
+  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const wrapKey=await deriveWrapKey(passphrase,salt);
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,
+    additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,raw));
+  return {v:1,kdf:'PBKDF2-SHA256',iterations:PBKDF2_ITER,salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)};
+}
+async function initGlobalVault(raw,passphrase){
+  if(globalVault?.initialized)throw Error('共享 Vault 已存在，禁止再次创建');
+  const vaultId=crypto.randomUUID(),keyId=await globalKeyId(raw);
+  const envelope=await makeGlobalEnvelope(raw,passphrase);
+  await ensureStepUp();
+  globalVault=await api('/api/v1/vault/initialize',{method:'POST',body:{vaultId,keyId,envelope}});
+  localStorage.removeItem(VAULT_STORE);
+}
+async function unwrapLegacyVault(passphrase){
+  const old=JSON.parse(localStorage.getItem(VAULT_STORE)||'null');
+  if(!old?.ct)throw Error('本机没有待迁移的旧 Vault');
+  const key=await deriveWrapKey(passphrase,unb64u(old.salt));
+  try{return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(old.iv),
+    additionalData:enc.encode('simhub-vault-wrap-v1')},key,unb64u(old.ct)));}
+  catch{throw Error('旧 Vault 密码不正确，无法自动迁移');}
+}
+async function importRecoveryFlow(){
+  const text=$('recoveryKey').value.trim(),prefix='SIMHUB-RECOVERY-V1:';
+  if(!text.startsWith(prefix))throw Error('恢复密钥格式无效');
+  const raw=unb64u(text.slice(prefix.length));
+  if(raw.length!==32)throw Error('恢复密钥长度无效');
+  try{
+    if(!globalVault)await loadGlobalVault();
+    if(globalVault.initialized){
+      if(await globalKeyId(raw)!==globalVault.keyId)throw Error('恢复密钥不属于当前共享 Vault，已阻止混用');
+    }else await initGlobalVault(raw,$('passphrase').value);
+    await importVault(raw);$('recoveryKey').value='';$('passphrase').value='';
+    toast('共享 Vault 已通过恢复密钥解锁');
+  }finally{raw.fill(0);}
+}
+async function unlockVault(passphrase){
+  if(!globalVault)await loadGlobalVault();
+  if(!globalVault.initialized)throw Error('尚未初始化共享 Vault');
+  const e=globalVault.envelope,wrapKey=await deriveWrapKey(passphrase,unb64u(e.salt));
+  let raw;
+  try{raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(e.iv),
+    additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,unb64u(e.ct)));}
+  catch{throw Error('共享 Vault 密码错误');}
+  try{
+    if(await globalKeyId(raw)!==globalVault.keyId)throw Error('共享 Vault 密钥指纹不一致，已停止解锁');
+    await importVault(raw);$('passphrase').value='';
+  }finally{raw.fill(0);}
+}
 async function keyIdForRaw(raw){const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',raw));return b64u(digest.slice(0,12));}
 async function deriveLegacyDevice(deviceId){if(!vaultRaw)throw new Error('Vault locked');const ikm=await crypto.subtle.importKey('raw',vaultRaw,'HKDF',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'HKDF',hash:'SHA-256',salt:enc.encode('simhub-device-v1'),info:enc.encode(deviceId)},ikm,256);const raw=new Uint8Array(bits),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);return {raw:raw,key:key,kid:await keyIdForRaw(raw),mode:'legacy'};}
 async function wrapNodeKey(raw,kid){const iv=crypto.getRandomValues(new Uint8Array(12)),aad=enc.encode('simhub-node-key-wrap-v1|'+kid),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:aad},vaultKey,raw));return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};}
@@ -444,11 +504,40 @@ async function importGateRecovery(){
 }
 async function createVaultFlow(){
   if(!authenticated)throw Error('请先登录');
-  if(localStorage.getItem(VAULT_STORE))throw Error('此浏览器已有 Vault，请使用恢复密钥而不是创建新密钥');
-  if(!confirm('仅首次创建管理池时使用：如果 Relay 已经存在加密短信，新 Vault 无法解密旧数据。确认创建？'))return;
-  await createVault($('passphrase').value);
-  await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
-  await storeTrustedVault();
+  await loadGlobalVault();
+  if(globalVault.initialized){showVaultStage();throw Error('共享 Vault 已初始化，只需输入原密码');}
+  const passphrase=$('passphrase').value;
+  let raw;
+  if(localStorage.getItem(VAULT_STORE)){
+    raw=await unwrapLegacyVault(passphrase);
+  }else{
+    if(!confirm('将首次创建全局 Vault。若现有节点由另一 Vault 配对，需重新配对或重新同步手机原始短信。继续？'))return;
+    raw=crypto.getRandomValues(new Uint8Array(32));
+  }
+  try{
+    await initGlobalVault(raw,passphrase);
+    await importVault(raw);
+    $('passphrase').value='';
+    await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
+    await storeTrustedVault();
+  }finally{raw.fill(0);}
+}
+async function changeGlobalVaultPassphrase(){
+  if(!vaultRaw || !globalVault?.initialized)throw Error('请先解锁共享 Vault');
+  const password=$('newVaultPassphrase').value;
+  if(password.length<10)throw Error('新 Vault 密码至少 10 位');
+  if(password!==$('confirmVaultPassphrase').value)throw Error('两次输入的 Vault 密码不一致');
+  const raw=new Uint8Array(vaultRaw);
+  try{
+    const envelope=await makeGlobalEnvelope(raw,password);
+    await ensureStepUp();
+    globalVault=await api('/api/v1/vault/rewrap',{method:'POST',body:{
+      vaultId:globalVault.vaultId,keyId:globalVault.keyId,
+      expectedGeneration:globalVault.generation,envelope}});
+    localStorage.removeItem(VAULT_STORE);
+    $('newVaultPassphrase').value='';$('confirmVaultPassphrase').value='';
+    toast('共享 Vault 密码已更新；所有管理终端将使用新密码解锁');
+  }finally{raw.fill(0);}
 }
 
 async function loadDevices(){
@@ -1603,7 +1692,7 @@ function relocalizeDynamic(){
   const active=document.querySelector('.nav.active')?.dataset.view||'inbox';
   switchView(active);
   setConnected($('relayDot').classList.contains('ok'));
-  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?tr('local_vault_found'):tr('no_local_vault');
+  $('gateHint').textContent=globalVault?.initialized?'已连接共享 Vault':'等待连接管理中心';
   if(vaultKey)$('vaultStatus').textContent=tr('vault_unlocked');
   renderDeviceSelectors();
   renderDevices();
@@ -1616,7 +1705,7 @@ function relocalizeDynamic(){
 
 function wire(){
   applyI18n();
-  $('gateHint').textContent=localStorage.getItem(VAULT_STORE)?tr('local_vault_found'):tr('no_local_vault');
+  $('gateHint').textContent=globalVault?.initialized?'已连接共享 Vault':'等待连接管理中心';
   $('languageSelect').onchange=()=>{setLocale($('languageSelect').value);relocalizeDynamic();};
   $('loginForm').onsubmit=e=>{e.preventDefault();loginFlow().catch(err=>toast(err.message));};
   $('vaultUnlockBtn').onclick=()=>connectAndUnlock().catch(e=>toast(e.message));
@@ -1633,6 +1722,7 @@ function wire(){
   $('passkeysList').onclick=e=>{const b=e.target.closest('button[data-passkey-id]');if(b)removePasskey(b.dataset.passkeyId).catch(err=>toast(err.message));};
   $('createVaultBtn').onclick=()=>createVaultFlow().catch(e=>toast(e.message));
   $('importKeyBtn').onclick=()=>importRecoveryFlow().catch(e=>toast(e.message));
+  $('changeVaultPassphrase').onclick=()=>changeGlobalVaultPassphrase().catch(e=>toast(e.message));
   $('lockBtn').onclick=lockVault;
   $('refreshBtn').onclick=()=>vaultKey?fullRefresh().catch(e=>toast(e.message)):toast(tr('vault_locked'));
   document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>switchView(b.dataset.view));

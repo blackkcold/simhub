@@ -1,3 +1,12 @@
+## v0.15.6 — Unified Android controller UI and same-phone authorization
+
+- Consolidate the Android SIM node and controller into one Compose App Shell: consistent brand toolbar, role switch, four-tab navigation and adaptive large-screen navigation rail; no second controller-specific toolbar or embedded WebView.
+- Add a native management overview dashboard; SMS, devices and settings reuse shared Material 3 cards and status components with independent navigation state per mode.
+- Allow **initial controller trust authorization entirely on the same Android phone**: jump to its HTTPS management site, use the browser's existing WebAuthn Passkey (including supported device biometrics) or administrator password/TOTP, unlock the original Global Vault and explicitly approve the Android identity and 6-digit pairing code.
+- Return to Android via a credential-free `simhub://controller?resume=1` link and resume pending enrollment; Keystore AES-GCM protects the time-limited ephemeral ECDH pairing state against ordinary process eviction.
+- Preserve E2EE ECDH/HKDF/AES-GCM one-time Vault grants, device-signed sessions, singleton Global Vault, Node Keys, historical source identity, existing SMS and PWA/Relay behavior. Add source-contract CI checks for shared navigation and same-phone onboarding.
+- The biometric/passkey ceremony uses the **same phone's secure browser**, not native Credential Manager or biometric-gated Android Vault unsealing. Actual OEM/passkey compatibility and physical process-death recovery still require device-level validation.
+
 ## v0.15.5 — One Global Vault across Web, PWA and native controllers
 
 - Introduce a singleton, zero-knowledge Master Vault registry: the Relay stores only a password-wrapped AES-GCM envelope, not plaintext keys.

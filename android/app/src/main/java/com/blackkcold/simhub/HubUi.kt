@@ -41,6 +41,8 @@ private val DarkBg=Color(0xFF0F1321)
 
 class HubViewModel:ViewModel(){
     var tab by mutableStateOf(0)
+    var controllerTab by mutableIntStateOf(0)
+    var controllerRefresh by mutableIntStateOf(0)
     var thread by mutableStateOf<String?>(null)
     var simDetail by mutableIntStateOf(-1)
     val drafts=mutableStateMapOf<String,String>()
@@ -123,7 +125,8 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
             ui.drafts["__new__"]=incomingBody
         }
     }
-    BackHandler(enabled=surface=="node" && (tools.compatibilityOpen || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0)){
+    BackHandler(enabled=(surface=="controller" && ui.controllerTab!=0) || (surface=="node" && (tools.compatibilityOpen || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0))){
+        if(surface=="controller"){ui.controllerTab=0;return@BackHandler}
         if(tools.compatibilityOpen)controller.closeCompatibility()
         else if(ui.tab==1 && ui.thread!=null)ui.thread=null
         else if(ui.tab==2 && ui.simDetail>=0)ui.simDetail=-1
@@ -141,7 +144,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                 containerColor=MaterialTheme.colorScheme.background,
                 contentWindowInsets=WindowInsets.safeDrawing,
                 topBar={
-                    if(isNode) Column {
+                    Column {
                         TopAppBar(
                             title={
                                 Row(verticalAlignment=Alignment.CenterVertically,
@@ -161,7 +164,8 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                 }
                             },
                             actions={
-                                if(isNode)IconButton(onClick=controller::refresh) {
+                                IconButton(onClick={if(isNode) controller.refresh()
+                                    else ui.controllerRefresh++}) {
                                     HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),
                                         description=stringResource(R.string.hub_refresh))
                                 }
@@ -185,10 +189,12 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                     }
                 },
                 bottomBar={
-                    if(isNode && !rail){
+                    if(!rail){
                         NavigationBar(containerColor=MaterialTheme.colorScheme.surface){
                             navIcons.forEachIndexed { i,id ->
-                                NavigationBarItem(selected=ui.tab==i,onClick={ui.tab=i},
+                                NavigationBarItem(
+                                    selected=(if(isNode)ui.tab else ui.controllerTab)==i,
+                                    onClick={if(isNode)ui.tab=i else ui.controllerTab=i},
                                     icon={HubIcon(id,Modifier.size(23.dp))},
                                     label={Text(stringResource(navText[i]),maxLines=1)},
                                     alwaysShowLabel=true)
@@ -198,29 +204,23 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                 }
             ) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
-                    // Keep this WebView and its sessionStorage alive while users inspect
-                    // the local node. Android View is hidden, not recreated, on switching.
-                    ControllerWorkspace(visible=!isNode,revision=controllerRevision,
-                        onScan=controller::scanController,onSwitchNode={chooseSurface("node")},
-                        expanded=rail,
-                        modifier=Modifier.fillMaxSize())
-                    if(isNode){
-                        Surface(Modifier.fillMaxSize(),
-                            color=MaterialTheme.colorScheme.background){
-                            Row(Modifier.fillMaxSize()) {
-                                if(rail){
-                                    NavigationRail(containerColor=MaterialTheme.colorScheme.surface){
-                                        Spacer(Modifier.height(12.dp))
-                                        navIcons.forEachIndexed { i,id ->
-                                            NavigationRailItem(selected=ui.tab==i,
-                                                onClick={ui.tab=i},
-                                                icon={HubIcon(id,Modifier.size(23.dp))},
-                                                label={Text(stringResource(navText[i]))})
-                                        }
-                                    }
+                    Row(Modifier.fillMaxSize()) {
+                        if(rail){
+                            NavigationRail(containerColor=MaterialTheme.colorScheme.surface){
+                                Spacer(Modifier.height(12.dp))
+                                navIcons.forEachIndexed { i,id ->
+                                    NavigationRailItem(
+                                        selected=(if(isNode)ui.tab else ui.controllerTab)==i,
+                                        onClick={if(isNode)ui.tab=i else ui.controllerTab=i},
+                                        icon={HubIcon(id,Modifier.size(23.dp))},
+                                        label={Text(stringResource(navText[i]))})
                                 }
+                            }
+                        }
+                        Box(Modifier.weight(1f).fillMaxHeight()){
+                            if(isNode) {
                                 AnimatedContent(targetState=ui.tab,
-                                    modifier=Modifier.weight(1f).fillMaxHeight(),
+                                    modifier=Modifier.fillMaxSize(),
                                     transitionSpec={fadeIn(tween(190)) togetherWith fadeOut(tween(130))},
                                     label="nodeTabContent") { page ->
                                     when(page) {
@@ -230,6 +230,13 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                         else->HubSettingsV2(snapshot,pairing,ui,controller,tools,expanded)
                                     }
                                 }
+                            } else {
+                                ControllerWorkspace(visible=true,revision=controllerRevision,
+                                    onScan=controller::scanController,
+                                    onSwitchNode={chooseSurface("node")},
+                                    tab=ui.controllerTab,onSelectTab={ui.controllerTab=it},
+                                    refreshTick=ui.controllerRefresh,
+                                    modifier=Modifier.fillMaxSize())
                             }
                         }
                     }

@@ -30,6 +30,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
+      - run: python3 scripts/test_controller_same_phone.py
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py

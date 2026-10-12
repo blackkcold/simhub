@@ -1,6 +1,8 @@
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 const $ = (id) => document.getElementById(id);
 const androidShell = new URLSearchParams(location.search).get('native') === '1';
+const samePhoneControllerApproval = new URLSearchParams(location.search).get('controller') === 'local';
+let samePhoneApprovalOpened = false;
 if(androidShell)document.documentElement.classList.add('simhub-android-shell');
 
 const enc = new TextEncoder();
@@ -423,7 +425,7 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
+function showUnlocked(){if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
@@ -1441,6 +1443,18 @@ function openControllerConnect(){
   const qr=$('controllerQr'),hint=$('controllerConnectHint');
   const dialog=$('controllerConnectDialog');
   $('controllerConnectLink').value='';qr.replaceChildren();
+  // Same-phone approval: the browser performs normal HTTPS WebAuthn/passkey
+  // authentication and Vault decryption; only the user's explicit tap returns
+  // to the Android app. Never include a code, key or token in the deep link.
+  if(samePhoneControllerApproval && !dialog.querySelector('.controller-return-to-app')){
+    const back=document.createElement('a');
+    back.className='ghost controller-return-to-app';
+    back.href='simhub://controller?resume=1';
+    back.textContent='返回 SIM Hub 管理中心';
+    back.style.display='inline-block';
+    back.style.padding='12px 0';
+    hint.parentElement?.insertBefore(back,hint.nextSibling);
+  }
   $('controllerCopyLink').disabled=false;$('controllerCopyAddress').disabled=false;
   try{
     const link=managementControllerLink(location.origin);

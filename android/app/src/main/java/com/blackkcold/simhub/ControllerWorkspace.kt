@@ -183,7 +183,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             color=MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(onClick={
                             context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
-                                Uri.parse(selected)))
+                                Uri.parse(selected + "/?controller=local")))
                         },modifier=Modifier.fillMaxWidth()) { Text("在本机浏览器认证并批准") }
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }else{

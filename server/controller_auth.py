@@ -40,6 +40,7 @@ def init(con: sqlite3.Connection) -> None:
       identity_public TEXT NOT NULL,
       exchange_public TEXT NOT NULL,
       code_hash TEXT NOT NULL,
+      poll_token_hash TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
       approved_at INTEGER,
@@ -60,6 +61,10 @@ def init(con: sqlite3.Connection) -> None:
       expires_at INTEGER NOT NULL
     );
     """)
+    # Existing installations require an additive migration for in-flight pairings.
+    cols = {r[1] for r in con.execute("PRAGMA table_info(controller_requests)")}
+    if "poll_token_hash" not in cols:
+        con.execute("ALTER TABLE controller_requests ADD COLUMN poll_token_hash TEXT NOT NULL DEFAULT ''")
     global_vault.init(con)
 
 def maintenance(con: sqlite3.Connection, now: int) -> None:
@@ -81,12 +86,13 @@ def start(con: sqlite3.Connection, body: dict, ip: str, now: int) -> dict:
         raise ValueError("Too many pending controller pairings")
     request_id = str(uuid.uuid4())
     code = f"{secrets.randbelow(1000000):06d}"
+    poll_token = secrets.token_urlsafe(32)
     import hashlib
     digest = hashlib.sha256((request_id + "|" + code).encode()).hexdigest()
     con.execute("""INSERT INTO controller_requests(id,label,client_ip,identity_public,exchange_public,
-                  code_hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)""",
-                (request_id,label,ip,identity,exchange,digest,now,now+PAIR_TTL))
-    return {"requestId":request_id,"pairingCode":code,"expiresIn":PAIR_TTL}
+                  code_hash,poll_token_hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (request_id,label,ip,identity,exchange,digest,hashlib.sha256(poll_token.encode()).hexdigest(),now,now+PAIR_TTL))
+    return {"requestId":request_id,"pairingCode":code,"pollToken":poll_token,"expiresIn":PAIR_TTL}
 
 def pending(con: sqlite3.Connection, now: int) -> list[dict]:
     rows = con.execute("""SELECT id,label,identity_public,exchange_public,created_at,expires_at
@@ -128,10 +134,14 @@ def approve(con: sqlite3.Connection, body: dict, now: int, admin_fingerprint: st
                 (now,json.dumps({"controllerId":controller_id,"vaultEnvelope":envelope,"grantVaultId":root["vaultId"],"grantVaultKeyId":root["keyId"]}),request_id))
     return {"ok":True,"controllerId":controller_id}
 
-def poll(con: sqlite3.Connection, request_id: str, ip: str, now: int) -> dict:
+def poll(con: sqlite3.Connection, request_id: str, ip: str, now: int, poll_token: str = "") -> dict:
     row=con.execute("SELECT * FROM controller_requests WHERE id=?",(request_id,)).fetchone()
-    # Public bearer requestId is high entropy; IP binding further limits leaked identifiers.
-    if not row or row["client_ip"]!=ip:
+    # A separate high-entropy polling credential survives Wi-Fi / mobile data handover.
+    # Pre-migration requests (without a poll token) retain their original IP restriction.
+    import hashlib, hmac
+    if not row or (row["poll_token_hash"] and not (poll_token and hmac.compare_digest(
+            row["poll_token_hash"],hashlib.sha256(poll_token.encode()).hexdigest()))) or (
+            not row["poll_token_hash"] and row["client_ip"]!=ip):
         raise ValueError("Unknown pairing request")
     if row["expires_at"]<=now:
         return {"state":"expired"}

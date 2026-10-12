@@ -27,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.view.WindowManager
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -34,6 +37,45 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+
+internal object ControllerCommandProgress {
+    fun describe(cmd:JSONObject):String = when(val state=cmd.optString("state","queued")){
+        "queued"->"排队中：等待设备唤醒领取（节能模式可能需要数分钟）"
+        "dispatched"->"设备已领取，等待最终执行 ACK"
+        "submitted"->"短信已提交系统，尚未确认发送"
+        "sent"->"系统已发送，等待运营商回执"
+        "delivered"->"运营商已确认送达"
+        "succeeded"->"任务执行成功"
+        "failed"->"任务失败："+cmd.optJSONObject("result")?.optString("reason").orEmpty().take(160)
+        "rejected"->"设备拒绝任务"
+        "expired"->"任务已过期，未被确认为执行成功"
+        else->"任务状态：$state"
+    }
+}
+
+private data class ControllerLoadBatch(
+    val payload:String,val sequence:Long,val nextTime:Long,val nextSeq:Long,
+    val unreadable:Int,val finalFragment:Boolean,val appendFragment:Boolean
+)
+private data class ControllerLoadResult(
+    val devices:List<JSONObject>,val totpRequired:Boolean,
+    val batches:List<ControllerLoadBatch>,val highWater:Long
+)
+/** Stable conversation identity and conservative phone normalization. */
+internal object ControllerConversation {
+    fun key(device:String,channel:String,revision:Int,address:String):String {
+        val digits=address.filter{it.isDigit()}
+        val number=when {
+            digits.length==15 && digits.startsWith("0086")->digits.drop(4)
+            digits.length==13 && digits.startsWith("86")->digits.drop(2)
+            digits.length==11 && digits.startsWith("1")->digits
+            address.trim().startsWith("+")->"+$digits"
+            digits.isNotBlank()->digits
+            else->address.trim().lowercase()
+        }
+        return "$device|$channel|$revision|$number"
+    }
+}
 
 /** Single Jetpack Compose surface: no WebView, nested browser shell or duplicate navigation. */
 @Composable
@@ -58,6 +100,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var unreadable by remember(selected){mutableIntStateOf(0)}
     var lastEventSeq by remember(selected){mutableLongStateOf(0L)}
     var showWrite by remember{mutableStateOf(false)}
+    var composeRecipient by remember(selected){mutableStateOf("")}
+    var composeMessage by remember(selected){mutableStateOf("")}
+    var composeSubmittedDraft by remember(selected){mutableStateOf("")}
+    var composeCommandId by remember(selected){mutableStateOf(UUID.randomUUID().toString())}
+    var composeDeviceIdx by remember(selected){mutableIntStateOf(0)}
+    var composeChannelIdx by remember(selected){mutableIntStateOf(0)}
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
@@ -70,6 +118,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var lastCommandId by remember(selected){mutableStateOf("")}
     var lastCommandState by remember(selected){mutableStateOf("")}
     var lastCommandDevice by remember(selected){mutableStateOf("")}
+    var commandHistory by remember(selected){mutableStateOf<List<JSONObject>>(emptyList())}
+    var commandHistoryError by remember(selected){mutableStateOf("")}
+    var expandCommands by remember(selected){mutableStateOf(false)}
+    var commandTick by remember(selected){mutableIntStateOf(0)}
+    // Controller-only screen capture protection, including Android Recents.
+    DisposableEffect(context,visible){
+        val window=(context as? Activity)?.window
+        if(visible)window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose{if(visible)window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)}
+    }
 
     // Optional OS-level app gate. This is not a cryptographically authentication-bound
     // Keystore key; such a migration requires a separate rewrap and recovery protocol.
@@ -112,91 +170,145 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         ControllerProfiles.select(context,value)
         selected=value;onSelectTab(0)
     }
-    fun load(older:Boolean=false,newer:Boolean=false){
+    // Exactly one load at a time. A second user request is queued, never discarded.
+    var pendingLoad by remember(selected){mutableStateOf("")}
+    fun load(mode:String="delta"){
         val api=client?:return
         if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
-        if(busy)return
+        if(mode=="delta" && page>0)return // Historical browsing is a stable window.
+        if(busy){pendingLoad=mode;return}
         busy=true
         scope.launch {
-            try{
+            try {
                 val data=withContext(Dispatchers.IO){
                     val d=api.api("/api/v1/devices")
                     val auth=api.api("/api/v1/auth/check")
                     val all=d.optJSONArray("devices")?:JSONArray()
-                    val list=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
-                    val incremental=newer && lastEventSeq>0
-                    val requested=if(newer)0 else if(older)page+1 else page
+                    val nodes=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
+                    val byId=nodes.associateBy{it.optString("id")}
+                    val delta=mode=="delta" && lastEventSeq>0
+                    // Read the sequence watermark *before* the latest-time page.
+                    // Concurrent uploads can then safely be replayed as delta.
+                    val highWater=if(mode=="latest" || (mode=="delta" && !delta))
+                        api.api("/api/v1/events?latest=1&limit=1").optLong("nextSince",0L)
+                        else 0L
+                    val requested=if(mode=="older")page+1 else 0
                     val cursor=if(requested>0)cursors.getOrNull(requested-1) else null
+                    if(mode=="older" && cursor==null)
+                        throw IllegalStateException("历史游标已失效，请返回最新短信重试")
                     val suffix=if(cursor!=null)
                         "&beforeTime=${cursor.first}&beforeSeq=${cursor.second}" else ""
-                    val events=if(incremental)
-                        api.api("/api/v1/events?since=$lastEventSeq&limit=1000")
-                        else api.api("/api/v1/events?order=occurred&limit=100"+suffix)
-                    val rows=events.optJSONArray("events")?:JSONArray()
-                    val newestSeq=(0 until rows.length()).maxOfOrNull{rows.optJSONObject(it)?.optLong("seq",0L)?:0L}?:0L
+                    val result=ArrayList<ControllerLoadBatch>()
+                    var sequence=lastEventSeq
                     val vault=api.vault()
-                    val messages=JSONArray()
-                    var failure=0
-                    try{
-                        val byId=list.associateBy{it.optString("id")}
-                        for(i in 0 until rows.length()){
-                            val item=rows.optJSONObject(i)?:continue
-                            if(!item.optString("kind").startsWith("sms."))continue
-                            val node=byId[item.optString("deviceId")]
-                            var plaintext=JSONObject()
-                            var failed=false
-                            try{
-                                if(node==null)throw SecurityException("Unknown node")
-                                plaintext=api.decryptEvent(item,node,vault)
-                            }catch(_:Exception){failed=true;failure++}
-                            val kind=item.optString("kind")
-                            val direction=plaintext.optString("direction")
-                            val inbound=kind=="sms.received"||direction=="in"||
-                                (kind=="sms.history"&&direction!="out")
-                            val sender=if(inbound)plaintext.optString("sender") else plaintext.optString("recipient")
-                            val address=sender.ifBlank{plaintext.optString("sender",plaintext.optString("recipient","未知"))}
-                            val ch=plaintext.optString("channelId")
-                            val rev=plaintext.optInt("channelRevision")
-                            val provenance=if(ch.isEmpty()||rev==0)"历史 SIM · 来源待确认"
-                                else (plaintext.optString("simTag").ifBlank{ch})+" · r"+rev
-                            // Preserve source identity for traceability; never assign a
-                            // historical record to the currently inserted SIM.
-                            val otp=plaintext.optJSONObject("otp")?.optString("value").orEmpty()
-                            val thread=address.trim().replace(" ","").lowercase()
-                            messages.put(JSONObject().put("id",item.optString("deviceId")+":"+item.optString("eventId"))
-                                .put("thread",thread).put("sender",plaintext.optString("contactName").ifBlank{address})
-                                .put("body",if(failed)"" else plaintext.optString("body"))
-                                .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
-                                .put("device",node?.optString("name")?:"未知设备")
-                                .put("sim",provenance)
-                                .put("sourceId",item.optString("deviceId")+"|"+ch+"|"+rev).put("otp",otp).put("failed",failed))
+                    try {
+                        // 50 bounded ciphertext events per batch. Up to eight batches
+                        // each refresh; remaining events resume from the ACKed cursor.
+                        val rounds=if(delta)8 else 1
+                        for(batchIndex in 0 until rounds){
+                            val events=if(delta)
+                                api.api("/api/v1/events?since=$sequence&limit=50")
+                            else api.api("/api/v1/events?order=occurred&limit=50"+suffix)
+                            val rows=events.optJSONArray("events")?:JSONArray()
+                            if(rows.length()>50)throw IllegalStateException("Relay batch exceeds negotiated limit")
+                            val messages=JSONArray()
+                            var failures=0
+                            var highest=sequence
+                            for(i in 0 until rows.length()){
+                                val item=rows.optJSONObject(i)?:throw IllegalStateException("Malformed event")
+                                val eventSeq=item.optLong("seq",0)
+                                if(eventSeq<=0)throw IllegalStateException("Invalid event sequence")
+                                if(delta && eventSeq<=highest)
+                                    throw IllegalStateException("Non-monotonic delta sequence")
+                                highest=maxOf(highest,eventSeq)
+                                if(!item.optString("kind").startsWith("sms."))continue
+                                val node=byId[item.optString("deviceId")]
+                                var plaintext=JSONObject()
+                                var failed=false
+                                try{
+                                    if(node==null)throw SecurityException("Unknown node")
+                                    plaintext=api.decryptEvent(item,node,vault)
+                                }catch(_:Exception){failed=true;failures++}
+                                val kind=item.optString("kind")
+                                val direction=plaintext.optString("direction")
+                                val inbound=kind=="sms.received"||direction=="in"||
+                                    (kind=="sms.history"&&direction!="out")
+                                val sender=if(inbound)plaintext.optString("sender") else plaintext.optString("recipient")
+                                val address=sender.ifBlank{plaintext.optString("sender",plaintext.optString("recipient","未知"))}
+                                val ch=plaintext.optString("channelId")
+                                val rev=plaintext.optInt("channelRevision")
+                                val provenance=if(ch.isEmpty()||rev==0)"历史 SIM · 来源待确认"
+                                    else (plaintext.optString("simTag").ifBlank{ch})+" · r"+rev
+                                val otp=plaintext.optJSONObject("otp")?.optString("value").orEmpty()
+                                // Do not coalesce separate devices/SIM revisions
+                                // merely because their phone number is the same.
+                                val thread=ControllerConversation.key(item.optString("deviceId"),ch,rev,address)
+                                messages.put(JSONObject().put("id",item.optString("deviceId")+":"+item.optString("eventId"))
+                                    .put("thread",thread).put("sender",plaintext.optString("contactName").ifBlank{address}.take(100))
+                                    .put("body",if(failed)"" else plaintext.optString("body").take(4000))
+                                    .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
+                                    .put("device",node?.optString("name")?.take(100)?:"未知设备")
+                                    .put("sim",provenance.take(90))
+                                    .put("sourceId",(item.optString("deviceId")+"|"+ch+"|"+rev).take(160))
+                                    .put("otp",otp.take(20)).put("failed",failed))
+                            }
+                            // A single SMS may contain many escapable characters.
+                            // Split after JSON encoding, not just by event count.
+                            // Only the final fragment may advance the event cursor.
+                            val fragments=ArrayList<JSONArray>()
+                            var fragment=JSONArray()
+                            var encodedSize=256
+                            for(j in 0 until messages.length()){
+                                val entry=messages.getJSONObject(j)
+                                val length=entry.toString().length+1
+                                if(fragment.length()>0 && encodedSize+length>400_000){
+                                    fragments.add(fragment);fragment=JSONArray();encodedSize=256
+                                }
+                                fragment.put(entry);encodedSize+=length
+                            }
+                            fragments.add(fragment)
+                            for(j in fragments.indices){
+                                val final=j==fragments.lastIndex
+                                val payload=JSONObject().put("type","snapshot").put("v",1)
+                                    .put("messages",fragments[j])
+                                    .put("unreadable",if(final)failures else 0)
+                                    .put("hasMore",events.optBoolean("hasMore"))
+                                    .put("hasNewer",requested>0).put("incremental",delta)
+                                result.add(ControllerLoadBatch(payload.toString(),
+                                    if(final)highest else sequence,
+                                    events.optLong("nextBeforeTime"),events.optLong("nextBeforeSeq"),
+                                    if(final)failures else 0,final,j>0))
+                            }
+                            sequence=highest
+                            if(!delta || rows.length()<50)break
                         }
                     }finally{vault.fill(0)}
-                    val nextTime=events.optLong("nextBeforeTime",0)
-                    val nextSeq=events.optLong("nextBeforeSeq",0)
-                    val response=JSONObject().put("type","snapshot").put("v",1).put("messages",messages)
-                        .put("unreadable",failure).put("hasMore",events.optBoolean("hasMore"))
-                        .put("hasNewer",requested>0).put("incremental",incremental)
-                    arrayOf(d,list,events,response,requested,nextTime,nextSeq,auth.optBoolean("totpRequired",true),newestSeq,incremental)
+                    ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater)
                 }
-                // A background/lock transition may occur while ciphertext is decrypting.
-                // Never repopulate native plaintext after the local OS gate has locked.
                 if(requireLocalUnlock && !localUnlocked)return@launch
-                @Suppress("UNCHECKED_CAST")
-                devices=data[1] as List<JSONObject>
-                secondFactorTotp=data[7] as Boolean
-                if(!(data[9] as Boolean)) unreadable=(data[3] as JSONObject).optInt("unreadable")
-                else unreadable+=(data[3] as JSONObject).optInt("unreadable")
-                lastEventSeq=maxOf(lastEventSeq,data[8] as Long)
-                inbox.accept((data[3] as JSONObject).toString(),append=older || (data[9] as Boolean))
-                val loaded=data[4] as Int
-                val nextTime=data[5] as Long
-                val nextSeq=data[6] as Long
-                if(newer && !(data[9] as Boolean)){page=0;cursors=emptyList()}
-                else if(older){page=loaded}
-                if(!(data[9] as Boolean) && nextTime>0&&nextSeq>0){
-                    cursors=cursors.take(page)+listOf(nextTime to nextSeq)
+                // Main-thread ACK: only successfully accepted decrypted content
+                // allows an event cursor or historical-page index to move.
+                for(batch in data.batches){
+                    if(!inbox.accept(batch.payload,append=mode=="older" || mode=="delta" || batch.appendFragment,
+                                     preferOlder=mode=="older"))
+                        throw IllegalStateException("短信批次未接收；游标未推进，可安全重试")
+                    if(mode=="delta" && batch.finalFragment)
+                        lastEventSeq=maxOf(lastEventSeq,batch.sequence,data.highWater)
+                    else if(mode=="older" && batch.finalFragment){
+                        page+=1
+                        if(batch.nextTime>0 && batch.nextSeq>0)
+                            cursors=cursors.take(page)+listOf(batch.nextTime to batch.nextSeq)
+                    }else if(mode=="latest" && batch.finalFragment){
+                        page=0
+                        cursors=if(batch.nextTime>0 && batch.nextSeq>0)
+                            listOf(batch.nextTime to batch.nextSeq) else emptyList()
+                        lastEventSeq=maxOf(lastEventSeq,data.highWater)
+                    }
+                    if(mode=="latest")unreadable=batch.unreadable
+                    else unreadable+=batch.unreadable
                 }
+                devices=data.devices
+                secondFactorTotp=data.totpRequired
                 authorized=true;error=""
             }catch(e:Exception){
                 error=e.message?:"无法连接管理中心"
@@ -204,19 +316,27 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     authorized=false;inbox.clear();devices=emptyList()
                     lastCommandId="";lastCommandState="";lastEventSeq=0
                 }
-            }
-            finally{busy=false}
+            }finally{busy=false}
+        }
+    }
+    fun refreshDelta(){load("delta")}
+    fun loadOlderPage(){load("older")}
+    fun navigateToLatest(){load("latest")}
+    LaunchedEffect(busy,pendingLoad){
+        if(!busy && pendingLoad.isNotBlank()){
+            val next=pendingLoad;pendingLoad=""
+            load(next)
         }
     }
     LaunchedEffect(selected,visible,localUnlocked,requireLocalUnlock){
         if(visible && (!requireLocalUnlock || localUnlocked) && client?.hasGrant()==true){
-            authorized=true;load(newer=true)
+            authorized=true;refreshDelta()
         }
     }
-    LaunchedEffect(selected,visible,authorized){
+    LaunchedEffect(selected,visible,authorized,localUnlocked,requireLocalUnlock){
         if(visible && authorized && (!requireLocalUnlock || localUnlocked))while(true){
             delay(60000)
-            if(!busy)load(newer=true)
+            if(!busy)refreshDelta()
         }
     }
     LaunchedEffect(pairing,selected,visible){
@@ -226,44 +346,33 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             delay(2400)
             try{
                 if(withContext(Dispatchers.IO){api.pollPairing()}){
-                    authorized=true;pairing=null;load(newer=true);break
+                    authorized=true;pairing=null;refreshDelta();break
                 }
             }catch(e:Exception){error=e.message?:"配对失败";pairing=null;break}
         }
     }
-    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized && (!requireLocalUnlock || localUnlocked))load(newer=true)}
-    // Queue acceptance is not device execution. Poll the Relay's immutable ACK state.
-    LaunchedEffect(selected,lastCommandId,visible){
-        if(!visible || lastCommandId.isBlank())return@LaunchedEffect
+    LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized && (!requireLocalUnlock || localUnlocked))refreshDelta()}
+    // Command progress is durable on Relay, not an ephemeral two-minute poll.
+    // Continue observing queued/ACKed commands across Eco-mode wakeups and app restarts.
+    LaunchedEffect(selected,visible,authorized,localUnlocked,requireLocalUnlock,commandTick){
         val api=client?:return@LaunchedEffect
-        repeat(40){
-            delay(3000)
-            try {
-                val statuses=withContext(Dispatchers.IO){
-                    api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")
-                }?:JSONArray()
-                val found=(0 until statuses.length()).mapNotNull{statuses.optJSONObject(it)}
-                    .firstOrNull{it.optString("commandId")==lastCommandId}
-                if(found!=null){
-                    val state=found.optString("state","queued")
-                    lastCommandState=when(state){
-                        "queued"->"等待设备连接并领取任务"
-                        "dispatched"->"设备已领取任务，等待执行确认"
-                        "submitted"->"已提交到系统短信服务"
-                        "sent"->"系统已发送，等待运营商回执"
-                        "delivered"->"运营商已确认送达"
-                        "succeeded"->"任务执行成功"
-                        "failed"->"任务执行失败："+found.optJSONObject("result")?.optString("reason").orEmpty()
-                        "rejected"->"任务被设备拒绝"
-                        "expired"->"任务已过期，没有执行"
-                        else->"当前状态：$state"
+        if(!visible || !authorized || (requireLocalUnlock && !localUnlocked))return@LaunchedEffect
+        while(true){
+            if(!busy){
+                try{
+                    val recent=withContext(Dispatchers.IO){
+                        api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")?:JSONArray()
                     }
-                    if(state in setOf("delivered","succeeded","failed","rejected","expired"))
-                        return@LaunchedEffect
+                    commandHistory=(0 until recent.length()).mapNotNull{recent.optJSONObject(it)}
+                    commandHistoryError=""
+                    val current=commandHistory.firstOrNull{it.optString("commandId")==lastCommandId}
+                    if(current!=null)
+                        lastCommandState=ControllerCommandProgress.describe(current)
+                }catch(e:Exception){
+                    commandHistoryError=e.message?:"任务状态暂不可用，稍后将继续重试"
                 }
-            }catch(e:Exception){
-                lastCommandState="无法更新任务进度："+(e.message?:"网络不可用")
             }
+            delay(60000)
         }
     }
     if(!visible)return
@@ -329,7 +438,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }else{
                         if(client?.hasGrant()==true)OutlinedButton(onClick={
-                            authorized=true;load(newer=true)
+                            authorized=true;refreshDelta()
                         },modifier=Modifier.fillMaxWidth()){Text("重试已授权终端连接")}
                         Button(enabled=!busy && client?.hasGrant()!=true,onClick={
                             busy=true;scope.launch {
@@ -369,16 +478,43 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 modifier=Modifier.fillMaxWidth()) { Text(hubLabel("查看短信","View messages")) }
                             FilledTonalButton(onClick={onSelectTab(2)},
                                 modifier=Modifier.fillMaxWidth()) { Text(hubLabel("管理设备","Manage devices")) }
-                            OutlinedButton(onClick={load(newer=true)},
+                            OutlinedButton(onClick={refreshDelta()},
                                 modifier=Modifier.fillMaxWidth()) { Text(hubLabel("刷新加密数据","Refresh encrypted data")) }
                         }
                     }
-                    if(lastCommandId.isNotBlank())item{
+                    item{
                         HubCard(Modifier.fillMaxWidth()){
-                            HubSectionTitle("最近下发的指令")
-                            Text(lastCommandState.ifBlank{"状态查询中"},style=MaterialTheme.typography.bodyMedium)
-                            Text("设备：$lastCommandDevice · 命令："+lastCommandId.take(8),
-                                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            HubSectionTitle(hubLabel("远程任务中心","Remote command center"))
+                            Text(hubLabel("队列接收不代表设备执行成功；任务状态来自服务器持久化 ACK。",
+                                "Queued is not completed. States are read from durable Relay acknowledgements."),
+                                style=MaterialTheme.typography.bodySmall,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedButton(onClick={commandTick++}){
+                                Text(hubLabel("刷新任务状态","Refresh command status"))
+                            }
+                            if(commandHistoryError.isNotEmpty())
+                                Text(commandHistoryError,color=MaterialTheme.colorScheme.error)
+                            if(commandHistory.isEmpty())
+                                Text(hubLabel("暂无可查询的任务","No commands to display"))
+                            commandHistory.take(if(expandCommands)50 else 5).forEach{cmd->
+                                HorizontalDivider()
+                                val type=cmd.optString("type")
+                                val deviceName=devices.firstOrNull{it.optString("id")==cmd.optString("deviceId")}
+                                    ?.optString("name")?:cmd.optString("deviceId").take(8)
+                                Text("$deviceName · $type",
+                                    style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.SemiBold)
+                                Text(ControllerCommandProgress.describe(cmd),
+                                    style=MaterialTheme.typography.bodySmall)
+                                Text("ID "+cmd.optString("commandId").take(12)+
+                                    " · "+android.text.format.DateFormat.format(
+                                        "MM-dd HH:mm",cmd.optLong("createdAt")*1000).toString(),
+                                    style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if(commandHistory.size>5)TextButton(onClick={expandCommands=!expandCommands}){
+                                Text(if(expandCommands)hubLabel("收起","Show fewer")
+                                    else hubLabel("展开更多任务","Show more commands"))
+                            }
                         }
                     }
                     if(error.isNotEmpty())item {
@@ -396,10 +532,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             }
                         }
                     }else NativeControllerInbox(inbox,
-                        onRefresh={load(newer=true)},
-                        onOlder={load(older=true)},
-                        onNewer={load(newer=true)},
-                        onOpenLogin={load(newer=true)},
+                        onRefresh={refreshDelta()},
+                        onOlder={loadOlderPage()},
+                        onNewer={navigateToLatest()},
+                        onOpenLogin={refreshDelta()},
                         onWrite={showWrite=true})
                     if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
@@ -452,7 +588,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                     item {
                         Text("安全与权限",style=MaterialTheme.typography.titleMedium)
-                        Text("解除本地授权会清除该管理空间的本机身份密钥与加密 Vault。服务器端撤销请在网页管理后台完成。",
+                        Text("可在本机完成云端授权撤销及本地密钥清除；离线时也可仅清除本机身份，但云端授权不会因此撤销。",
                             color=MaterialTheme.colorScheme.onSurfaceVariant,
                             style=MaterialTheme.typography.bodySmall)
                         Row(verticalAlignment=Alignment.CenterVertically){
@@ -572,15 +708,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             confirmButton={TextButton(onClick={selectedDevice=null;actionError=""}){Text(hubLabel("关闭","Close"))}})
     }
     if(showWrite){
-        var recipient by remember{mutableStateOf("")}
-        var message by remember{mutableStateOf("")}
         var sendError by remember{mutableStateOf("")}
         var sending by remember{mutableStateOf(false)}
-        var submittedDraft by remember{mutableStateOf("")}
-        // Reuse this ID across uncertain retries to avoid accidental duplicate sends.
-        val messageCommandId=remember{UUID.randomUUID().toString()}
-        var deviceIdx by remember{mutableIntStateOf(0)}
-        var channelIdx by remember{mutableIntStateOf(0)}
+        // Draft, SIM choice and idempotency key survive closing the compose page.
+        val recipient=composeRecipient
+        val message=composeMessage
+        val submittedDraft=composeSubmittedDraft
+        val messageCommandId=composeCommandId
+        val deviceIdx=composeDeviceIdx
+        val channelIdx=composeChannelIdx
         val possible=devices.filter{d->
             val st=d.optJSONObject("state")?:JSONObject()
             val channels=st.optJSONArray("channels")
@@ -591,9 +727,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val channels=current?.optJSONObject("state")?.optJSONArray("channels")?:JSONArray()
         val currentDraft=(current?.optString("id")?:"")+"|"+deviceIdx+"|"+channelIdx+"|"+recipient+"|"+message
         var stepUp by remember{mutableStateOf("")}
-        AlertDialog(onDismissRequest={showWrite=false},title={Text(hubLabel("发送加密短信","Send encrypted SMS"))},
-            text={Column(Modifier.heightIn(max=430.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Dialog(onDismissRequest={showWrite=false},
+            properties=DialogProperties(usePlatformDefaultWidth=false)){
+            Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
+                Column(Modifier.fillMaxSize().imePadding().padding(18.dp)){
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                        Text(hubLabel("发送加密短信","Send encrypted SMS"),
+                            modifier=Modifier.weight(1f),style=MaterialTheme.typography.titleLarge)
+                        TextButton(onClick={showWrite=false}){Text(hubLabel("关闭","Close"))}
+                    }
+                    HorizontalDivider()
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                        verticalArrangement=Arrangement.spacedBy(12.dp)){
                 if(sendError.isNotEmpty())Text(sendError,color=MaterialTheme.colorScheme.error)
                 if(submittedDraft.isNotEmpty() && currentDraft!=submittedDraft)
                     Text(hubLabel("重试需保留原收件人、SIM 与短信内容；修改内容请新建发送任务。",
@@ -603,23 +748,25 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 else{
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)
                     possible.forEachIndexed{i,d->
-                        FilterChip(selected=i==deviceIdx,onClick={deviceIdx=i;channelIdx=0},
+                        FilterChip(selected=i==deviceIdx,onClick={composeDeviceIdx=i;composeChannelIdx=0},
                             label={Text(d.optString("name"))})
                     }
                     Text("来源 SIM",style=MaterialTheme.typography.labelLarge)
                     for(i in 0 until channels.length()){
                         val ch=channels.optJSONObject(i)?:continue
-                        FilterChip(selected=i==channelIdx,onClick={channelIdx=i},
+                        FilterChip(selected=i==channelIdx,onClick={composeChannelIdx=i},
                             label={Text(ch.optString("displayName").ifBlank{ch.optString("id")})})
                     }
-                    OutlinedTextField(recipient,{recipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
-                    OutlinedTextField(message,{message=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
+                    OutlinedTextField(recipient,{composeRecipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
+                    OutlinedTextField(message,{composeMessage=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
                     OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
                         singleLine=true,visualTransformation=PasswordVisualTransformation())
                 }
-            }},confirmButton={TextButton(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && recipient.isNotBlank() && message.isNotBlank(),
+                    }
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+                        Button(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
-                    if(submittedDraft.isEmpty())submittedDraft=currentDraft
+                    if(submittedDraft.isEmpty())composeSubmittedDraft=currentDraft
                     sending=true;sendError=""
                     scope.launch{
                         try {
@@ -647,11 +794,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             lastCommandDevice=current?.optString("name").orEmpty()
                             lastCommandState="等待设备连接并领取任务"
                             showWrite=false;error=""
+                            composeRecipient="";composeMessage=""
+                            composeSubmittedDraft=""
+                            composeCommandId=UUID.randomUUID().toString()
                         }catch(e:Exception){
                             sendError=(e.message?:"请求失败")+
                                 "。若请求状态不明，请先查看命令执行状态再重试。"
                         }finally{sending=false}
                     }
-                }){Text(hubLabel("确认发送","Confirm send"))}},dismissButton={TextButton(onClick={showWrite=false}){Text(hubLabel("取消","Cancel"))}})
+                        }){Text(hubLabel("确认发送","Confirm send"))}
+                    }
+                }
+            }
+        }
     }
 }

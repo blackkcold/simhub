@@ -31,6 +31,48 @@ public class ControllerInboxStateTest {
         state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"old\",\"timestamp\":100,\"body\":\"older\"}],\"hasMore\":false}",true);
         assertEquals(2,state.getMessages().size());
     }
+    @Test public void batchAckRejectedWhenOversizedAndNeverMutatesExistingMessages() throws Exception {
+        ControllerInboxState state=new ControllerInboxState();
+        assertTrue(state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"one\",\"timestamp\":100}]}"));
+        assertFalse(state.accept("x".repeat(450001)));
+        assertEquals(1,state.getMessages().size());
+        org.json.JSONArray rows=new org.json.JSONArray();
+        for(int i=0;i<261;i++)rows.put(new org.json.JSONObject().put("id","id"+i));
+        String oversized=new org.json.JSONObject().put("type","snapshot").put("v",1)
+            .put("messages",rows).toString();
+        assertFalse(state.accept(oversized));
+        assertEquals("one",state.getMessages().get(0).getId());
+    }
+    @Test public void deepHistoryWindowRetainsOlderMessagesAndCanNavigateToLatest() throws Exception {
+        ControllerInboxState state=new ControllerInboxState();
+        for(int batch=0;batch<14;batch++) {
+            org.json.JSONArray rows=new org.json.JSONArray();
+            for(int i=0;i<100;i++){
+                int t=1400-(batch*100+i);
+                rows.put(new org.json.JSONObject().put("id","sms"+t).put("timestamp",t));
+            }
+            boolean older=batch>0;
+            assertTrue(state.accept(new org.json.JSONObject().put("type","snapshot").put("v",1)
+                .put("messages",rows).put("hasMore",batch<13).put("hasNewer",older)
+                .toString(),older,older));
+        }
+        assertEquals(1200,state.getMessages().size());
+        assertEquals("sms1",state.getMessages().get(1199).getId());
+        assertTrue(state.getHasNewer());
+        org.json.JSONArray latest=new org.json.JSONArray().put(
+            new org.json.JSONObject().put("id","fresh").put("timestamp",1500));
+        assertTrue(state.accept(new org.json.JSONObject().put("type","snapshot").put("v",1)
+            .put("messages",latest).put("hasNewer",false).toString()));
+        assertEquals(1,state.getMessages().size());
+        assertEquals("fresh",state.getMessages().get(0).getId());
+    }
+    @Test public void conversationsNeverMergeAcrossDevicesOrSimRevision() {
+        String p=ControllerConversation.INSTANCE.key("node1","simA",1,"+86 138-0013-8000");
+        assertEquals(p,ControllerConversation.INSTANCE.key("node1","simA",1,"13800138000"));
+        assertNotEquals(p,ControllerConversation.INSTANCE.key("node2","simA",1,"13800138000"));
+        assertNotEquals(p,ControllerConversation.INSTANCE.key("node1","simA",2,"13800138000"));
+    }
+
     @Test public void unrecognizedOrOversizedMessagesDoNotUnlock() {
         ControllerInboxState state=new ControllerInboxState();
         state.accept("{\"type\":\"snapshot\",\"v\":2,\"messages\":[]}");

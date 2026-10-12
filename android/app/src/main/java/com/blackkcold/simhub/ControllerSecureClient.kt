@@ -157,7 +157,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         connection.requestMethod=method
         connection.setRequestProperty("Accept","application/json")
         if(!pollToken.isNullOrEmpty())connection.setRequestProperty("X-SimHub-Pair-Token",pollToken)
-        if(authenticated && cookie.isNotEmpty())connection.setRequestProperty("X-SimHub-Activity","1")
+        // Background polling is not user activity; idle sessions must still expire.
         if(authenticated && cookie.isNotEmpty())connection.setRequestProperty("Cookie",cookie)
         if(authenticated && method!="GET" && csrf.isNotEmpty())connection.setRequestProperty("X-SimHub-CSRF",csrf)
         if(body!=null){
@@ -195,6 +195,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         val data=request("/api/v1/controllers/pair","POST",JSONObject()
             .put("label",label.take(64))
             .put("identityPublic",enc(identity().public.encoded))
+            .put("pairingProtocolVersion",2)
             .put("exchangePublic",enc(key.public.encoded)))
         exchange=key
         requestedId=data.getString("requestId")

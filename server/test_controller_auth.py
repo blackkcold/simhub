@@ -28,7 +28,8 @@ class ControllerAuthTest(unittest.TestCase):
         self.ip="127.0.0.1"
         self.fingerprint="admin-v1"
         self.pair=controller_auth.start(self.con,{"label":"Pixel",
-            "identityPublic":pub(self.id_key),"exchangePublic":pub(self.ecdh)},
+            "identityPublic":pub(self.id_key),"exchangePublic":pub(self.ecdh),
+            "pairingProtocolVersion":2},
             self.ip,self.now)
 
     def envelope(self):
@@ -72,6 +73,27 @@ class ControllerAuthTest(unittest.TestCase):
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM admin_sessions").fetchone()[0],0)
         with self.assertRaises(ValueError):
             controller_auth.challenge(self.con,cid,self.now+5,self.fingerprint)
+
+    def test_old_client_ip_bound_pairing_and_sunset(self):
+        legacy=controller_auth.start(self.con,{"label":"Old Android",
+            "identityPublic":pub(self.id_key),"exchangePublic":pub(self.ecdh)},
+            self.ip,self.now)
+        self.assertEqual(legacy["pairingProtocolVersion"],1)
+        self.assertNotIn("pollToken",legacy)
+        self.assertEqual(controller_auth.poll(self.con,legacy["requestId"],
+                         self.ip,self.now+1)["state"],"pending")
+        with self.assertRaises(ValueError):
+            controller_auth.poll(self.con,legacy["requestId"],
+                                 "198.51.100.9",self.now+1)
+        with self.assertRaises(ValueError):
+            controller_auth.start(self.con,{"label":"Old Android",
+                "identityPublic":pub(self.id_key),"exchangePublic":pub(self.ecdh)},
+                self.ip,controller_auth.LEGACY_PAIR_SUNSET)
+
+    def test_v2_never_allows_tokenless_poll_even_same_ip(self):
+        self.assertEqual(self.pair["pairingProtocolVersion"],2)
+        with self.assertRaises(ValueError):
+            controller_auth.poll(self.con,self.pair["requestId"],self.ip,self.now)
 
     def test_approved_pairing_survives_ip_handover(self):
         self.approve()

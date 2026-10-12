@@ -45,7 +45,7 @@ class ControllerInboxState {
     fun clear() {
         messages.clear();unlocked=false;hasMore=false;hasNewer=false;warning=""
     }
-    fun accept(raw:String, append:Boolean=false) {
+    @JvmOverloads fun accept(raw:String, append:Boolean=false) {
         if(raw.length>450_000)return
         try {
             val obj=JSONObject(raw)

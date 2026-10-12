@@ -166,13 +166,13 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                             if(sms.inbound && sms.otp.isNotBlank()){
                                 TextButton(onClick={
                                     val clip=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip=ClipData.newPlainText("OTP",sms.otp)
+                                    val clipData=ClipData.newPlainText("OTP",sms.otp)
                                     if(android.os.Build.VERSION.SDK_INT>=33){
-                                        clip.description.extras=android.os.PersistableBundle().apply{
+                                        clipData.description.extras=android.os.PersistableBundle().apply{
                                             putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true)
                                         }
                                     }
-                                    clip.setPrimaryClip(clip)
+                                    clip.setPrimaryClip(clipData)
                                 }){Text("复制验证码 · "+sms.otp)}
                             }
                             Text("${sms.device} · ${sms.sim} · "+

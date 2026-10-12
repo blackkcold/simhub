@@ -50,11 +50,12 @@ class ControllerHttpTest(unittest.TestCase):
         cls.proc.wait(timeout=5)
         cls.work.cleanup()
 
-    def call(self,method,path,obj=None,cookie=None,admin=False,csrf=None):
+    def call(self,method,path,obj=None,cookie=None,admin=False,csrf=None,poll_token=None):
         headers={"Content-Type":"application/json"}
         if admin:headers["Authorization"]="Bearer "+ADMIN_TOKEN
         if cookie:headers["Cookie"]=cookie
         if csrf:headers["X-SimHub-CSRF"]=csrf
+        if poll_token:headers["X-SimHub-Pair-Token"]=poll_token
         data=json.dumps(obj).encode() if obj is not None else None
         req=urllib.request.Request(self.url+path,method=method,data=data,headers=headers)
         try:
@@ -84,7 +85,7 @@ class ControllerHttpTest(unittest.TestCase):
         self.assertEqual(s,200)
         self.assertEqual(grant["ok"],True)
         cid=grant["controllerId"]
-        s,poll,_=self.call("GET","/api/v1/controllers/pair/"+pair_id)
+        s,poll,_=self.call("GET","/api/v1/controllers/pair/"+pair_id,poll_token=pair["pollToken"])
         self.assertEqual(s,200)
         self.assertEqual(poll["vaultEnvelope"],envelope)
         s,response,_=self.call("POST","/api/v1/controllers/login/challenge",{"controllerId":cid})

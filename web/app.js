@@ -1258,6 +1258,77 @@ async function sha256Hex(text){
   return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
 }
 
+
+/** Encrypted controller grant: plaintext Master Vault never touches the Relay. */
+async function refreshControllerRequests(){
+  if(!authenticated)return;
+  const [pending,authorized]=await Promise.all([
+    api('/api/v1/controllers/pending'),api('/api/v1/controllers')
+  ]);
+  const box=$('controllerPending'),list=pending.pending||[];
+  box.replaceChildren();
+  if(!list.length){const p=document.createElement('p');p.className='hint';p.textContent='暂无待授权请求';box.append(p);}
+  for(const req of list){
+    const line=document.createElement('div');line.className='card subtle';
+    line.style.margin='8px 0';
+    const title=document.createElement('strong');title.textContent=req.label+' · '+req.fingerprint;
+    const code=document.createElement('input');code.placeholder='手机上的 6 位配对码';
+    code.inputMode='numeric';code.maxLength=6;code.pattern='[0-9]{6}';
+    const btn=document.createElement('button');btn.className='primary';btn.textContent='核对并授权';
+    btn.onclick=async()=>{
+      if(!/^\d{6}$/.test(code.value)){toast('请输入手机上的 6 位配对码');return;}
+      btn.disabled=true;
+      try{await approveAndroidController(req,code.value);await refreshControllerRequests();}
+      catch(e){toast(e.message);}finally{btn.disabled=false;}
+    };
+    line.append(title,code,btn);box.append(line);
+  }
+  const regs=$('controllerAuthorized');regs.replaceChildren();
+  for(const item of authorized.controllers||[]){
+    const row=document.createElement('div');row.className='row between';
+    const name=document.createElement('span');name.textContent=item.label+(item.revokedAt?' · 已撤销':' · 已授权');
+    row.append(name);
+    if(!item.revokedAt){
+      const btn=document.createElement('button');btn.className='danger mini';btn.textContent='撤销';
+      btn.onclick=async()=>{
+        if(!confirm('撤销此管理终端的服务端访问权限？'))return;
+        btn.disabled=true;
+        try{await ensureStepUp();await api('/api/v1/controllers/revoke',{method:'POST',body:{controllerId:item.id}});await refreshControllerRequests();}
+        catch(e){toast(e.message);}finally{btn.disabled=false;}
+      };
+      row.append(btn);
+    }
+    regs.append(row);
+  }
+}
+async function approveAndroidController(req,pairingCode){
+  if(!vaultRaw||vaultRaw.length!==32)throw Error('必须先在本浏览器解锁原 Vault');
+  await ensureStepUp();
+  if(!vaultRaw||vaultRaw.length!==32)throw Error('授权期间 Vault 已被锁定');
+  const other=await crypto.subtle.importKey('spki',unb64u(req.exchangePublic),
+    {name:'ECDH',namedCurve:'P-256'},false,[]);
+  const local=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},
+    true,['deriveBits']);
+  const shared=new Uint8Array(await crypto.subtle.deriveBits({name:'ECDH',public:other},local.privateKey,256));
+  const requestId=req.requestId,origin=location.origin;
+  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const hkdf=await crypto.subtle.importKey('raw',shared,'HKDF',false,['deriveKey']);
+  shared.fill(0);
+  const key=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,
+    info:enc.encode('simhub-controller-grant-v1|'+requestId+'|'+origin)},
+    hkdf,{name:'AES-GCM',length:256},false,['encrypt']);
+  const vaultCopy=new Uint8Array(vaultRaw);
+  let ct;
+  try{ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,
+    additionalData:enc.encode('simhub-controller-vault-v1|'+requestId+'|'+origin)},
+    key,vaultCopy));}finally{vaultCopy.fill(0);}
+  const epk=new Uint8Array(await crypto.subtle.exportKey('spki',local.publicKey));
+  await api('/api/v1/controllers/approve',{method:'POST',body:{
+    requestId,pairingCode,vaultEnvelope:{v:1,epk:b64u(epk),salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}
+  }});
+  toast('管理终端已授权，可在手机继续连接');
+}
+
 /** Credential-free QR for pairing a management console (not a SIM node). */
 function managementControllerLink(origin){
   const url=new URL(origin);
@@ -1599,7 +1670,8 @@ function wire(){
   }
   $('loadNewerBtn').onclick=()=>{$('inboxList').scrollTop=0;};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
-  $('controllerConnectBtn').onclick=openControllerConnect;
+  $('controllerConnectBtn').onclick=()=>{openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));};
+  $('controllerApprovalRefresh').onclick=()=>refreshControllerRequests().catch(e=>toast(e.message));
   $('controllerConnectClose').onclick=closeControllerConnect;
   $('controllerConnectDialog').addEventListener('cancel',()=>queueMicrotask(()=> $('controllerQr').replaceChildren()));
   $('controllerCopyLink').onclick=()=>copy($('controllerConnectLink').value,'已复制管理配置链接').catch(e=>toast(e.message));

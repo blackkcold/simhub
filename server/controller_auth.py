@@ -13,6 +13,7 @@ import uuid
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.exceptions import InvalidSignature
+import global_vault
 
 PAIR_TTL = 600
 LOGIN_TTL = 90
@@ -59,6 +60,7 @@ def init(con: sqlite3.Connection) -> None:
       expires_at INTEGER NOT NULL
     );
     """)
+    global_vault.init(con)
 
 def maintenance(con: sqlite3.Connection, now: int) -> None:
     con.execute("DELETE FROM controller_requests WHERE expires_at < ?", (now - 86400,))
@@ -109,7 +111,6 @@ def approve(con: sqlite3.Connection, body: dict, now: int, admin_fingerprint: st
     public_key(envelope["epk"])
     # Never approve a newly paired controller for a different local Master Key.
     # The Relay checks the public identifier, not the key material.
-    import global_vault
     root=global_vault.status(con)
     if root["initialized"] and (body.get("vaultId")!=root["vaultId"] or body.get("vaultKeyId")!=root["keyId"]):
         raise ValueError("Controller grant does not match the unique Global Vault")

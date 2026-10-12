@@ -1,0 +1,203 @@
+package com.blackkcold.simhub
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.text.format.DateFormat
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import org.json.JSONObject
+
+/**
+ * Native presentation of controller-decrypted SMS; never persists SMS or Vault secrets.
+ * Payloads arrive exclusively from a verified HTTPS main frame via WebMessageListener.
+ */
+data class ControllerSms(
+    val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,
+    val inbound:Boolean,val device:String,val sim:String,val otp:String,val failed:Boolean
+)
+class ControllerInboxState {
+    val messages=mutableStateListOf<ControllerSms>()
+    var unlocked by mutableStateOf(false)
+        private set
+    var hasMore by mutableStateOf(false)
+        private set
+    var warning by mutableStateOf("")
+        private set
+    fun clear() {
+        messages.clear();unlocked=false;hasMore=false;warning=""
+    }
+    fun accept(raw:String) {
+        if(raw.length>450_000)return
+        try {
+            val obj=JSONObject(raw)
+            when(obj.optString("type")){
+                "locked" -> clear()
+                "snapshot" -> {
+                    if(obj.optInt("v")!=1)return
+                    val rows=obj.optJSONArray("messages")?:return
+                    if(rows.length()>260)return
+                    val fresh=ArrayList<ControllerSms>(rows.length())
+                    for(i in 0 until rows.length()){
+                        val row=rows.optJSONObject(i)?:continue
+                        fun str(name:String,max:Int)=row.optString(name,"").take(max)
+                        fresh.add(ControllerSms(
+                            str("id",180),str("thread",160),str("sender",100),
+                            str("body",4000),row.optLong("timestamp",0),
+                            row.optBoolean("inbound",true),str("device",100),
+                            str("sim",90),str("otp",20),row.optBoolean("failed",false)
+                        ))
+                    }
+                    messages.clear();messages.addAll(fresh)
+                    unlocked=true;hasMore=obj.optBoolean("hasMore")
+                    warning=if(obj.optInt("unreadable")>0)
+                        "部分短信无法解密，请检查历史 Node Key 或 Vault 密钥" else ""
+                }
+            }
+        }catch(_:Exception){ /* Malformed page data is ignored, not logged. */ }
+    }
+}
+
+@Composable
+fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
+                          onOlder:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit) {
+    val context=LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var otpOnly by remember { mutableStateOf(false) }
+    var activeThread by remember { mutableStateOf<String?>(null) }
+    val filtered=state.messages.filter { m ->
+        (!otpOnly||m.otp.isNotBlank()) &&
+        (query.isBlank() || listOf(m.sender,m.body,m.device,m.sim).any{it.contains(query,true)})
+    }
+    val threads=filtered.groupBy{it.thread}.values.mapNotNull{items->
+        items.maxByOrNull{it.timestamp}?.let{latest->latest to items.size}
+    }.sortedByDescending{it.first.timestamp}
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)){
+        if(!state.unlocked) {
+            Box(Modifier.fillMaxSize().padding(22.dp),contentAlignment=Alignment.Center){
+                HubCard(Modifier.fillMaxWidth().widthIn(max=520.dp)){
+                    HubIcon(R.drawable.ic_hub_shield,Modifier.size(40.dp),
+                        MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(12.dp))
+                    Text("请先登录并解锁 Vault",style=MaterialTheme.typography.titleLarge)
+                    Text("管理端短信会在当前手机本地解密后呈现。未授权时不会读取或缓存短信。",
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick=onOpenLogin,modifier=Modifier.fillMaxWidth()){Text("登录 / 解锁管理空间")}
+                }
+            }
+            return@Column
+        }
+        Row(Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment=Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)){
+                Text(if(activeThread==null)"管理短信" else "短信会话",
+                    style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold)
+                Text("${state.messages.size} 条已解密 · 不持久保存于本机",
+                    style=MaterialTheme.typography.labelSmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick=onRefresh){Text("刷新")}
+            if(activeThread==null)TextButton(onClick=onWrite){Text("发送")}
+        }
+        if(state.warning.isNotBlank()){
+            Text(state.warning,modifier=Modifier.padding(horizontal=16.dp,vertical=7.dp),
+                color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+        }
+        val key=activeThread
+        if(key!=null){
+            val conversation=state.messages.filter{it.thread==key}.sortedBy{it.timestamp}
+            Row(Modifier.padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically){
+                TextButton(onClick={activeThread=null}){Text("‹ 返回")}
+                Text(conversation.lastOrNull()?.sender.orEmpty(),fontWeight=FontWeight.SemiBold)
+            }
+            if(conversation.isEmpty())LaunchedEffect(key){activeThread=null}
+            LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),
+                verticalArrangement=Arrangement.spacedBy(10.dp)){
+                items(conversation,key={it.id}){sms->
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=if(sms.inbound)
+                        Arrangement.Start else Arrangement.End){
+                        Column(Modifier.fillMaxWidth(.88f)
+                            .background(if(sms.inbound)MaterialTheme.colorScheme.surface
+                                else MaterialTheme.colorScheme.primaryContainer,
+                                RoundedCornerShape(18.dp)).padding(14.dp)){
+                            Text(if(sms.failed)"[无法解密]" else sms.body,
+                                style=MaterialTheme.typography.bodyMedium)
+                            if(sms.inbound && sms.otp.isNotBlank()){
+                                TextButton(onClick={
+                                    val clip=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clip.setPrimaryClip(ClipData.newPlainText("OTP",sms.otp))
+                                }){Text("复制验证码 · "+sms.otp)}
+                            }
+                            Text("${sms.device} · ${sms.sim} · "+
+                                DateFormat.format("MM-dd HH:mm",sms.timestamp*1000).toString(),
+                                style=MaterialTheme.typography.labelSmall,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if(state.hasMore)item{
+                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}
+                }
+            }
+        }else{
+            OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
+                label={Text("搜索号码、短信与来源设备")},singleLine=true)
+            Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
+                horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text("全部短信")})
+                FilterChip(selected=otpOnly,onClick={otpOnly=true},label={Text("验证码")})
+            }
+            if(threads.isEmpty()){
+                Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
+                    Text("暂无已解密短信",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(horizontal=14.dp,vertical=6.dp),
+                verticalArrangement=Arrangement.spacedBy(8.dp)){
+                items(threads,key={it.first.thread}){(latest,count)->
+                    HubCard(Modifier.fillMaxWidth().clickable{activeThread=latest.thread}){
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Box(Modifier.size(42.dp).background(MaterialTheme.colorScheme.surfaceVariant,CircleShape),
+                                contentAlignment=Alignment.Center) {
+                                HubIcon(R.drawable.ic_hub_messages,Modifier.size(23.dp),
+                                    tint=MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)){
+                                Row(verticalAlignment=Alignment.CenterVertically){
+                                    Text(latest.sender,modifier=Modifier.weight(1f),
+                                        fontWeight=FontWeight.SemiBold,maxLines=1,
+                                        overflow=TextOverflow.Ellipsis)
+                                    Text(DateFormat.format("MM-dd HH:mm",latest.timestamp*1000).toString(),
+                                        style=MaterialTheme.typography.labelSmall)
+                                }
+                                Text(if(latest.failed)"[无法解密]" else latest.body,maxLines=1,
+                                    overflow=TextOverflow.Ellipsis,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${latest.device} · ${latest.sim} · ${count} 条",
+                                    style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+                if(state.hasMore)item{
+                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}
+                }
+            }
+        }
+    }
+}

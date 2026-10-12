@@ -323,6 +323,53 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     fun refreshDelta(){load("delta")}
     fun loadOlderPage(){load("older")}
     fun navigateToLatest(){load("latest")}
+    /** Remote commands are E2EE encrypted, idempotent and acknowledged asynchronously. */
+    fun queueDeviceAction(device:JSONObject,action:String){
+        if(actionBusy || !authorized || (requireLocalUnlock && !localUnlocked))return
+        val commandType=when(action){
+            "sync-recent"->"sms.sync_recent"
+            "sync-older"->"sms.sync_older"
+            "refresh"->"device.refresh_state"
+            "diagnostics"->"diagnostics.request"
+            "ota-install"->"ota.install"
+            "ota-cancel"->"ota.cancel"
+            else->return
+        }
+        val state=device.optJSONObject("state")?:JSONObject()
+        if(action.startsWith("ota-") && (
+            device.optString("nodeType")!="android" || !state.optBoolean("remoteOtaSupported") ||
+            !(state.optInt("sdk")>=36 || state.optBoolean("remoteOtaDeveloperOverride")) ||
+            !state.optBoolean("remoteOtaAuthorized") || !state.optBoolean("remoteOtaInstallPermission"))) {
+            actionError="节点不满足远程更新能力或授权条件";return
+        }
+        if(action=="ota-cancel" && state.optString("remoteOtaStage") !in
+            listOf("checking","downloading","verified"))return
+        actionError="";actionBusy=true
+        scope.launch{
+            try{
+                val commandId=withContext(Dispatchers.IO){
+                    val api=client?:throw SecurityException("管理授权已失效")
+                    val id=UUID.randomUUID().toString()
+                    val now=System.currentTimeMillis()/1000
+                    val end=now+if(action=="ota-install")3600L else 900L
+                    val payload=JSONObject().put("v",2).put("action",commandType)
+                        .put("commandId",id).put("issuedAt",now).put("expiresAt",end)
+                    if(action=="sync-recent" || action=="sync-older")payload.put("maxMessages",100)
+                    if(action=="ota-install")payload.put("targetVersion","latest")
+                    val cipher=api.encryptCommand(device,id,commandType,now,end,payload)
+                    api.api("/api/v1/devices/"+device.getString("id")+"/commands","POST",
+                        JSONObject().put("commandId",id).put("idempotencyKey",id)
+                            .put("type",commandType).put("createdAt",now)
+                            .put("expiresAt",end).put("ciphertext",cipher))
+                    id
+                }
+                lastCommandId=commandId;lastCommandDevice=device.optString("name")
+                lastCommandState="任务已入队，等待设备领取及最终 ACK"
+                commandTick++
+            }catch(e:Exception){actionError=e.message?:"任务下发失败，请检查网络及设备状态"}
+            finally{actionBusy=false}
+        }
+    }
     LaunchedEffect(busy,pendingLoad){
         if(!busy && pendingLoad.isNotBlank()){
             val next=pendingLoad;pendingLoad=""

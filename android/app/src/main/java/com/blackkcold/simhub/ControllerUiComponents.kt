@@ -1,0 +1,208 @@
+package com.blackkcold.simhub
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import org.json.JSONObject
+import java.text.DateFormat
+import java.util.Date
+
+/** Components intentionally remain presentation-only; actions run in ControllerWorkspace. */
+@Composable
+internal fun ControllerMetric(title:String,value:String,icon:Int,modifier:Modifier=Modifier){
+    HubCard(modifier){
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer,
+                RoundedCornerShape(12.dp)),contentAlignment=Alignment.Center){
+                HubIcon(icon,Modifier.size(21.dp),MaterialTheme.colorScheme.primary)
+            }
+            Column(Modifier.weight(1f)){
+                Text(value,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1)
+                Text(title,style=MaterialTheme.typography.labelSmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ControllerTaskRow(command:JSONObject){
+    val state=command.optString("state","queued")
+    val error=state in listOf("failed","rejected","expired")
+    val done=state in listOf("sent","delivered","succeeded")
+    Row(Modifier.fillMaxWidth().padding(vertical=9.dp),
+        horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.Top){
+        Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.surfaceVariant,
+            RoundedCornerShape(12.dp)),contentAlignment=Alignment.Center){
+            HubIcon(if(error)R.drawable.ic_hub_shield else if(done)R.drawable.ic_hub_sync else R.drawable.ic_hub_tasks,
+                Modifier.size(20.dp),if(error)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+        }
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+            Text(command.optString("type").replace('.',' '),fontWeight=FontWeight.SemiBold,
+                style=MaterialTheme.typography.bodyMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
+            Text(ControllerCommandProgress.describe(command),
+                style=MaterialTheme.typography.bodySmall,
+                color=if(error)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT)
+                .format(Date(command.optLong("createdAt")*1000)),
+                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        StatePill(when(state){"queued"->"排队";"dispatched"->"已领取";"succeeded"->"完成";"sent"->"已发送";
+            "delivered"->"送达";"failed"->"失败";"rejected"->"拒绝";"expired"->"过期";else->state.take(10)},
+            !error)
+    }
+}
+
+@Composable
+internal fun ControllerDeviceCard(device:JSONObject,onClick:()->Unit){
+    val state=device.optJSONObject("state")?:JSONObject()
+    val online=device.optBoolean("online") && !device.optBoolean("revoked")
+    Card(onClick=onClick,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(20.dp),
+        colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surface)){
+        Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(11.dp)){
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer,
+                    RoundedCornerShape(14.dp)),contentAlignment=Alignment.Center){
+                    HubIcon(R.drawable.ic_hub_devices,Modifier.size(24.dp),MaterialTheme.colorScheme.primary)
+                }
+                Column(Modifier.weight(1f)){
+                    Text(device.optString("name","SIM 节点"),fontWeight=FontWeight.SemiBold,
+                        style=MaterialTheme.typography.titleMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    Text(device.optString("model").ifBlank{device.optString("nodeType","Android")},
+                        color=MaterialTheme.colorScheme.onSurfaceVariant,
+                        style=MaterialTheme.typography.bodySmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+                }
+                StatePill(if(online)"在线" else "离线",online)
+            }
+            HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)){
+                HubIcon(R.drawable.ic_hub_sim,Modifier.size(16.dp),MaterialTheme.colorScheme.primary)
+                Text(ControllerNodePolicy.channels(device).length().toString()+" SIM",style=MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.weight(1f))
+                HubIcon(R.drawable.ic_hub_battery,Modifier.size(16.dp))
+                Text(state.optString("batteryPct","—")+"%",style=MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.width(7.dp))
+                HubIcon(R.drawable.ic_hub_network,Modifier.size(16.dp))
+                Text(state.optString("network","—"),style=MaterialTheme.typography.labelMedium,
+                    maxLines=1,overflow=TextOverflow.Ellipsis)
+            }
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                Text(ControllerNodePolicy.sendModeLabel(device),modifier=Modifier.weight(1f),
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall,maxLines=2)
+                Text(hubLabel("详情 ›","Details ›"),color=MaterialTheme.colorScheme.primary,
+                    style=MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:String,
+    error:String,onClose:()->Unit,onAction:(String)->Unit,onAdvanced:()->Unit){
+    val state=device.optJSONObject("state")?:JSONObject()
+    val channels=ControllerNodePolicy.channels(device)
+    val isAndroid=device.optString("nodeType")!="modem"
+    val otaReady=isAndroid && state.optBoolean("remoteOtaSupported") &&
+        (state.optInt("sdk")>=36 || state.optBoolean("remoteOtaDeveloperOverride")) &&
+        state.optBoolean("remoteOtaAuthorized") && state.optBoolean("remoteOtaInstallPermission")
+    Column(Modifier.fillMaxSize().imePadding()){
+        Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=10.dp),
+            verticalAlignment=Alignment.CenterVertically){
+            IconButton(onClick=onClose){HubIcon(R.drawable.ic_hub_home,description=hubLabel("返回","Back"))}
+            Column(Modifier.weight(1f)){
+                Text(device.optString("name","设备详情"),style=MaterialTheme.typography.titleLarge,
+                    fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                Text(device.optString("model"),style=MaterialTheme.typography.labelSmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            StatePill(if(device.optBoolean("online"))"在线" else "离线",device.optBoolean("online"))
+        }
+        HorizontalDivider()
+        LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(16.dp),
+            verticalArrangement=Arrangement.spacedBy(12.dp)){
+            item{
+                HubCard(Modifier.fillMaxWidth()){
+                    HubSectionTitle(hubLabel("设备概览","Device overview"))
+                    InfoRow("App",device.optString("appVersion","—"))
+                    InfoRow(hubLabel("短信模式","SMS mode"),ControllerNodePolicy.sendModeLabel(device))
+                    InfoRow(hubLabel("短信发送权限","Send permission"),
+                        if(state.optBoolean("smsSendPermission"))hubLabel("已授权","Granted") else hubLabel("未授权","Unavailable"))
+                    InfoRow(hubLabel("远程发送能力","Remote send"),
+                        if(ControllerNodePolicy.canSend(device))hubLabel("可用","Available") else hubLabel("只读或不可用","Read-only / unavailable"))
+                    InfoRow(hubLabel("网络","Network"),state.optString("network","—"))
+                    InfoRow(hubLabel("待上传事件","Pending events"),state.optString("pendingEvents","—"))
+                }
+            }
+            item{
+                HubCard(Modifier.fillMaxWidth()){
+                    HubSectionTitle(hubLabel("SIM 通道","SIM channels"))
+                    if(channels.length()==0)Text(hubLabel("暂无可用通道","No available channels"))
+                    for(i in 0 until channels.length()){
+                        val c=channels.optJSONObject(i)?:continue
+                        if(i>0)HorizontalDivider(Modifier.padding(vertical=8.dp))
+                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(9.dp)){
+                            HubIcon(R.drawable.ic_hub_sim,Modifier.size(22.dp),MaterialTheme.colorScheme.primary)
+                            Column(Modifier.weight(1f)){
+                                Text(c.optString("alias").ifBlank{c.optString("displayName","SIM "+(i+1))},
+                                    fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                                Text("Revision "+c.optInt("revision",c.optInt("channelRevision",1))+" · "+c.optString("carrierName","—"),
+                                    style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+            item{
+                HubCard(Modifier.fillMaxWidth()){
+                    HubSectionTitle(hubLabel("远程操作","Remote actions"))
+                    if(lastStatus.isNotBlank())Text(lastStatus,color=MaterialTheme.colorScheme.primary,
+                        style=MaterialTheme.typography.bodySmall)
+                    if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,
+                        style=MaterialTheme.typography.bodySmall)
+                    Button(enabled=!busy,onClick={onAction("sync-recent")},modifier=Modifier.fillMaxWidth()){
+                        HubIcon(R.drawable.ic_hub_sync,Modifier.size(19.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(hubLabel("同步最近短信","Sync recent messages"))
+                    }
+                    OutlinedButton(enabled=!busy,onClick={onAction("sync-older")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("同步更早短信","Sync older messages"))}
+                    OutlinedButton(enabled=!busy,onClick={onAction("refresh")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("刷新设备状态","Refresh device state"))}
+                    OutlinedButton(enabled=!busy,onClick={onAction("diagnostics")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("发起设备诊断","Request diagnostics"))}
+                }
+            }
+            if(isAndroid)item{
+                HubCard(Modifier.fillMaxWidth()){
+                    HubSectionTitle(hubLabel("应用远程更新","Remote app update"))
+                    Text(if(state.optBoolean("remoteOtaSupported"))
+                        hubLabel("安装是否需要确认由安卓系统决定。","Android may require confirmation.")
+                        else hubLabel("当前设备未报告支持远程更新。","Remote updates not supported."),
+                        style=MaterialTheme.typography.bodySmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    InfoRow(hubLabel("更新状态","Status"),state.optString("remoteOtaStage","—"))
+                    Button(onClick={onAction("ota-install")},enabled=otaReady&&!busy,
+                        modifier=Modifier.fillMaxWidth()){Text(hubLabel("更新到最新签名版本","Install latest signed version"))}
+                    if(state.optString("remoteOtaStage") in listOf("checking","downloading","verified"))
+                        TextButton(onClick={onAction("ota-cancel")},enabled=otaReady&&!busy){
+                            Text(hubLabel("取消尚未提交的更新","Cancel pending update"))}
+                }
+            }
+            item{
+                OutlinedButton(onClick=onAdvanced,modifier=Modifier.fillMaxWidth()){
+                    HubIcon(R.drawable.ic_hub_shield,Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(hubLabel("更多高级管理（HTTPS）","More controls (HTTPS)"))
+                }
+            }
+        }
+    }
+}

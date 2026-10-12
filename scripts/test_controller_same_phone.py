@@ -41,6 +41,22 @@ class NativeControllerContract(unittest.TestCase):
         self.assertIn('private fun clearPending()', client)
         self.assertIn("System.currentTimeMillis()+600_000L", client)
 
+    def test_controller_network_handover_requires_separate_poll_secret(self):
+        client = (ANDROID / "ControllerSecureClient.kt").read_text()
+        server = (ROOT / "server/controller_auth.py").read_text()
+        self.assertIn("X-SimHub-Pair-Token", client)
+        self.assertIn('pairPollToken=data.getString("pollToken")', client)
+        self.assertIn('"poll_token_hash"', server)
+        self.assertIn("hmac.compare_digest", server)
+
+    def test_local_authentication_is_explicit_not_key_alias_auth(self):
+        client = (ANDROID / "ControllerSecureClient.kt").read_text()
+        workspace = (ANDROID / "ControllerWorkspace.kt").read_text()
+        self.assertIn("requireLocalUnlock()", workspace)
+        self.assertIn("BiometricPrompt.Builder", workspace)
+        self.assertIn("Lifecycle.Event.ON_STOP", workspace)
+        self.assertIn("setUserAuthenticationRequired(false)", client)
+
     def test_approval_still_requires_current_global_vault(self):
         web = (ROOT / "web/app.js").read_text()
         server = (ROOT / "server/controller_auth.py").read_text()

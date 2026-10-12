@@ -71,7 +71,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
     LaunchedEffect(inbox.unlocked) {
         if(inbox.unlocked&&tab==3)changeTab(0)
     }
-    BackHandler(visible && tab==0 && canGoBack) { /* Native SMS controls navigation. */ }
     BackHandler(visible && tab!=0){
         if(web?.canGoBack()==true && tab==3)web?.goBack() else changeTab(0)
     }
@@ -128,6 +127,14 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                 }) {Text("刷新")}
                 TextButton(onClick={confirmRemove=true}) {Text("移除")}
             }
+            if(visible && tab==3){
+                Text(if(passkeyAvailable)
+                    "已接入 Android 系统通行密钥；管理域名还需配置签名证书关联"
+                    else "当前 WebView 不支持系统通行密钥，可使用密码与 OTP 登录",
+                    modifier=Modifier.padding(horizontal=14.dp,vertical=3.dp),
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,
+                    style=MaterialTheme.typography.labelSmall)
+            }
             if(error.isNotEmpty() && visible)
                 Text(error,color=MaterialTheme.colorScheme.error,
                     modifier=Modifier.padding(horizontal=16.dp,vertical=6.dp),
@@ -136,6 +143,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
             Box(Modifier.weight(1f).fillMaxWidth()){
                 // WebView stays attached across Compose navigation and maintains the
                 // user's WebCrypto/HttpOnly session. Native SMS is rendered above it.
+                key(profiles.joinToString("|")) {
                 AndroidView(factory={ctx->
                     WebView(ctx).apply{
                         settings.apply {
@@ -220,6 +228,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,modifier:Mo
                             view.loadUrl(selected!!+"/?native=1")
                         }
                     },onRelease={view->view.stopLoading();view.destroy();web=null;inbox.clear()})
+                }
                 if(visible && tab==0){
                     Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
                         NativeControllerInbox(inbox,

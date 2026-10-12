@@ -111,7 +111,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
             Column(Modifier.weight(1f)){
                 Text(if(activeThread==null)"管理短信" else "短信会话",
                     style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold)
-                Text("${state.messages.size} 条已解密 · 不持久保存于本机",
+                Text("${state.messages.count{!it.failed}} 条已解密 · ${state.messages.count{it.failed}} 条解密失败 · 不持久保存于本机",
                     style=MaterialTheme.typography.labelSmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }

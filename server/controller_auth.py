@@ -107,6 +107,12 @@ def approve(con: sqlite3.Connection, body: dict, now: int, admin_fingerprint: st
     if len(b64decode(envelope["salt"]))!=16 or len(b64decode(envelope["iv"]))!=12 or len(b64decode(envelope["ct"]))!=48:
         raise ValueError("Invalid sealed Vault envelope")
     public_key(envelope["epk"])
+    # Never approve a newly paired controller for a different local Master Key.
+    # The Relay checks the public identifier, not the key material.
+    import global_vault
+    root=global_vault.status(con)
+    if root["initialized"] and (body.get("vaultId")!=root["vaultId"] or body.get("vaultKeyId")!=root["keyId"]):
+        raise ValueError("Controller grant does not match the unique Global Vault")
     row=con.execute("""SELECT * FROM controller_requests WHERE id=? AND expires_at>?
                        AND approved_at IS NULL""",(request_id,now)).fetchone()
     import hashlib, hmac
@@ -118,7 +124,7 @@ def approve(con: sqlite3.Connection, body: dict, now: int, admin_fingerprint: st
                    VALUES(?,?,?,?,?)""",(controller_id,row["label"],row["identity_public"],
                                           now,admin_fingerprint))
     con.execute("UPDATE controller_requests SET approved_at=?,envelope_json=? WHERE id=?",
-                (now,json.dumps({"controllerId":controller_id,"vaultEnvelope":envelope}),request_id))
+                (now,json.dumps({"controllerId":controller_id,"vaultEnvelope":envelope,"grantVaultId":root["vaultId"],"grantVaultKeyId":root["keyId"]}),request_id))
     return {"ok":True,"controllerId":controller_id}
 
 def poll(con: sqlite3.Connection, request_id: str, ip: str, now: int) -> dict:

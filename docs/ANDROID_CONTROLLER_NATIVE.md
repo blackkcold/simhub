@@ -1,4 +1,16 @@
-# Android 统一工作区与同机授权 · v0.15.6
+# Android 原生工作区与同机授权（v0.15.7）
+
+## 0.15.7 审计修复
+
+- 管理控制器配对轮询改为独立随机凭证（服务器只存 SHA-256），手机以 Keystore AES-GCM 封存；移动数据 / Wi-Fi 切换不再依赖固定来源 IP。旧的尚未完成配对请求沿用原 IP 限制直至过期。
+- 原生管理短信使用服务端事件序号增量获取新加密事件，历史分页追加并按事件稳定 ID 去重，提供按 Node ID / Channel ID / Revision 来源过滤。已加载内容限定最多 1200 条于内存，不承诺服务器端可对密文全文检索。
+- 原生发送根据服务器实际 TOTP 能力选择二次认证类型；敏感认证值在输入框中掩码显示。
+- 命令状态通过 Relay 的持久 ACK 查询呈现 queued/dispatched/submitted/sent/delivered/succeeded/failed/rejected/expired，不把入队解释为完成。
+- 本机授权可选择先在 Relay 撤销再清除 Keystore，或明确选择仅删除本地密钥；认证被撤销时清理当前原生短信视图。
+- 可选系统 BiometricPrompt / 锁屏身份验证门禁：返回后台即锁定并擦除原生已展示短信列表，重新进入须由系统验证后重新读取数据。**这是 App 层访问门禁，不是每次 Vault 解密都经过用户认证绑定的 Keystore 密钥**；已有 AES wrapping Key 仍为 setUserAuthenticationRequired(false)，不能将此功能宣传为硬件密钥级保护。需要后续设计具备无损迁移和恢复流程的用户认证型密钥重封装。
+- 进一步改进发送窗口、设备详情滚动空间和主要中英文 UI 标签。真实 OEM 生物识别提供方、折叠屏和电台短信收发必须真机测试。
+
+
 
 ## 单一 Compose App Shell
 

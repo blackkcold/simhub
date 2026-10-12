@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.view.WindowManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -34,6 +35,21 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+
+internal object ControllerCommandProgress {
+    fun describe(cmd:JSONObject):String = when(val state=cmd.optString("state","queued")){
+        "queued"->"排队中：等待设备唤醒领取（节能模式可能需要数分钟）"
+        "dispatched"->"设备已领取，等待最终执行 ACK"
+        "submitted"->"短信已提交系统，尚未确认发送"
+        "sent"->"系统已发送，等待运营商回执"
+        "delivered"->"运营商已确认送达"
+        "succeeded"->"任务执行成功"
+        "failed"->"任务失败："+cmd.optJSONObject("result")?.optString("reason").orEmpty().take(160)
+        "rejected"->"设备拒绝任务"
+        "expired"->"任务已过期，未被确认为执行成功"
+        else->"任务状态：$state"
+    }
+}
 
 private data class ControllerLoadBatch(
     val payload:String,val sequence:Long,val nextTime:Long,val nextSeq:Long,
@@ -94,6 +110,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var lastCommandId by remember(selected){mutableStateOf("")}
     var lastCommandState by remember(selected){mutableStateOf("")}
     var lastCommandDevice by remember(selected){mutableStateOf("")}
+    var commandHistory by remember(selected){mutableStateOf<List<JSONObject>>(emptyList())}
+    var commandHistoryError by remember(selected){mutableStateOf("")}
+    var expandCommands by remember(selected){mutableStateOf(false)}
+    var commandTick by remember(selected){mutableIntStateOf(0)}
+    // Controller-only screen capture protection, including Android Recents.
+    DisposableEffect(context,visible){
+        val window=(context as? Activity)?.window
+        if(visible)window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose{if(visible)window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)}
+    }
 
     // Optional OS-level app gate. This is not a cryptographically authentication-bound
     // Keystore key; such a migration requires a separate rewrap and recovery protocol.
@@ -298,7 +324,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             authorized=true;refreshDelta()
         }
     }
-    LaunchedEffect(selected,visible,authorized){
+    LaunchedEffect(selected,visible,authorized,localUnlocked,requireLocalUnlock){
         if(visible && authorized && (!requireLocalUnlock || localUnlocked))while(true){
             delay(60000)
             if(!busy)refreshDelta()
@@ -317,38 +343,27 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         }
     }
     LaunchedEffect(refreshTick){if(refreshTick>0 && visible && authorized && (!requireLocalUnlock || localUnlocked))refreshDelta()}
-    // Queue acceptance is not device execution. Poll the Relay's immutable ACK state.
-    LaunchedEffect(selected,lastCommandId,visible){
-        if(!visible || lastCommandId.isBlank())return@LaunchedEffect
+    // Command progress is durable on Relay, not an ephemeral two-minute poll.
+    // Continue observing queued/ACKed commands across Eco-mode wakeups and app restarts.
+    LaunchedEffect(selected,visible,authorized,localUnlocked,requireLocalUnlock,commandTick){
         val api=client?:return@LaunchedEffect
-        repeat(40){
-            delay(3000)
-            try {
-                val statuses=withContext(Dispatchers.IO){
-                    api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")
-                }?:JSONArray()
-                val found=(0 until statuses.length()).mapNotNull{statuses.optJSONObject(it)}
-                    .firstOrNull{it.optString("commandId")==lastCommandId}
-                if(found!=null){
-                    val state=found.optString("state","queued")
-                    lastCommandState=when(state){
-                        "queued"->"等待设备连接并领取任务"
-                        "dispatched"->"设备已领取任务，等待执行确认"
-                        "submitted"->"已提交到系统短信服务"
-                        "sent"->"系统已发送，等待运营商回执"
-                        "delivered"->"运营商已确认送达"
-                        "succeeded"->"任务执行成功"
-                        "failed"->"任务执行失败："+found.optJSONObject("result")?.optString("reason").orEmpty()
-                        "rejected"->"任务被设备拒绝"
-                        "expired"->"任务已过期，没有执行"
-                        else->"当前状态：$state"
+        if(!visible || !authorized || (requireLocalUnlock && !localUnlocked))return@LaunchedEffect
+        while(true){
+            if(!busy){
+                try{
+                    val recent=withContext(Dispatchers.IO){
+                        api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")?:JSONArray()
                     }
-                    if(state in setOf("delivered","succeeded","failed","rejected","expired"))
-                        return@LaunchedEffect
+                    commandHistory=(0 until recent.length()).mapNotNull{recent.optJSONObject(it)}
+                    commandHistoryError=""
+                    val current=commandHistory.firstOrNull{it.optString("commandId")==lastCommandId}
+                    if(current!=null)
+                        lastCommandState=ControllerCommandProgress.describe(current)
+                }catch(e:Exception){
+                    commandHistoryError=e.message?:"任务状态暂不可用，稍后将继续重试"
                 }
-            }catch(e:Exception){
-                lastCommandState="无法更新任务进度："+(e.message?:"网络不可用")
             }
+            delay(60000)
         }
     }
     if(!visible)return
@@ -458,12 +473,39 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 modifier=Modifier.fillMaxWidth()) { Text(hubLabel("刷新加密数据","Refresh encrypted data")) }
                         }
                     }
-                    if(lastCommandId.isNotBlank())item{
+                    item{
                         HubCard(Modifier.fillMaxWidth()){
-                            HubSectionTitle("最近下发的指令")
-                            Text(lastCommandState.ifBlank{"状态查询中"},style=MaterialTheme.typography.bodyMedium)
-                            Text("设备：$lastCommandDevice · 命令："+lastCommandId.take(8),
-                                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            HubSectionTitle(hubLabel("远程任务中心","Remote command center"))
+                            Text(hubLabel("队列接收不代表设备执行成功；任务状态来自服务器持久化 ACK。",
+                                "Queued is not completed. States are read from durable Relay acknowledgements."),
+                                style=MaterialTheme.typography.bodySmall,
+                                color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedButton(onClick={commandTick++}){
+                                Text(hubLabel("刷新任务状态","Refresh command status"))
+                            }
+                            if(commandHistoryError.isNotEmpty())
+                                Text(commandHistoryError,color=MaterialTheme.colorScheme.error)
+                            if(commandHistory.isEmpty())
+                                Text(hubLabel("暂无可查询的任务","No commands to display"))
+                            commandHistory.take(if(expandCommands)50 else 5).forEach{cmd->
+                                HorizontalDivider()
+                                val type=cmd.optString("type")
+                                val deviceName=devices.firstOrNull{it.optString("id")==cmd.optString("deviceId")}
+                                    ?.optString("name")?:cmd.optString("deviceId").take(8)
+                                Text("$deviceName · $type",
+                                    style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.SemiBold)
+                                Text(ControllerCommandProgress.describe(cmd),
+                                    style=MaterialTheme.typography.bodySmall)
+                                Text("ID "+cmd.optString("commandId").take(12)+
+                                    " · "+android.text.format.DateFormat.format(
+                                        "MM-dd HH:mm",cmd.optLong("createdAt")*1000).toString(),
+                                    style=MaterialTheme.typography.labelSmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if(commandHistory.size>5)TextButton(onClick={expandCommands=!expandCommands}){
+                                Text(if(expandCommands)hubLabel("收起","Show fewer")
+                                    else hubLabel("展开更多任务","Show more commands"))
+                            }
                         }
                     }
                     if(error.isNotEmpty())item {

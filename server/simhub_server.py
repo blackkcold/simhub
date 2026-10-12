@@ -28,6 +28,7 @@ from pathlib import Path
 
 import passkeys
 import controller_auth
+import global_vault
 from argon2 import PasswordHasher, exceptions as argon2_errors
 import shared_pool
 import update_bridge
@@ -434,6 +435,7 @@ def init_db() -> None:
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         shared_pool.init(con)
         controller_auth.init(con)
+        global_vault.init(con)
         _add_column(con,"admin_sessions","controller_id","TEXT NOT NULL DEFAULT ''")
         con.execute("PRAGMA user_version=13")
     run_maintenance()
@@ -1047,6 +1049,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 num_keys=con.execute("SELECT COUNT(*) FROM admin_passkeys").fetchone()[0]
             self.send_json(200,{"ok":True,"username":ADMIN_USERNAME,"passkeyCount":num_keys,"totpRequired":bool(TOTP_SECRET),"sessionTtlSeconds":SESSION_TTL,"sessionIdleTtlSeconds":SESSION_IDLE_TTL,"csrfToken":csrf_for_session(_cookie_session(self.headers)) if session_valid(self.headers) else None,
                 "passwordConfigured":bool(admin_password_hash())}); return
+        if path=="/api/v1/vault":
+            if not self.require_admin():return
+            with open_db() as con: result=global_vault.get(con)
+            self.send_json(200,result);return
+        if path=="/api/v1/vault/status":
+            if not self.require_admin():return
+            with open_db() as con: result=global_vault.status(con)
+            self.send_json(200,result);return
         if path=="/api/v1/controllers/pending":
             if not self.require_admin():return
             with open_db() as con: result=controller_auth.pending(con,now())
@@ -1142,6 +1152,20 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path,p,q=self.route()
         if not self.preflight("POST", path): return
+        if path in {"/api/v1/vault/initialize","/api/v1/vault/rewrap"}:
+            if not self.require_stepup():return
+            body=self.read_json()
+            if body is None:return
+            try:
+                with open_db() as con:
+                    result=(global_vault.initialize(con,body) if path.endswith("/initialize")
+                            else global_vault.rewrap(con,body))
+                audit("vault."+path.rsplit("/",1)[-1],result["vaultId"],"ok",self.ip)
+                self.send_json(201 if path.endswith("/initialize") else 200,result)
+            except ValueError as err:
+                self.send_error_json(409 if ("already" in str(err) or "concurrent" in str(err) or "changed" in str(err)) else 400,
+                                     "vault_rejected",str(err))
+            return
         if path in {"/api/v1/controllers/pair","/api/v1/controllers/approve",
                     "/api/v1/controllers/revoke","/api/v1/controllers/login/challenge",
                     "/api/v1/controllers/login/verify"}:

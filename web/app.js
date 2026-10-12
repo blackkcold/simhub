@@ -473,6 +473,7 @@ function lockVault(broadcast=true){
   $('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;
   clearTrustedVault();
   $('authStage').hidden=authenticated;$('vaultStage').hidden=!authenticated;
+  if(authenticated)showVaultStage();
   $('vaultStatus').textContent=tr('vault_locked');setConnected(false);
   if(broadcast)try{vaultLockChannel?.postMessage({action:'lock'});}catch{}
   toast('Vault locked');
@@ -491,6 +492,8 @@ window.addEventListener('pageshow',enforceAutoLock);
 async function connectAndUnlock(){
   await establishSession();
   if(!authenticated)throw Error('请先登录');
+  await loadGlobalVault();
+  showVaultStage();
   await unlockVault($('passphrase').value);
   await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
   await storeTrustedVault();
@@ -517,6 +520,7 @@ async function createVaultFlow(){
   }
   try{
     await initGlobalVault(raw,passphrase);
+    showVaultStage();
     await importVault(raw);
     $('passphrase').value='';
     await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();

@@ -117,7 +117,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     Text("管理端短信会在当前手机本地解密后呈现。未授权时不会读取或缓存短信。",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick=onOpenLogin,modifier=Modifier.fillMaxWidth()){Text("登录 / 解锁管理空间")}
+                    Button(onClick=onOpenLogin,modifier=Modifier.fillMaxWidth()){Text(hubLabel("登录 / 解锁管理空间","Sign in / unlock"))}
                 }
             }
             return@Column
@@ -131,8 +131,8 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     style=MaterialTheme.typography.labelSmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick=onRefresh){Text("刷新")}
-            if(activeThread==null)TextButton(onClick=onWrite){Text("发送")}
+            TextButton(onClick=onRefresh){Text(hubLabel("刷新","Refresh"))}
+            if(activeThread==null)TextButton(onClick=onWrite){Text(hubLabel("发送","Send"))}
         }
         if(state.warning.isNotBlank()){
             Text(state.warning,modifier=Modifier.padding(horizontal=16.dp,vertical=7.dp),
@@ -141,7 +141,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
             .padding(horizontal=16.dp,vertical=4.dp),
             horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            FilterChip(selected=sourceFilter.isEmpty(),onClick={sourceFilter=""},label={Text("全部来源")})
+            FilterChip(selected=sourceFilter.isEmpty(),onClick={sourceFilter=""},label={Text(hubLabel("全部来源","All sources"))})
             sources.forEach{(key,label)->
                 FilterChip(selected=sourceFilter==key,onClick={sourceFilter=key;activeThread=null},
                     label={Text(label,maxLines=1)})
@@ -187,11 +187,11 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 }
                 if(state.hasNewer)item{
                     TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){
-                        Text("查看较新短信")
+                        Text(hubLabel("查看较新短信","View newer messages"))
                     }
                 }
                 if(state.hasMore)item{
-                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}
+                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
                 }
             }
         }else{
@@ -199,8 +199,8 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 label={Text("搜索已加载短信、号码与来源")},singleLine=true)
             Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text("全部短信")})
-                FilterChip(selected=otpOnly,onClick={otpOnly=true},label={Text("验证码")})
+                FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text(hubLabel("全部短信","All messages"))})
+                FilterChip(selected=otpOnly,onClick={otpOnly=true},label={Text(hubLabel("验证码","Verification codes"))})
             }
             if(threads.isEmpty()){
                 Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
@@ -236,10 +236,10 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     }
                 }
                 if(state.hasNewer)item{
-                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){Text("查看较新短信")}
+                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){Text(hubLabel("查看较新短信","View newer messages"))}
                 }
                 if(state.hasMore)item{
-                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text("加载更早短信")}
+                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
                 }
             }
         }

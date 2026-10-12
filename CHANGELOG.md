@@ -1,3 +1,14 @@
+## v0.16.0 — Native controller UX overhaul and SMS-mode-aware actions
+
+- Introduce dual Material 3 semantic themes: teal for the local SIM node and indigo for the native management center, with dedicated dashboard/device navigation vector icons and matching editable SVG sources.
+- Replace the text-heavy controller overview with metric cards, quick actions and compact durable-ACK task items.
+- Rebuild device lists as icon-led cards and use a full-screen native device detail with SIM channels, permission summary, sync, diagnostics and capability-gated remote OTA commands.
+- Reorganize controller settings into management address, security and system/update cards.
+- Implement a conservative SMS send capability policy across Android and Web: companion/non-default SMS mode is read-only; full default-SMS role additionally requires SEND_SMS; temporary one-hour developer send overrides must be explicitly reported, visibly labeled, and remain subject to node-side enforcement. Modem send ability is independent of Android role.
+- Gate new-message and reply UI by current sending capabilities; in-conversation reply pre-fills only the recipient and requires the user to verify the sending device and SIM.
+- Continue using the existing Global Vault E2EE, management signing and server ACK state machine; advanced destructive management and identity/Vault flows remain on the trusted HTTPS web console.
+- Add coverage for companion/default/developer/modem SMS capability decisions. Hardware, OEM, foldable and Passkey/biometric acceptance still requires physical-device validation.
+
 ## v0.15.8 — Reliable controller sync and compatibility
 
 - Negotiate pairing protocols: pre-v0.15.7 Android clients use temporary IP-bound v1 polling; v2 requires a separate high-entropy polling token. Legacy v1 expires 2027-02-11 UTC.

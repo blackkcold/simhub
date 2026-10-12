@@ -664,9 +664,15 @@ function deviceCanSendSms(d){
   // Modem agents are independent send-capable nodes, not Android SMS role holders.
   if(d.nodeType==='modem'||state.nodeType==='modem')
     return state.smsOperational!==false && nodeChannels(d).length>0;
-  if(state.smsSendAllowed===true)return nodeChannels(d).length>0;
-  // Conservative fallback for Android nodes which have not yet upgraded.
-  return state.smsMode==='default' && state.smsSendPermission===true && nodeChannels(d).length>0;
+  if(!nodeChannels(d).length)return false;
+  // Companion nodes are read-only by default. A developer test override must be
+  // explicitly reported, time-limited by the node, and revalidated before sending.
+  if(state.smsMode==='companion')
+    return state.smsDeveloperOverride===true && state.smsSendPermission===true &&
+      state.smsSendAllowed===true;
+  if(state.smsMode!=='default')return false;
+  if(state.smsSendPermission!==true)return false;
+  return state.smsSendAllowed!==false;
 }
 function sendingDevices(){return devices.filter(deviceCanSendSms);}
 function hasSmsSending(){return sendingDevices().length>0;}

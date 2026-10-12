@@ -18,6 +18,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -110,6 +114,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
     var actionError by remember{mutableStateOf("")}
+    var actionBusy by remember{mutableStateOf(false)}
+    var pendingSensitiveTask by remember { mutableStateOf<Pair<JSONObject,String>?>(null) }
+    var sensitiveCredential by remember { mutableStateOf("") }
     var serverVersion by remember{mutableStateOf("—")}
     var secondFactorTotp by remember(selected){mutableStateOf(true)}
     var requireLocalUnlock by remember(selected){mutableStateOf(client?.requireLocalUnlock()==true)}
@@ -322,6 +329,67 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     fun refreshDelta(){load("delta")}
     fun loadOlderPage(){load("older")}
     fun navigateToLatest(){load("latest")}
+    /** Remote commands are E2EE encrypted, idempotent and acknowledged asynchronously. */
+    fun queueDeviceAction(device:JSONObject,action:String,credential:String?=null){
+        if(action.startsWith("ota-") && credential==null){
+            pendingSensitiveTask=device to action
+            sensitiveCredential=""
+            return
+        }
+        if(actionBusy || !authorized || (requireLocalUnlock && !localUnlocked))return
+        val commandType=when(action){
+            "sync-recent"->"sms.sync_recent"
+            "sync-older"->"sms.sync_older"
+            "refresh"->"device.refresh_state"
+            "diagnostics"->"diagnostics.request"
+            "ota-install"->"ota.install"
+            "ota-cancel"->"ota.cancel"
+            else->return
+        }
+        val state=device.optJSONObject("state")?:JSONObject()
+        if(action.startsWith("ota-") && (
+            device.optString("nodeType")!="android" || !state.optBoolean("remoteOtaSupported") ||
+            !(state.optInt("sdk")>=36 || state.optBoolean("remoteOtaDeveloperOverride")) ||
+            !state.optBoolean("remoteOtaAuthorized") || !state.optBoolean("remoteOtaInstallPermission"))) {
+            actionError="节点不满足远程更新能力或授权条件";return
+        }
+        if(action=="ota-cancel" && state.optString("remoteOtaStage") !in
+            listOf("checking","downloading","verified"))return
+        actionError="";actionBusy=true
+        scope.launch{
+            try{
+                val commandId=withContext(Dispatchers.IO){
+                    val api=client?:throw SecurityException("管理授权已失效")
+                    if(action.startsWith("ota-")){
+                        if(credential.isNullOrBlank())throw SecurityException("此操作要求管理员二次验证")
+                        api.api("/api/v1/auth/elevate","POST",JSONObject()
+                            .put(if(secondFactorTotp)"totp" else "adminToken",credential))
+                    }
+                    val id=UUID.randomUUID().toString()
+                    val now=System.currentTimeMillis()/1000
+                    val energy=state.optString("effectiveEnergyMode",
+                        state.optString("energyMode","balanced"))
+                    val minTtl=if(!state.optBoolean("foregroundRelay") || energy=="eco")1200L
+                        else if(energy=="balanced")300L else 180L
+                    val end=now+maxOf(if(action=="ota-install")3600L else 900L,minTtl)
+                    val payload=JSONObject().put("v",2).put("action",commandType)
+                        .put("commandId",id).put("issuedAt",now).put("expiresAt",end)
+                    if(action=="sync-recent" || action=="sync-older")payload.put("maxMessages",100)
+                    if(action=="ota-install")payload.put("targetVersion","latest")
+                    val cipher=api.encryptCommand(device,id,commandType,now,end,payload)
+                    api.api("/api/v1/devices/"+device.getString("id")+"/commands","POST",
+                        JSONObject().put("commandId",id).put("idempotencyKey",id)
+                            .put("type",commandType).put("createdAt",now)
+                            .put("expiresAt",end).put("ciphertext",cipher))
+                    id
+                }
+                lastCommandId=commandId;lastCommandDevice=device.optString("name")
+                lastCommandState="任务已入队，等待设备领取及最终 ACK"
+                commandTick++
+            }catch(e:Exception){actionError=e.message?:"任务下发失败，请检查网络及设备状态"}
+            finally{actionBusy=false}
+        }
+    }
     LaunchedEffect(busy,pendingLoad){
         if(!busy && pendingLoad.isNotBlank()){
             val next=pendingLoad;pendingLoad=""
@@ -457,68 +525,94 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 modifier=Modifier.padding(horizontal=16.dp,vertical=6.dp))
             if(tab==0){
                 LazyColumn(Modifier.weight(1f),
-                    contentPadding=PaddingValues(16.dp),
-                    verticalArrangement=Arrangement.spacedBy(12.dp)){
-                    item {
-                        HubCard(Modifier.fillMaxWidth()) {
-                            Text("管理中心",style=MaterialTheme.typography.titleLarge,
-                                fontWeight=FontWeight.SemiBold)
-                            Spacer(Modifier.height(10.dp))
-                            StatePill("已授权 · 端到端加密",true)
-                            Spacer(Modifier.height(12.dp))
-                            InfoRow("服务器",Uri.parse(selected.orEmpty()).host?:selected.orEmpty())
-                            InfoRow("已加载 SIM 节点",devices.size.toString())
-                            InfoRow("无法解密消息",unreadable.toString())
+                    contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                                HubIcon(R.drawable.ic_hub_dashboard,Modifier.size(31.dp),MaterialTheme.colorScheme.primary)
+                                Column(Modifier.weight(1f)){
+                                    Text(hubLabel("管理中心","Management center"),
+                                        style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+                                    Text(Uri.parse(selected.orEmpty()).host?:selected.orEmpty(),
+                                        style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                StatePill(hubLabel("E2EE 已授权","E2EE authorized"),true)
+                            }
                         }
                     }
-                    item {
-                        HubCard(Modifier.fillMaxWidth()) {
-                            HubSectionTitle("快捷操作")
-                            FilledTonalButton(onClick={onSelectTab(1)},
-                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("查看短信","View messages")) }
-                            FilledTonalButton(onClick={onSelectTab(2)},
-                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("管理设备","Manage devices")) }
-                            OutlinedButton(onClick={refreshDelta()},
-                                modifier=Modifier.fillMaxWidth()) { Text(hubLabel("刷新加密数据","Refresh encrypted data")) }
+                    item{
+                        Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                            ControllerMetric(hubLabel("设备总数","Total nodes"),devices.size.toString(),
+                                R.drawable.ic_hub_devices,Modifier.weight(1f))
+                            ControllerMetric(hubLabel("在线设备","Online nodes"),devices.count{it.optBoolean("online")}.toString(),
+                                R.drawable.ic_hub_network,Modifier.weight(1f))
+                        }
+                    }
+                    item{
+                        Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                            ControllerMetric(hubLabel("已加载短信","Loaded SMS"),inbox.messages.size.toString(),
+                                R.drawable.ic_hub_messages,Modifier.weight(1f))
+                            ControllerMetric(hubLabel("待处理任务","Pending tasks"),
+                                commandHistory.count{it.optString("state") in listOf("queued","dispatched","submitted")}.toString(),
+                                R.drawable.ic_hub_tasks,Modifier.weight(1f))
+                        }
+                    }
+                    if(unreadable>0)item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Text(hubLabel("部分短信无法解密","Messages could not be decrypted"),
+                                color=MaterialTheme.colorScheme.error)
+                            Text(hubLabel("请检查历史设备密钥。","Check historical node keys."),
+                                style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     item{
                         HubCard(Modifier.fillMaxWidth()){
-                            HubSectionTitle(hubLabel("远程任务中心","Remote command center"))
-                            Text(hubLabel("队列接收不代表设备执行成功；任务状态来自服务器持久化 ACK。",
-                                "Queued is not completed. States are read from durable Relay acknowledgements."),
-                                style=MaterialTheme.typography.bodySmall,
-                                color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            OutlinedButton(onClick={commandTick++}){
-                                Text(hubLabel("刷新任务状态","Refresh command status"))
+                            HubSectionTitle(hubLabel("快捷操作","Quick actions"))
+                            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                                FilledTonalButton(onClick={onSelectTab(1)},modifier=Modifier.weight(1f)){
+                                    HubIcon(R.drawable.ic_hub_messages,Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(hubLabel("短信","Inbox"))
+                                }
+                                FilledTonalButton(onClick={onSelectTab(2)},modifier=Modifier.weight(1f)){
+                                    HubIcon(R.drawable.ic_hub_devices,Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(hubLabel("设备","Devices"))
+                                }
+                            }
+                            if(devices.any{ControllerNodePolicy.canSend(it)})
+                                OutlinedButton(onClick={showWrite=true},modifier=Modifier.fillMaxWidth()){
+                                    HubIcon(R.drawable.ic_hub_send,Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(hubLabel("发送加密短信","Send encrypted SMS"))
+                                }
+                            OutlinedButton(onClick={refreshDelta()},modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("刷新加密数据","Refresh encrypted data"))
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                Text(hubLabel("远程任务","Remote tasks"),
+                                    style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold,
+                                    modifier=Modifier.weight(1f))
+                                IconButton(onClick={commandTick++}){
+                                    HubIcon(R.drawable.ic_hub_sync,description=hubLabel("刷新任务","Refresh tasks"))
+                                }
                             }
                             if(commandHistoryError.isNotEmpty())
                                 Text(commandHistoryError,color=MaterialTheme.colorScheme.error)
                             if(commandHistory.isEmpty())
-                                Text(hubLabel("暂无可查询的任务","No commands to display"))
-                            commandHistory.take(if(expandCommands)50 else 5).forEach{cmd->
-                                HorizontalDivider()
-                                val type=cmd.optString("type")
-                                val deviceName=devices.firstOrNull{it.optString("id")==cmd.optString("deviceId")}
-                                    ?.optString("name")?:cmd.optString("deviceId").take(8)
-                                Text("$deviceName · $type",
-                                    style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.SemiBold)
-                                Text(ControllerCommandProgress.describe(cmd),
-                                    style=MaterialTheme.typography.bodySmall)
-                                Text("ID "+cmd.optString("commandId").take(12)+
-                                    " · "+android.text.format.DateFormat.format(
-                                        "MM-dd HH:mm",cmd.optLong("createdAt")*1000).toString(),
-                                    style=MaterialTheme.typography.labelSmall,
-                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(hubLabel("暂无任务","No recent tasks"))
+                            commandHistory.take(if(expandCommands)50 else 5).forEachIndexed{index,cmd->
+                                if(index>0)HorizontalDivider()
+                                ControllerTaskRow(cmd)
                             }
                             if(commandHistory.size>5)TextButton(onClick={expandCommands=!expandCommands}){
-                                Text(if(expandCommands)hubLabel("收起","Show fewer")
-                                    else hubLabel("展开更多任务","Show more commands"))
+                                Text(if(expandCommands)hubLabel("收起","Show fewer") else hubLabel("全部任务","All tasks"))
                             }
                         }
-                    }
-                    if(error.isNotEmpty())item {
-                        Text(error,color=MaterialTheme.colorScheme.error)
                     }
                 }
             }else if(tab==1){
@@ -536,85 +630,145 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         onOlder={loadOlderPage()},
                         onNewer={navigateToLatest()},
                         onOpenLogin={refreshDelta()},
-                        onWrite={showWrite=true})
+                        onWrite={showWrite=true},
+                         onReply={address->composeRecipient=address;showWrite=true},
+                         canCompose=devices.any{ControllerNodePolicy.canSend(it)})
                     if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             }else if(tab==2){
-                LazyColumn(Modifier.weight(1f),
-                    contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-                    items(devices,key={it.optString("id")}){d->
-                        HubCard(Modifier.fillMaxWidth()){
-                            Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                                Row(verticalAlignment=Alignment.CenterVertically){
-                                    Column(Modifier.weight(1f)){
-                                        Text(d.optString("name","SIM 节点"),fontWeight=FontWeight.SemiBold)
-                                        Text(d.optString("model"),style=MaterialTheme.typography.bodySmall)
-                                    }
-                                    Text(if(d.optBoolean("online"))"在线" else "离线",
-                                        color=if(d.optBoolean("online"))MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                val state=d.optJSONObject("state")?:JSONObject()
-                                Text("短信：${d.optInt("smsCount")} 条 · ${state.optString("smsMode","未知模式")}",
-                                    style=MaterialTheme.typography.bodySmall)
-                                Text("电量：${state.optString("batteryPct","—")}%  · ${state.optString("network","—")}",
-                                    style=MaterialTheme.typography.bodySmall)
-                                TextButton(onClick={selectedDevice=d}){Text(hubLabel("设备详情与操作","Device details and actions"))}
+                LazyVerticalGrid(columns=GridCells.Adaptive(300.dp),modifier=Modifier.weight(1f),
+                    contentPadding=PaddingValues(16.dp),
+                    horizontalArrangement=Arrangement.spacedBy(12.dp),
+                    verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    item(span={GridItemSpan(maxLineSpan)}){
+                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){
+                                Text(hubLabel("已连接设备","Connected devices"),
+                                    style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+                                Text(devices.size.toString()+hubLabel(" 台设备"," nodes"),
+                                    style=MaterialTheme.typography.bodySmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick={refreshDelta()}){
+                                HubIcon(R.drawable.ic_hub_sync,description=hubLabel("刷新设备","Refresh devices"))
                             }
                         }
+                    }
+                    item(span={GridItemSpan(maxLineSpan)}){
+                        OutlinedButton(onClick={
+                            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                Uri.parse(selected+"/")))
+                        },modifier=Modifier.fillMaxWidth()){
+                            HubIcon(R.drawable.ic_hub_add,Modifier.size(19.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(hubLabel("添加 SIM 节点（网页安全配对）","Add SIM node (secure Web enrollment)"))
+                        }
+                    }
+                    if(devices.isEmpty())item(span={GridItemSpan(maxLineSpan)}){
+                        HubCard(Modifier.fillMaxWidth()){
+                            Text(hubLabel("暂无已配对设备","No enrolled devices"))
+                            Text(hubLabel("请在网页管理后台添加 SIM 节点。","Enroll SIM nodes in the web console."),
+                                style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    gridItems(devices,key={it.optString("id")}){device->
+                        ControllerDeviceCard(device){selectedDevice=device;actionError=""}
                     }
                 }
             }else{
-                LazyColumn(Modifier.weight(1f),
-                    contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(16.dp),
+                    verticalArrangement=Arrangement.spacedBy(12.dp)){
                     item{
-                        Text("管理空间",style=MaterialTheme.typography.titleMedium)
-                        ListItem(headlineContent={Text(Uri.parse(selected).host?:selected.orEmpty())},
-                            supportingContent={Text("终端签名已授权 · 加密密钥仅存于本机")},
-                            leadingContent={HubIcon(R.drawable.ic_hub_shield)})
-                        Text("终端标识：${client?.controllerId()?.take(12)}…",
-                            style=MaterialTheme.typography.bodySmall)
+                        Text(hubLabel("管理设置","Management settings"),
+                            style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
                     }
                     item{
-                        HubSectionTitle("管理空间")
-                        OutlinedButton(onClick={add=true},
-                            modifier=Modifier.fillMaxWidth()) { Text(hubLabel("添加管理地址","Add management URL")) }
-                        profiles.forEach { origin ->
-                            TextButton(onClick={chooseOrigin(origin)},
-                                modifier=Modifier.fillMaxWidth()) {
-                                Text(Uri.parse(origin).host?:origin)
-                            }
-                        }
-                    }
-                    item {
-                        Text("安全与权限",style=MaterialTheme.typography.titleMedium)
-                        Text("可在本机完成云端授权撤销及本地密钥清除；离线时也可仅清除本机身份，但云端授权不会因此撤销。",
-                            color=MaterialTheme.colorScheme.onSurfaceVariant,
-                            style=MaterialTheme.typography.bodySmall)
-                        Row(verticalAlignment=Alignment.CenterVertically){
-                            Column(Modifier.weight(1f)){
-                                Text(hubLabel("重新进入时验证身份","Require authentication on return"))
-                                Text(hubLabel("使用安卓系统生物识别或锁屏；这是应用访问保护，并非密钥的硬件认证绑定。",
-                                    "Android biometrics or device credential. App access gate, not a hardware-bound Vault key."),
-                                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Switch(checked=requireLocalUnlock,onCheckedChange={enabled->
-                                if(enabled)authenticateLocal(enable=true)
-                                else{client?.setRequireLocalUnlock(false);requireLocalUnlock=false;localUnlocked=true}
-                            })
-                        }
-                        OutlinedButton(onClick={showReset=true}){Text(hubLabel("清除此手机的管理授权","Remove authorization from this phone"))}
-                    }
-                    item{
-                        Text("版本及诊断",style=MaterialTheme.typography.titleMedium)
-                        Text("Android ${BuildConfig.VERSION_NAME} · 原生管理端")
-                        OutlinedButton(onClick={
-                            scope.launch{try{
-                                serverVersion=withContext(Dispatchers.IO){
-                                    client!!.api("/api/v1/version").optString("version","未知")
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(11.dp)){
+                                HubIcon(R.drawable.ic_hub_dashboard,Modifier.size(28.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                Column(Modifier.weight(1f)){
+                                    Text(hubLabel("管理空间","Workspace"),fontWeight=FontWeight.SemiBold)
+                                    Text(Uri.parse(selected).host?:selected.orEmpty(),
+                                        style=MaterialTheme.typography.bodySmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                            }catch(e:Exception){error=e.message?:"版本检查失败"}}
-                        }){Text("服务器版本：$serverVersion")}
+                                StatePill(hubLabel("已授权","Authorized"),true)
+                            }
+                            InfoRow(hubLabel("设备身份","Controller ID"),client?.controllerId()?.take(12).orEmpty()+"…")
+                            HorizontalDivider(Modifier.padding(vertical=10.dp))
+                            OutlinedButton(onClick={add=true},modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("添加管理地址","Add management URL"))
+                            }
+                            profiles.forEach{origin->
+                                TextButton(onClick={chooseOrigin(origin)},
+                                    modifier=Modifier.fillMaxWidth()){
+                                    Text(Uri.parse(origin).host?:origin)
+                                }
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(9.dp)){
+                                HubIcon(R.drawable.ic_hub_shield,Modifier.size(24.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                Text(hubLabel("安全与访问","Security & access"),
+                                    style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                Column(Modifier.weight(1f)){
+                                    Text(hubLabel("返回时验证身份","Require unlock on return"),
+                                        fontWeight=FontWeight.Medium)
+                                    Text(hubLabel("系统生物识别/锁屏是应用门禁，不是硬件认证绑定的 Vault 密钥。",
+                                        "System unlock is an app gate, not an auth-bound Vault key."),
+                                        style=MaterialTheme.typography.bodySmall,
+                                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(checked=requireLocalUnlock,onCheckedChange={enabled->
+                                    if(enabled)authenticateLocal(enable=true)
+                                    else{
+                                        client?.setRequireLocalUnlock(false)
+                                        requireLocalUnlock=false;localUnlocked=true
+                                    }
+                                })
+                            }
+                            HorizontalDivider(Modifier.padding(vertical=10.dp))
+                            OutlinedButton(onClick={showReset=true},modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("撤销此手机的管理授权…","Revoke this controller…"))
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(9.dp)){
+                                HubIcon(R.drawable.ic_hub_tasks,Modifier.size(24.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                Text(hubLabel("系统与版本","System & updates"),
+                                    style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                            }
+                            InfoRow(hubLabel("Android 版本","Android app"),BuildConfig.VERSION_NAME)
+                            InfoRow(hubLabel("Relay 版本","Relay version"),serverVersion)
+                            OutlinedButton(onClick={
+                                scope.launch{
+                                    try{serverVersion=withContext(Dispatchers.IO){
+                                        client!!.api("/api/v1/version").optString("version","未知")
+                                    }}catch(e:Exception){error=e.message?:"版本检查失败"}
+                                }
+                            },modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("检查服务器版本","Check Relay version"))
+                            }
+                            OutlinedButton(onClick={
+                                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                    Uri.parse(selected+"/")))
+                            },modifier=Modifier.fillMaxWidth()){
+                                Text(hubLabel("打开网页高级管理","Open advanced Web management"))
+                            }
+                        }
                     }
                 }
             }
@@ -666,46 +820,51 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 lastCommandId="";resetCredential="";showReset=false
             }){Text(hubLabel("仅清除此手机","Remove only from this phone"))}
         })
-    selectedDevice?.let{d->
-        AlertDialog(onDismissRequest={selectedDevice=null},
-            title={Text(d.optString("name","设备详情"))},
-            text={Column(Modifier.heightIn(max=450.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement=Arrangement.spacedBy(10.dp)){
-                Text("设备 ID：${d.optString("id")}")
-                Text("版本：${d.optString("appVersion")}")
-                Text("连接：${if(d.optBoolean("online"))"在线" else "离线"}")
-                Text("最近同步：${d.optLong("lastSeenAt")}")
-                Text("远程同步使用原有端到端加密指令，操作异步排队并等待设备 ACK。",
-                    style=MaterialTheme.typography.bodySmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-                if(actionError.isNotEmpty())Text(actionError,color=MaterialTheme.colorScheme.error)
-                if(lastCommandId.isNotBlank() && lastCommandDevice==d.optString("name"))
-                    Text(lastCommandState.ifBlank{"查询任务状态中"},style=MaterialTheme.typography.bodySmall)
-                Button(onClick={
-                    scope.launch{
-                        try{
-                            val queuedId=withContext(Dispatchers.IO){
-                                val id=UUID.randomUUID().toString()
-                                val now=System.currentTimeMillis()/1000
-                                val end=now+1200
-                                val payload=JSONObject().put("v",2).put("action","sms.sync_recent")
-                                    .put("commandId",id).put("issuedAt",now).put("expiresAt",end)
-                                val cipher=client!!.encryptCommand(d,id,"sms.sync_recent",now,end,payload)
-                                client.api("/api/v1/devices/"+d.getString("id")+"/commands","POST",
-                                    JSONObject().put("commandId",id).put("idempotencyKey",id)
-                                    .put("type","sms.sync_recent").put("createdAt",now)
-                                    .put("expiresAt",end).put("ciphertext",cipher))
-                                id
-                            }
-                            lastCommandId=queuedId
-                            lastCommandDevice=d.optString("name")
-                            lastCommandState="等待设备连接并领取任务"
-                            actionError="同步任务已入队，可在首页跟踪执行结果"
-                        }catch(e:Exception){actionError=e.message?:"指令失败"}
-                    }
-                }){Text(hubLabel("下发同步最近短信","Sync recent messages"))}
-            }},
-            confirmButton={TextButton(onClick={selectedDevice=null;actionError=""}){Text(hubLabel("关闭","Close"))}})
+    selectedDevice?.let{device->
+        if(pendingSensitiveTask==null)Dialog(onDismissRequest={selectedDevice=null},
+            properties=DialogProperties(usePlatformDefaultWidth=false)){
+            Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
+                ControllerDeviceDetails(device,busy=actionBusy,
+                    lastStatus=if(lastCommandDevice==device.optString("name"))lastCommandState else "",
+                    error=actionError,
+                    onClose={selectedDevice=null;actionError=""},
+                    onAction={action->queueDeviceAction(device,action)},
+                    onAdvanced={
+                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            Uri.parse(selected+"/")))
+                    })
+            }
+        }
+    }
+    pendingSensitiveTask?.let{pending->
+        val (device,action)=pending
+        AlertDialog(onDismissRequest={pendingSensitiveTask=null;sensitiveCredential=""},
+            icon={HubIcon(R.drawable.ic_hub_shield,Modifier.size(28.dp),
+                MaterialTheme.colorScheme.primary)},
+            title={Text(if(action=="ota-install")hubLabel("确认远程安装","Confirm remote installation")
+                else hubLabel("取消待处理更新","Cancel pending update"))},
+            text={
+                Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    Text(if(action=="ota-install")
+                        hubLabel("仅请求安装最新签名版本；安卓系统仍可能要求在设备上确认。任务入队不等于更新成功。",
+                            "Only a newer signed build is requested. Android may still require confirmation; queued is not installed.")
+                        else hubLabel("仅能取消尚未提交系统安装器的更新。","Cancellation is limited to updates not yet committed to Android."),
+                        style=MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(sensitiveCredential,{sensitiveCredential=it},
+                        label={Text(if(secondFactorTotp)hubLabel("二次验证 TOTP","TOTP")
+                            else hubLabel("管理员令牌","Admin token"))},
+                        singleLine=true,visualTransformation=PasswordVisualTransformation(),
+                        modifier=Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton={TextButton(enabled=sensitiveCredential.isNotBlank()&&!actionBusy,onClick={
+                val auth=sensitiveCredential
+                pendingSensitiveTask=null;sensitiveCredential=""
+                queueDeviceAction(device,action,auth)
+            }){Text(hubLabel("确认提交","Confirm"))}},
+            dismissButton={TextButton(onClick={pendingSensitiveTask=null;sensitiveCredential=""}){
+                Text(hubLabel("取消","Cancel"))
+            }})
     }
     if(showWrite){
         var sendError by remember{mutableStateOf("")}
@@ -717,14 +876,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val messageCommandId=composeCommandId
         val deviceIdx=composeDeviceIdx
         val channelIdx=composeChannelIdx
-        val possible=devices.filter{d->
-            val st=d.optJSONObject("state")?:JSONObject()
-            val channels=st.optJSONArray("channels")
-            d.optBoolean("online") && channels!=null && channels.length()>0 &&
-                (st.optBoolean("smsSendAllowed") || d.optString("nodeType")=="modem")
-        }
+        val possible=devices.filter{ControllerNodePolicy.canSend(it)}
         val current=possible.getOrNull(deviceIdx)
-        val channels=current?.optJSONObject("state")?.optJSONArray("channels")?:JSONArray()
+        val channels=current?.let{ControllerNodePolicy.channels(it)}?:JSONArray()
         val currentDraft=(current?.optString("id")?:"")+"|"+deviceIdx+"|"+channelIdx+"|"+recipient+"|"+message
         var stepUp by remember{mutableStateOf("")}
         Dialog(onDismissRequest={showWrite=false},
@@ -744,13 +898,20 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     Text(hubLabel("重试需保留原收件人、SIM 与短信内容；修改内容请新建发送任务。",
                         "For an idempotent retry, restore the original recipient, SIM and message."),
                         color=MaterialTheme.colorScheme.error)
-                if(possible.isEmpty())Text("当前没有允许发送短信的在线 SIM 节点。")
+                if(possible.isEmpty())Text(hubLabel("当前没有具备发送能力的在线节点。不接管模式默认只读，完全接管模式需取得发送权限。",
+                        "No send-capable online node. Companion mode is read-only; default SMS mode requires permission."))
                 else{
+                    Text(hubLabel("核对发送节点和 SIM，系统不会因会话来源自动替换路由。",
+                        "Verify node and SIM; the conversation does not automatically change routing."),
+                        style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("发送设备",style=MaterialTheme.typography.labelLarge)
                     possible.forEachIndexed{i,d->
                         FilterChip(selected=i==deviceIdx,onClick={composeDeviceIdx=i;composeChannelIdx=0},
                             label={Text(d.optString("name"))})
                     }
+                    if(current!=null)Text(ControllerNodePolicy.sendModeLabel(current),
+                        color=if(ControllerNodePolicy.isDeveloperSend(current))MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.bodySmall)
                     Text("来源 SIM",style=MaterialTheme.typography.labelLarge)
                     for(i in 0 until channels.length()){
                         val ch=channels.optJSONObject(i)?:continue
@@ -764,7 +925,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 }
                     }
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
-                        Button(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && recipient.isNotBlank() && message.isNotBlank(),
+                        Button(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && ControllerNodePolicy.canSend(current) && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
                     if(submittedDraft.isEmpty())composeSubmittedDraft=currentDraft
                     sending=true;sendError=""

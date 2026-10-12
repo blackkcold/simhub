@@ -36,6 +36,8 @@ import java.util.Date
 
 private val Violet=Color(0xFF574FEA)
 private val Plum=Color(0xFFACA9FF)
+private val Teal=Color(0xFF087F74)
+private val Mint=Color(0xFF7BE3D3)
 private val LightBg=Color(0xFFF6F7FB)
 private val DarkBg=Color(0xFF0F1321)
 
@@ -59,19 +61,30 @@ fun HubIcon(id:Int,modifier:Modifier=Modifier,tint:Color=LocalContentColor.curre
     Icon(painterResource(id),contentDescription=description,modifier=modifier,tint=tint)
 }
 @Composable
-private fun HubTheme(content:@Composable ()->Unit){
+private fun HubTheme(surface:String,content:@Composable ()->Unit){
+    val controller=surface=="controller"
+    val accent=if(controller)Violet else Teal
+    val darkAccent=if(controller)Plum else Mint
     val dark=androidx.compose.foundation.isSystemInDarkTheme()
-    val lightColors=lightColorScheme(primary=Violet,onPrimary=Color.White,secondary=Violet,background=LightBg,
+    val lightColors=lightColorScheme(primary=accent,onPrimary=Color.White,secondary=accent,
+        primaryContainer=if(controller)Color(0xFFEAE8FF) else Color(0xFFD8F4EF),
+        onPrimaryContainer=if(controller)Color(0xFF292276) else Color(0xFF09594F),background=LightBg,
         surface=Color.White,onSurface=Color(0xFF18223A),surfaceVariant=Color(0xFFF0F2FB),outlineVariant=Color(0xFFE1E5F0))
-    val darkColors=darkColorScheme(primary=Plum,onPrimary=Color(0xFF262254),background=DarkBg,
+    val darkColors=darkColorScheme(primary=darkAccent,onPrimary=Color(0xFF0F1321),secondary=darkAccent,
+        primaryContainer=if(controller)Color(0xFF343063) else Color(0xFF154940),
+        background=DarkBg,
         surface=Color(0xFF181D2D),onSurface=Color(0xFFF1F2FA),surfaceVariant=Color(0xFF292E40),outlineVariant=Color(0xFF383E50))
     MaterialTheme(colorScheme=if(dark)darkColors else lightColors,
         shapes=Shapes(small=RoundedCornerShape(12.dp),medium=RoundedCornerShape(16.dp),
             large=RoundedCornerShape(20.dp),extraLarge=RoundedCornerShape(24.dp)),
         content=content)
 }
-private val navIcons=listOf(R.drawable.ic_hub_home,R.drawable.ic_hub_messages,R.drawable.ic_hub_sim,R.drawable.ic_hub_settings)
-private val navText=listOf(R.string.hub_home,R.string.hub_sms,R.string.hub_sim,R.string.hub_settings)
+private val nodeNavIcons=listOf(R.drawable.ic_hub_home,R.drawable.ic_hub_messages,R.drawable.ic_hub_sim,R.drawable.ic_hub_settings)
+private val controllerNavIcons=listOf(R.drawable.ic_hub_dashboard,R.drawable.ic_hub_messages,R.drawable.ic_hub_devices,R.drawable.ic_hub_shield)
+@Composable
+private fun navTitle(node:Boolean,index:Int):String =
+    if(node) when(index){0->hubLabel("状态","Status");1->hubLabel("本机短信","Messages");2->hubLabel("SIM 卡","SIM cards");else->hubLabel("设置","Settings")}
+    else when(index){0->hubLabel("总览","Overview");1->hubLabel("短信","Inbox");2->hubLabel("设备","Devices");else->hubLabel("设置","Settings")}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,7 +107,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
         surface=value
     }
     if(!configured) {
-        HubTheme {
+        HubTheme("node") {
             Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,
                 horizontalAlignment=Alignment.CenterHorizontally) {
                 Text("SIM Hub",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold)
@@ -132,7 +145,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
         else if(ui.tab==2 && ui.simDetail>=0)ui.simDetail=-1
         else ui.tab=0
     }
-    HubTheme {
+    HubTheme(surface) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val expanded=maxWidth>=840.dp
             val foldVertical=fold!=null &&
@@ -140,6 +153,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
             val rail=HubLayoutPolicy.navigationRail(maxWidth.value.toInt(),
                 maxHeight.value.toInt(),foldVertical)
             val isNode=surface=="node"
+            val navIcons=if(isNode)nodeNavIcons else controllerNavIcons
             Scaffold(
                 containerColor=MaterialTheme.colorScheme.background,
                 contentWindowInsets=WindowInsets.safeDrawing,
@@ -152,8 +166,8 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                     Box(Modifier.size(35.dp).background(
                                         MaterialTheme.colorScheme.primary,RoundedCornerShape(12.dp)),
                                         contentAlignment=Alignment.Center){
-                                        HubIcon(R.drawable.ic_hub_sim,Modifier.size(21.dp),
-                                            MaterialTheme.colorScheme.onPrimary)
+                                        HubIcon(if(isNode)R.drawable.ic_hub_sim else R.drawable.ic_hub_dashboard,
+                                            Modifier.size(21.dp),MaterialTheme.colorScheme.onPrimary)
                                     }
                                     Column {
                                         Text("SIM Hub",fontWeight=FontWeight.Bold,fontSize=18.sp)
@@ -174,7 +188,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                 containerColor=MaterialTheme.colorScheme.surface)
                         )
                         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
-                            .padding(horizontal=16.dp,vertical=5.dp),
+                            .padding(horizontal=16.dp,vertical=0.dp),
                             horizontalArrangement=Arrangement.spacedBy(10.dp)){
                             FilterChip(selected=isNode,onClick={chooseSurface("node")},
                                 label={Text("SIM 节点")},leadingIcon={
@@ -196,7 +210,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                     selected=(if(isNode)ui.tab else ui.controllerTab)==i,
                                     onClick={if(isNode)ui.tab=i else ui.controllerTab=i},
                                     icon={HubIcon(id,Modifier.size(23.dp))},
-                                    label={Text(stringResource(navText[i]),maxLines=1)},
+                                    label={Text(navTitle(isNode,i),maxLines=1)},
                                     alwaysShowLabel=true)
                             }
                         }
@@ -213,7 +227,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                         selected=(if(isNode)ui.tab else ui.controllerTab)==i,
                                         onClick={if(isNode)ui.tab=i else ui.controllerTab=i},
                                         icon={HubIcon(id,Modifier.size(23.dp))},
-                                        label={Text(stringResource(navText[i]))})
+                                        label={Text(navTitle(isNode,i))})
                                 }
                             }
                         }

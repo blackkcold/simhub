@@ -69,6 +69,27 @@ private fun SmsConversationList(threads:List<HubThread>,state:HubSnapshot?,ui:Hu
                 HubIcon(R.drawable.ic_hub_add,Modifier.size(23.dp),MaterialTheme.colorScheme.onPrimary,stringResource(R.string.hub_new_sms))
             }
         }
+        if(!sendingAllowed){
+            Row(Modifier.fillMaxWidth().padding(vertical=8.dp),
+                verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(7.dp)){
+                HubIcon(R.drawable.ic_hub_shield,Modifier.size(18.dp),
+                    MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(hubLabel("不接管模式：只读同步。需完全接管短信才能正常发送。",
+                    "Companion mode: read-only. Default SMS role is needed for regular sending."),
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }else if(state?.smsRole==false && DeveloperSettings.isForceSmsEnabled(context)){
+            Row(Modifier.fillMaxWidth().padding(vertical=8.dp),
+                verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(7.dp)){
+                HubIcon(R.drawable.ic_hub_shield,Modifier.size(18.dp),MaterialTheme.colorScheme.error)
+                Text(hubLabel("开发者测试发送已开启，1 小时后自动失效；不是正常短信接管模式。",
+                    "Developer-only SMS test enabled; expires in one hour."),
+                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+            }
+        }
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(value=ui.search,onValueChange={ui.search=it},
             label={Text(stringResource(R.string.hub_search),maxLines=1)},

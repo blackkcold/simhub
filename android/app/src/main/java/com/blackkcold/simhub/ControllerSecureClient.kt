@@ -49,6 +49,8 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     fun hasGrant():Boolean=prefs.getString("controllerId",null)!=null &&
         prefs.getString("sealedVault",null)!=null
     fun controllerId():String=prefs.getString("controllerId","")?:""
+    fun identityFingerprint():String=MessageDigest.getInstance("SHA-256")
+        .digest(identity().public.encoded).take(8).joinToString(""){"%02x".format(it.toInt() and 255)}
 
     private fun identity():KeyPair {
         val store=KeyStore.getInstance("AndroidKeyStore").apply{load(null)}
@@ -164,7 +166,6 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
             prefs.edit().putString("controllerId",result.getString("controllerId"))
                 .putString("sealedVault",saved).apply()
         }finally{raw.fill(0);exchange=null;requestedId=null}
-        login()
         return true
     }
     fun login() {

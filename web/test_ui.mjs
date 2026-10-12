@@ -209,10 +209,26 @@ try {
   await p.locator("#unlockBtn").click();
   await p.locator("#passphrase").fill("session-resume-test-passphrase");
   p.once("dialog",d=>d.accept());
+  const setupProblems=[];
+  p.on("pageerror",e=>setupProblems.push("page: "+e.message));
+  p.on("response",r=>{if(r.url().includes("/api/")&&r.status()>=400)
+    setupProblems.push("HTTP "+r.status()+" "+r.url());});
   await p.locator("#createVaultBtn").click();
   await p.locator("#stepupValue").fill("A".repeat(48));
   await p.locator("#stepupForm").evaluate(form=>form.requestSubmit());
-  await p.waitForFunction(()=>!!sessionStorage.getItem("simhub_session_vault_v1"),null,{timeout:12000});
+  try {await p.waitForFunction(()=>!!sessionStorage.getItem("simhub_session_vault_v1"),null,{timeout:12000});}
+  catch(e){
+    const detail=await p.evaluate(()=>({
+      toast:document.querySelector("#toast")?.textContent,
+      gate:document.querySelector("#gateHint")?.textContent,
+      vaultShown:!document.querySelector("#vaultStage")?.hidden,
+      createShown:!document.querySelector("#createVaultBtn")?.hidden,
+      hasSnapshot:!!sessionStorage.getItem("simhub_session_vault_v1"),
+      status:document.querySelector("#vaultStatus")?.textContent
+    }));
+    console.error("GLOBAL-VAULT-INIT-FAILED",JSON.stringify({detail,setupProblems}));
+    throw e;
+  }
   assert.equal(await p.locator("#createVaultBtn").isVisible(),false,"Global Vault must not offer creation after initialization");
   const loginErrors=[];
   p.on("response",response=>{if(response.url().includes("/api/")&&response.status()>=400)loginErrors.push({url:response.url(),status:response.status()});});

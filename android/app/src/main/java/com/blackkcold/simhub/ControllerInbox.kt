@@ -75,10 +75,13 @@ class ControllerInboxState {
                         .take(1200)
                     messages.clear();messages.addAll(ordered)
                     unlocked=true
-                    hasMore=obj.optBoolean("hasMore")
-                    hasNewer=obj.optBoolean("hasNewer")
-                    warning=if(obj.optInt("unreadable")>0)
-                        "部分短信无法解密，请检查历史 Node Key 或 Vault 密钥" else ""
+                    if(!obj.optBoolean("incremental")){
+                        hasMore=obj.optBoolean("hasMore")
+                        hasNewer=obj.optBoolean("hasNewer")
+                    }
+                    if(obj.optInt("unreadable")>0)
+                        warning="部分短信无法解密，请检查历史 Node Key 或 Vault 密钥"
+                    else if(!obj.optBoolean("incremental"))warning=""
                 }
             }
         }catch(_:Exception){ /* Malformed page data is ignored, not logged. */ }

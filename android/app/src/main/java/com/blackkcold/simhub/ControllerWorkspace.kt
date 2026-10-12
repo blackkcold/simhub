@@ -1,6 +1,11 @@
 package com.blackkcold.simhub
 
 import android.net.Uri
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,7 +40,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     val inbox=remember(selected){ControllerInboxState()}
     var add by remember{mutableStateOf(false)}
     var addUrl by remember{mutableStateOf("")}
-    var pairing by remember(selected){mutableStateOf<ControllerSecureClient.PairStatus?>(null)}
+    var pairing by remember(selected){mutableStateOf(client?.pendingPairing())}
     var error by remember(selected){mutableStateOf("")}
     var busy by remember(selected){mutableStateOf(false)}
     var authorized by remember(selected){mutableStateOf(client?.hasGrant()==true)}
@@ -177,6 +182,16 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     if(pairing!=null){
                         Text("配对码  ${pairing!!.code}",
                             style=MaterialTheme.typography.headlineMedium)
+                        OutlinedButton(onClick={
+                            val clipboard=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip=ClipData.newPlainText("SIM Hub 一次性配对码",pairing!!.code)
+                            if(Build.VERSION.SDK_INT>=33){
+                                clip.description.extras=android.os.PersistableBundle().apply{
+                                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE,true)
+                                }
+                            }
+                            clipboard.setPrimaryClip(clip)
+                        },modifier=Modifier.fillMaxWidth()) { Text("复制配对码，粘贴到本机浏览器") }
                         Text("终端指纹：${client?.identityFingerprint()}",
                             style=MaterialTheme.typography.labelSmall)
                         Text("请在本机浏览器打开后台：连接管理手机 → 待授权终端，核对本页配对码并批准。返回 App 后会自动完成加密授权。",

@@ -51,7 +51,7 @@ class ControllerAuthTest(unittest.TestCase):
                 "vaultEnvelope":self.envelope()},self.now,self.fingerprint)
         approved=self.approve()
         self.assertEqual(controller_auth.poll(self.con,self.pair["requestId"],
-                         self.ip,self.now+2)["controllerId"],approved["controllerId"])
+                         self.ip,self.now+2,self.pair["pollToken"])["controllerId"],approved["controllerId"])
         with self.assertRaises(ValueError):
             controller_auth.approve(self.con,{"requestId":self.pair["requestId"],
                 "pairingCode":self.pair["pairingCode"],"vaultEnvelope":self.envelope()},
@@ -73,12 +73,18 @@ class ControllerAuthTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             controller_auth.challenge(self.con,cid,self.now+5,self.fingerprint)
 
+    def test_approved_pairing_survives_ip_handover(self):
+        self.approve()
+        result=controller_auth.poll(self.con,self.pair["requestId"],"198.51.100.8",
+                                    self.now+2,self.pair["pollToken"])
+        self.assertEqual(result["state"],"approved")
+
     def test_invalid_public_key_and_untrusted_poll(self):
         with self.assertRaises(ValueError):
             controller_auth.start(self.con,{"label":"bad","identityPublic":b64(b"key"),
                 "exchangePublic":pub(self.ecdh)},self.ip,self.now)
         with self.assertRaises(ValueError):
-            controller_auth.poll(self.con,self.pair["requestId"],"203.0.113.5",self.now)
+            controller_auth.poll(self.con,self.pair["requestId"],"203.0.113.5",self.now,"invalid")
 
 if __name__=="__main__":
     unittest.main()

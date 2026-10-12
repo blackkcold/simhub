@@ -1,6 +1,7 @@
 """Exercise the controller pairing protocol through HTTP and the existing auth gate."""
 import base64
 import json
+import sqlite3
 import os
 import socket
 import subprocess
@@ -63,6 +64,45 @@ class ControllerHttpTest(unittest.TestCase):
                 return response.status,json.loads(response.read()),dict(response.headers)
         except urllib.error.HTTPError as exc:
             return exc.code,json.loads(exc.read()),dict(exc.headers)
+
+    def test_two_thousand_event_delta_cursor_and_historical_pages(self):
+        # Encryptions are opaque to Relay; paging must preserve *all* sequence
+        # IDs across bounded batches before the Android client ACKs progress.
+        db=str(Path(self.work.name)/"relay.db")
+        with sqlite3.connect(db) as con:
+            con.execute("INSERT OR IGNORE INTO devices(id,token_hash,name,created_at) VALUES(?,?,?,?)",
+                        ("bulk-test-node","bulk-test-token","Fixture node",1760000000))
+            con.executemany(
+                """INSERT OR IGNORE INTO events(id,device_id,kind,occurred_at,received_at,ciphertext_json)
+                   VALUES(?,?,?,?,?,?)""",
+                [(f"bulk-{i}","bulk-test-node","sms.received",1760000000+i,
+                  1760000000+i,"{}") for i in range(2050)])
+        cursor=0
+        observed=[]
+        for _ in range(100):
+            status,page,_=self.call("GET",f"/api/v1/events?since={cursor}&limit=50",admin=True)
+            self.assertEqual(status,200)
+            events=page["events"]
+            if not events:break
+            seqs=[e["seq"] for e in events]
+            self.assertTrue(all(a<b for a,b in zip(seqs,seqs[1:])))
+            self.assertGreater(seqs[0],cursor)
+            observed.extend(e["eventId"] for e in events if e["deviceId"]=="bulk-test-node")
+            # This update models an ACK *after* accepting a complete page.
+            cursor=seqs[-1]
+            if len(events)<50:break
+        self.assertEqual(observed,[f"bulk-{i}" for i in range(2050)])
+        before_time=before_seq=0
+        history=[]
+        for _ in range(60):
+            suffix=f"&beforeTime={before_time}&beforeSeq={before_seq}" if before_time else ""
+            status,page,_=self.call("GET","/api/v1/events?order=occurred&limit=50"+suffix,admin=True)
+            self.assertEqual(status,200)
+            history.extend(e["eventId"] for e in page["events"] if e["deviceId"]=="bulk-test-node")
+            if not page["hasMore"]:break
+            before_time=page["nextBeforeTime"]
+            before_seq=page["nextBeforeSeq"]
+        self.assertEqual(history,[f"bulk-{i}" for i in reversed(range(2050))])
 
     def test_first_use_approval_session_and_server_revocation(self):
         identity=ec.generate_private_key(ec.SECP256R1())

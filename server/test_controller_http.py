@@ -65,6 +65,25 @@ class ControllerHttpTest(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             return exc.code,json.loads(exc.read()),dict(exc.headers)
 
+    def test_native_device_management_post_requires_admin_and_validates_actions(self):
+        db=str(Path(self.work.name)/"relay.db")
+        with sqlite3.connect(db) as con:
+            con.execute("INSERT OR IGNORE INTO devices(id,token_hash,name,created_at) VALUES(?,?,?,?)",
+                        ("native-manage-test","native-manage-token","Original label",1760000000))
+        path="/api/v1/devices/native-manage-test/manage"
+        status,_,_=self.call("POST",path,{"action":"rename","name":"New name"})
+        self.assertEqual(status,401)
+        status,_,_=self.call("POST",path,{"action":"unsupported"},admin=True)
+        self.assertEqual(status,400)
+        status,_,_=self.call("POST",path,{"action":"rename","name":""},admin=True)
+        self.assertEqual(status,400)
+        status,body,_=self.call("POST",path,{"action":"rename","name":"工作设备"},admin=True)
+        self.assertEqual((status,body.get("ok")),(200,True))
+        with sqlite3.connect(db) as con:
+            name=con.execute("SELECT name FROM devices WHERE id=?",
+                             ("native-manage-test",)).fetchone()[0]
+        self.assertEqual(name,"工作设备")
+
     def test_two_thousand_event_delta_cursor_and_historical_pages(self):
         # Encryptions are opaque to Relay; paging must preserve *all* sequence
         # IDs across bounded batches before the Android client ACKs progress.

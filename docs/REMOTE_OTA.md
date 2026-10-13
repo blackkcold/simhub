@@ -25,3 +25,14 @@ SIM Hub remote OTA is **explicitly opt-in** on the device and is available for A
 ## Troubleshooting
 
 The Device detail panel reports `remoteOtaStage` (`checking`, `downloading`, `verified`, `installing`, `awaiting_confirmation`, `succeeded`, `failed`), Android SDK and local authorization. Errors are sanitized; SMS content and encryption keys never appear in OTA state. Only the device can authorize remote OTA.
+
+## Post-install reconciliation and device metadata (v0.16.1)
+
+- Each Android Agent startup, background sync, `MY_PACKAGE_REPLACED` and relevant installer callback checks the **actual installed package version code**. Queuing or committing a session never means the update succeeded.
+- A pending OTA is marked `succeeded` only when the installed version code reaches the verified release target. The signed command acknowledgement is queued durably and retried after network recovery.
+- OTA changes carry a monotonic persisted revision: newer changes during a state upload cannot be erased by an older response. Installer status callbacks are bound to their saved PackageInstaller session ID.
+- If an installer remains `installing` for over 15 minutes without a confirmed package version, the node changes to `verification_pending`; this is **not proof of failure**. `awaiting_confirmation` remains a separate state.
+- An Android app replacement requests immediate full inventory upload; successful SMS uploads request throttled metadata-only heartbeats (at most once every two minutes) using the current app version and version code.
+- The Relay atomically updates the device list's `appVersion` and inventory version during full state upload. Heartbeats update the same version, but do not falsely refresh stale SIM inventory timestamps.
+- The Web/PWA and native Android controller can display **target installed, acknowledgement pending** when a fresh device-reported version confirms the target but its older OTA stage has not yet synchronized.
+- Timers and immediate JobScheduler requests are best-effort under Doze/OEM constraints; this does not enable silent installation or bypass system approval.

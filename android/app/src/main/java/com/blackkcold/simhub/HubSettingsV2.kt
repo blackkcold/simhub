@@ -418,7 +418,18 @@ private fun RemoteOtaCard(state:HubSnapshot?,tools:HubToolsState,controller:HubC
         val phase=otaState?.optString("remoteOtaStage","idle").orEmpty()
         if(phase.isNotBlank() && phase!="idle"){
             Spacer(Modifier.height(9.dp))
-            InfoRow(hubLabel("远程更新任务状态","Remote update task"),phase)
+            val visibleStage=when(phase){
+                "checking"->hubLabel("检查版本","Checking")
+                "downloading"->hubLabel("下载中","Downloading")
+                "verified"->hubLabel("已校验","Verified")
+                "installing"->hubLabel("安装中","Installing")
+                "awaiting_confirmation"->hubLabel("等待设备确认","Awaiting device approval")
+                "verification_pending"->hubLabel("状态待核实","Verification pending")
+                "succeeded"->hubLabel("已完成","Completed")
+                "failed"->hubLabel("更新失败","Failed")
+                else->phase
+            }
+            InfoRow(hubLabel("远程更新任务状态","Remote update task"),visibleStage)
             val reason=otaState?.optString("remoteOtaError","").orEmpty()
             if(reason.isNotBlank())Text(reason,style=MaterialTheme.typography.bodySmall,
                 color=MaterialTheme.colorScheme.error)

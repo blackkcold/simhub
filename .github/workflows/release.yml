@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.16.0.trigger'
+      - '.github/release/v0.16.1.trigger'
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.16.0.trigger | tr -d '[:space:]')"
+            VERSION="$(head -n1 .github/release/v0.16.1.trigger | tr -d '[:space:]')"
             TAG="v$VERSION"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -301,23 +301,22 @@ jobs:
           cat > release/RELEASE_NOTES.md <<EOF
           # SIM Hub v${VERSION}
 
-          Android management UI/UX upgrade: mode-specific Material 3 themes,
-          a native dashboard, clearer navigation and expanded device management.
+          Android OTA status reconciliation and robust node version synchronization:
+          verify actual installed package versions and coalesce metadata heartbeats.
 
           ## Changes
-          - Teal local SIM Node and indigo native Management Center with distinct
-            navigation SVG glyphs, compact metrics and remote task cards.
-          - Native full-screen device detail includes SIM status, role/permission
-            summaries, recent/older SMS sync, diagnostics and conditional OTA.
-          - Management settings are organized into workspace, security and system.
-          - Companion/non-default SMS mode remains read-only by default.
-            Normal send requires default SMS role and SEND_SMS authorization.
-          - A developer-only, temporary companion-mode send exception must be
-            explicitly reported and is visibly labeled as a test capability.
-          - Web/native controller message compose honors device send capability.
-            In-conversation replies require verifying the sending SIM.
-          - Preserve per-node E2EE, Global Vault, channel revision checks and
-            durable idempotent command status.
+          - Android OTA reconciles installed versionCode at startup, package
+            replacement and background recovery, with persisted OTA revisions.
+          - Installer callbacks are restricted to their matching installation
+            session; stale installations show verification-pending rather
+            than an indefinitely misleading "Installing" label.
+          - New SMS acknowledgements trigger coalesced lightweight version
+            heartbeats, retaining the original encrypted event queue.
+          - Full inventory and heartbeat versions update one authoritative
+            Relay device record; Web and native management views reflect
+            the reported installed version and pending OTA acknowledgement.
+          - Preserve signed APK identity/SHA256, Android user confirmation,
+            original E2EE/Vault and Rootless Docker policies.
 
           ## Security and validation boundaries
           - Passkey and Vault recovery still use trusted HTTPS web operations.

@@ -110,6 +110,27 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
     val state=device.optJSONObject("state")?:JSONObject()
     val channels=ControllerNodePolicy.channels(device)
     val isAndroid=device.optString("nodeType")!="modem"
+    val otaStage=state.optString("remoteOtaStage","idle")
+    val installed=device.optInt("appVersionCode",state.optInt("appVersionCode",0))
+    val target=state.optInt("remoteOtaTargetCode",0)
+    val pendingVersion=otaStage in listOf("checking","downloading","verified","installing",
+        "awaiting_confirmation","verification_pending") && target>0 && installed>=target
+    val staleInstall=otaStage=="installing" && state.optLong("remoteOtaUpdatedAt",0)>0 &&
+        System.currentTimeMillis()/1000-state.optLong("remoteOtaUpdatedAt")>=900
+    val statusLabel=when {
+        pendingVersion->hubLabel("目标版本已安装 · 等待回执","Target version installed · awaiting ACK")
+        staleInstall || otaStage=="verification_pending"->hubLabel("状态待核实","Verification pending")
+        else->when(otaStage) {
+            "checking"->hubLabel("检查版本","Checking")
+            "downloading"->hubLabel("下载中","Downloading")
+            "verified"->hubLabel("已校验","Verified")
+            "installing"->hubLabel("安装中","Installing")
+            "awaiting_confirmation"->hubLabel("等待设备确认","Awaiting approval")
+            "succeeded"->hubLabel("已完成","Completed")
+            "failed"->hubLabel("更新失败","Failed")
+            else->hubLabel("空闲","Idle")
+        }
+    }
     val otaReady=isAndroid && state.optBoolean("remoteOtaSupported") &&
         (state.optInt("sdk")>=36 || state.optBoolean("remoteOtaDeveloperOverride")) &&
         state.optBoolean("remoteOtaAuthorized") && state.optBoolean("remoteOtaInstallPermission")
@@ -188,7 +209,8 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
                         else hubLabel("当前设备未报告支持远程更新。","Remote updates not supported."),
                         style=MaterialTheme.typography.bodySmall,
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    InfoRow(hubLabel("更新状态","Status"),state.optString("remoteOtaStage","—"))
+                    InfoRow(hubLabel("当前版本","Installed version"),"v"+device.optString("appVersion","—"))
+                    InfoRow(hubLabel("更新状态","Status"),statusLabel)
                     Button(onClick={onAction("ota-install")},enabled=otaReady&&!busy,
                         modifier=Modifier.fillMaxWidth()){Text(hubLabel("更新到最新签名版本","Install latest signed version"))}
                     if(state.optString("remoteOtaStage") in listOf("checking","downloading","verified"))

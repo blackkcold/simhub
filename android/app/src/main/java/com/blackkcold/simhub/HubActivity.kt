@@ -264,6 +264,7 @@ class HubActivity: ComponentActivity(), HubController {
 
     override fun onResume(){
         super.onResume()
+        RemoteOta.reconcileInstalledVersion(applicationContext)
         if(localNodeEnabled())refresh() else loading=false
         if(tools.compatibilityOpen)refreshCompatibility()
         val active=ActivePairing.session

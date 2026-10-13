@@ -34,7 +34,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.16.1"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -675,7 +675,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaError","remoteOtaUpdatedAt"}
+    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","appVersionCode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaTargetCode","remoteOtaError","remoteOtaUpdatedAt"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -1770,6 +1770,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             offline_after=self.device_offline_threshold(reported_state,r["node_type"])
             out.append({
                 "id":r["id"],"name":r["name"],"group":r["group_name"],"model":r["model"],"osVersion":r["os_version"],"appVersion":r["app_version"],
+                "appVersionCode":reported_state.get("appVersionCode"),"stateUpdatedAt":r["state_updated_at"],
                 "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,"tokenIssuedAt":r["token_issued_at"],
                 "wrappedKey":safe_json_loads(r["wrapped_key_json"],{}) if r["key_id"] else None,
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
@@ -1908,8 +1909,32 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def heartbeat(self,device_id:str,body:dict[str,Any]) -> None:
         ts=now()
+        version=str(body.get("appVersion") or "")[:40]
+        os_version=str(body.get("osVersion") or "")[:40]
+        code=body.get("appVersionCode")
+        if type(code) is not int or not (0<code<2**31): code=None
+        changed=False
         with open_db() as con:
-            con.execute("UPDATE devices SET last_seen_at=?,app_version=COALESCE(NULLIF(?,''),app_version),os_version=COALESCE(NULLIF(?,''),os_version) WHERE id=?",(ts,str(body.get("appVersion",""))[:40],str(body.get("osVersion",""))[:40],device_id))
+            row=con.execute("SELECT app_version FROM devices WHERE id=?",(device_id,)).fetchone()
+            previous=row["app_version"] if row else ""
+            con.execute("UPDATE devices SET last_seen_at=?,app_version=COALESCE(NULLIF(?,''),app_version),os_version=COALESCE(NULLIF(?,''),os_version) WHERE id=?",(ts,version,os_version,device_id))
+            state_row=con.execute("SELECT state_json FROM device_state WHERE device_id=?",(device_id,)).fetchone()
+            state=safe_json_loads(state_row["state_json"],{}) if state_row else {}
+            if not isinstance(state,dict): state={}
+            if version and state.get("appVersion")!=version:
+                state["appVersion"]=version;changed=True
+            if code is not None and state.get("appVersionCode")!=code:
+                state["appVersionCode"]=code;changed=True
+            if changed:
+                state["versionReportedAt"]=ts
+                if state_row:
+                    con.execute("UPDATE device_state SET state_json=? WHERE device_id=?",
+                                (json.dumps(state,ensure_ascii=False,separators=(",",":")),device_id))
+                else:
+                    con.execute("INSERT INTO device_state(device_id,state_json,updated_at) VALUES(?,?,?)",
+                                (device_id,json.dumps(state,separators=(",",":")),ts))
+            changed=changed or bool(version and version!=previous)
+        if changed:signal_stream()
         self.send_json(200,{"ok":True,"serverTime":ts})
 
     def ingest_event(self,device_id:str,body:dict[str,Any]) -> None:
@@ -2029,15 +2054,24 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def put_device_state(self,device_id:str,body:dict[str,Any]) -> None:
         state=sanitize_state(body)
+        code=state.get("appVersionCode")
+        if type(code) is not int or not (0<code<2**31):
+            state.pop("appVersionCode",None)
+        version=str(state.get("appVersion") or "")[:40]
+        ts=now()
+        if version:state["versionReportedAt"]=ts
         raw=json.dumps(state,ensure_ascii=False,separators=(",",":"))
         if len(raw)>200_000:
             self.send_error_json(413,"state_too_large","State exceeds 200 KB"); return
-        ts=now()
         node_type=normalize_node_type(state.get("nodeType","android"))
         capabilities=normalize_capabilities(state.get("capabilities",[]))
         active_key=str(state.get("cryptoKeyId") or "")[:80]
         with open_db() as con:
             con.execute("INSERT INTO device_state(device_id,state_json,updated_at) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET state_json=excluded.state_json,updated_at=excluded.updated_at",(device_id,raw,ts))
+            # Inventory and the version shown in the device list are committed atomically.
+            if version:
+                con.execute("UPDATE devices SET app_version=?,os_version=COALESCE(NULLIF(?,''),os_version) WHERE id=?",
+                            (version,str(state.get("androidVersion") or "")[:40],device_id))
             row=con.execute("SELECT pending_key_id,pending_wrapped_key_json FROM devices WHERE id=?",(device_id,)).fetchone()
             if row and active_key and row["pending_key_id"]==active_key:
                 current=con.execute("SELECT key_id,wrapped_key_json FROM devices WHERE id=?",(device_id,)).fetchone()

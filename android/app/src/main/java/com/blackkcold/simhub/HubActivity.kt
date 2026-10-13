@@ -887,7 +887,7 @@ class HubActivity: ComponentActivity(), HubController {
                         tools.shellOutput="> "+command+"\\nexit="+r.optInt("exitCode",-1)+
                             "  elapsed="+r.optLong("durationMs")+"ms"+
                             (if(r.optBoolean("timedOut"))" [TIMEOUT]" else "")+
-                            "\\nstdout:\\n"+r.optString("stdout")+"\\nstderr:\\n"+r.optString("stderr")+
+                            "\\nstdout:\\n"+r.optString("stdout")+"\\nstderr:\\n"+r.optString("stderr")
                         if(r.has("error"))tools.shellOutput+="\\nError: "+r.optString("error")
                         auditCompatibility("shizuku_execute",if(r.optInt("exitCode",-1)==0)"completed" else "failed")
                     }catch(parse:Exception){tools.shellOutput="Command result unavailable";auditCompatibility("shizuku_execute","failed")}

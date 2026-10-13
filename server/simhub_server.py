@@ -1082,19 +1082,35 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_json(200,{"version":APP_VERSION,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None,"nodeBaseUrl":PUBLIC_BASE_URL or (MANAGEMENT_ORIGIN if not SEPARATE_SURFACES else None),"separateSurfaces":bool(SEPARATE_SURFACES)}); return
         if path=="/api/v1/update":
             if not self.require_admin(): return
-            result={"installed": APP_VERSION, "ignored":update_bridge.ignored(), "agent":False}
+            # Explicit administrator checks bypass the normal background cache.
+            # Only known refresh flags are accepted; never take a user URL.
+            refresh=q.get("refresh", ["0"])[0]=="1"
+            result={"installed": APP_VERSION, "ignored":update_bridge.ignored(),
+                    "agent":False, "available":False, "canInstall":False}
             try:
-                result.update(update_bridge.host("status"))
-                result["agent"]=True
+                status=update_bridge.host("status")
+                if status.get("ok") is True and status.get("mode")=="rootless-verified":
+                    result.update({k:v for k,v in status.items() if k!="installed"})
+                    result["updaterInstalled"]=status.get("installed")
+                    result["agent"]=True
+                else:
+                    result["agentError"]=str(status.get("error") or
+                                             "Verified rootless updater is not ready")[:180]
             except (OSError,ValueError) as err:
                 result["agentError"]=str(err)[:180]
             try:
-                remote=update_bridge.release()
+                remote=update_bridge.release(force=refresh)
                 result["latest"]=remote["version"]
+                result["latestPublishedAt"]=remote["publishedAt"]
+                result["latestCheckedAt"]=remote["checkedAt"]
+                result["latestFromCache"]=remote["fromCache"]
+                result["cacheAgeSeconds"]=remote["cacheAgeSeconds"]
                 result["available"]=(update_bridge.version_tuple(remote["version"])>
                                      update_bridge.version_tuple(APP_VERSION))
                 result["ignoredLatest"]=result["ignored"]==remote["version"]
-            except (OSError,ValueError,KeyError) as err:
+                result["canInstall"]=bool(result["agent"] and result["available"]
+                                          and not result["ignoredLatest"])
+            except (OSError,ValueError,KeyError,TypeError) as err:
                 result["releaseError"]=str(err)[:180]
             self.send_json(200,result);return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="lifecycle":

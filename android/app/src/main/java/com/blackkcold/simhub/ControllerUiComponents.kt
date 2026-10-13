@@ -187,6 +187,13 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
                     }
                     OutlinedButton(enabled=!busy,onClick={onAction("sync-older")},modifier=Modifier.fillMaxWidth()){
                         Text(hubLabel("同步更早短信","Sync older messages"))}
+                    if(isAndroid && installed>=50)OutlinedButton(
+                        enabled=!busy,onClick={onAction("restore-history")},
+                        modifier=Modifier.fillMaxWidth()){
+                        HubIcon(R.drawable.ic_hub_shield,Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(hubLabel("恢复本机短信历史（需验证）","Restore local SMS history"))
+                    }
                     OutlinedButton(enabled=!busy,onClick={onAction("refresh")},modifier=Modifier.fillMaxWidth()){
                         Text(hubLabel("刷新设备状态","Refresh device state"))}
                     OutlinedButton(enabled=!busy,onClick={onAction("diagnostics")},modifier=Modifier.fillMaxWidth()){

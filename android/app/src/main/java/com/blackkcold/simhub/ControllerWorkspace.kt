@@ -81,6 +81,32 @@ internal object ControllerConversation {
     }
 }
 
+/** Presentation-only SIM labels. Preserve channel identity in sourceId/thread keys. */
+internal object ControllerSourceLabel {
+    fun name(node:JSONObject?,channelId:String,revision:Int,tag:String):String {
+        if(channelId.isBlank() || revision<=0)return "历史 SIM · 来源待确认"
+        val state=node?.optJSONObject("state")
+        val channels=state?.optJSONArray("channels") ?: state?.optJSONArray("subscriptions") ?: JSONArray()
+        for(i in 0 until channels.length()){
+            val item=channels.optJSONObject(i)?:continue
+            val id=item.optString("id").ifBlank{item.optString("channelId")}
+            val rev=item.optInt("revision",item.optInt("channelRevision",1))
+            if(id!=channelId || rev!=revision)continue
+            for(key in listOf("alias","displayName","carrierName")){
+                val value=item.optString(key).trim()
+                if(value.isNotBlank() && value!=channelId && value.length<=48 &&
+                    !value.matches(Regex("[0-9a-fA-F-]{20,}")))return value
+            }
+            val slot=item.optInt("slotIndex",item.optInt("slot",-1))
+            if(slot in 0..7)return "SIM ${slot+1}"
+        }
+        val display=tag.trim()
+        if(display.isNotEmpty() && display!=channelId && display.length<=48 &&
+            !display.matches(Regex("[0-9a-fA-F-]{20,}")))return display
+        return "历史 SIM"
+    }
+}
+
 /** Single Jetpack Compose surface: no WebView, nested browser shell or duplicate navigation. */
 @Composable
 fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
@@ -245,8 +271,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 val address=sender.ifBlank{plaintext.optString("sender",plaintext.optString("recipient","未知"))}
                                 val ch=plaintext.optString("channelId")
                                 val rev=plaintext.optInt("channelRevision")
-                                val provenance=if(ch.isEmpty()||rev==0)"历史 SIM · 来源待确认"
-                                    else (plaintext.optString("simTag").ifBlank{ch})+" · r"+rev
+                                val provenance=ControllerSourceLabel.name(node,ch,rev,plaintext.optString("simTag"))
                                 val otp=plaintext.optJSONObject("otp")?.optString("value").orEmpty()
                                 // Do not coalesce separate devices/SIM revisions
                                 // merely because their phone number is the same.

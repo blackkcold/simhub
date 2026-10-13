@@ -28,16 +28,25 @@
 
 ![设备和 SIM 状态、短信同步与诊断界面示意](docs/assets/ui-devices.svg)
 
+**Android · 同一应用的两种原生工作区**
+
 <table>
-<tr><th>手机端 Web / PWA</th><th>Android SIM Node</th></tr>
-<tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="移动端短信会话界面示意" width="100%"></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="Android 设备节点界面示意" width="100%"></td></tr>
+<tr><th>SIM 节点 · 青绿色主题</th><th>管理中心 · 靛紫色主题</th></tr>
+<tr>
+<td width="50%"><img src="docs/assets/ui-android.svg" alt="Android 原生 SIM 节点概览模拟界面" width="100%"></td>
+<td width="50%"><img src="docs/assets/ui-android-controller.svg" alt="Android 原生管理中心概览、设备及远程任务模拟界面" width="100%"></td>
+</tr>
 </table>
 
-**Android 折叠屏展开态 · 双栏短信工作区**
+**移动 Web / PWA · 响应式加密短信会话**
+
+<p align="center"><img src="docs/assets/ui-mobile.svg" alt="移动 Web PWA 加密短信会话示意" width="43%"></p>
+
+**Android 折叠屏展开态 · 双栏短信工作区（伴随模式只读）**
 
 ![折叠屏 Android 双栏短信界面示意](docs/assets/ui-android-fold.svg)
 
-<sub>均为依据当前 UI 绘制的模拟数据示意图，非真实短信或已登录设备截图。</sub>
+<sub>以上为根据现有 Web/PWA 与 Android 原生布局更新的 SVG 界面示意，采用模拟数据，不是真实账号截图。</sub>
 
 ## Android 原生双角色工作区
 

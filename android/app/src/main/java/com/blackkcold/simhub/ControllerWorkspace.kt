@@ -184,6 +184,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
         if(mode=="delta" && page>0)return // Historical browsing is a stable window.
         if(busy){pendingLoad=mode;return}
+        val initialPage=mode=="latest" || (mode=="delta" && lastEventSeq==0L)
         busy=true
         scope.launch {
             try {
@@ -193,10 +194,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     val all=d.optJSONArray("devices")?:JSONArray()
                     val nodes=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
                     val byId=nodes.associateBy{it.optString("id")}
-                    val delta=mode=="delta" && lastEventSeq>0
+                    val delta=mode=="delta" && !initialPage
                     // Read the sequence watermark *before* the latest-time page.
                     // Concurrent uploads can then safely be replayed as delta.
-                    val highWater=if(mode=="latest" || (mode=="delta" && !delta))
+                    val highWater=if(initialPage)
                         api.api("/api/v1/events?latest=1&limit=1").optLong("nextSince",0L)
                         else 0L
                     val requested=if(mode=="older")page+1 else 0
@@ -296,22 +297,22 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 // Main-thread ACK: only successfully accepted decrypted content
                 // allows an event cursor or historical-page index to move.
                 for(batch in data.batches){
-                    if(!inbox.accept(batch.payload,append=mode=="older" || mode=="delta" || batch.appendFragment,
+                    if(!inbox.accept(batch.payload,append=mode=="older" || (mode=="delta" && !initialPage) || batch.appendFragment,
                                      preferOlder=mode=="older"))
                         throw IllegalStateException("短信批次未接收；游标未推进，可安全重试")
-                    if(mode=="delta" && batch.finalFragment)
+                    if(mode=="delta" && !initialPage && batch.finalFragment)
                         lastEventSeq=maxOf(lastEventSeq,batch.sequence,data.highWater)
                     else if(mode=="older" && batch.finalFragment){
                         page+=1
                         if(batch.nextTime>0 && batch.nextSeq>0)
                             cursors=cursors.take(page)+listOf(batch.nextTime to batch.nextSeq)
-                    }else if(mode=="latest" && batch.finalFragment){
+                    }else if(initialPage && batch.finalFragment){
                         page=0
                         cursors=if(batch.nextTime>0 && batch.nextSeq>0)
                             listOf(batch.nextTime to batch.nextSeq) else emptyList()
                         lastEventSeq=maxOf(lastEventSeq,data.highWater)
                     }
-                    if(mode=="latest")unreadable=batch.unreadable
+                    if(initialPage)unreadable=batch.unreadable
                     else unreadable+=batch.unreadable
                 }
                 devices=data.devices

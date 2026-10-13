@@ -151,6 +151,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var pendingSensitiveTask by remember { mutableStateOf<Pair<JSONObject,String>?>(null) }
     var sensitiveCredential by remember { mutableStateOf("") }
     var serverVersion by remember{mutableStateOf("—")}
+    var poolStatus by remember(selected){mutableStateOf<JSONObject?>(null)}
+    var auditRows by remember(selected){mutableStateOf<List<JSONObject>>(emptyList())}
+    var adminOverviewError by remember(selected){mutableStateOf("")}
     var secondFactorTotp by remember(selected){mutableStateOf(true)}
     var requireLocalUnlock by remember(selected){mutableStateOf(client?.requireLocalUnlock()==true)}
     var localUnlocked by remember(selected){mutableStateOf(!requireLocalUnlock)}
@@ -456,6 +459,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             if(!busy)refreshDelta()
         }
     }
+    LaunchedEffect(selected,visible,authorized,tab,localUnlocked){
+        if(!visible || !authorized || tab!=3 || (requireLocalUnlock && !localUnlocked))return@LaunchedEffect
+        val api=client?:return@LaunchedEffect
+        try{
+            val (pool,audits)=withContext(Dispatchers.IO){
+                val p=api.api("/api/v1/pool")
+                val a=api.api("/api/v1/audit?limit=12").optJSONArray("audit")?:JSONArray()
+                p to (0 until a.length()).mapNotNull{a.optJSONObject(it)}
+            }
+            poolStatus=pool;auditRows=audits;adminOverviewError=""
+        }catch(e:Exception){adminOverviewError=e.message?:"管理记录读取失败"}
+    }
     LaunchedEffect(pairing,selected,visible){
         if(!visible)return@LaunchedEffect
         val api=client?:return@LaunchedEffect
@@ -730,6 +745,69 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     item{
                         Text(hubLabel("管理设置","Management settings"),
                             style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(9.dp)){
+                                HubIcon(R.drawable.ic_hub_share,Modifier.size(22.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                HubSectionTitle(hubLabel("共享短信池","Shared SMS pool"))
+                            }
+                            if(adminOverviewError.isNotBlank())
+                                Text(adminOverviewError,style=MaterialTheme.typography.bodySmall,
+                                    color=MaterialTheme.colorScheme.error)
+                            val pool=poolStatus
+                            if(pool==null)Text(hubLabel("读取管理空间状态中…","Loading shared-pool status…"),
+                                style=MaterialTheme.typography.bodySmall)
+                            else {
+                                if(pool.optBoolean("rotationRequired"))
+                                    Text(hubLabel("密钥轮换待完成：共享上传已暂停，请完成安全轮换。",
+                                        "Key rotation pending; shared uploads are paused."),
+                                        color=MaterialTheme.colorScheme.error)
+                                InfoRow(hubLabel("密钥版本","Key epoch"),pool.optString("epoch","—"))
+                                val members=pool.optJSONArray("members")?:JSONArray()
+                                InfoRow(hubLabel("共享成员","Pool members"),members.length().toString())
+                                for(i in 0 until members.length()){
+                                    val member=members.optJSONObject(i)?:continue
+                                    val linked=devices.firstOrNull{it.optString("id")==member.optString("id")}
+                                    val memberName=linked?.optString("name")?.ifBlank{null}
+                                        ?:member.optString("name").ifBlank{"SIM Node"}
+                                    val status=when {
+                                        !member.optBoolean("requested")->hubLabel("待设备启用","Node not enabled")
+                                        member.optBoolean("approved")->hubLabel("已授权","Authorized")
+                                        else->hubLabel("等待批准","Awaiting approval")
+                                    }
+                                    InfoRow(memberName,status)
+                                }
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            HubSectionTitle(hubLabel("安全审计记录","Security audit"))
+                            if(auditRows.isEmpty())Text(hubLabel("暂无近期审计记录","No recent audit records"),
+                                style=MaterialTheme.typography.bodySmall)
+                            auditRows.take(8).forEach{entry->
+                                Row(Modifier.fillMaxWidth().padding(vertical=5.dp),
+                                    verticalAlignment=Alignment.CenterVertically,
+                                    horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                                    HubIcon(R.drawable.ic_hub_shield,Modifier.size(16.dp),
+                                        MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Column(Modifier.weight(1f)){
+                                        Text(entry.optString("action").take(70),
+                                            style=MaterialTheme.typography.bodySmall)
+                                        val ts=entry.optLong("occurred_at",0L)
+                                        if(ts>0)Text(android.text.format.DateFormat.format(
+                                            "MM-dd HH:mm",ts*1000).toString(),
+                                            style=MaterialTheme.typography.labelSmall,
+                                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(entry.optString("result").take(16),
+                                        style=MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
                     }
                     item{
                         HubCard(Modifier.fillMaxWidth()){

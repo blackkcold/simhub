@@ -1,3 +1,4 @@
+import {renderNodeDashboard} from './device-dashboard.js';
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 const $ = (id) => document.getElementById(id);
 const androidShell = new URLSearchParams(location.search).get('native') === '1';
@@ -965,44 +966,15 @@ function deviceStatusText(d) {
 function renderDeviceDetail(id) {
   const d=devices.find(x=>x.id===id);
   if(!d)return false;
-  const s=d.state||{},subs=nodeChannels(d);
-  $('deviceDetailTitle').textContent=d.name;
-  const stat=(label,value)=>'<div class="detail-stat"><small>'+escapeHtml(label)+'</small><strong>'+escapeHtml(value==null?'—':String(value))+'</strong></div>';
-  const simRows=subs.map(ch=>'<div class="sim-detail"><div><strong>'+escapeHtml(ch.displayName||ch.carrierName||ch.id||'SIM')+'</strong><p class="hint">'+escapeHtml(ch.phoneNumber||tr('phone_unknown'))+' · '+escapeHtml(ch.serviceState||'')+' · '+escapeHtml(tr('signal'))+' '+escapeHtml(ch.signalLevel==null?'—':ch.signalLevel)+'</p></div><button class="ghost mini" type="button" data-action="edit-sim" data-id="'+escapeHtml(d.id)+'" data-channel="'+escapeHtml(ch.id)+'">'+escapeHtml(tr('set_sim_phone'))+'</button></div>').join('');
   const content=$('deviceDetailContent');
   const previousScroll=content.scrollTop;
-  content.innerHTML='<div class="detail-intro"><span class="status-pill '+(d.online?'online':'')+'">'+escapeHtml(deviceStatusText(d))+'</span><span>'+escapeHtml(d.model||d.nodeType||'Android')+' · v'+escapeHtml(d.appVersion||'—')+'</span></div>'+
-    '<section class="detail-section"><h3>'+escapeHtml(tr('ux_overview'))+'</h3><div class="detail-stats">'+
-    stat(tr('sms_status_label'),s.smsOperational===true?tr('sms_ready'):s.smsOperational===false?tr('sms_unavailable'):tr('sms_unverified'))+
-     stat(tr('sms_mode_label'),s.smsMode==='default'?tr('sms_mode_default'):s.smsMode==='companion'?tr('sms_mode_companion'):'—')+
-     stat(tr('sms_read_permission'),s.smsReadPermission===true?tr('permission_yes'):s.smsReadPermission===false?tr('permission_no'):'—')+
-     stat(tr('sms_receive_permission'),s.smsReceivePermission===true?tr('permission_yes'):s.smsReceivePermission===false?tr('permission_no'):'—')+
-     stat(tr('sms_send_permission'),s.smsSendPermission===true?tr('permission_yes'):s.smsSendPermission===false?tr('permission_no'):'—')+
-    stat(tr('battery'),s.batteryPct==null?'—':s.batteryPct+'%')+
-    stat(tr('network'),s.network||'—')+
-    stat(tr('pending'),s.pendingEvents)+
-    stat(tr('charging_state'),s.charging===true?tr('charging_now'):s.charging===false?tr('not_charging'):'—')+
-    stat(tr('ux_fallback_state'),s.dataFallbackEnabled===true?(s.dataFallbackStatus||'待确认'):'未启用')+
-    stat(tr('last_sync'),fmtTime(s.lastSyncSuccessAt))+
-    stat('SMS Provider 变化',fmtTime(s.lastSmsProviderChangeAt))+
-    stat('SMS 广播',fmtTime(s.lastSmsBroadcastAt))+
-    stat('最近补扫',fmtTime(s.lastReconcileAt))+
-    stat('待上传事件 / 命令 ACK',(s.pendingEvents??0)+' / '+(s.pendingCommandAcks??0))+
-    stat('已上传回执',(s.uploadedEventReceipts??0))+
-    stat('累计确认上传',(s.uploadedEventTotal??0))+
-    stat('最近上传',fmtTime(s.lastEventUploadAt))+
-    stat('上次上传条数',(s.lastEventUploadCount??0))+
-    stat(tr('last_sms'),fmtTime(s.lastSmsReceivedAt))+
-    stat(tr('ux_sms_count'),d.smsCount??0)+
-    '</div></section>'+
-    '<section class="detail-section"><h3>'+escapeHtml(tr('ux_channels'))+'</h3><div class="sim-detail-list">'+(simRows||'<p class="hint">'+escapeHtml(tr('no_subscriptions'))+'</p>')+'</div></section>'+
-    (Array.isArray(s.pendingEventTasks)&&s.pendingEventTasks.length?
-      '<section class="detail-section"><h3>'+escapeHtml(tr('queue_task_preview'))+'</h3><div class="detail-stats">'+
-      s.pendingEventTasks.slice(0,10).map(t=>stat(String(t.kind||'unknown'),fmtTime(t.queuedAt))).join('')+
-      '</div></section>':'')+
-    ((s.lastUploadError||s.lastEventQueueError||s.lastSyncError||s.smsProviderError||s.stateCollectionError)?'<section class="detail-section"><h3>'+escapeHtml(tr('ux_sync_warning'))+'</h3><p class="warn detail-error">'+escapeHtml(s.lastUploadError||s.lastEventQueueError||s.lastSyncError||s.smsProviderError||s.stateCollectionError)+'</p></section>':'')+
-    ((s.cryptoKeyId&&d.keyId&&s.cryptoKeyId!==d.keyId)?'<section class="detail-section"><p class="warn detail-error">'+escapeHtml(tr('decrypt_issue_device_key_diverged'))+' '+escapeHtml(tr('decrypt_recovery_hint'))+'</p></section>':'')+
-    deviceButtons(d);
+  const expanded=[...content.querySelectorAll('.node-tasks-details')].map(x=>x.open);
+  $('deviceDetailTitle').textContent=d.name;
+  content.innerHTML=renderNodeDashboard(d,{
+    escapeHtml,fmtTime,deviceStatusText,channels:nodeChannels(d),
+    buttons:deviceButtons(d),zh:getLocale()==='zh-CN'
+  });
+  content.querySelectorAll('.node-tasks-details').forEach((x,i)=>{x.open=expanded[i]||false;});
   content.scrollTop=previousScroll;
   return true;
 }

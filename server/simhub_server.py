@@ -34,7 +34,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.16.2"
+APP_VERSION = "0.16.3"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")

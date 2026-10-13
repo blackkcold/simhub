@@ -872,23 +872,26 @@ class HubActivity: ComponentActivity(), HubController {
             "cmd role get-role-holders android.app.role.SMS",
             "cmd appops get --uid "+android.os.Process.myUid()+" READ_OTP_SMS"
         )){tools.compatibilityError="自定义命令仅在开发者选项中开放";return}
+        // 'adb shell' is a host-side prefix; Shizuku already runs inside Android.
+        val actual=if(command.trimStart().startsWith("adb shell "))
+            command.trim().removePrefix("adb shell ").trim() else command.trim()
         tools.shellRunning=true
-        tools.shellOutput="> "+command+"\\nConnecting to Shizuku…"
+        tools.shellOutput="> "+command+"\nConnecting to Shizuku…"
         tools.compatibilityError=""
         try{
-            ShizukuShellClient.execute(this,command){result,error->
+            ShizukuShellClient.execute(this,actual){result,error->
                 tools.shellRunning=false
                 if(error!=null){
-                    tools.shellOutput="> "+command+"\\nError: "+error
+                    tools.shellOutput="> "+command+"\nError: "+error
                     auditCompatibility("shizuku_execute","failed")
                 }else{
                     try {
                         val r=org.json.JSONObject(result?:"{}")
-                        tools.shellOutput="> "+command+"\\nexit="+r.optInt("exitCode",-1)+
+                        tools.shellOutput="> "+command+"\nexit="+r.optInt("exitCode",-1)+
                             "  elapsed="+r.optLong("durationMs")+"ms"+
                             (if(r.optBoolean("timedOut"))" [TIMEOUT]" else "")+
-                            "\\nstdout:\\n"+r.optString("stdout")+"\\nstderr:\\n"+r.optString("stderr")
-                        if(r.has("error"))tools.shellOutput+="\\nError: "+r.optString("error")
+                            "\nstdout:\n"+r.optString("stdout")+"\nstderr:\n"+r.optString("stderr")
+                        if(r.has("error"))tools.shellOutput+="\nError: "+r.optString("error")
                         auditCompatibility("shizuku_execute",if(r.optInt("exitCode",-1)==0)"completed" else "failed")
                     }catch(parse:Exception){tools.shellOutput="Command result unavailable";auditCompatibility("shizuku_execute","failed")}
                 }

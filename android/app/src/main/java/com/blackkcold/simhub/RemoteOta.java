@@ -113,6 +113,8 @@ public final class RemoteOta {
          .putString("error","").putLong("updatedAt",System.currentTimeMillis()/1000).commit();
         dirty(c);
         AppUpdater.check(c,true,(metadata,error)->{
+            // Ignore a late release lookup from an earlier/replaced OTA command.
+            if(!commandId.equals(prefs(c).getString(COMMAND,"")) || !"checking".equals(currentStage(c)))return;
             if(error!=null||metadata==null||!metadata.optBoolean("available")){
                 fail(c,error!=null?"release_unavailable":"no_new_version");return;
             }

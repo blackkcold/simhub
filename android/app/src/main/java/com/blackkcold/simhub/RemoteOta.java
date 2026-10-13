@@ -26,7 +26,8 @@ public final class RemoteOta {
         SharedPreferences p=prefs(c);
         p.edit().putLong("revision",p.getLong("revision",0)+1).putBoolean("stateDirty",true).commit();
         SyncJobService.scheduleNow(c);
-        EnrollmentManager.notifyStateChanged(c);
+        try{EnrollmentManager.notifyStateChanged(c);}
+        catch(RuntimeException e){AppLogger.e(c,"RemoteOTA","Local UI notification deferred",e);}
     }
     public static void setWifiOnly(Context c,boolean value){prefs(c).edit().putBoolean("wifiOnly",value).commit();dirty(c);}
     public static void capabilityChanged(Context c){dirty(c);}

@@ -651,14 +651,14 @@ async function loadEvents(){
   if(!initialEventsLoaded){
     const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    const first=await api('/api/v1/events?order=occurred&scope=sms&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
     if(epoch!==securityEpoch||!vaultKey)return;
     // Recent uploads can contain old-dated messages excluded by occurredAt paging.
     // Fetch the latest Relay sequence page too, without losing the original head.
-    const newest=await api('/api/v1/events?latest=1&limit=100');
+    const newest=await api('/api/v1/events?latest=1&scope=sms&limit=100');
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     await ingestEvents(newest.events||[],false);
     if(epoch!==securityEpoch||!vaultKey)return;
@@ -682,7 +682,7 @@ async function loadOlder(){
   if(!historyHasMore||!olderCursor)return;
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
   historyFetchInFlight=(async()=>{
-    const r=await api('/api/v1/events?order=occurred&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
+    const r=await api('/api/v1/events?order=occurred&scope=sms&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
     historyHasMore=!!r.hasMore;

@@ -35,7 +35,7 @@ public final class DeviceMetadataSync {
         SharedPreferences.Editor edit=p.edit()
             .putLong("ackRevision",Math.max(p.getLong("ackRevision",0),revision))
             .putLong("sentAt",System.currentTimeMillis());
-        if(full)edit.putBoolean("fullDirty",false);
+        if(full && p.getLong("revision",0)==revision)edit.putBoolean("fullDirty",false);
         edit.commit();
     }
 }

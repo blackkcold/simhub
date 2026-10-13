@@ -1,3 +1,15 @@
+## v0.17.0 — Encrypted history recovery, source-safe threads and fluid controller UX
+
+- Keep encrypted SMS history on new Relay installations by default (configurable via `SIMHUB_EVENT_RETENTION_DAYS`; existing deployments preserve their configured retention). A recovery command can replay locally retained Android Provider messages after automatic expiry without bypassing explicit server-side purge tombstones.
+- Add an administrator-step-up-protected `sms.restore_history` action with explicit Web and native Android confirmations. Initial recovery imports the latest 100 Provider SMS, then repeated older-history commands can restore earlier pages; server event IDs remain deduplicated.
+- Add `scope=sms` to Relay keyset and incremental pagination. Web/PWA and Android history browsers request bounded SMS-only pages; preserve auxiliary SIM profile and operational event bootstrap.
+- Align Web thread identity with Android: physical device, stable Channel ID, revision and canonical correspondent. Prevent distinct SIMs sharing a phone number from being silently merged.
+- Cache per-SIM profile metadata across Web render passes and wipe that cache on Vault lock or data reset. Retain authenticated memory-only SMS handling and encrypted key hierarchy.
+- Improve native management inbox readability with scroll-direction-aware collapsing toolbar and independent, stable conversation list position. Enrich task statuses without presenting queued work as successful.
+- Poll active native command progress more often while reverting to lower-frequency idle checks. Improve accessible Web toast semantics, focus feedback, and restrained panel/list animations, respecting reduced-motion preferences.
+- Keep the existing E2EE protocol, AAD bindings, default SMS versus companion send restrictions, immutable APK signing, Rootless Docker updater and verified OTA release chain unchanged.
+- CI/CodeQL verifies software behavior; physical SIM/Doze/OTP restrictions, OEM installation prompts, long-running restore and hardware-auth-bound Keystore migration still require the documented on-device gates.
+
 ## v0.16.8 — Controller history, compact native inbox and secure device management
 
 - Fix the first native management inbox load so a bounded 50-event response initializes both historical time/sequence pagination and the incremental high-water mark. All retained encrypted events remain reachable through repeated pagination; 1200 messages is a client memory window, not a relay history cap.

@@ -16,7 +16,7 @@ android {
         versionCode = 42
         versionName = "0.16.1"
     }
-    buildFeatures { buildConfig = true; compose = true }
+    buildFeatures { buildConfig = true; compose = true; aidl = true }
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {

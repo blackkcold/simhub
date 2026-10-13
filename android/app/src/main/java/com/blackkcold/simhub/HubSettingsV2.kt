@@ -48,6 +48,9 @@ class HubToolsState {
     var compatibilityError by mutableStateOf("")
     var compatibilityNote by mutableStateOf("")
     var compatibilityAudit by mutableStateOf("")
+    var shellRunning by mutableStateOf(false)
+    var shellCommand by mutableStateOf("")
+    var shellOutput by mutableStateOf("")
 
 }
 

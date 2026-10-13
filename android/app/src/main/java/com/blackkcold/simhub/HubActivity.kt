@@ -102,6 +102,7 @@ interface HubController {
     fun requestShizukuAuthorization()
     fun openShizukuManager()
     fun copyAdbDiagnostics()
+    fun runShellCommand(command:String)
     fun startCompanionAssociation()
     fun removeCompanionAssociations()
     fun openBatteryOptimization()
@@ -861,6 +862,41 @@ class HubActivity: ComponentActivity(), HubController {
         }catch(error:Exception){
             auditCompatibility("shizuku_manager","failed")
             tools.compatibilityError=hubError("shizuku_open_failed")
+        }
+    }
+    override fun runShellCommand(command:String){
+        if(tools.shellRunning)return
+        if(command.isBlank()||command.length>2048){tools.compatibilityError="命令长度应为 1–2048 字符";return}
+        if(!tools.developer && command !in setOf(
+            "getprop ro.build.version.sdk", "getprop ro.product.manufacturer",
+            "cmd role get-role-holders android.app.role.SMS",
+            "cmd appops get --uid "+android.os.Process.myUid()+" READ_OTP_SMS"
+        )){tools.compatibilityError="自定义命令仅在开发者选项中开放";return}
+        tools.shellRunning=true
+        tools.shellOutput="> "+command+"\\nConnecting to Shizuku…"
+        tools.compatibilityError=""
+        try{
+            ShizukuShellClient.execute(this,command){result,error->
+                tools.shellRunning=false
+                if(error!=null){
+                    tools.shellOutput="> "+command+"\\nError: "+error
+                    auditCompatibility("shizuku_execute","failed")
+                }else{
+                    try {
+                        val r=org.json.JSONObject(result?:"{}")
+                        tools.shellOutput="> "+command+"\\nexit="+r.optInt("exitCode",-1)+
+                            "  elapsed="+r.optLong("durationMs")+"ms"+
+                            (if(r.optBoolean("timedOut"))" [TIMEOUT]" else "")+
+                            "\\nstdout:\\n"+r.optString("stdout")+"\\nstderr:\\n"+r.optString("stderr")+
+                        if(r.has("error"))tools.shellOutput+="\\nError: "+r.optString("error")
+                        auditCompatibility("shizuku_execute",if(r.optInt("exitCode",-1)==0)"completed" else "failed")
+                    }catch(parse:Exception){tools.shellOutput="Command result unavailable";auditCompatibility("shizuku_execute","failed")}
+                }
+            }
+        }catch(error:Exception){
+            tools.shellRunning=false
+            tools.shellOutput="Shizuku: "+error.javaClass.simpleName
+            auditCompatibility("shizuku_execute","failed")
         }
     }
     override fun copyAdbDiagnostics(){

@@ -495,7 +495,8 @@ function lockVault(broadcast=true){
   purgeSensitiveUI();
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
   vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
-  poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
+  poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();
+  simProfileIndex.clear();simProfileIndexVersion='';lastSeq=0;oldestSeq=0;
   initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
   clearTimeout(refreshTimer);refreshTimer=null;
@@ -651,13 +652,15 @@ async function loadEvents(){
   if(!initialEventsLoaded){
     const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    const first=await api('/api/v1/events?order=occurred&scope=sms&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
     if(epoch!==securityEpoch||!vaultKey)return;
     // Recent uploads can contain old-dated messages excluded by occurredAt paging.
     // Fetch the latest Relay sequence page too, without losing the original head.
+    // Keep the newest unfiltered page: SIM profile and device events still
+    // supply historical source labels and operational notifications.
     const newest=await api('/api/v1/events?latest=1&limit=100');
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     await ingestEvents(newest.events||[],false);
@@ -682,7 +685,7 @@ async function loadOlder(){
   if(!historyHasMore||!olderCursor)return;
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
   historyFetchInFlight=(async()=>{
-    const r=await api('/api/v1/events?order=occurred&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
+    const r=await api('/api/v1/events?order=occurred&scope=sms&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
     historyHasMore=!!r.hasMore;
@@ -727,16 +730,31 @@ function syncSendControls(){
   if(activeConversationKey && !hasSmsSending())$('replyComposer').hidden=true;
 }
 function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
+// Indexed once per event-generation rather than re-sorting every decrypted SMS
+// and SIM source label while rendering a conversation.
+let simProfileIndexVersion='',simProfileIndex=new Map();
+function latestSimProfiles(){
+  const version=eventDataGeneration+':'+decryptedEvents.length;
+  if(simProfileIndexVersion===version)return simProfileIndex;
+  const next=new Map();
+  for(const e of decryptedEvents){
+    if(e.kind!=='sim.profile'||!e.payload)continue;
+    const p=e.payload,channel=String(p.channelId||''),revision=Number(p.channelRevision||1);
+    if(!channel)continue;
+    const key=e.deviceId+'|'+channel+'|'+revision,old=next.get(key);
+    if(!old||Number(e.occurredAt||0)>=Number(old.occurredAt||0))next.set(key,e);
+  }
+  simProfileIndex=next;simProfileIndexVersion=version;
+  return next;
+}
 function nodeChannels(d){
   if(!d||!d.state)return[];
   const channels=Array.isArray(d.state.channels)&&d.state.channels.length?d.state.channels:(d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));
   const phones=d.state._phoneNumbers||[];
-  const profiles=decryptedEvents.filter(e=>e.deviceId===d.id&&e.kind==='sim.profile'&&e.payload)
-    .sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
+  const profiles=latestSimProfiles();
   return channels.map(ch=>{
     const found=phones.find(n=>String(n.channelId)===String(ch.id));
-    const profile=profiles.find(e=>String(e.payload.channelId)===String(ch.id)&&
-      Number(e.payload.channelRevision||1)===Number(ch.revision||ch.channelRevision||1))?.payload;
+    const profile=profiles.get(d.id+'|'+String(ch.id)+'|'+Number(ch.revision||ch.channelRevision||1))?.payload;
     return {...ch,alias:profile?.tag||ch.alias,
       phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||
         (profile?.tail?'••••'+profile.tail:'')).trim()};
@@ -755,7 +773,7 @@ function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevi
 function renderCommandActivity(commands){
   const box=$('commandActivity');if(!box||!vaultKey)return;
   const zh=getLocale()==='zh-CN';
-  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation','ota.install':zh?'远程 APK 更新':'Remote APK update','ota.cancel':zh?'取消远程更新':'Cancel remote update'};
+  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','sms.restore_history':zh?'恢复本机历史':'Restore history','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation','ota.install':zh?'远程 APK 更新':'Remote APK update','ota.cancel':zh?'取消远程更新':'Cancel remote update'};
   const statuses={queued:zh?'已排队':'Queued',dispatched:zh?'已下发':'Dispatched',submitted:zh?'已提交运营商':'Submitted',sent:zh?'已发送':'Sent',delivered:zh?'已送达':'Delivered',succeeded:zh?'节点已执行':'Executed',failed:zh?'失败':'Failed',rejected:zh?'已拒绝':'Rejected',expired:zh?'已过期':'Expired'};
   box.innerHTML=commands.length?commands.map(c=>{
     const detail=c.result||{};
@@ -808,6 +826,7 @@ async function loadLifecycleHistory(){
 function resetEventCache(){
   eventDataGeneration++;
   events=[];decryptedEvents=[];eventIds.clear();
+  simProfileIndex.clear();simProfileIndexVersion='';
   lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   activeConversationKey=null;
   $('smsLayout').classList.remove('conversation-open');
@@ -1008,6 +1027,8 @@ function deviceButtons(d) {
     action('refresh',tr('action_refresh'))+
     (d.nodeType==='android'?action('sync-recent',tr('sync_recent_100'))+action('sync-older',tr('sync_older_100')):'')+
     action('diagnostics',tr('action_diagnostics'))+
+    (d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.17.0')?
+      action('restore-history',zh?'重建本机历史索引':'Rebuild local SMS history'):'')+
     (d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.5.0')?action('network',tr('mobile_fallback')):'')+
     '</div></div>'+otaDetails+'<details class="action-group destructive-group"><summary>'+escapeHtml(tr('ux_security_actions'))+'</summary><div class="row wrap">'+
     (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?action('rotate-key',tr('action_rotate')):'')+
@@ -1089,7 +1110,9 @@ function canonicalAddress(value){
   const intl=clean.startsWith('00')?'+'+clean.slice(2):clean;
   return /^\+861[3-9]\d{9}$/.test(intl)?intl.slice(3):intl;
 }
-function threadKey(e){return canonicalAddress(messageAddress(e));}
+// The same correspondent on different Nodes/SIM revisions is a distinct conversation.
+// Keep the physical source in the stable key; never silently pick a sending SIM.
+function threadKey(e){return eventSimKey(e)+'|'+canonicalAddress(messageAddress(e));}
 function eventSimKey(e){
   const p=e.payload||{},ch=String(p.channelId||''),rev=Number(p.channelRevision||0);
   return e.deviceId+'|'+(ch&&rev?ch+'|'+rev:'unverified:'+String(p.subscriptionId??e.subscriptionId??-1));
@@ -1361,7 +1384,7 @@ async function sendConversationReply(){
     }
   }finally{btn.disabled=false;}
 }
-async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install'||type==='ota.cancel')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
+async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='sms.restore_history'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install'||type==='ota.cancel')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
   const energy=power.effectiveEnergyMode||power.energyMode||'balanced';
   // A compact background policy must not make remote commands expire before
   // the next eligible fetch. Preserve a finite expiry and the encrypted AAD.
@@ -1752,7 +1775,16 @@ async function handleDeviceAction(btn){
     await fullRefresh();
     toast(zh?'服务器设备数据已清除':'Relay device records deleted');
     return;
-  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队');}else if(action==='diagnostics'){await openDiagnostics(id);await queueCommand(id,'diagnostics.request',{});toast('健康检查已入队，稍后刷新结果');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
+  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队'); }else if(action==='restore-history'){
+    const d=devices.find(x=>x.id===id);
+    if(!d||!versionAtLeast(d.appVersion,'0.17.0'))throw Error('请先更新 Android 节点至 v0.17.0');
+    const notice=getLocale()==='zh-CN'
+      ?'这将重建本机上传索引，重新上传最新短信。已有消息会按事件 ID 去重；继续使用“同步更早短信”补齐历史。服务器明确清除的数据不会恢复。请确认有足够空间。'
+      :'Rebuild the local upload index and replay recent messages. Existing messages remain deduplicated; use Sync older for further history. Explicitly purged messages remain purged.';
+    if(!confirm(notice))return;
+    await queueCommand(id,'sms.restore_history',{},1200);
+    toast(getLocale()==='zh-CN'?'历史恢复请求已入队':'History recovery queued');
+  }else if(action==='diagnostics'){await openDiagnostics(id);await queueCommand(id,'diagnostics.request',{});toast('健康检查已入队，稍后刷新结果');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
 function syncResponsiveConversation(){
   const layout=$('smsLayout');
   if(!layout)return;

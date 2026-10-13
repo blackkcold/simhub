@@ -159,6 +159,9 @@ The Android app only checks and opens the HTTPS download URL. It does not silent
 ## Retention, notifications and push tickle
 
 - `SIMHUB_EVENT_RETENTION_DAYS`, `SIMHUB_AUDIT_RETENTION_DAYS` and `SIMHUB_COMMAND_RETENTION_DAYS` are enforced continuously by the maintenance loop. `SIMHUB_MAINTENANCE_INTERVAL` controls cadence. Admins may also purge events explicitly.
+- From v0.17.0, **new Relay installations default to `SIMHUB_EVENT_RETENTION_DAYS=0`** (no automatic ciphertext expiry). Existing `.env` files keep their configured value (such as 30); update it explicitly to retain complete SMS history. Plan volume capacity and encrypted SQLite backups accordingly.
+- If prior automatic expiry removed historical records while Android still holds their upload receipts, update both Relay and Android node to v0.17.0, choose **Rebuild local SMS history** in the device details, pass administrator step-up, then repeatedly select **Sync older messages**. The recovery begins with the newest 100 Provider messages and replays earlier pages with the same immutable event IDs; existing records remain deduplicated.
+- Recovery cannot recover an SMS no longer present in the phone's SMS Provider. **Explicitly purged Relay data remains suppressed** by the server's per-device purge boundary; this action is not an undo button for intentional deletion. A positive retention limit may delete recovered old events again during the next maintenance cycle.
 - `SIMHUB_NOTIFY_OTP_ONLY`, `SIMHUB_NOTIFY_MAX_AGE` and `SIMHUB_NOTIFY_DEVICE_IDS` constrain metadata-only notification delivery. History-sync events never trigger new-message notifications.
 - `SIMHUB_PUSH_TICKLE_URL` is an optional metadata-only adapter hook. It receives only device ID/reason/time and can map that device to FCM or an OEM push provider; command content remains on the relay and is fetched over authenticated HTTPS. Always-on relay + JobScheduler remain the built-in fallback.
 

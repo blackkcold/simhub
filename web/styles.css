@@ -655,3 +655,53 @@ dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:c
   .sidebar nav>.nav .nav-label{flex:0 0 auto;width:100%;text-align:center}
   .sidebar nav>.nav .nav-unread-badge{top:-7px;right:-12px}
 }
+
+
+/* v0.17 interaction motion: status changes are short and never block input. */
+:root {
+  --motion-fast: 120ms;
+  --motion-normal: 200ms;
+  --motion-panel: 260ms;
+  --motion-ease: cubic-bezier(.2,.75,.2,1);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .device-card,
+  .message,
+  .settings-shell [data-settings-link] {
+    transition: border-color var(--motion-normal) var(--motion-ease),
+      background-color var(--motion-normal) var(--motion-ease),
+      transform var(--motion-fast) var(--motion-ease);
+  }
+  .device-card:hover {transform: translateY(-2px);}
+  .device-card:active {transform: translateY(0);}
+  .message:active {transform: scale(.994);}
+  .status-pill, .state-pill {
+    transition: color var(--motion-normal) var(--motion-ease),
+      background-color var(--motion-normal) var(--motion-ease);
+  }
+  dialog[open] {
+    animation: simhub-panel-enter var(--motion-panel) var(--motion-ease) both;
+  }
+  @keyframes simhub-panel-enter {
+    from {opacity:0;transform:translateY(8px) scale(.992);}
+    to {opacity:1;transform:translateY(0) scale(1);}
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .device-card, .message, .status-pill, .state-pill,
+  .settings-shell [data-settings-link], dialog[open] {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}
+/* Keyboard and pointer affordances share one consistent focus treatment. */
+.device-open:focus-visible,
+.message:focus-visible,
+.settings-shell [data-settings-link]:focus-visible {
+  outline: 3px solid color-mix(in srgb,var(--accent) 45%,transparent);
+  outline-offset: 2px;
+}
+@media (hover:none) {
+  .device-card:hover {transform:none;}
+}

@@ -257,8 +257,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         val rounds=if(delta)8 else 1
                         for(batchIndex in 0 until rounds){
                             val events=if(delta)
-                                api.api("/api/v1/events?since=$sequence&limit=50")
-                            else api.api("/api/v1/events?order=occurred&limit=50"+suffix)
+                                api.api("/api/v1/events?since=$sequence&scope=sms&limit=50")
+                            else api.api("/api/v1/events?order=occurred&scope=sms&limit=50"+suffix)
                             val rows=events.optJSONArray("events")?:JSONArray()
                             if(rows.length()>50)throw IllegalStateException("Relay batch exceeds negotiated limit")
                             val messages=JSONArray()
@@ -373,7 +373,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     fun navigateToLatest(){load("latest")}
     /** Remote commands are E2EE encrypted, idempotent and acknowledged asynchronously. */
     fun queueDeviceAction(device:JSONObject,action:String,credential:String?=null,channelIndex:Int=-1){
-        if(action.startsWith("ota-") && credential==null){
+        if((action.startsWith("ota-") || action=="restore-history") && credential==null){
             pendingSensitiveTask=device to action
             sensitiveCredential=""
             return
@@ -382,6 +382,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val commandType=when(action){
             "sync-recent"->"sms.sync_recent"
             "sync-older"->"sms.sync_older"
+            "restore-history"->"sms.restore_history"
             "refresh"->"device.refresh_state"
             "diagnostics"->"diagnostics.request"
             "ota-install"->"ota.install"
@@ -397,6 +398,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             !state.optBoolean("remoteOtaAuthorized") || !state.optBoolean("remoteOtaInstallPermission"))) {
             actionError="节点不满足远程更新能力或授权条件";return
         }
+        if(action=="restore-history" && device.optInt("appVersionCode",state.optInt("appVersionCode",0))<50){
+            actionError="节点版本暂不支持历史恢复，请先升级";return
+        }
         if(action=="ota-cancel" && state.optString("remoteOtaStage") !in
             listOf("checking","downloading","verified"))return
         actionError="";actionBusy=true
@@ -404,7 +408,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             try{
                 val commandId=withContext(Dispatchers.IO){
                     val api=client?:throw SecurityException("管理授权已失效")
-                    if(action.startsWith("ota-") || action.startsWith("network-")){
+                    if(action.startsWith("ota-") || action=="restore-history" || action.startsWith("network-")){
                         if(credential.isNullOrBlank())throw SecurityException("此操作要求管理员二次验证")
                         api.api("/api/v1/auth/elevate","POST",JSONObject()
                             .put(if(secondFactorTotp)"totp" else "adminToken",credential))
@@ -510,7 +514,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     commandHistoryError=e.message?:"任务状态暂不可用，稍后将继续重试"
                 }
             }
-            delay(60000)
+            // Active tasks deserve timely progress without permanent high-rate polling.
+            val awaiting=commandHistory.any{it.optString("state") in
+                listOf("queued","dispatched","submitted")}
+            delay(if(awaiting)15000L else 60000L)
         }
     }
     if(!visible)return
@@ -1092,14 +1099,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         AlertDialog(onDismissRequest={pendingSensitiveTask=null;sensitiveCredential=""},
             icon={HubIcon(R.drawable.ic_hub_shield,Modifier.size(28.dp),
                 MaterialTheme.colorScheme.primary)},
-            title={Text(if(action=="ota-install")hubLabel("确认远程安装","Confirm remote installation")
-                else hubLabel("取消待处理更新","Cancel pending update"))},
+            title={Text(when(action){
+                "restore-history"->hubLabel("确认恢复本机短信历史","Confirm history recovery")
+                "ota-install"->hubLabel("确认远程安装","Confirm remote installation")
+                else->hubLabel("取消待处理更新","Cancel pending update")})},
             text={
                 Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
-                    Text(if(action=="ota-install")
-                        hubLabel("仅请求安装最新签名版本；安卓系统仍可能要求在设备上确认。任务入队不等于更新成功。",
+                    Text(when(action){
+                        "restore-history"->hubLabel("将重置本机历史短信上传索引并从最新短信重新导入。已有短信按 ID 去重，后续可重复使用“同步更早短信”补齐；服务端明确清除的短信仍不可恢复。",
+                            "Reset the local upload index and replay recent history. Older history can be requested in pages. Explicit relay purges remain irreversible.")
+                        "ota-install"->hubLabel("仅请求安装最新签名版本；安卓系统仍可能要求在设备上确认。任务入队不等于更新成功。",
                             "Only a newer signed build is requested. Android may still require confirmation; queued is not installed.")
-                        else hubLabel("仅能取消尚未提交系统安装器的更新。","Cancellation is limited to updates not yet committed to Android."),
+                        else->hubLabel("仅能取消尚未提交系统安装器的更新。","Cancellation is limited to updates not yet committed to Android.")},
                         style=MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(sensitiveCredential,{sensitiveCredential=it},
                         label={Text(if(secondFactorTotp)hubLabel("二次验证 TOTP","TOTP")

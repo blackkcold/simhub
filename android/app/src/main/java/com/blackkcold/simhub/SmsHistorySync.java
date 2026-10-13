@@ -128,6 +128,29 @@ public final class SmsHistorySync {
         return scanned;
     }
 
+    /**
+     * A user-approved, step-up-protected recovery operation. Resets historical
+     * upload receipts without affecting commands, pending SMS or SIM credentials.
+     * Replays the newest page first; subsequent sync_older calls continue the
+     * history. Existing Relay event IDs remain idempotent, and explicit Relay
+     * purge boundaries cannot be undone by a restoration.
+     */
+    public static synchronized int beginHistoryRestore(Context c) {
+        if(!canRead(c))return -1;
+        AgentConfig cfg=new AgentConfig(c);
+        if(!cfg.isEnrolled())return -1;
+        LocalStore local=LocalStore.get(c);
+        if(local.pendingEventCount()>100){
+            cfg.recordSyncError("RESTORE_WAIT_FOR_PENDING_QUEUE");
+            return -1;
+        }
+        local.resetProviderUploadReceiptsForRestore();
+        cfg.setHistoryInitialized(false);
+        cfg.setHistoryBackfillCursor(0,-1);
+        cfg.setHistoryCursor(0,-1);
+        return sync(c,PAGE);
+    }
+
     /** Explicitly rescan the newest N SMS; stable provider event IDs prevent duplicates. */
     public static synchronized int syncRecent(Context c,int requested){
         if(!canRead(c))return -1;

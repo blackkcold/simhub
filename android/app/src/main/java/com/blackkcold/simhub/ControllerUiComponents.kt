@@ -55,9 +55,12 @@ internal fun ControllerTaskRow(command:JSONObject){
                 .format(Date(command.optLong("createdAt")*1000)),
                 style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        StatePill(when(state){"queued"->"排队";"dispatched"->"已领取";"succeeded"->"完成";"sent"->"已发送";
-            "delivered"->"送达";"failed"->"失败";"rejected"->"拒绝";"expired"->"过期";else->state.take(10)},
-            !error)
+        StatePill(when(state){"queued"->hubLabel("排队","Queued");"dispatched"->hubLabel("已领取","Dispatched");
+            "submitted"->hubLabel("已提交","Submitted");"succeeded"->hubLabel("完成","Completed");
+            "sent"->hubLabel("已发送","Sent");"delivered"->hubLabel("送达","Delivered");
+            "failed"->hubLabel("失败","Failed");"rejected"->hubLabel("拒绝","Rejected");
+            "expired"->hubLabel("过期","Expired");else->state.take(10)},
+            done)
     }
 }
 
@@ -187,6 +190,13 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
                     }
                     OutlinedButton(enabled=!busy,onClick={onAction("sync-older")},modifier=Modifier.fillMaxWidth()){
                         Text(hubLabel("同步更早短信","Sync older messages"))}
+                    if(isAndroid && installed>=50)OutlinedButton(
+                        enabled=!busy,onClick={onAction("restore-history")},
+                        modifier=Modifier.fillMaxWidth()){
+                        HubIcon(R.drawable.ic_hub_shield,Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(hubLabel("恢复本机短信历史（需验证）","Restore local SMS history"))
+                    }
                     OutlinedButton(enabled=!busy,onClick={onAction("refresh")},modifier=Modifier.fillMaxWidth()){
                         Text(hubLabel("刷新设备状态","Refresh device state"))}
                     OutlinedButton(enabled=!busy,onClick={onAction("diagnostics")},modifier=Modifier.fillMaxWidth()){

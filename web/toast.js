@@ -15,6 +15,9 @@ export function createToastHost(element, localize=(x)=>String(x)){
   sync();
   return {show(message,{kind='info',duration}={}){
     sync();
+    // Surface success/errors to screen readers without redirecting focus.
+    element.setAttribute('role',kind==='error'?'alert':'status');
+    element.setAttribute('aria-live',kind==='error'?'assertive':'polite');
     element.replaceChildren();
     const icon=document.createElement('span');icon.className='toast-symbol';icon.setAttribute('aria-hidden','true');
     const symbols={info:'M12 2v2m0 4v6m0 4h.01M4 12a8 8 0 1 0 16 0 8 8 0 1 0-16 0',success:'M5 12l4 4L19 6',error:'M12 8v5m0 4h.01M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20'};

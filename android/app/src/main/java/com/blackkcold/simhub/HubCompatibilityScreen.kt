@@ -215,7 +215,7 @@ fun HubCompatibilityScreen(
             ),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(9.dp))
             Button(onClick=controller::startCompanionAssociation,
-                enabled=state?.enrolled==true&&Build.VERSION.SDK_INT>=33,
+                enabled=state?.enrolled==true&&status?.optBoolean("associationSupported")==true,
                 modifier=Modifier.fillMaxWidth()){
                 Text(hubLabel("由系统确认创建伴侣关联","Request companion association"))
             }

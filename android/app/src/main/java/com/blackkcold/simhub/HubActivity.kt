@@ -915,8 +915,9 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun startCompanionAssociation(){
         if(!CompatibilityPolicy.canOfferSelfManagedAssociation(
-                Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled())){
-            tools.compatibilityError="需要 Android 13 以上系统以及已配对的 Relay。"
+                Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled()) ||
+                !CompatibilityManager.supportsSelfManagedAssociation(this)){
+            tools.compatibilityError="需要 Android 13+、已配对 Relay，且 ROM 支持 Companion Device Setup。"
             return
         }
         if(CompatibilityManager.associationCount(this)>0){
@@ -947,12 +948,16 @@ class HubActivity: ComponentActivity(), HubController {
                         }
                         override fun onFailure(errorMessage:CharSequence?){
                             auditCompatibility("companion_association","failed")
-                            tools.compatibilityError="关联失败，可能被厂商系统拒绝；请导出诊断日志。"
+                            tools.compatibilityError="系统拒绝伴侣关联："+
+                                (errorMessage?.toString()?.take(200) ?: "unknown")
+                            AppLogger.w(this@HubActivity,"Companion","Association callback failed")
                         }
                     })
                 }catch(error:Exception){
                     auditCompatibility("companion_association","failed")
-                    tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName
+                    AppLogger.e(this@HubActivity,"Companion","Association request rejected",error)
+                    tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName+
+                        (error.message?.take(180)?.let{" · "+it} ?: "")
                 }
             }.show()
     }

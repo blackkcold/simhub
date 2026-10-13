@@ -1,3 +1,12 @@
+## v0.16.5 — Reliable update discovery and security scan coverage
+
+- Fix manual server update checks so they refresh the published stable GitHub Release rather than reusing the normal 15-minute background cache; coalesce rapid repeated checks and cap release metadata downloads.
+- Separate latest-version discovery from Rootless Docker updater readiness, report agent failures accurately and distinguish update availability, install eligibility, ignored releases and GitHub retrieval errors in the management UI.
+- Introduce strict streaming limits for both Android SIM Node and native management controller HTTP responses; close HTTP connections on read failures and cover limit/Unicode behavior in Android unit tests.
+- Upgrade CodeQL to v4 and compile Kotlin/Java using the actual Android 37, Gradle 9.6 and JDK 17 toolchain so Kotlin files are included in source analysis.
+- Add update-cache regression tests and refresh public-exposure documentation to reflect the actual 24-hour absolute / 8-hour idle admin session defaults.
+- Preserve existing E2EE/Vault, SMS, device pairing, Shizuku authorization, signed APK verification, immutable releases and verified Rootless OCI update architecture.
+
 ## v0.16.4 — Notification center and browser alert reliability
 
 - Fix notifications hidden behind native modal backdrops by moving the toast host into the active dialog top layer; retain accessible, mobile-aware feedback.

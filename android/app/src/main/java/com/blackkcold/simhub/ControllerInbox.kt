@@ -104,6 +104,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                            onReply:(String)->Unit,canCompose:Boolean) {
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
+    var filtersExpanded by remember { mutableStateOf(false) }
     var otpOnly by remember { mutableStateOf(false) }
     var sourceFilter by remember { mutableStateOf("") }
     var activeThread by remember { mutableStateOf<String?>(null) }
@@ -133,41 +134,49 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
             }
             return@Column
         }
-        Row(Modifier.fillMaxWidth().padding(16.dp),
+        Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=3.dp),
             verticalAlignment=Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)){
-                Text(if(activeThread==null)"管理短信" else "短信会话",
-                    style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold)
-                Text("${state.messages.count{!it.failed}} 条已解密 · ${state.messages.count{it.failed}} 条失败",
-                    style=MaterialTheme.typography.labelSmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if(activeThread==null)
+                hubLabel("${threads.size} 个会话 · ${state.messages.size} 条已加载",
+                    "${threads.size} threads · ${state.messages.size} loaded")
+                else hubLabel("加密会话","Encrypted conversation"),
+                modifier=Modifier.weight(1f),
+                style=MaterialTheme.typography.labelMedium,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines=1,overflow=TextOverflow.Ellipsis)
+            if(activeThread==null)IconButton(onClick={filtersExpanded=!filtersExpanded}) {
+                HubIcon(R.drawable.ic_hub_settings,Modifier.size(20.dp),
+                    description=hubLabel("搜索与筛选","Search and filters"))
             }
             IconButton(onClick=onRefresh){
                 HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp),
                     description=hubLabel("刷新短信","Refresh messages"))
             }
-            if(activeThread==null && canCompose)
-                FilledIconButton(onClick=onWrite){
-                    HubIcon(R.drawable.ic_hub_send,Modifier.size(19.dp),
-                        MaterialTheme.colorScheme.onPrimary,hubLabel("新建短信","New SMS"))
-                }
-        }
-        if(!canCompose){
-            Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp),
-                verticalAlignment=Alignment.CenterVertically,
-                horizontalArrangement=Arrangement.spacedBy(7.dp)){
-                HubIcon(R.drawable.ic_hub_shield,Modifier.size(16.dp),
-                    MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(hubLabel("当前设备均为只读、离线或无发送权限；不接管模式不会提供普通发送入口。",
-                    "No eligible sending node. Companion mode does not show regular SMS sending."),
-                    style=MaterialTheme.typography.labelSmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(activeThread==null && canCompose)IconButton(onClick=onWrite){
+                HubIcon(R.drawable.ic_hub_send,Modifier.size(20.dp),
+                    description=hubLabel("新建短信","New SMS"))
             }
         }
+        if(!canCompose && filtersExpanded)Text(
+            hubLabel("只读或离线节点不会显示发送操作。不接管短信模式默认只读。",
+                "Read-only and offline nodes cannot send; companion mode is read-only."),
+            modifier=Modifier.padding(horizontal=16.dp,vertical=4.dp),
+            style=MaterialTheme.typography.labelSmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant)
         if(state.warning.isNotBlank()){
             Text(state.warning,modifier=Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
         }
+        if(activeThread==null && filtersExpanded) {
+            OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
+                label={Text("搜索已加载短信、号码与来源")},singleLine=true)
+            Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
+                horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text(hubLabel("全部短信","All messages"))})
+                FilterChip(selected=otpOnly,onClick={otpOnly=true},label={Text(hubLabel("验证码","Verification codes"))})
+            }
+        }
+        if(filtersExpanded) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
             .padding(horizontal=16.dp,vertical=4.dp),
             horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -176,6 +185,12 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 FilterChip(selected=sourceFilter==key,onClick={sourceFilter=key;activeThread=null},
                     label={Text(label,maxLines=1)})
             }
+        }
+        } else if(sourceFilter.isNotEmpty() || otpOnly || query.isNotBlank()) {
+            Text(hubLabel("筛选已启用 · 点击筛选图标修改","Filters active · open filters to edit"),
+                modifier=Modifier.padding(horizontal=16.dp,vertical=3.dp),
+                style=MaterialTheme.typography.labelSmall,
+                color=MaterialTheme.colorScheme.primary)
         }
         val key=activeThread
         if(key!=null){
@@ -233,19 +248,12 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 }
             }
         }else{
-            OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
-                label={Text("搜索已加载短信、号码与来源")},singleLine=true)
-            Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
-                horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text(hubLabel("全部短信","All messages"))})
-                FilterChip(selected=otpOnly,onClick={otpOnly=true},label={Text(hubLabel("验证码","Verification codes"))})
-            }
             if(threads.isEmpty()){
                 Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
                     Text("暂无已解密短信",color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(horizontal=14.dp,vertical=6.dp),
-                verticalArrangement=Arrangement.spacedBy(8.dp)){
+            }else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp),
+                verticalArrangement=Arrangement.spacedBy(4.dp)){
                 items(threads,key={it.first.thread}){(latest,count)->
                     HubCard(Modifier.fillMaxWidth().clickable{activeThread=latest.thread}){
                         Row(verticalAlignment=Alignment.CenterVertically){

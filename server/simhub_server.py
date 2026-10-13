@@ -34,7 +34,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.16.7"
+APP_VERSION = "0.16.8"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -1392,6 +1392,22 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not auth.startswith("Device ") or not device_for_token(p[3],auth[7:],allow_pending=True):
                 self.send_error_json(401,"unauthorized","Current or pending device token required"); return
             self.commit_device_token(p[3],auth[7:]); return
+        # HttpURLConnection does not support PATCH. Restrict this Android POST
+        # bridge to the existing authenticated device mutations.
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="manage":
+            if not self.require_admin():return
+            body=self.read_json()
+            if body is None:return
+            operation=body.get("action")
+            if operation=="rename":
+                name=body.get("name")
+                if not isinstance(name,str) or not name.strip() or len(name)>80:
+                    self.send_error_json(400,"invalid_name","Device name must contain 1-80 characters");return
+                self.patch_device(p[3],{"name":name.strip()});return
+            if operation=="revoke":
+                if not self.require_stepup():return
+                self.patch_device(p[3],{"revoke":True});return
+            self.send_error_json(400,"unsupported_action","Unsupported native management action");return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="commands":
             if not self.require_admin():return
             body=self.read_json()

@@ -65,6 +65,12 @@ private data class ControllerLoadResult(
     val devices:List<JSONObject>,val totpRequired:Boolean,
     val batches:List<ControllerLoadBatch>,val highWater:Long
 )
+/** First history request must initialize both cursors before incremental requests. */
+internal object ControllerPagingPolicy {
+    fun isInitialPage(mode:String,lastEventSeq:Long):Boolean =
+        mode=="latest" || (mode=="delta" && lastEventSeq<=0L)
+}
+
 /** Stable conversation identity and conservative phone normalization. */
 internal object ControllerConversation {
     fun key(device:String,channel:String,revision:Int,address:String):String {
@@ -78,6 +84,32 @@ internal object ControllerConversation {
             else->address.trim().lowercase()
         }
         return "$device|$channel|$revision|$number"
+    }
+}
+
+/** Presentation-only SIM labels. Preserve channel identity in sourceId/thread keys. */
+internal object ControllerSourceLabel {
+    fun name(node:JSONObject?,channelId:String,revision:Int,tag:String):String {
+        if(channelId.isBlank() || revision<=0)return "历史 SIM · 来源待确认"
+        val state=node?.optJSONObject("state")
+        val channels=state?.optJSONArray("channels") ?: state?.optJSONArray("subscriptions") ?: JSONArray()
+        for(i in 0 until channels.length()){
+            val item=channels.optJSONObject(i)?:continue
+            val id=item.optString("id").ifBlank{item.optString("channelId")}
+            val rev=item.optInt("revision",item.optInt("channelRevision",1))
+            if(id!=channelId || rev!=revision)continue
+            for(key in listOf("alias","displayName","carrierName")){
+                val value=item.optString(key).trim()
+                if(value.isNotBlank() && value!=channelId && value.length<=48 &&
+                    !value.matches(Regex("[0-9a-fA-F-]{20,}")))return value
+            }
+            val slot=item.optInt("slotIndex",item.optInt("slot",-1))
+            if(slot in 0..7)return "SIM ${slot+1}"
+        }
+        val display=tag.trim()
+        if(display.isNotEmpty() && display!=channelId && display.length<=48 &&
+            !display.matches(Regex("[0-9a-fA-F-]{20,}")))return display
+        return "历史 SIM"
     }
 }
 
@@ -113,11 +145,21 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
+    var pendingManageAction by remember{mutableStateOf<Pair<JSONObject,String>?>(null)}
+    var manageValue by remember{mutableStateOf("")}
+    var manageCredential by remember{mutableStateOf("")}
+    var manageConfirm by remember{mutableStateOf("")}
+    var manageChannelIndex by remember{mutableIntStateOf(-1)}
+    var manageBusy by remember{mutableStateOf(false)}
+    var manageError by remember{mutableStateOf("")}
     var actionError by remember{mutableStateOf("")}
     var actionBusy by remember{mutableStateOf(false)}
     var pendingSensitiveTask by remember { mutableStateOf<Pair<JSONObject,String>?>(null) }
     var sensitiveCredential by remember { mutableStateOf("") }
     var serverVersion by remember{mutableStateOf("—")}
+    var poolStatus by remember(selected){mutableStateOf<JSONObject?>(null)}
+    var auditRows by remember(selected){mutableStateOf<List<JSONObject>>(emptyList())}
+    var adminOverviewError by remember(selected){mutableStateOf("")}
     var secondFactorTotp by remember(selected){mutableStateOf(true)}
     var requireLocalUnlock by remember(selected){mutableStateOf(client?.requireLocalUnlock()==true)}
     var localUnlocked by remember(selected){mutableStateOf(!requireLocalUnlock)}
@@ -184,6 +226,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
         if(mode=="delta" && page>0)return // Historical browsing is a stable window.
         if(busy){pendingLoad=mode;return}
+        val initialPage=ControllerPagingPolicy.isInitialPage(mode,lastEventSeq)
         busy=true
         scope.launch {
             try {
@@ -193,10 +236,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     val all=d.optJSONArray("devices")?:JSONArray()
                     val nodes=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
                     val byId=nodes.associateBy{it.optString("id")}
-                    val delta=mode=="delta" && lastEventSeq>0
+                    val delta=mode=="delta" && !initialPage
                     // Read the sequence watermark *before* the latest-time page.
                     // Concurrent uploads can then safely be replayed as delta.
-                    val highWater=if(mode=="latest" || (mode=="delta" && !delta))
+                    val highWater=if(initialPage)
                         api.api("/api/v1/events?latest=1&limit=1").optLong("nextSince",0L)
                         else 0L
                     val requested=if(mode=="older")page+1 else 0
@@ -244,8 +287,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 val address=sender.ifBlank{plaintext.optString("sender",plaintext.optString("recipient","未知"))}
                                 val ch=plaintext.optString("channelId")
                                 val rev=plaintext.optInt("channelRevision")
-                                val provenance=if(ch.isEmpty()||rev==0)"历史 SIM · 来源待确认"
-                                    else (plaintext.optString("simTag").ifBlank{ch})+" · r"+rev
+                                val provenance=ControllerSourceLabel.name(node,ch,rev,plaintext.optString("simTag"))
                                 val otp=plaintext.optJSONObject("otp")?.optString("value").orEmpty()
                                 // Do not coalesce separate devices/SIM revisions
                                 // merely because their phone number is the same.
@@ -296,22 +338,22 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 // Main-thread ACK: only successfully accepted decrypted content
                 // allows an event cursor or historical-page index to move.
                 for(batch in data.batches){
-                    if(!inbox.accept(batch.payload,append=mode=="older" || mode=="delta" || batch.appendFragment,
+                    if(!inbox.accept(batch.payload,append=mode=="older" || (mode=="delta" && !initialPage) || batch.appendFragment,
                                      preferOlder=mode=="older"))
                         throw IllegalStateException("短信批次未接收；游标未推进，可安全重试")
-                    if(mode=="delta" && batch.finalFragment)
+                    if(mode=="delta" && !initialPage && batch.finalFragment)
                         lastEventSeq=maxOf(lastEventSeq,batch.sequence,data.highWater)
                     else if(mode=="older" && batch.finalFragment){
                         page+=1
                         if(batch.nextTime>0 && batch.nextSeq>0)
                             cursors=cursors.take(page)+listOf(batch.nextTime to batch.nextSeq)
-                    }else if(mode=="latest" && batch.finalFragment){
+                    }else if(initialPage && batch.finalFragment){
                         page=0
                         cursors=if(batch.nextTime>0 && batch.nextSeq>0)
                             listOf(batch.nextTime to batch.nextSeq) else emptyList()
                         lastEventSeq=maxOf(lastEventSeq,data.highWater)
                     }
-                    if(mode=="latest")unreadable=batch.unreadable
+                    if(initialPage)unreadable=batch.unreadable
                     else unreadable+=batch.unreadable
                 }
                 devices=data.devices
@@ -330,7 +372,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     fun loadOlderPage(){load("older")}
     fun navigateToLatest(){load("latest")}
     /** Remote commands are E2EE encrypted, idempotent and acknowledged asynchronously. */
-    fun queueDeviceAction(device:JSONObject,action:String,credential:String?=null){
+    fun queueDeviceAction(device:JSONObject,action:String,credential:String?=null,channelIndex:Int=-1){
         if(action.startsWith("ota-") && credential==null){
             pendingSensitiveTask=device to action
             sensitiveCredential=""
@@ -344,6 +386,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             "diagnostics"->"diagnostics.request"
             "ota-install"->"ota.install"
             "ota-cancel"->"ota.cancel"
+            "network-enable"->"device.network_policy"
+            "network-disable"->"device.network_policy"
             else->return
         }
         val state=device.optJSONObject("state")?:JSONObject()
@@ -360,7 +404,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             try{
                 val commandId=withContext(Dispatchers.IO){
                     val api=client?:throw SecurityException("管理授权已失效")
-                    if(action.startsWith("ota-")){
+                    if(action.startsWith("ota-") || action.startsWith("network-")){
                         if(credential.isNullOrBlank())throw SecurityException("此操作要求管理员二次验证")
                         api.api("/api/v1/auth/elevate","POST",JSONObject()
                             .put(if(secondFactorTotp)"totp" else "adminToken",credential))
@@ -376,6 +420,20 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         .put("commandId",id).put("issuedAt",now).put("expiresAt",end)
                     if(action=="sync-recent" || action=="sync-older")payload.put("maxMessages",100)
                     if(action=="ota-install")payload.put("targetVersion","latest")
+                    if(action.startsWith("network-")){
+                        val enabled=action=="network-enable"
+                        payload.put("enabled",enabled)
+                        if(enabled){
+                            val channel=ControllerNodePolicy.channels(device).optJSONObject(channelIndex)
+                                ?:throw IllegalStateException("请选择有效 SIM 通道")
+                            payload.put("channelId",channel.optString("id")
+                                .ifBlank{channel.optString("channelId")})
+                            payload.put("channelRevision",channel.optInt("revision",
+                                channel.optInt("channelRevision",1)))
+                            if(payload.optString("channelId").isBlank())
+                                throw IllegalStateException("SIM 通道 ID 不可用")
+                        }
+                    }
                     val cipher=api.encryptCommand(device,id,commandType,now,end,payload)
                     api.api("/api/v1/devices/"+device.getString("id")+"/commands","POST",
                         JSONObject().put("commandId",id).put("idempotencyKey",id)
@@ -406,6 +464,18 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             delay(60000)
             if(!busy)refreshDelta()
         }
+    }
+    LaunchedEffect(selected,visible,authorized,tab,localUnlocked){
+        if(!visible || !authorized || tab!=3 || (requireLocalUnlock && !localUnlocked))return@LaunchedEffect
+        val api=client?:return@LaunchedEffect
+        try{
+            val (pool,audits)=withContext(Dispatchers.IO){
+                val p=api.api("/api/v1/pool")
+                val a=api.api("/api/v1/audit?limit=12").optJSONArray("audit")?:JSONArray()
+                p to (0 until a.length()).mapNotNull{a.optJSONObject(it)}
+            }
+            poolStatus=pool;auditRows=audits;adminOverviewError=""
+        }catch(e:Exception){adminOverviewError=e.message?:"管理记录读取失败"}
     }
     LaunchedEffect(pairing,selected,visible){
         if(!visible)return@LaunchedEffect
@@ -685,6 +755,69 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     item{
                         HubCard(Modifier.fillMaxWidth()){
                             Row(verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(9.dp)){
+                                HubIcon(R.drawable.ic_hub_share,Modifier.size(22.dp),
+                                    MaterialTheme.colorScheme.primary)
+                                HubSectionTitle(hubLabel("共享短信池","Shared SMS pool"))
+                            }
+                            if(adminOverviewError.isNotBlank())
+                                Text(adminOverviewError,style=MaterialTheme.typography.bodySmall,
+                                    color=MaterialTheme.colorScheme.error)
+                            val pool=poolStatus
+                            if(pool==null)Text(hubLabel("读取管理空间状态中…","Loading shared-pool status…"),
+                                style=MaterialTheme.typography.bodySmall)
+                            else {
+                                if(pool.optBoolean("rotationRequired"))
+                                    Text(hubLabel("密钥轮换待完成：共享上传已暂停，请完成安全轮换。",
+                                        "Key rotation pending; shared uploads are paused."),
+                                        color=MaterialTheme.colorScheme.error)
+                                InfoRow(hubLabel("密钥版本","Key epoch"),pool.optString("epoch","—"))
+                                val members=pool.optJSONArray("members")?:JSONArray()
+                                InfoRow(hubLabel("共享成员","Pool members"),members.length().toString())
+                                for(i in 0 until members.length()){
+                                    val member=members.optJSONObject(i)?:continue
+                                    val linked=devices.firstOrNull{it.optString("id")==member.optString("id")}
+                                    val memberName=linked?.optString("name")?.takeIf{it.isNotBlank()}
+                                        ?:member.optString("name").ifBlank{"SIM Node"}
+                                    val status=when {
+                                        !member.optBoolean("requested")->hubLabel("待设备启用","Node not enabled")
+                                        member.optBoolean("approved")->hubLabel("已授权","Authorized")
+                                        else->hubLabel("等待批准","Awaiting approval")
+                                    }
+                                    InfoRow(memberName,status)
+                                }
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            HubSectionTitle(hubLabel("安全审计记录","Security audit"))
+                            if(auditRows.isEmpty())Text(hubLabel("暂无近期审计记录","No recent audit records"),
+                                style=MaterialTheme.typography.bodySmall)
+                            auditRows.take(8).forEach{entry->
+                                Row(Modifier.fillMaxWidth().padding(vertical=5.dp),
+                                    verticalAlignment=Alignment.CenterVertically,
+                                    horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                                    HubIcon(R.drawable.ic_hub_shield,Modifier.size(16.dp),
+                                        MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Column(Modifier.weight(1f)){
+                                        Text(entry.optString("action").take(70),
+                                            style=MaterialTheme.typography.bodySmall)
+                                        val ts=entry.optLong("occurred_at",0L)
+                                        if(ts>0)Text(android.text.format.DateFormat.format(
+                                            "MM-dd HH:mm",ts*1000).toString(),
+                                            style=MaterialTheme.typography.labelSmall,
+                                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(entry.optString("result").take(16),
+                                        style=MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                    item{
+                        HubCard(Modifier.fillMaxWidth()){
+                            Row(verticalAlignment=Alignment.CenterVertically,
                                 horizontalArrangement=Arrangement.spacedBy(11.dp)){
                                 HubIcon(R.drawable.ic_hub_dashboard,Modifier.size(28.dp),
                                     MaterialTheme.colorScheme.primary)
@@ -829,12 +962,130 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     error=actionError,
                     onClose={selectedDevice=null;actionError=""},
                     onAction={action->queueDeviceAction(device,action)},
+                    onManage={action->
+                        pendingManageAction=device to action
+                        manageValue=device.optString("name")
+                        manageCredential="";manageConfirm="";manageChannelIndex=-1;manageError=""
+                    },
                     onAdvanced={
                         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
                             Uri.parse(selected+"/")))
                     })
             }
         }
+    }
+    pendingManageAction?.let{(device,action)->
+        val destructive=action in listOf("purge","revoke","delete")
+        val sensitive=destructive || action=="network"
+        val channels=ControllerNodePolicy.channels(device)
+        val title=when(action){
+            "rename"->hubLabel("修改设备名称","Rename node")
+            "network"->hubLabel("备用移动数据策略","Mobile network fallback")
+            "purge"->hubLabel("清理中继短信","Purge relay SMS")
+            "revoke"->hubLabel("撤销设备授权","Revoke device")
+            else->hubLabel("强制删除设备","Force delete device")
+        }
+        AlertDialog(
+            onDismissRequest={if(!manageBusy)pendingManageAction=null},
+            title={Text(title)},
+            text={Column(Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text(device.optString("name").ifBlank{"SIM Node"},
+                    fontWeight=FontWeight.SemiBold)
+                if(action=="rename")OutlinedTextField(manageValue,{manageValue=it.take(80)},
+                    label={Text(hubLabel("新设备名称","Device name"))},singleLine=true)
+                if(action=="network"){
+                    Text(hubLabel("Android 只能使用系统设定的默认数据 SIM；选择监控卡不会切换系统默认卡。",
+                        "Android can only use the system's default mobile data SIM. This choice does not change it."),
+                        style=MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment=Alignment.CenterVertically,
+                        modifier=Modifier.clickable{manageChannelIndex=-1}){
+                        RadioButton(selected=manageChannelIndex==-1,onClick={manageChannelIndex=-1})
+                        Text(hubLabel("关闭备用数据监控","Disable fallback"))
+                    }
+                    for(i in 0 until channels.length()){
+                        val ch=channels.optJSONObject(i)?:continue
+                        Row(verticalAlignment=Alignment.CenterVertically,
+                            modifier=Modifier.clickable{manageChannelIndex=i}){
+                            RadioButton(selected=manageChannelIndex==i,onClick={manageChannelIndex=i})
+                            Text(ch.optString("alias").ifBlank{ch.optString("displayName")
+                                .ifBlank{ch.optString("carrierName").ifBlank{"SIM ${i+1}"}}})
+                        }
+                    }
+                }
+                if(destructive){
+                    Text(when(action){
+                        "purge"->hubLabel("删除该设备在中继服务器保存的短信及共享池副本，不能撤销。设备本地原始短信不受此操作影响。",
+                            "Deletes relay SMS and shared-pool copies; local node SMS remain.")
+                        "revoke"->hubLabel("撤销云端设备授权，设备需要重新配对。","Re-enrollment is required after revoke.")
+                        else->hubLabel("强制删除设备与云端记录，需重新配对。","Deletes the node and cloud records; re-enrollment required.")
+                    },color=MaterialTheme.colorScheme.error,
+                        style=MaterialTheme.typography.bodySmall)
+                    if(action=="purge" || action=="delete")
+                        OutlinedTextField(manageConfirm,{manageConfirm=it},
+                            label={Text(if(action=="purge")"输入 PURGE" else "输入 DELETE")},
+                            singleLine=true)
+                }
+                if(sensitive)OutlinedTextField(manageCredential,{manageCredential=it},
+                    label={Text(if(secondFactorTotp)"管理员二次验证 TOTP" else "管理员令牌")},
+                    singleLine=true,visualTransformation=PasswordVisualTransformation())
+                if(manageError.isNotBlank())
+                    Text(manageError,color=MaterialTheme.colorScheme.error,
+                        style=MaterialTheme.typography.bodySmall)
+            }},
+            confirmButton={TextButton(
+                enabled=!manageBusy && (action!="rename" || manageValue.trim().isNotEmpty()) &&
+                    (!sensitive || manageCredential.isNotBlank()) &&
+                    (action!="purge" || manageConfirm=="PURGE") &&
+                    (action!="delete" || manageConfirm=="DELETE") &&
+                    (action!="network" || manageChannelIndex==-1 ||
+                        channels.optJSONObject(manageChannelIndex)!=null),
+                onClick={
+                    if(action=="network"){
+                        queueDeviceAction(device,if(manageChannelIndex>=0)"network-enable" else "network-disable",
+                            manageCredential,manageChannelIndex)
+                        pendingManageAction=null;manageCredential=""
+                    }else{
+                        val api=client
+                        if(api==null){manageError="管理终端授权不可用"}
+                        else {
+                            manageBusy=true;manageError=""
+                            val value=manageValue.trim()
+                            val credential=manageCredential
+                            scope.launch{
+                                try{
+                                    withContext(Dispatchers.IO){
+                                        if(sensitive)api.api("/api/v1/auth/elevate","POST",
+                                            JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",credential))
+                                        val uri="/api/v1/devices/"+device.getString("id")
+                                        when(action){
+                                            "rename"->api.api(uri+"/manage","POST",JSONObject()
+                                                .put("action","rename").put("name",value))
+                                            "revoke"->api.api(uri+"/manage","POST",JSONObject()
+                                                .put("action","revoke"))
+                                            "purge"->api.api(uri+"/sms","DELETE")
+                                            "delete"->api.api(uri,"DELETE")
+                                            else->throw IllegalArgumentException("Unsupported device action")
+                                        }
+                                    }
+                                    pendingManageAction=null
+                                    if(destructive){
+                                        // A removed or revoked source must disappear from
+                                        // the decrypted inbox immediately, not on next restart.
+                                        inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList()
+                                        if(action!="purge")selectedDevice=null
+                                        load("latest")
+                                    }else refreshDelta()
+                                }catch(e:Exception){manageError=e.message?:"操作失败，请检查权限和设备状态"}
+                                finally{manageBusy=false;manageCredential="";manageConfirm=""}
+                            }
+                        }
+                    }
+                }){Text(hubLabel("确认","Confirm"))}},
+            dismissButton={TextButton(enabled=!manageBusy,onClick={
+                pendingManageAction=null;manageCredential="";manageConfirm="";manageError=""
+            }){Text(hubLabel("取消","Cancel"))}}
+        )
     }
     pendingSensitiveTask?.let{pending->
         val (device,action)=pending

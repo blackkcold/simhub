@@ -1,3 +1,13 @@
+## v0.16.8 — Controller history, compact native inbox and secure device management
+
+- Fix the first native management inbox load so a bounded 50-event response initializes both historical time/sequence pagination and the incremental high-water mark. All retained encrypted events remain reachable through repeated pagination; 1200 messages is a client memory window, not a relay history cap.
+- Streamline native management SMS UI with on-demand search/source filters, a collapsible Compose app bar on scroll and human-readable SIM source labels. Preserve hidden Channel ID/Revision in identity and E2EE routing.
+- Align desktop/mobile Web navigation labels, anchoring the unread-count badge to the SMS icon without shifting the sidebar text.
+- Expand native node details with rename, mobile network fallback policy, step-up-protected relay SMS purge, authorization revocation and forced node deletion. Native settings also read shared pool membership/rotation status and recent metadata-only audit entries.
+- Add a limited authenticated POST bridge for native rename/revoke because Android HttpURLConnection cannot issue PATCH; preserve server-side admin/step-up authorization and tests.
+- Preserve existing signed-release and Global Vault/Node-Key contracts. Initial node enrollment, browser WebAuthn and cryptographic shared-pool grant/rotation still use trusted HTTPS management until equivalent native ceremonies are validated.
+- Relay event retention remains configurable (default 30 days). Client pagination cannot recover data previously purged from Relay or absent on the original phone. CI is not a substitute for OEM/foldable/device testing.
+
 ## v0.16.7 — Compact native SIM Node settings and visual UX
 
 - Replace the excessively long SIM Node settings stack with a live operational summary, immediate sync and five categorized native settings destinations: connection/permissions, runtime/synchronization, sharing/privacy, application updates and advanced tools.

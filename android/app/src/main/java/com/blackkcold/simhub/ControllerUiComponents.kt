@@ -106,7 +106,7 @@ internal fun ControllerDeviceCard(device:JSONObject,onClick:()->Unit){
 
 @Composable
 internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:String,
-    error:String,onClose:()->Unit,onAction:(String)->Unit,onAdvanced:()->Unit){
+    error:String,onClose:()->Unit,onAction:(String)->Unit,onManage:(String)->Unit,onAdvanced:()->Unit){
     val state=device.optJSONObject("state")?:JSONObject()
     val channels=ControllerNodePolicy.channels(device)
     val isAndroid=device.optString("nodeType")!="modem"
@@ -208,6 +208,31 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
                     if(state.optString("remoteOtaStage") in listOf("checking","downloading","verified"))
                         TextButton(onClick={onAction("ota-cancel")},enabled=otaReady&&!busy){
                             Text(hubLabel("取消尚未提交的更新","Cancel pending update"))}
+                }
+            }
+            item{
+                HubCard(Modifier.fillMaxWidth()){
+                    HubSectionTitle(hubLabel("设备管理","Device management"))
+                    OutlinedButton(onClick={onManage("rename")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("修改设备名称","Rename device"))
+                    }
+                    if(isAndroid)OutlinedButton(onClick={onManage("network")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("备用数据 SIM 策略","Mobile data fallback policy"))
+                    }
+                    HorizontalDivider(Modifier.padding(vertical=10.dp))
+                    Text(hubLabel("危险操作需要管理员二次验证，无法撤销。",
+                        "Destructive actions require step-up authentication and cannot be undone."),
+                        style=MaterialTheme.typography.bodySmall,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(onClick={onManage("purge")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("清理该设备中继短信","Purge device SMS from relay"))
+                    }
+                    OutlinedButton(onClick={onManage("revoke")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("撤销设备授权","Revoke node authorization"))
+                    }
+                    OutlinedButton(onClick={onManage("delete")},modifier=Modifier.fillMaxWidth()){
+                        Text(hubLabel("强制删除设备…","Force delete device…"))
+                    }
                 }
             }
             item{

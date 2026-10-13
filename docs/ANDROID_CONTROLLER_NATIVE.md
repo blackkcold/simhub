@@ -1,3 +1,13 @@
+## 管理中心短信与设备 UX 更新
+
+- Android 首次载入最近 50 条 **事件**时初始化历史分页游标和最新事件序列水位；后续增量加载与历史翻页使用不同游标，历史受 Relay 保留数据、原手机历史同步范围和有限端侧内存窗口约束。
+- Compose 管理短信页面移除重复大标题和常驻过滤层。全局管理短信顶栏滚动收起/向下出现；搜索、OTP 与 SIM 来源过滤按需展开，底栏保留。
+- 短信来源展示友好 SIM 名称，不暴露 Channel ID/Revision，但加解密、唯一来源与会话键保持不变。
+- Android 原生设备详情支持重命名、移动数据备用策略、Relay 短信清理、撤销授权及强制删除；危险操作依赖 Relay 管理员二次验证和确认。
+- Android HttpURLConnection 使用 POST /api/v1/devices/{id}/manage（仅 rename/revoke，均身份验证，revoke 额外要求 step-up）；Web PATCH 接口未变。
+- 原生设置展示共享池成员/密钥轮换状态、近期服务器审计元数据；初次节点加密注册、Passkey 和共享池密钥授权/轮换仍在系统 HTTPS 浏览器中执行。
+- Relay SIMHUB_EVENT_RETENTION_DAYS 默认 30 日、0 关闭按日清理；分页不能恢复已删除数据。真机及 Android 10–17 OEM/折叠屏需额外验收。
+
 # Android 原生工作区与同机授权（v0.15.8）
 
 ## 0.15.8 数据完整性与任务闭环

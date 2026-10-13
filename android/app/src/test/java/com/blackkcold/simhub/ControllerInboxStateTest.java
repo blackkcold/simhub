@@ -73,6 +73,27 @@ public class ControllerInboxStateTest {
         assertNotEquals(p,ControllerConversation.INSTANCE.key("node1","simA",2,"13800138000"));
     }
 
+    @Test public void firstDeltaLoadMustInitializeHistoricalCursor() {
+        assertTrue(ControllerPagingPolicy.INSTANCE.isInitialPage("delta",0));
+        assertTrue(ControllerPagingPolicy.INSTANCE.isInitialPage("latest",100));
+        assertFalse(ControllerPagingPolicy.INSTANCE.isInitialPage("delta",50));
+        assertFalse(ControllerPagingPolicy.INSTANCE.isInitialPage("older",0));
+        assertFalse(ControllerPagingPolicy.INSTANCE.isInitialPage("older",50));
+    }
+    @Test public void sourceLabelsNeverExposeOpaqueChannelIdentifiers() throws Exception {
+        org.json.JSONObject channel=new org.json.JSONObject()
+            .put("id","c1bb1442-37fa-49e6-9fd8-b54f71298301")
+            .put("revision",4).put("alias","工作卡");
+        org.json.JSONObject node=new org.json.JSONObject().put("state",
+            new org.json.JSONObject().put("channels",new org.json.JSONArray().put(channel)));
+        assertEquals("工作卡",ControllerSourceLabel.INSTANCE.name(node,
+            "c1bb1442-37fa-49e6-9fd8-b54f71298301",4,""));
+        assertEquals("历史 SIM",ControllerSourceLabel.INSTANCE.name(node,
+            "d312c45b-20aa-4bc8-bd2e-2e8ea7ab9c02",5,
+            "d312c45b-20aa-4bc8-bd2e-2e8ea7ab9c02"));
+        assertEquals("历史 SIM · 来源待确认",ControllerSourceLabel.INSTANCE.name(node,"",0,""));
+    }
+
     @Test public void unrecognizedOrOversizedMessagesDoNotUnlock() {
         ControllerInboxState state=new ControllerInboxState();
         state.accept("{\"type\":\"snapshot\",\"v\":2,\"messages\":[]}");

@@ -1,3 +1,11 @@
+## v0.16.4 — Notification center and browser alert reliability
+
+- Fix notifications hidden behind native modal backdrops by moving the toast host into the active dialog top layer; retain accessible, mobile-aware feedback.
+- Add categorized browser notification preferences and permission/help states, with a Service Worker notification path and notification-click routing. Closed-browser Web Push is not included.
+- Add local, deduplicated notification history (maximum 500 metadata-only events retained for 30 days), per-event SMS unread badges, mark-read and clear-history controls.
+- Detect sustained device-offline transitions and confirmed remote task/OTA outcomes; avoid announcing queued commands as successful, and never store SMS body, OTP or Vault key in notification metadata.
+- Preserve encrypted Relay/SMS behavior, existing Bark/ntfy/Webhook integrations and Android node/controller capabilities.
+
 ## v0.16.3 — Categorized device health dashboards
 
 - Reorganize Web/PWA device details into responsive cards for device health, SIM/SMS permissions, real sending capability, sync/ACK queues, network/power, chronological event timestamps and diagnostics. Add inline SVG battery and capability indicators.

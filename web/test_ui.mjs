@@ -56,7 +56,33 @@ try {
       assert.ok(positions.dialog<=500,"Dialog is too wide at "+width);
       assert.ok(positions.right<=width+2,"Dialog overflows viewport at "+width);
       assert.ok(positions.buttonsTop-positions.inputBottom>=16,"Buttons touch input at "+width+" "+JSON.stringify(positions));
-      await page.locator("#stepupDialog").evaluate(d=>d.close());
+      // A Toast within a native modal must be in the dialog top layer, not behind its backdrop.
+      await page.evaluate(()=>document.getElementById('refreshBtn').click());
+      await page.waitForFunction(()=>document.getElementById('toast').classList.contains('show'));
+      assert.equal(await page.locator('#toast').evaluate(t=>t.parentElement?.id),
+        'stepupDialog','Toast must portal inside active modal at '+width);
+      assert.equal(await page.locator('#toast .toast-message').count(),1);
+            await page.locator("#stepupDialog").evaluate(d=>d.close());
+      await page.waitForFunction(()=>document.getElementById('toast').parentElement===document.body);
+      assert.equal(await page.locator('#smsUnreadBadge').count(),1);
+      assert.equal(await page.locator('[data-notify-pref]').count(),10);
+      assert.equal(await page.locator('#notifyHistoryList').count(),1);
+      const notifyContract=await page.evaluate(async()=>{
+        const m=await import('/notifications.js');
+        const n=new m.NotificationCenter();
+        const key='test-ui-'+Math.random().toString(36).slice(2);
+        await n.setScope(key);
+        await n.record({id:'sms:fixture:1',kind:'sms',deviceId:'fixture',createdAt:Date.now()});
+        await n.record({id:'sms:fixture:1',kind:'sms',deviceId:'fixture',createdAt:Date.now()});
+        const count=n.unread(),length=n.rows.length;
+        await n.markRead(['sms:fixture:1']);
+        const unreadAfter=n.unread();
+        await n.clear();
+        n.channel?.close();
+        return {count,length,unreadAfter,cleared:n.rows.length};
+      });
+      assert.deepEqual(notifyContract,{count:1,length:1,unreadAfter:0,cleared:0});
+
       await page.evaluate(()=>{
         document.querySelector("#lockedPanel").hidden=true;
         document.querySelector("#appContent").hidden=false;

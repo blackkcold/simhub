@@ -644,3 +644,14 @@ dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:c
 .notify-entry-time{font-size:11px;color:var(--muted);white-space:nowrap}
 .notify-entry-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--accent)}
 @media(max-width:760px){.sidebar .nav .nav-label{flex:none;text-align:center}.nav-unread-badge{right:-12px;top:-7px}.notify-options{grid-template-columns:1fr}.notify-history-actions select{max-width:100%}.notify-section{padding:14px 0}}
+
+/* Keep desktop navigation labels and unread counts independent of layout flow. */
+.sidebar nav>.nav{display:flex;align-items:center;justify-content:flex-start;min-width:0;gap:12px;text-align:left}
+.sidebar nav>.nav .nav-glyph{position:relative;display:inline-grid;place-items:center;flex:0 0 22px;width:22px;height:22px}
+.sidebar nav>.nav .nav-label{flex:1 1 auto;min-width:0;text-align:left;white-space:nowrap}
+.sidebar nav>.nav .nav-unread-badge{position:absolute;inset:auto;top:-9px;right:-11px;margin:0;float:none;pointer-events:none;z-index:1}
+@media(max-width:760px){
+  .sidebar nav>.nav{flex-direction:column;justify-content:center;align-items:center;gap:3px;text-align:center}
+  .sidebar nav>.nav .nav-label{flex:0 0 auto;width:100%;text-align:center}
+  .sidebar nav>.nav .nav-unread-badge{top:-7px;right:-12px}
+}

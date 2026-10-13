@@ -287,6 +287,17 @@ function renderDecryptNotice(){
 }
 async function decryptEvent(e){const cipher=e.ciphertext;if(cipher&&cipher.v===1){const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode('simhub-event-v1')},vaultKey,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}if(!cipher||cipher.v!==2)throw new Error('Unsupported ciphertext version');let d=await deviceCrypto(e.deviceId);if(cipher.kid!==d.kid){const info=devices.find(x=>x.id===e.deviceId);if(info&&info.pendingKeyId===cipher.kid&&info.pendingWrappedKey){const raw=await unwrapNodeKey(info.pendingWrappedKey,info.pendingKeyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw:raw,key:key,kid:info.pendingKeyId,mode:'pending-node'};}else{const hist=(info?.historicalWrappedKeys||[]).find(k=>k.keyId===cipher.kid);if(hist){const raw=await unwrapNodeKey(hist.wrappedKey,hist.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);d={raw,key,kid:hist.keyId,mode:'retired-node'};}else{const legacy=await deriveLegacyDevice(e.deviceId);if(cipher.kid!==legacy.kid)throw new Error('Node key mismatch');d=legacy;}}}const aad=eventAad(e.deviceId,e.eventId,e.kind,e.occurredAt,e.subscriptionId,e.hasOtp),pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(cipher.iv),additionalData:enc.encode(aad)},d.key,unb64u(cipher.ct));return JSON.parse(dec.decode(pt));}
 function versionAtLeast(v,target){const a=String(v||'0').split('.').map(Number),b=String(target).split('.').map(Number);for(let i=0;i<Math.max(a.length,b.length);i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x>y;}return true;}
+function otaView(device){
+  const state=device?.state||{},raw=state.remoteOtaStage||'idle';
+  const installed=Number(device?.appVersionCode||state.appVersionCode||0);
+  const target=Number(state.remoteOtaTargetCode||0);
+  const awaiting=['checking','downloading','verified','installing','awaiting_confirmation','verification_pending'].includes(raw);
+  // A reported actual package version confirms installation, not completion of command ACK.
+  if(awaiting&&target>0&&installed>=target)return {stage:'version_confirmed',cancelable:false};
+  const age=Math.max(0,Date.now()/1000-Number(state.remoteOtaUpdatedAt||0));
+  if(raw==='installing'&&age>900)return {stage:'verification_pending',cancelable:false};
+  return {stage:raw,cancelable:['checking','downloading','verified'].includes(raw)};
+}
 async function encryptCommand(deviceId,outer,payload){const info=devices.find(x=>x.id===deviceId);if(!versionAtLeast(info&&info.appVersion,'0.1.5')){const iv=crypto.getRandomValues(new Uint8Array(12)),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-command-v1')},vaultKey,enc.encode(JSON.stringify(payload))));return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};}const d=await deviceCrypto(deviceId),iv=crypto.getRandomValues(new Uint8Array(12)),aad=commandAad(deviceId,outer.commandId,outer.type,outer.createdAt,outer.expiresAt,outer.idempotencyKey),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode(aad)},d.key,enc.encode(JSON.stringify(payload))));return {v:2,alg:'A256GCM',kid:d.kid,iv:b64u(iv),ct:b64u(ct)};}
 
 async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body=Object.prototype.hasOwnProperty.call(opts,'body')?opts.body:null,headers={};if(body!==null)headers['Content-Type']='application/json';if(vaultKey&&Date.now()-lastActivity<60000)headers['X-SimHub-Activity']='1';if(!['GET','HEAD'].includes(method)&&path!=='/api/v1/auth/session'&&csrfToken)headers['X-SimHub-CSRF']=csrfToken;let res;
@@ -715,7 +726,7 @@ function renderCommandActivity(commands){
     const detail=c.result||{};
     const status=c.type==='ota.install'
       ?({queued:zh?'等待设备领取':'Queued',dispatched:zh?'设备已领取':'Dispatched',
-          submitted:zh?'设备正在处理更新':'Device updating',
+          submitted:zh?'已接收安装请求，等待版本确认':'Installation requested, awaiting version verification',
           succeeded:zh?'更新已确认':'Update confirmed',
           failed:zh?'更新失败':'Update failed',
           rejected:zh?'设备拒绝':'Rejected',
@@ -916,11 +927,13 @@ function deviceButtons(d) {
   const otaReady=otaVisible&&ota.remoteOtaAuthorized===true&&
     ota.remoteOtaInstallPermission===true;
   const zh=getLocale()==='zh-CN';
+  const otaStatus=otaView(d);
   const otaStage={checking:'检查版本',downloading:'下载中',verified:'已校验',
     installing:'安装中',awaiting_confirmation:'等待手机确认',
-    succeeded:'已更新',failed:'更新失败',idle:'空闲'}[ota.remoteOtaStage]||'待检测';
-  const otaLabel=zh?otaStage:(ota.remoteOtaStage||'idle');
-  const otaCancelable=otaReady&&['checking','downloading','verified'].includes(ota.remoteOtaStage);
+    verification_pending:'状态待核实',version_confirmed:'目标版本已安装 · 等待回执',
+    succeeded:'已更新',failed:'更新失败',idle:'空闲'}[otaStatus.stage]||'待检测';
+  const otaLabel=zh?otaStage:({verification_pending:'Verification pending',version_confirmed:'Target version installed · awaiting ACK'}[otaStatus.stage]||otaStatus.stage);
+  const otaCancelable=otaReady&&otaStatus.cancelable;
   const otaDetails=otaVisible?'<div class="action-group"><h4>'+
     (zh?'应用远程更新':'Remote app updates')+'</h4><p class="hint">'+
     escapeHtml(sdk<36?(zh?'开发者测试模式 · 无法保证免确认安装':'Developer test mode · silent install not guaranteed'):

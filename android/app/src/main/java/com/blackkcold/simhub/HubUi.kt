@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.VectorPainter
 import androidx.compose.ui.platform.LocalContext
@@ -155,8 +156,11 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
             val rail=HubLayoutPolicy.navigationRail(maxWidth.value.toInt(),
                 maxHeight.value.toInt(),foldVertical)
             val isNode=surface=="node"
+            val compactInbox=!isNode && ui.controllerTab==1
+            val inboxScrollBehavior=TopAppBarDefaults.enterAlwaysScrollBehavior(canScroll={compactInbox})
             val navIcons=if(isNode)nodeNavIcons else controllerNavIcons
             Scaffold(
+                modifier=Modifier.nestedScroll(inboxScrollBehavior.nestedScrollConnection),
                 containerColor=MaterialTheme.colorScheme.background,
                 contentWindowInsets=WindowInsets.safeDrawing,
                 topBar={
@@ -173,13 +177,17 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                     }
                                     Column {
                                         Text("SIM Hub",fontWeight=FontWeight.Bold,fontSize=18.sp)
-                                        Text(if(isNode) "本机 SIM 节点" else "管理控制台",
+                                        Text(if(isNode) "本机 SIM 节点" else if(compactInbox) "管理短信" else "管理控制台",
                                             style=MaterialTheme.typography.labelSmall,
                                             color=MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                             },
                             actions={
+                                if(compactInbox) IconButton(onClick={chooseSurface("node")}) {
+                                    HubIcon(R.drawable.ic_hub_sim,Modifier.size(21.dp),
+                                        description=hubLabel("切换 SIM 节点","Switch to SIM node"))
+                                }
                                 IconButton(onClick={if(isNode) controller.refreshRemote()
                                     else ui.controllerRefresh++}) {
                                     HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),
@@ -187,9 +195,10 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                 }
                             },
                             colors=TopAppBarDefaults.topAppBarColors(
-                                containerColor=MaterialTheme.colorScheme.surface)
+                                containerColor=MaterialTheme.colorScheme.surface),
+                            scrollBehavior=if(compactInbox)inboxScrollBehavior else null
                         )
-                        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+                        if(!compactInbox)Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
                             .padding(horizontal=16.dp,vertical=0.dp),
                             horizontalArrangement=Arrangement.spacedBy(10.dp)){
                             FilterChip(selected=isNode,onClick={chooseSurface("node")},

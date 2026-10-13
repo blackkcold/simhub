@@ -755,7 +755,7 @@ function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevi
 function renderCommandActivity(commands){
   const box=$('commandActivity');if(!box||!vaultKey)return;
   const zh=getLocale()==='zh-CN';
-  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation','ota.install':zh?'远程 APK 更新':'Remote APK update','ota.cancel':zh?'取消远程更新':'Cancel remote update'};
+  const types={'sms.send':zh?'发送短信':'SMS send','sms.sync_recent':zh?'同步最近短信':'Sync recent','sms.sync_older':zh?'同步更早短信':'Sync older','sms.sync_history':zh?'同步更早短信':'Sync older','sms.restore_history':zh?'恢复本机历史':'Restore history','diagnostics.request':zh?'设备诊断':'Diagnostics','device.refresh_state':zh?'刷新设备状态':'Refresh device','device.network_policy':zh?'联网策略':'Network policy','node.rotate_key':zh?'密钥轮换':'Key rotation','ota.install':zh?'远程 APK 更新':'Remote APK update','ota.cancel':zh?'取消远程更新':'Cancel remote update'};
   const statuses={queued:zh?'已排队':'Queued',dispatched:zh?'已下发':'Dispatched',submitted:zh?'已提交运营商':'Submitted',sent:zh?'已发送':'Sent',delivered:zh?'已送达':'Delivered',succeeded:zh?'节点已执行':'Executed',failed:zh?'失败':'Failed',rejected:zh?'已拒绝':'Rejected',expired:zh?'已过期':'Expired'};
   box.innerHTML=commands.length?commands.map(c=>{
     const detail=c.result||{};
@@ -1008,6 +1008,8 @@ function deviceButtons(d) {
     action('refresh',tr('action_refresh'))+
     (d.nodeType==='android'?action('sync-recent',tr('sync_recent_100'))+action('sync-older',tr('sync_older_100')):'')+
     action('diagnostics',tr('action_diagnostics'))+
+    (d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.17.0')?
+      action('restore-history',zh?'重建本机历史索引':'Rebuild local SMS history'):'')+
     (d.nodeType==='android'&&versionAtLeast(d.appVersion,'0.5.0')?action('network',tr('mobile_fallback')):'')+
     '</div></div>'+otaDetails+'<details class="action-group destructive-group"><summary>'+escapeHtml(tr('ux_security_actions'))+'</summary><div class="row wrap">'+
     (!d.keyId&&!d.pendingKeyId&&versionAtLeast(d.appVersion,'0.2.0')?action('rotate-key',tr('action_rotate')):'')+
@@ -1363,7 +1365,7 @@ async function sendConversationReply(){
     }
   }finally{btn.disabled=false;}
 }
-async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install'||type==='ota.cancel')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
+async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='sms.restore_history'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install'||type==='ota.cancel')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
   const energy=power.effectiveEnergyMode||power.energyMode||'balanced';
   // A compact background policy must not make remote commands expire before
   // the next eligible fetch. Preserve a finite expiry and the encrypted AAD.
@@ -1754,7 +1756,16 @@ async function handleDeviceAction(btn){
     await fullRefresh();
     toast(zh?'服务器设备数据已清除':'Relay device records deleted');
     return;
-  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队');}else if(action==='diagnostics'){await openDiagnostics(id);await queueCommand(id,'diagnostics.request',{});toast('健康检查已入队，稍后刷新结果');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
+  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队'); }else if(action==='restore-history'){
+    const d=devices.find(x=>x.id===id);
+    if(!d||!versionAtLeast(d.appVersion,'0.17.0'))throw Error('请先更新 Android 节点至 v0.17.0');
+    const notice=getLocale()==='zh-CN'
+      ?'这将重建本机上传索引，重新上传最新短信。已有消息会按事件 ID 去重；继续使用“同步更早短信”补齐历史。服务器明确清除的数据不会恢复。请确认有足够空间。'
+      :'Rebuild the local upload index and replay recent messages. Existing messages remain deduplicated; use Sync older for further history. Explicitly purged messages remain purged.';
+    if(!confirm(notice))return;
+    await queueCommand(id,'sms.restore_history',{},1200);
+    toast(getLocale()==='zh-CN'?'历史恢复请求已入队':'History recovery queued');
+  }else if(action==='diagnostics'){await openDiagnostics(id);await queueCommand(id,'diagnostics.request',{});toast('健康检查已入队，稍后刷新结果');}else if(action==='rotate-key'){await rotateDeviceKey(id);}else if(action==='revoke'&&confirm(tr('confirm_revoke'))){await ensureStepUp();await api('/api/v1/devices/'+encodeURIComponent(id),{method:'PATCH',body:{revoke:true}});await fullRefresh();}}
 function syncResponsiveConversation(){
   const layout=$('smsLayout');
   if(!layout)return;

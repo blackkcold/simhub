@@ -13,7 +13,7 @@ const icons = {
   alert:'<path d="m12 3 10 18H2z"/><path d="M12 9v5m0 3h.01"/>'
 };
 function icon(name){return '<svg class="node-icon" viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(icons[name]||icons.activity)+'</svg>';}
-const validNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+const validNumber = (value) => value===null||value===undefined||value==='' ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
 export function nodeDashboardModel(device){
   const s=device.state||{}, revoked=!!device.revoked, online=!!device.online&&!revoked;
   const battery=validNumber(s.batteryPct),pct=battery===null?null:Math.max(0,Math.min(100,battery));

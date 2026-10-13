@@ -514,35 +514,8 @@ private fun DiagnosticsCard(state:HubSnapshot?,tools:HubToolsState,controller:Hu
                 Switch(checked=tools.forceRemoteOta,onCheckedChange=controller::setDeveloperRemoteOtaOverride)
             }
         }
-        HorizontalDivider(Modifier.padding(vertical=12.dp))
-        Row(verticalAlignment=Alignment.CenterVertically){
-            Column(Modifier.weight(1f)){
-                Text(hubLabel("自动检查更新","Automatic update checks"))
-                Text(hubLabel("每天检查一次正式版本","Check stable releases daily"),
-                    style=MaterialTheme.typography.bodySmall)
-            }
-            Switch(checked=tools.autoCheckUpdates,onCheckedChange=controller::setAutoCheckUpdates)
-        }
-        Row(verticalAlignment=Alignment.CenterVertically){
-            Column(Modifier.weight(1f)){
-                Text(hubLabel("自动下载安装","Automatic download & installation"))
-                Text(hubLabel("需要时由 Android 系统确认安装","Android may require approval"),
-                    style=MaterialTheme.typography.bodySmall)
-            }
-            Switch(checked=tools.autoDownloadUpdates,onCheckedChange=controller::setAutoDownloadUpdates)
-        }
-        HorizontalDivider(Modifier.padding(vertical=12.dp))
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
-            OutlinedButton(onClick=controller::checkOta,modifier=Modifier.weight(1f)){
-                Text(hubLabel("检查更新","Check for updates"))
-            }
-            OutlinedButton(onClick=controller::exportDiagnostics,modifier=Modifier.weight(1f)){
-                Text(hubLabel("导出诊断 ZIP","Export diagnostic ZIP"))
-            }
-        }
-        if(tools.ota.isNotBlank()){
-            Spacer(Modifier.height(8.dp))
-            Text(tools.ota,style=MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick=controller::exportDiagnostics,modifier=Modifier.fillMaxWidth()){
+            Text(hubLabel("导出诊断 ZIP","Export diagnostic ZIP"))
         }
         if(tools.developer){
             if(state?.smsRole==false){
@@ -625,11 +598,46 @@ private fun CompatibilityEntry(controller:HubController,modifier:Modifier){
 
 @Composable
 private fun UpdatePreferencesCard(tools:HubToolsState,controller:HubController,modifier:Modifier){
-    ToolSection(hubLabel("检查应用更新","Check app updates"),modifier){
+    ToolSection(hubLabel("应用版本与自动更新","Version & automatic updates"),modifier){
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+            HubIcon(R.drawable.ic_hub_sync,Modifier.size(30.dp),
+                tint=MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)){
+                Text("SIM Hub "+BuildConfig.VERSION_NAME,
+                    style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                Text(hubLabel("当前安装版本","Installed app version"),
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("+"+BuildConfig.VERSION_CODE,style=MaterialTheme.typography.labelSmall)
+        }
+        HorizontalDivider(Modifier.padding(vertical=12.dp))
+        Row(verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("自动检查更新","Automatic update checks"))
+                Text(hubLabel("每天检查一次正式版本","Check stable releases daily"),
+                    style=MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked=tools.autoCheckUpdates,onCheckedChange=controller::setAutoCheckUpdates)
+        }
+        Row(verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("自动下载安装","Automatic download & installation"))
+                Text(hubLabel("需要时由 Android 系统确认安装","Android may require approval"),
+                    style=MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked=tools.autoDownloadUpdates,onCheckedChange=controller::setAutoDownloadUpdates)
+        }
+
+        Spacer(Modifier.height(10.dp))
         OutlinedButton(onClick=controller::checkOta,modifier=Modifier.fillMaxWidth()){
             Text(hubLabel("检查正式版本","Check stable releases"))
         }
-        if(tools.ota.isNotBlank())Text(tools.ota,style=MaterialTheme.typography.bodySmall)
+        if(tools.ota.isNotBlank()){
+            Spacer(Modifier.height(8.dp))
+            Text(tools.ota,style=MaterialTheme.typography.bodySmall)
+        }
     }
 }
 

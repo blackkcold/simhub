@@ -25,7 +25,8 @@ public final class EnrollmentManager {
             if(version>=4){String kid=r.optString("keyId","");JSONObject envelope=r.optJSONObject("bootstrapEnvelope");if(kid.isBlank()||envelope==null)throw new SecurityException("Relay bootstrap envelope missing");key=CryptoBox.decryptBootstrapNodeKey(envelope,bootstrap,kid);existing.setNodeEnrollment(server.replaceAll("/+$",""),r.getString("deviceId"),name,r.getString("deviceToken"),kid,key);}
             else{String keyText=u.getQueryParameter("key"),keyId=u.getQueryParameter("keyId");if(keyText==null)throw new SecurityException("Legacy enrollment key missing");key=CryptoBox.ub64(keyText);if(key.length!=32)throw new SecurityException("Enrollment key length invalid");if(version>=3&&keyId!=null&&!keyId.isBlank()){String computed=CryptoBox.keyId(key);if(!computed.equals(keyId))throw new SecurityException("Node key id mismatch");existing.setNodeEnrollment(server.replaceAll("/+$",""),r.getString("deviceId"),name,r.getString("deviceToken"),keyId,key);}else existing.setLegacyEnrollment(server.replaceAll("/+$",""),r.getString("deviceId"),name,r.getString("deviceToken"),key);}
         }finally{if(key!=null)Arrays.fill(key,(byte)0);if(bootstrap!=null)Arrays.fill(bootstrap,(byte)0);}
-        SyncJobService.schedule(c);SyncJobService.scheduleNow(c);AppLogger.i(c,"Enrollment","Node enrollment stored successfully version="+version);
+        enrollmentActivated(c);
+        AppLogger.i(c,"Enrollment","Node enrollment stored successfully version="+version);
     }
     public static void requestReset(Context c){
         AgentConfig cfg=new AgentConfig(c);

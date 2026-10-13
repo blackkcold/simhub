@@ -56,9 +56,9 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 
 ## Native Android experience
 
-Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. Messages, device details, task history and settings are native rather than nested WebViews. The management SMS inbox has compact expandable filters, a scroll-collapsing header and paged history beyond the first 50 relay events. Native node controls include rename, mobile fallback, authenticated revoke/purge/delete, shared-pool status and recent security audit events. Sensitive WebAuthn, node enrollment and shared-pool key ceremonies remain on the trusted HTTPS management page. Management-only devices need no telephony permissions.
+Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. SMS, devices, tasks and settings use native Compose screens. The controller inbox supports paged history beyond 50 events, compact filters and a scroll-aware header; device management offers rename, network fallback and step-up protected actions. Passkey and enrollment cryptography remain in the trusted browser.
 
-**SIM Node settings:** A compact live-status hub opens five native categories: connection, runtime/sync, sharing, updates and advanced tools. Foldables use separate scrolling panes. Energy profiles and real sync counters are visual; detailed diagnostics are on demand. All existing Node, Vault and OTA policies remain unchanged.
+**SIM Node settings:** Five compact native categories, adaptive foldable layout and on-demand diagnostics.
 
 **Same-phone controller approval:** Scan the management QR or import a trusted HTTPS address; authenticate in the phone's **system browser** with registered Passkey or password/TOTP, unlock the existing Global Vault, confirm the device fingerprint and return to SIM Hub. Native access uses a Keystore signing identity. Browser WebAuthn is not native Credential Manager; optional biometric app locking is not hardware-authenticated Vault decryption.
 

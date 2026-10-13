@@ -65,6 +65,12 @@ private data class ControllerLoadResult(
     val devices:List<JSONObject>,val totpRequired:Boolean,
     val batches:List<ControllerLoadBatch>,val highWater:Long
 )
+/** First history request must initialize both cursors before incremental requests. */
+internal object ControllerPagingPolicy {
+    fun isInitialPage(mode:String,lastEventSeq:Long):Boolean =
+        mode=="latest" || (mode=="delta" && lastEventSeq<=0L)
+}
+
 /** Stable conversation identity and conservative phone normalization. */
 internal object ControllerConversation {
     fun key(device:String,channel:String,revision:Int,address:String):String {
@@ -220,7 +226,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
         if(mode=="delta" && page>0)return // Historical browsing is a stable window.
         if(busy){pendingLoad=mode;return}
-        val initialPage=mode=="latest" || (mode=="delta" && lastEventSeq==0L)
+        val initialPage=ControllerPagingPolicy.isInitialPage(mode,lastEventSeq)
         busy=true
         scope.launch {
             try {

@@ -167,7 +167,7 @@ public final class AppUpdater {
                 MAIN.post(()->callback.onProgress("安装已提交至 Android 系统"));
                 if(remote&&RemoteOta.cancelRequested(app))throw new java.io.IOException("remote_ota_cancelled");
                 if(remote)RemoteOta.stage(app,"installing");
-                install(app,file);
+                install(app,file,remote);
             }catch(Exception error){
                 if(remote)RemoteOta.fail(app,RemoteOta.cancelRequested(app)?"update_cancelled":
                     (error instanceof SecurityException?"update_security_check_failed":"update_download_or_install_failed"));
@@ -180,7 +180,7 @@ public final class AppUpdater {
     static boolean pmCanInstall(Context c){
         return Build.VERSION.SDK_INT<26 || c.getPackageManager().canRequestPackageInstalls();
     }
-    private static void install(Context c,File file)throws Exception{
+    private static void install(Context c,File file,boolean remote)throws Exception{
         PackageInstaller installer=c.getPackageManager().getPackageInstaller();
         PackageInstaller.SessionParams p=new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         p.setAppPackageName(c.getPackageName());
@@ -188,6 +188,7 @@ public final class AppUpdater {
         if(Build.VERSION.SDK_INT>=31)
             p.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
         int id=installer.createSession(p);
+        if(remote)RemoteOta.installSession(c,id);
         boolean committed=false;
         try(PackageInstaller.Session session=installer.openSession(id)){
             try(InputStream input=new java.io.FileInputStream(file);
@@ -199,6 +200,7 @@ public final class AppUpdater {
             Intent callback=new Intent(c,UpdateInstallReceiver.class);
             callback.setAction("com.blackkcold.simhub.UPDATE_STATUS");
             callback.putExtra("sessionId",id);
+            callback.putExtra("remoteOta",remote);
             PendingIntent pending=PendingIntent.getBroadcast(c,id,callback,
                 PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_MUTABLE);
             session.commit(pending.getIntentSender());

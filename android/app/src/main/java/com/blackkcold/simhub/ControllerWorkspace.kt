@@ -514,7 +514,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     commandHistoryError=e.message?:"任务状态暂不可用，稍后将继续重试"
                 }
             }
-            delay(60000)
+            // Active tasks deserve timely progress without permanent high-rate polling.
+            val awaiting=commandHistory.any{it.optString("state") in
+                listOf("queued","dispatched","submitted")}
+            delay(if(awaiting)15000L else 60000L)
         }
     }
     if(!visible)return

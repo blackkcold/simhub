@@ -56,7 +56,7 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 
 ## Native Android experience
 
-Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. Messages, device details, task history and settings are native rather than nested WebViews. Management-only devices need no telephony permissions.
+Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. Messages, device details, task history and settings are native rather than nested WebViews. The management SMS inbox has compact expandable filters, a scroll-collapsing header and paged history beyond the first 50 relay events. Native node controls include rename, mobile fallback, authenticated revoke/purge/delete, shared-pool status and recent security audit events. Sensitive WebAuthn, node enrollment and shared-pool key ceremonies remain on the trusted HTTPS management page. Management-only devices need no telephony permissions.
 
 **SIM Node settings:** A compact live-status hub opens five native categories: connection, runtime/sync, sharing, updates and advanced tools. Foldables use separate scrolling panes. Energy profiles and real sync counters are visual; detailed diagnostics are on demand. All existing Node, Vault and OTA policies remain unchanged.
 

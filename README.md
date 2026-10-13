@@ -30,16 +30,25 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 
 ![Device and SIM overview, SMS sync and diagnostics preview](docs/assets/ui-devices.svg)
 
+**Android · One app, two native modes**
+
 <table>
-<tr><th>Mobile Web / PWA</th><th>Native Android SIM Node</th></tr>
-<tr><td width="50%"><img src="docs/assets/ui-mobile.svg" alt="Mobile messaging interface preview" width="100%"></td><td width="50%"><img src="docs/assets/ui-android.svg" alt="Android node interface preview" width="100%"></td></tr>
+<tr><th>Native SIM Node · Teal</th><th>Native Management Center · Indigo</th></tr>
+<tr>
+<td width="50%"><img src="docs/assets/ui-android.svg" alt="SIM Node native Android dashboard, illustrative data" width="100%"></td>
+<td width="50%"><img src="docs/assets/ui-android-controller.svg" alt="Native Android management center overview with encrypted devices and command status, illustrative data" width="100%"></td>
+</tr>
 </table>
 
-**Unfolded Android · Adaptive dual-pane SMS workspace**
+**Mobile Web / PWA · Responsive encrypted conversation**
+
+<p align="center"><img src="docs/assets/ui-mobile.svg" alt="Mobile responsive Web PWA conversation preview" width="43%"></p>
+
+**Unfolded Android · Adaptive dual-pane SMS workspace (companion read-only mode)**
 
 ![Illustrative unfolded Android conversation view](docs/assets/ui-android-fold.svg)
 
-<sub>Illustrative UI mockups using synthetic data; not screenshots from a live account or real messages.</sub>
+<sub>Updated vector UI previews are based on the current Web/PWA and native Android layouts, with synthetic data; they are not live screenshots.</sub>
 
 ## Native Android experience
 

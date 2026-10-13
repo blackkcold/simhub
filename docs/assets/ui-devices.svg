@@ -1,1 +1,84 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="Illustrative v0.10 desktop device cards with separate SIM detail and actions"><rect x="0" y="0" width="1280" height="760" rx="0" fill="#0C1223" stroke="none"/><rect x="12" y="12" width="1256" height="736" rx="20" fill="#0F182B" stroke="#303C57"/><rect x="16" y="16" width="228" height="728" rx="18" fill="#151E32" stroke="none"/><text x="42" y="68" fill="#F0F4FF" font-size="28" font-weight="750" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">SIM Hub</text><text x="42" y="91" fill="#ADB9D0" font-size="11" font-weight="700" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">PRIVATE RELAY</text><text x="62" y="149" fill="#ADB9D0" font-size="17" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">短信</text><rect x="28" y="176" width="203" height="52" rx="12" fill="#302D56" stroke="none"/><text x="62" y="210" fill="#A49DFF" font-size="17" font-weight="750" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">设备</text><text x="62" y="270" fill="#ADB9D0" font-size="17" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">设置</text><text x="289" y="76" fill="#F0F4FF" font-size="31" font-weight="750" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">设备</text><text x="290" y="103" fill="#ADB9D0" font-size="15" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">管理设备、SIM 卡与配对</text><rect x="1060" y="47" width="171" height="47" rx="12" fill="#A49DFF" stroke="none"/><text x="1082" y="78" fill="#11162C" font-size="17" font-weight="750" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">+ 添加设备</text><text x="289" y="149" fill="#F0F4FF" font-size="21" font-weight="680" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">我的设备</text><text x="290" y="172" fill="#ADB9D0" font-size="13" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">2 台设备 · 1 台在线 · 点击卡片查看详情</text><rect x="288" y="199" width="446" height="188" rx="16" fill="#151E32" stroke="#303C57"/><rect x="305" y="220" width="48" height="48" rx="13" fill="#1D2A43" stroke="none"/><text x="319" y="252" fill="#A49DFF" font-size="23" font-weight="750" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">▣</text><text x="368" y="238" fill="#F0F4FF" font-size="18" font-weight="700" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">vivo SIM 节点</text><text x="368" y="258" fill="#ADB9D0" font-size="12" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">vivo Fold · 124 SMS</text><text x="624" y="236" fill="#7EE5B0" font-size="13" font-weight="600" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">● 在线</text><rect x="306" y="281" width="186" height="29" rx="8" fill="#1D2A43" stroke="none"/><text x="317" y="301" fill="#ADB9D0" font-size="12" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">SIM 1 · 中国移动</text><rect x="498" y="281" width="200" height="29" rx="8" fill="#1D2A43" stroke="none"/><text x="509" y="301" fill="#ADB9D0" font-size="12" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">SIM 2 · 中国联通</text><rect x="306" y="332" width="410" height="1" rx="0" fill="#303C57" stroke="none"/><text x="310" y="356" fill="#ADB9D0" font-size="13" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">82%   ·   Wi-Fi</text><text x="653" y="356" fill="#A49DFF" font-size="13" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">详情 ›</text><rect x="754" y="199" width="446" height="188" rx="16" fill="#151E32" stroke="#303C57"/><rect x="771" y="220" width="48" height="48" rx="13" fill="#1D2A43" stroke="none"/><text x="785" y="252" fill="#A49DFF" font-size="23" font-weight="750" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">▣</text><text x="834" y="238" fill="#F0F4FF" font-size="18" font-weight="700" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">备用 Android 节点</text><text x="834" y="258" fill="#ADB9D0" font-size="12" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">Android 节点 · 16 SMS</text><text x="1090" y="236" fill="#ADB9D0" font-size="13" font-weight="600" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">○ 离线</text><rect x="772" y="281" width="186" height="29" rx="8" fill="#1D2A43" stroke="none"/><text x="783" y="301" fill="#ADB9D0" font-size="12" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">SIM 1 · 中国电信</text><rect x="772" y="332" width="410" height="1" rx="0" fill="#303C57" stroke="none"/><text x="776" y="356" fill="#ADB9D0" font-size="13" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">61%   ·   未连接</text><text x="1119" y="356" fill="#A49DFF" font-size="13" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">详情 ›</text><rect x="288" y="414" width="942" height="270" rx="16" fill="#151E32" stroke="#303C57"/><text x="311" y="451" fill="#F0F4FF" font-size="20" font-weight="700" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">设备详情 · vivo SIM 节点</text><text x="311" y="478" fill="#7EE5B0" font-size="14" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">在线   |   充电中   |   Wi-Fi   |   SIM 1</text><rect x="311" y="501" width="895" height="1" rx="0" fill="#303C57" stroke="none"/><text x="311" y="532" fill="#F0F4FF" font-size="17" font-weight="700" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">同步与诊断</text><rect x="311" y="553" width="196" height="44" rx="10" fill="#1D2A43" stroke="#303C57"/><text x="326" y="581" fill="#F0F4FF" font-size="13" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">同步最近 100 条</text><rect x="518" y="553" width="196" height="44" rx="10" fill="#1D2A43" stroke="#303C57"/><text x="533" y="581" fill="#F0F4FF" font-size="13" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">同步更早 100 条</text><rect x="727" y="553" width="125" height="44" rx="10" fill="#1D2A43" stroke="#303C57"/><text x="742" y="581" fill="#F0F4FF" font-size="13" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">诊断</text><rect x="866" y="553" width="174" height="44" rx="10" fill="#1D2A43" stroke="#303C57"/><text x="881" y="581" fill="#F0F4FF" font-size="13" font-weight="650" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">查看 SIM 信息</text><text x="312" y="637" fill="#ADB9D0" font-size="13" font-weight="500" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">更多操作：同步状态 · SIM 号码标记 · 权限与安全（按需展开）</text><rect x="1130" y="705" width="90" height="24" rx="7" fill="#25233D" stroke="none"/><text x="1144" y="722" fill="#A49DFF" font-size="12" font-weight="700" font-family="Inter, 'Noto Sans SC', 'Microsoft YaHei', sans-serif">DEMO</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="SIM Hub current Web PWA device cards and native detail dialog, synthetic demo">
+<defs><style>text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Noto Sans SC","Microsoft YaHei","Segoe UI",sans-serif}</style></defs>
+<rect x="0" y="0" width="1280" height="760" rx="0" fill="#0C1223"/>
+<rect x="0" y="0" width="236" height="760" rx="0" fill="#11192A"/>
+<path d="M236 0 L236 760" stroke="#303C57" stroke-width="1" fill="none"/>
+<rect x="25" y="25" width="43" height="43" rx="13" fill="#A49DFF"/>
+<g transform="translate(35 34) scale(0.9583333333333334)" fill="none" stroke="#151A37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2h8l4 4v16H5V4a2 2 0 0 1 2-2Z"/><rect x="8" y="11" width="8" height="7" rx="1"/></g>
+<text x="84" y="49" fill="#F0F4FF" font-size="22" font-weight="750" >SIM Hub</text>
+<text x="84" y="66" fill="#ADB9D0" font-size="10" font-weight="600" letter-spacing="1.4">PRIVATE RELAY</text>
+<g transform="translate(38 128) scale(0.9166666666666666)" fill="none" stroke="#ADB9D0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h10M7 14h7"/></g>
+<text x="77" y="146" fill="#ADB9D0" font-size="16" font-weight="500" >短信</text>
+<rect x="18" y="172" width="200" height="46" rx="12" fill="#272746"/>
+<g transform="translate(38 184) scale(0.9166666666666666)" fill="none" stroke="#A49DFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></g>
+<text x="77" y="202" fill="#A49DFF" font-size="16" font-weight="700" >设备</text>
+<g transform="translate(38 240) scale(0.9166666666666666)" fill="none" stroke="#ADB9D0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 1.5v3m0 15v3M1.5 12h3m15 0h3M4.7 4.7l2.1 2.1m10.4 10.4 2.1 2.1M19.3 4.7l-2.1 2.1M6.8 17.2l-2.1 2.1"/></g>
+<text x="77" y="258" fill="#ADB9D0" font-size="16" font-weight="500" >设置</text>
+<circle cx="38" cy="687" r="5" fill="#7EE5B0"/>
+<text x="53" y="691" fill="#ADB9D0" font-size="13" font-weight="400" >中继已连接</text>
+<text x="28" y="721" fill="#ADB9D0" font-size="11" font-weight="400" >端到端加密 · 本地 Vault</text>
+<text x="275" y="69" fill="#F0F4FF" font-size="31" font-weight="730" >设备</text>
+<text x="276" y="95" fill="#ADB9D0" font-size="14" font-weight="400" >管理已配对节点、SIM 通道及远程任务</text>
+<rect x="1110" y="35" width="122" height="39" rx="11" fill="#1D2A43" stroke="#303C57" stroke-width="1"/>
+<g transform="translate(1125 44) scale(0.8333333333333334)" fill="none" stroke="#ADB9D0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 8a7 7 0 0 1 12-2l2 1M4 17l2 1a7 7 0 0 0 12-2"/></g>
+<text x="1155" y="60" fill="#F0F4FF" font-size="14" font-weight="600" >刷新</text>
+<rect x="1076" y="117" width="157" height="40" rx="11" fill="#A49DFF"/>
+<text x="1097" y="143" fill="#151A37" font-size="14" font-weight="750" >＋ 添加设备</text>
+<text x="277" y="149" fill="#F0F4FF" font-size="22" font-weight="700" >我的设备</text>
+<text x="277" y="173" fill="#ADB9D0" font-size="13" font-weight="400" >2 台设备 · 1 台在线 · 可查看每台设备的详细信息</text>
+<rect x="276" y="196" width="437" height="216" rx="17" fill="#151E32" stroke="#303C57" stroke-width="1"/>
+<rect x="294" y="214" width="43" height="43" rx="13" fill="#1D2A43"/>
+<g transform="translate(303 223) scale(1)" fill="none" stroke="#A49DFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></g>
+<text x="349" y="232" fill="#F0F4FF" font-size="17" font-weight="700" >vivo SIM 节点</text>
+<text x="349" y="252" fill="#ADB9D0" font-size="12" font-weight="400" >双 SIM · 默认读取模式</text>
+<rect x="602" y="214" width="90" height="29" rx="15" fill="#173D38"/>
+<text x="617" y="233" fill="#7EE5B0" font-size="12" font-weight="650" >● 在线</text>
+<path d="M294 273 L695 273" stroke="#303C57" stroke-width="1" fill="none"/>
+<text x="298" y="302" fill="#F0F4FF" font-size="13" font-weight="400" >SIM 1 · 中国移动 · 尾号 0042</text>
+<text x="298" y="333" fill="#F0F4FF" font-size="13" font-weight="400" >SIM 2 · 中国联通 · 尾号 0189</text>
+<rect x="295" y="352" width="398" height="43" rx="10" fill="#1D2A43"/>
+<text x="310" y="380" fill="#ADB9D0" font-size="12" font-weight="400" >电量 82%    ·    Wi-Fi    ·    充电中</text>
+<text x="629" y="380" fill="#A49DFF" font-size="13" font-weight="600" >详情  ›</text>
+<rect x="276" y="427" width="437" height="216" rx="17" fill="#151E32" stroke="#303C57" stroke-width="1"/>
+<rect x="294" y="445" width="43" height="43" rx="13" fill="#1D2A43"/>
+<g transform="translate(303 454) scale(1)" fill="none" stroke="#ADB9D0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></g>
+<text x="349" y="463" fill="#F0F4FF" font-size="17" font-weight="700" >备用 Android 节点</text>
+<text x="349" y="483" fill="#ADB9D0" font-size="12" font-weight="400" >单 SIM · 等待重连</text>
+<rect x="602" y="445" width="90" height="29" rx="15" fill="#1D2A43"/>
+<text x="617" y="464" fill="#ADB9D0" font-size="12" font-weight="650" >○ 离线</text>
+<path d="M294 504 L695 504" stroke="#303C57" stroke-width="1" fill="none"/>
+<text x="298" y="533" fill="#F0F4FF" font-size="13" font-weight="400" >SIM 1 · 中国电信 · 尾号 2736</text>
+<text x="298" y="564" fill="#F0F4FF" font-size="13" font-weight="400" >最近联系：昨天</text>
+<rect x="295" y="583" width="398" height="43" rx="10" fill="#1D2A43"/>
+<text x="310" y="611" fill="#ADB9D0" font-size="12" font-weight="400" >电量 61%    ·    最后在线 昨天</text>
+<text x="629" y="611" fill="#A49DFF" font-size="13" font-weight="600" >详情  ›</text>
+<rect x="730" y="182" width="505" height="518" rx="21" fill="#202940" stroke="#485576" stroke-width="1.2"/>
+<text x="755" y="219" fill="#F0F4FF" font-size="20" font-weight="750" >设备详情</text>
+<text x="1188" y="220" fill="#ADB9D0" font-size="25" font-weight="500" >×</text>
+<rect x="754" y="237" width="459" height="65" rx="12" fill="#151E32"/>
+<text x="770" y="262" fill="#F0F4FF" font-size="16" font-weight="750" >vivo SIM 节点</text>
+<text x="770" y="286" fill="#ADB9D0" font-size="12" font-weight="400" >Android  ·  原生 SIM 节点</text>
+<rect x="1102" y="251" width="94" height="29" rx="15" fill="#173D38"/>
+<text x="1117" y="270" fill="#7EE5B0" font-size="12" font-weight="650" >● 在线</text>
+<text x="755" y="338" fill="#F0F4FF" font-size="14" font-weight="700" >运行状态</text>
+<rect x="753" y="351" width="144" height="66" rx="11" fill="#1D2A43"/>
+<text x="769" y="376" fill="#ADB9D0" font-size="12" font-weight="400" >连接</text>
+<text x="769" y="402" fill="#7EE5B0" font-size="17" font-weight="700" >正常</text>
+<rect x="908" y="351" width="144" height="66" rx="11" fill="#1D2A43"/>
+<text x="924" y="376" fill="#ADB9D0" font-size="12" font-weight="400" >电量</text>
+<text x="924" y="402" fill="#F0F4FF" font-size="15" font-weight="700" >82% · 充电</text>
+<rect x="1063" y="351" width="150" height="66" rx="11" fill="#1D2A43"/>
+<text x="1079" y="376" fill="#ADB9D0" font-size="12" font-weight="400" >网络</text>
+<text x="1079" y="402" fill="#F0F4FF" font-size="16" font-weight="700" >Wi-Fi</text>
+<text x="755" y="454" fill="#F0F4FF" font-size="14" font-weight="700" >SIM 通道</text>
+<rect x="754" y="467" width="459" height="63" rx="10" fill="#151E32" stroke="#303C57" stroke-width="1"/>
+<text x="770" y="491" fill="#F0F4FF" font-size="13" font-weight="650" >SIM 1 · 中国移动</text>
+<text x="770" y="511" fill="#ADB9D0" font-size="11" font-weight="400" >尾号 0042 · 可读取短信</text>
+<rect x="754" y="540" width="459" height="61" rx="10" fill="#151E32" stroke="#303C57" stroke-width="1"/>
+<text x="770" y="562" fill="#F0F4FF" font-size="13" font-weight="650" >SIM 2 · 中国联通</text>
+<text x="770" y="582" fill="#ADB9D0" font-size="11" font-weight="400" >尾号 0189 · 可读取短信</text>
+<rect x="754" y="618" width="210" height="43" rx="10" fill="#1D2A43" stroke="#303C57" stroke-width="1"/>
+<text x="773" y="645" fill="#F0F4FF" font-size="13" font-weight="650" >同步最近 100 条</text>
+<rect x="975" y="618" width="238" height="43" rx="10" fill="#1D2A43" stroke="#303C57" stroke-width="1"/>
+<text x="994" y="645" fill="#F0F4FF" font-size="13" font-weight="650" >诊断与远程任务</text>
+<text x="1256" y="745" fill="#ADB9D0" font-size="12" font-weight="500" text-anchor="end">DEMO · 模拟数据</text></svg>

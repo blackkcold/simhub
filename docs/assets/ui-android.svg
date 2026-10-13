@@ -1,54 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="440" height="900" viewBox="0 0 440 900" role="img" aria-label="Illustrative SIM Hub Android v0.7 dashboard with four navigation tabs, SIM summaries and status">
-<rect width="440" height="900" fill="#F6F7FB"/>
-<rect x="8" y="8" width="424" height="884" rx="28" fill="#F6F7FB" stroke="#DFE3EF"/>
-<text x="27" y="41" font-size="15" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">9:41</text>
-<text x="366" y="41" font-size="14" fill="#737D91" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">● ●</text>
-<rect x="22" y="62" width="42" height="42" rx="13" fill="#574FEA"/>
-<path d="M18,2 L10,2 L4,8 L4,20 C4,21.1 4.9,22 6,22 L18,22 C19.1,22 20,21.1 20,20 L20,4 C20,2.9 19.1,2 18,2 Z" transform="translate(32 71) scale(0.9)" fill="#FFFFFF"/>
-<text x="80" y="81" font-size="19" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">SIM Hub</text>
-<text x="80" y="100" font-size="12" fill="#69748C" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">概览</text>
-<circle cx="388" cy="83" r="16" fill="#F0F2FB"/>
-<path d="M381 83H395M388 76V90" stroke="#574FEA" stroke-width="2" stroke-linecap="round"/>
-<rect x="22" y="131" width="396" height="184" rx="20" fill="white" stroke="#E5E8F2"/>
-<text x="43" y="170" font-size="23" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">运行正常</text>
-<rect x="304" y="148" width="94" height="30" rx="15" fill="#EAF7F0"/>
-<circle cx="319" cy="163" r="4" fill="#1C9867"/>
-<text x="331" y="167" font-size="12" fill="#1C9867" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">已连接</text>
-<text x="43" y="198" font-size="13" fill="#66718A" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">私人 SIM 节点 · 常驻中继运行中</text>
-<line x1="42" y1="218" x2="397" y2="218" stroke="#EBEEF5"/>
-<text x="43" y="246" font-size="12" fill="#69748C" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">最近成功同步</text>
-<text x="298" y="246" font-size="13" fill="#1E2940" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">今天 09:40</text>
-<text x="43" y="280" font-size="12" fill="#69748C" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">待上传</text>
-<text x="357" y="280" font-size="13" fill="#1E2940" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">0 条</text>
-<text x="24" y="351" font-size="18" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">本机 SIM 卡</text>
-<text x="353" y="351" font-size="12" fill="#574FEA" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">查看全部 ›</text>
-<rect x="22" y="373" width="396" height="106" rx="20" fill="white" stroke="#E5E8F2"/>
-<rect x="42" y="395" width="44" height="44" rx="14" fill="#EFEDFF"/>
-<path d="M18,2 L10,2 L4,8 L4,20 C4,21.1 4.9,22 6,22 L18,22 C19.1,22 20,21.1 20,20 L20,4 C20,2.9 19.1,2 18,2 Z" transform="translate(52 405)" fill="#574FEA"/>
-<text x="101" y="408" font-size="16" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">中国移动</text>
-<text x="101" y="430" font-size="12" fill="#68758B" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">SIM 1 · 5G</text>
-<rect x="315" y="409" width="85" height="26" rx="13" fill="#EAF7F0"/>
-<text x="327" y="426" font-size="11" fill="#19875F" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">服务正常</text>
-<rect x="22" y="491" width="396" height="106" rx="20" fill="white" stroke="#E5E8F2"/>
-<rect x="42" y="513" width="44" height="44" rx="14" fill="#EFEDFF"/>
-<path d="M18,2 L10,2 L4,8 L4,20 C4,21.1 4.9,22 6,22 L18,22 C19.1,22 20,21.1 20,20 L20,4 C20,2.9 19.1,2 18,2 Z" transform="translate(52 523)" fill="#574FEA"/>
-<text x="101" y="526" font-size="16" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">中国联通</text>
-<text x="101" y="548" font-size="12" fill="#68758B" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">SIM 2 · LTE</text>
-<rect x="315" y="526" width="85" height="26" rx="13" fill="#EAF7F0"/>
-<text x="327" y="543" font-size="11" fill="#19875F" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">服务正常</text>
-<text x="24" y="637" font-size="18" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">最近短信</text>
-<text x="352" y="637" font-size="12" fill="#574FEA" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">查看全部 ›</text>
-<rect x="22" y="657" width="396" height="125" rx="20" fill="white" stroke="#E5E8F2"/>
-<circle cx="65" cy="699" r="22" fill="#F0F2FF"/>
-<path d="M20,2 L4,2 C2.9,2 2,2.9 2,4 L2,22 L6,18 L20,18 C21.1,18 22,17.1 22,16 L22,4 C22,2.9 21.1,2 20,2 Z" transform="translate(53 688)" fill="#574FEA"/>
-<text x="103" y="690" font-size="15" fill="#18223A" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">10010</text>
-<text x="352" y="690" font-size="11" fill="#7B859C" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">09:40</text>
-<text x="103" y="711" font-size="12" fill="#6F7891" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">【中国联通】服务提醒…</text>
-<line x1="103" y1="727" x2="397" y2="727" stroke="#EDF0F5"/>
-<text x="103" y="753" font-size="12" fill="#6F7891" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">验证码通知 · 已同步</text>
-<rect x="8" y="796" width="424" height="96" rx="24" fill="white" stroke="#E4E8F2"/>
-<rect x="27" y="808" width="70" height="44" rx="18" fill="#F0EDFF"/><path d="M10,20 L10,14 L14,14 L14,20 L19,20 L19,12 L22,12 L12,3 L2,12 L5,12 L5,20 Z" transform="translate(50 818)" fill="#574FEA"/><text x="49" y="871" font-size="12" fill="#574FEA" font-weight="700" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">概览</text>
-<path d="M20,2 L4,2 C2.9,2 2,2.9 2,4 L2,22 L6,18 L20,18 C21.1,18 22,17.1 22,16 L22,4 C22,2.9 21.1,2 20,2 Z" transform="translate(154 818)" fill="#8490A5"/><text x="153" y="871" font-size="12" fill="#7B8497" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">短信</text>
-<path d="M18,2 L10,2 L4,8 L4,20 C4,21.1 4.9,22 6,22 L18,22 C19.1,22 20,21.1 20,20 L20,4 C20,2.9 19.1,2 18,2 Z" transform="translate(258 818)" fill="#8490A5"/><text x="237.5" y="871" font-size="12" fill="#7B8497" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">SIM 卡</text>
-<path d="M19.4,13 A8,8 0,0 0,19.4 11 L21.5,9.4 L19.5,6 L17.1,6.6 A8,8 0,0 0,15.4 5.6 L15,3 L9,3 L8.6,5.6 A8,8 0,0 0,6.9 6.6 L4.5,6 L2.5,9.4 L4.6,11 A8,8 0,0 0,4.6 13 L2.5,14.6 L4.5,18 L6.9,17.4 A8,8 0,0 0,8.6 18.4 L9,21 L15,21 L15.4,18.4 A8,8 0,0 0,17.1 17.4 L19.5,18 L21.5,14.6 Z" transform="translate(362 818)" fill="#8490A5"/><text x="361" y="871" font-size="12" fill="#7B8497" font-weight="400" font-family="'Noto Sans SC','Microsoft YaHei',Arial,sans-serif">设置</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="900" viewBox="0 0 440 900" role="img" aria-label="SIM Hub modern native Android SIM Node dashboard using Material 3 cards and distinct teal role theme">
+<defs><style>text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Noto Sans SC","Microsoft YaHei","Segoe UI",sans-serif}</style></defs>
+<rect x="0" y="0" width="440" height="900" rx="0" fill="#F6F7FB"/>
+<rect x="0" y="0" width="440" height="208" rx="0" fill="#FFFFFF"/>
+<rect x="0" y="0" width="440" height="46" rx="0" fill="#FFFFFF"/>
+<text x="30" y="30" font-size="16" fill="#18223A" font-weight="680" >9:41</text>
+<text x="401" y="28" font-size="12" fill="#18223A" font-weight="650" text-anchor="end">5G  ▮▮  98%</text>
+<rect x="24" y="67" width="48" height="48" rx="14" fill="#087F74"/>
+<g transform="translate(35 77) scale(1.125)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M7 2h7l5 5v15H5V4a2 2 0 0 1 2-2Z"/><path d="M9 12h6v6H9z"/></g>
+<text x="84" y="86" font-size="25" fill="#18223A" font-weight="780" >SIM Hub</text>
+<text x="84" y="111" font-size="13" fill="#657086" font-weight="500" >本机 SIM 节点</text>
+<g transform="translate(383 77) scale(1.0833333333333333)" fill="none" stroke="#18223A" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 8a7 7 0 0 1 12-2l2 1M4 17l2 1a7 7 0 0 0 12-2"/></g>
+<rect x="23" y="146" width="179" height="44" rx="23" fill="#D8F4EF"/>
+<g transform="translate(42 157) scale(0.9583333333333334)" fill="none" stroke="#087F74" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M7 2h7l5 5v15H5V4a2 2 0 0 1 2-2Z"/><path d="M9 12h6v6H9z"/></g>
+<text x="73" y="173" font-size="16" fill="#087F74" font-weight="750" >SIM 节点</text>
+<rect x="213" y="146" width="204" height="44" rx="23" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<g transform="translate(233 157) scale(0.9583333333333334)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M12 2 20 6v6c0 5-3 8-8 10-5-2-8-5-8-10V6Z"/><path d="m8.5 12 2.5 2.5L16 9"/></g>
+<text x="263" y="173" font-size="16" fill="#18223A" font-weight="600" >管理中心</text>
+<path d="M0 207 L440 207" fill="none" stroke="#E1E5F0" stroke-width="1"/>
+<rect x="0" y="803" width="440" height="97" rx="0" fill="#FFFFFF"/>
+<path d="M0 802 L440 802" fill="none" stroke="#E1E5F0" stroke-width="1"/>
+<rect x="28" y="816" width="66" height="34" rx="18" fill="#D8F4EF"/>
+<g transform="translate(49 823) scale(0.9166666666666666)" fill="none" stroke="#087F74" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="m3 11 9-8 9 8"/><path d="M5 10v11h14V10M10 21v-7h4v7"/></g>
+<text x="60" y="871" font-size="13" fill="#087F74" font-weight="750" text-anchor="middle">状态</text>
+<g transform="translate(155 823) scale(0.9166666666666666)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M4 4h16v14H8l-4 3V4Z"/><path d="M7 9h10M7 13h7"/></g>
+<text x="166" y="871" font-size="13" fill="#657086" font-weight="500" text-anchor="middle">本机短信</text>
+<g transform="translate(261 823) scale(0.9166666666666666)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M7 2h7l5 5v15H5V4a2 2 0 0 1 2-2Z"/><path d="M9 12h6v6H9z"/></g>
+<text x="272" y="871" font-size="13" fill="#657086" font-weight="500" text-anchor="middle">SIM 卡</text>
+<g transform="translate(367 823) scale(0.9166666666666666)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 1.5v3m0 15v3M1.5 12h3m15 0h3M4.7 4.7l2.1 2.1m10.4 10.4 2.1 2.1M19.3 4.7l-2.1 2.1M6.8 17.2l-2.1 2.1"/></g>
+<text x="378" y="871" font-size="13" fill="#657086" font-weight="500" text-anchor="middle">设置</text>
+<rect x="166" y="891" width="107" height="5" rx="3" fill="#C0C5CC"/>
+<rect x="316" y="234" width="83" height="27" rx="14" fill="#E4F7F0"/>
+<text x="329" y="252" font-size="12" fill="#0E8D68" font-weight="650" >● 已连接</text>
+<rect x="20" y="222" width="400" height="162" rx="22" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="39" y="255" font-size="18" fill="#18223A" font-weight="750" >设备与 Relay</text>
+
+<rect x="38" y="272" width="364" height="94" rx="15" fill="#F2FAF8"/>
+<g transform="translate(53 289) scale(0.9583333333333334)" fill="none" stroke="#087F74" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M2 12h5l3-6 4 12 3-6h5"/></g>
+<text x="88" y="309" font-size="16" fill="#18223A" font-weight="730" >vivo SIM 节点</text>
+<text x="88" y="332" font-size="12" fill="#657086" font-weight="400" >加密连接正常 · 后台服务已启用</text>
+<text x="53" y="354" font-size="12" fill="#087F74" font-weight="680" >最近同步 09:40</text>
+<text x="392" y="355" font-size="12" fill="#657086" font-weight="550" text-anchor="end">待上传 0</text>
+<rect x="20" y="397" width="400" height="164" rx="22" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="39" y="430" font-size="18" fill="#18223A" font-weight="750" >SIM 卡</text>
+<text x="381" y="430" font-size="12" fill="#087F74" font-weight="650" text-anchor="end">查看全部  ›</text>
+<rect x="38" y="445" width="364" height="48" rx="12" fill="#F0F2FB"/>
+<g transform="translate(50 455) scale(1.0416666666666667)" fill="none" stroke="#087F74" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M7 2h7l5 5v15H5V4a2 2 0 0 1 2-2Z"/><path d="M9 12h6v6H9z"/></g>
+<text x="88" y="465" font-size="14" fill="#18223A" font-weight="680" >SIM 1  ·  中国移动</text>
+<text x="88" y="485" font-size="11" fill="#657086" font-weight="400" >5G   ·   尾号 0042</text>
+<rect x="38" y="499" width="364" height="48" rx="12" fill="#F0F2FB"/>
+<g transform="translate(50 509) scale(1.0416666666666667)" fill="none" stroke="#087F74" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M7 2h7l5 5v15H5V4a2 2 0 0 1 2-2Z"/><path d="M9 12h6v6H9z"/></g>
+<text x="88" y="519" font-size="14" fill="#18223A" font-weight="680" >SIM 2  ·  中国联通</text>
+<text x="88" y="539" font-size="11" fill="#657086" font-weight="400" >5G   ·   尾号 0189</text>
+<rect x="20" y="575" width="400" height="109" rx="22" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="39" y="607" font-size="18" fill="#18223A" font-weight="750" >快速操作</text>
+<rect x="37" y="620" width="218" height="46" rx="12" fill="#D8F4EF"/>
+<g transform="translate(48 631) scale(0.9166666666666666)" fill="none" stroke="#087F74" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 8a7 7 0 0 1 12-2l2 1M4 17l2 1a7 7 0 0 0 12-2"/></g>
+<text x="82" y="649" font-size="13" fill="#087F74" font-weight="730" >立即检查并同步短信</text>
+<rect x="264" y="620" width="138" height="46" rx="12" fill="#F0F2FB"/>
+<g transform="translate(276 632) scale(0.8333333333333334)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M12 2 20 6v6c0 5-3 8-8 10-5-2-8-5-8-10V6Z"/><path d="m8.5 12 2.5 2.5L16 9"/></g>
+<text x="306" y="648" font-size="13" fill="#18223A" font-weight="600" >权限检查</text>
+<rect x="20" y="697" width="400" height="96" rx="22" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="39" y="729" font-size="18" fill="#18223A" font-weight="750" >最近短信</text>
+<text x="381" y="728" font-size="12" fill="#087F74" font-weight="650" text-anchor="end">查看全部 ›</text>
+<text x="40" y="754" font-size="14" fill="#18223A" font-weight="700" >10010</text>
+<text x="383" y="754" font-size="11" fill="#657086" font-weight="400" text-anchor="end">09:40</text>
+<text x="40" y="776" font-size="12" fill="#657086" font-weight="400" >运营商服务通知 · SIM 2 · 已同步</text>
+<text x="418" y="789" font-size="10" fill="#657086" font-weight="450" text-anchor="end">DEMO · 模拟数据</text>
 </svg>

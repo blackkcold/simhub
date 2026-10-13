@@ -1070,10 +1070,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     }
                                     pendingManageAction=null
                                     if(destructive){
+                                        // A removed or revoked source must disappear from
+                                        // the decrypted inbox immediately, not on next restart.
+                                        inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList()
                                         if(action!="purge")selectedDevice=null
-                                        if(action=="purge"){inbox.clear();lastEventSeq=0L;load("latest")}
-                                    }
-                                    refreshDelta()
+                                        load("latest")
+                                    }else refreshDelta()
                                 }catch(e:Exception){manageError=e.message?:"操作失败，请检查权限和设备状态"}
                                 finally{manageBusy=false;manageCredential="";manageConfirm=""}
                             }

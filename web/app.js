@@ -585,6 +585,29 @@ async function loadDevices(){
       next.some(x=>previousSms.has(x.id) && previousSms.get(x.id)!==(x.smsEpoch||0)))){
     resetEventCache();
   }
+  // Notify only after an observed online->offline transition persists for 120 seconds.
+  for(const prior of devices){
+    const current=next.find(x=>x.id===prior.id);
+    if(!current||current.revoked){
+      clearTimeout(offlineTimers.get(prior.id));offlineTimers.delete(prior.id);offlineNotified.delete(prior.id);
+      continue;
+    }
+    if(prior.online&&!current.online&&!offlineTimers.has(prior.id)){
+      const timer=setTimeout(()=>{
+        offlineTimers.delete(prior.id);
+        if(!vaultKey||!devices.some(x=>x.id===prior.id&&!x.online&&!x.revoked))return;
+        offlineNotified.add(prior.id);
+        notificationCenter.record({id:'offline:'+prior.id+':'+Date.now(),
+          kind:'device_offline',deviceId:prior.id}).catch(()=>{});
+      },120000);
+      offlineTimers.set(prior.id,timer);
+    }
+    if(current.online){
+      clearTimeout(offlineTimers.get(prior.id));offlineTimers.delete(prior.id);
+      if(offlineNotified.delete(prior.id))notificationCenter.record({
+        id:'recovered:'+prior.id+':'+Date.now(),kind:'device_recovered',deviceId:prior.id}).catch(()=>{});
+    }
+  }
   const oldKeys=new Map(devices.map(x=>[x.id,[x.keyId,x.wrappedKey,x.pendingKeyId,x.historicalWrappedKeys].map(v=>JSON.stringify(v||'')).join('|')]));
   for(const node of next)if(oldKeys.get(node.id)!==[node.keyId,node.wrappedKey,node.pendingKeyId,node.historicalWrappedKeys].map(v=>JSON.stringify(v||'')).join('|'))deviceKeyCache.delete(node.id);
   devices=next;
@@ -755,7 +778,24 @@ async function loadCommandActivity(){
   const epoch=securityEpoch;
   const result=await api('/api/v1/commands/recent?limit=20');
   if(epoch!==securityEpoch||!vaultKey)return;
-  renderCommandActivity(result.commands||[]);
+  const commands=result.commands||[];
+  if(commandsSnapshotInitialized){
+    for(const c of commands){
+      const id=String(c.id||c.commandId||''),state=String(c.state||'');
+      const previous=knownCommandStates.get(id);
+      if(!id||!previous||previous===state)continue;
+      const isFail=['failed','rejected','expired'].includes(state);
+      const isDone=['succeeded','delivered'].includes(state);
+      if(!isFail&&!isDone)continue;
+      const update=c.type==='ota.install';
+      notificationCenter.record({id:'command:'+id+':'+state,
+        kind:update?(isFail?'update_failed':'update_done'):(isFail?'task_failed':'task_done'),
+        deviceId:c.deviceId||''}).catch(()=>{});
+    }
+  }
+  for(const c of commands)if(c.id||c.commandId)knownCommandStates.set(String(c.id||c.commandId),String(c.state||''));
+  commandsSnapshotInitialized=true;
+  renderCommandActivity(commands);
 }
 async function loadLifecycleHistory(){
   if(!vaultKey)return;

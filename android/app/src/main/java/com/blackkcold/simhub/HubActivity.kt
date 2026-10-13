@@ -311,12 +311,17 @@ class HubActivity: ComponentActivity(), HubController {
         if(!AgentConfig(this).isEnrolled()){refresh();return}
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val stillPaired=withContext(Dispatchers.IO) {
                     val api=ApiClient(applicationContext)
                     api.pollCommands(false)
-                    if(AgentConfig(applicationContext).isEnrolled())api.putState()
+                    if(AgentConfig(applicationContext).isEnrolled()){
+                        api.putState()
+                        true
+                    }else false
                 }
-                toast(actionLabel("已连接服务器并刷新设备信息","Relay checked and device state updated"))
+                toast(if(stillPaired)
+                    actionLabel("已连接服务器并刷新设备信息","Relay checked and device state updated")
+                    else actionLabel("配对状态已变化，请查看设备配对卡片","Pairing state changed; check device enrollment"))
             }catch(error:Exception){
                 AppLogger.e(this@HubActivity,"ManualRefresh","Immediate refresh failed",error)
                 toast(UiErrors.message(this@HubActivity,error))
@@ -513,11 +518,13 @@ class HubActivity: ComponentActivity(), HubController {
                         api.putState()
                     }
                     SyncJobService.scheduleNow(app)
-                    Pair(inspected,LocalStore.get(app).pendingEventCount())
+                    Triple(inspected,LocalStore.get(app).pendingEventCount(),AgentConfig(app).isEnrolled())
                 }
-                toast(actionLabel(
+                toast(if(result.third)actionLabel(
                     "检查了 ${result.first} 条短信；剩余 ${result.second} 条待上传。命令检查已完成。",
-                    "Inspected ${result.first} SMS; ${result.second} uploads pending. Command check completed."))
+                    "Inspected ${result.first} SMS; ${result.second} uploads pending. Command check completed.")
+                else actionLabel("设备已解除配对或正在重置，请查看配对状态",
+                    "Device is unpaired or resetting; check enrollment status"))
                 refresh()
             }catch(error:Exception){
                 AppLogger.e(this@HubActivity,"ManualSync","Manual command/SMS check failed",error)
@@ -600,8 +607,25 @@ class HubActivity: ComponentActivity(), HubController {
         AlertDialog.Builder(this).setTitle(R.string.reset_title).setMessage(R.string.reset_message)
             .setNegativeButton(R.string.cancel,null)
             .setPositiveButton(R.string.reset){_,_->
-                EnrollmentManager.requestReset(this);SyncJobService.scheduleNow(this);refresh()
-                toast(getString(R.string.enrollment_reset_pending))
+                lifecycleScope.launch {
+                    try{
+                        withContext(Dispatchers.IO){
+                            val app=applicationContext
+                            EnrollmentManager.requestReset(app)
+                            // User action should attempt the reset immediately; the
+                            // persisted JobScheduler job remains the fallback.
+                            ApiClient(app).syncCycle()
+                        }
+                        refresh()
+                        toast(if(AgentConfig(applicationContext).resetPending())
+                            getString(R.string.enrollment_reset_pending)
+                            else actionLabel("设备已解除配对","Device unpaired"))
+                    }catch(error:Exception){
+                        AppLogger.e(this@HubActivity,"Enrollment","Immediate reset attempt failed",error)
+                        refresh()
+                        toast(UiErrors.message(this@HubActivity,error))
+                    }
+                }
             }.show()
     }
     private fun actionLabel(zh:String,en:String):String =

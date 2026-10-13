@@ -658,7 +658,9 @@ async function loadEvents(){
     if(epoch!==securityEpoch||!vaultKey)return;
     // Recent uploads can contain old-dated messages excluded by occurredAt paging.
     // Fetch the latest Relay sequence page too, without losing the original head.
-    const newest=await api('/api/v1/events?latest=1&scope=sms&limit=100');
+    // Keep the newest unfiltered page: SIM profile and device events still
+    // supply historical source labels and operational notifications.
+    const newest=await api('/api/v1/events?latest=1&limit=100');
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     await ingestEvents(newest.events||[],false);
     if(epoch!==securityEpoch||!vaultKey)return;

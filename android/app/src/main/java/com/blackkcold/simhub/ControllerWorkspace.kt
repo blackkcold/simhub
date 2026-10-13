@@ -139,6 +139,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
+    var pendingManageAction by remember{mutableStateOf<Pair<JSONObject,String>?>(null)}
+    var manageValue by remember{mutableStateOf("")}
+    var manageCredential by remember{mutableStateOf("")}
+    var manageConfirm by remember{mutableStateOf("")}
+    var manageChannelIndex by remember{mutableIntStateOf(-1)}
+    var manageBusy by remember{mutableStateOf(false)}
+    var manageError by remember{mutableStateOf("")}
     var actionError by remember{mutableStateOf("")}
     var actionBusy by remember{mutableStateOf(false)}
     var pendingSensitiveTask by remember { mutableStateOf<Pair<JSONObject,String>?>(null) }
@@ -356,7 +363,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     fun loadOlderPage(){load("older")}
     fun navigateToLatest(){load("latest")}
     /** Remote commands are E2EE encrypted, idempotent and acknowledged asynchronously. */
-    fun queueDeviceAction(device:JSONObject,action:String,credential:String?=null){
+    fun queueDeviceAction(device:JSONObject,action:String,credential:String?=null,channelIndex:Int=-1){
         if(action.startsWith("ota-") && credential==null){
             pendingSensitiveTask=device to action
             sensitiveCredential=""
@@ -370,6 +377,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             "diagnostics"->"diagnostics.request"
             "ota-install"->"ota.install"
             "ota-cancel"->"ota.cancel"
+            "network-enable"->"device.network_policy"
+            "network-disable"->"device.network_policy"
             else->return
         }
         val state=device.optJSONObject("state")?:JSONObject()
@@ -386,7 +395,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             try{
                 val commandId=withContext(Dispatchers.IO){
                     val api=client?:throw SecurityException("管理授权已失效")
-                    if(action.startsWith("ota-")){
+                    if(action.startsWith("ota-") || action.startsWith("network-")){
                         if(credential.isNullOrBlank())throw SecurityException("此操作要求管理员二次验证")
                         api.api("/api/v1/auth/elevate","POST",JSONObject()
                             .put(if(secondFactorTotp)"totp" else "adminToken",credential))
@@ -402,6 +411,20 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         .put("commandId",id).put("issuedAt",now).put("expiresAt",end)
                     if(action=="sync-recent" || action=="sync-older")payload.put("maxMessages",100)
                     if(action=="ota-install")payload.put("targetVersion","latest")
+                    if(action.startsWith("network-")){
+                        val enabled=action=="network-enable"
+                        payload.put("enabled",enabled)
+                        if(enabled){
+                            val channel=ControllerNodePolicy.channels(device).optJSONObject(channelIndex)
+                                ?:throw IllegalStateException("请选择有效 SIM 通道")
+                            payload.put("channelId",channel.optString("id")
+                                .ifBlank{channel.optString("channelId")})
+                            payload.put("channelRevision",channel.optInt("revision",
+                                channel.optInt("channelRevision",1)))
+                            if(payload.optString("channelId").isBlank())
+                                throw IllegalStateException("SIM 通道 ID 不可用")
+                        }
+                    }
                     val cipher=api.encryptCommand(device,id,commandType,now,end,payload)
                     api.api("/api/v1/devices/"+device.getString("id")+"/commands","POST",
                         JSONObject().put("commandId",id).put("idempotencyKey",id)
@@ -855,12 +878,125 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     error=actionError,
                     onClose={selectedDevice=null;actionError=""},
                     onAction={action->queueDeviceAction(device,action)},
+                    onManage={action->
+                        pendingManageAction=device to action
+                        manageValue=device.optString("name")
+                        manageCredential="";manageConfirm="";manageChannelIndex=-1;manageError=""
+                    },
                     onAdvanced={
                         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
                             Uri.parse(selected+"/")))
                     })
             }
         }
+    }
+    pendingManageAction?.let{(device,action)->
+        val destructive=action in listOf("purge","revoke","delete")
+        val sensitive=destructive || action=="network"
+        val channels=ControllerNodePolicy.channels(device)
+        val title=when(action){
+            "rename"->hubLabel("修改设备名称","Rename node")
+            "network"->hubLabel("备用移动数据策略","Mobile network fallback")
+            "purge"->hubLabel("清理中继短信","Purge relay SMS")
+            "revoke"->hubLabel("撤销设备授权","Revoke device")
+            else->hubLabel("强制删除设备","Force delete device")
+        }
+        AlertDialog(
+            onDismissRequest={if(!manageBusy)pendingManageAction=null},
+            title={Text(title)},
+            text={Column(Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text(device.optString("name").ifBlank{"SIM Node"},
+                    fontWeight=FontWeight.SemiBold)
+                if(action=="rename")OutlinedTextField(manageValue,{manageValue=it.take(80)},
+                    label={Text(hubLabel("新设备名称","Device name"))},singleLine=true)
+                if(action=="network"){
+                    Text(hubLabel("Android 只能使用系统设定的默认数据 SIM；选择监控卡不会切换系统默认卡。",
+                        "Android can only use the system's default mobile data SIM. This choice does not change it."),
+                        style=MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment=Alignment.CenterVertically,
+                        modifier=Modifier.clickable{manageChannelIndex=-1}){
+                        RadioButton(selected=manageChannelIndex==-1,onClick={manageChannelIndex=-1})
+                        Text(hubLabel("关闭备用数据监控","Disable fallback"))
+                    }
+                    for(i in 0 until channels.length()){
+                        val ch=channels.optJSONObject(i)?:continue
+                        Row(verticalAlignment=Alignment.CenterVertically,
+                            modifier=Modifier.clickable{manageChannelIndex=i}){
+                            RadioButton(selected=manageChannelIndex==i,onClick={manageChannelIndex=i})
+                            Text(ch.optString("alias").ifBlank{ch.optString("displayName")
+                                .ifBlank{ch.optString("carrierName").ifBlank{"SIM ${i+1}"}}})
+                        }
+                    }
+                }
+                if(destructive){
+                    Text(when(action){
+                        "purge"->hubLabel("删除该设备在中继服务器保存的短信及共享池副本，不能撤销。设备本地原始短信不受此操作影响。",
+                            "Deletes relay SMS and shared-pool copies; local node SMS remain.")
+                        "revoke"->hubLabel("撤销云端设备授权，设备需要重新配对。","Re-enrollment is required after revoke.")
+                        else->hubLabel("强制删除设备与云端记录，需重新配对。","Deletes the node and cloud records; re-enrollment required.")
+                    },color=MaterialTheme.colorScheme.error,
+                        style=MaterialTheme.typography.bodySmall)
+                    if(action=="purge" || action=="delete")
+                        OutlinedTextField(manageConfirm,{manageConfirm=it},
+                            label={Text(if(action=="purge")"输入 PURGE" else "输入 DELETE")},
+                            singleLine=true)
+                }
+                if(sensitive)OutlinedTextField(manageCredential,{manageCredential=it},
+                    label={Text(if(secondFactorTotp)"管理员二次验证 TOTP" else "管理员令牌")},
+                    singleLine=true,visualTransformation=PasswordVisualTransformation())
+                if(manageError.isNotBlank())
+                    Text(manageError,color=MaterialTheme.colorScheme.error,
+                        style=MaterialTheme.typography.bodySmall)
+            }},
+            confirmButton={TextButton(
+                enabled=!manageBusy && (action!="rename" || manageValue.trim().isNotEmpty()) &&
+                    (!sensitive || manageCredential.isNotBlank()) &&
+                    (action!="purge" || manageConfirm=="PURGE") &&
+                    (action!="delete" || manageConfirm=="DELETE") &&
+                    (action!="network" || manageChannelIndex==-1 ||
+                        channels.optJSONObject(manageChannelIndex)!=null),
+                onClick={
+                    if(action=="network"){
+                        queueDeviceAction(device,if(manageChannelIndex>=0)"network-enable" else "network-disable",
+                            manageCredential,manageChannelIndex)
+                        pendingManageAction=null;manageCredential=""
+                    }else{
+                        val api=client
+                        if(api==null){manageError="管理终端授权不可用"}
+                        else {
+                            manageBusy=true;manageError=""
+                            val value=manageValue.trim()
+                            val credential=manageCredential
+                            scope.launch{
+                                try{
+                                    withContext(Dispatchers.IO){
+                                        if(sensitive)api.api("/api/v1/auth/elevate","POST",
+                                            JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",credential))
+                                        val uri="/api/v1/devices/"+device.getString("id")
+                                        when(action){
+                                            "rename"->api.api(uri,"PATCH",JSONObject().put("name",value))
+                                            "revoke"->api.api(uri,"PATCH",JSONObject().put("revoke",true))
+                                            "purge"->api.api(uri+"/sms","DELETE")
+                                            "delete"->api.api(uri,"DELETE")
+                                        }
+                                    }
+                                    pendingManageAction=null
+                                    if(destructive){
+                                        if(action!="purge")selectedDevice=null
+                                        if(action=="purge"){inbox.clear();lastEventSeq=0L;load("latest")}
+                                    }
+                                    refreshDelta()
+                                }catch(e:Exception){manageError=e.message?:"操作失败，请检查权限和设备状态"}
+                                finally{manageBusy=false;manageCredential="";manageConfirm=""}
+                            }
+                        }
+                    }
+                }){Text(hubLabel("确认","Confirm"))}},
+            dismissButton={TextButton(enabled=!manageBusy,onClick={
+                pendingManageAction=null;manageCredential="";manageConfirm="";manageError=""
+            }){Text(hubLabel("取消","Cancel"))}}
+        )
     }
     pendingSensitiveTask?.let{pending->
         val (device,action)=pending

@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="900" viewBox="0 0 440 900" role="img" aria-label="SIM Hub current native Android Management Center dashboard with purple role theme and original encrypted device/command cards">
+<defs><style>text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Noto Sans SC","Microsoft YaHei","Segoe UI",sans-serif}</style></defs>
+<rect x="0" y="0" width="440" height="900" rx="0" fill="#F6F7FB"/>
+<rect x="0" y="0" width="440" height="208" rx="0" fill="#FFFFFF"/>
+<rect x="0" y="0" width="440" height="46" rx="0" fill="#FFFFFF"/>
+<text x="30" y="30" font-size="16" fill="#18223A" font-weight="680" >9:41</text>
+<text x="401" y="28" font-size="12" fill="#18223A" font-weight="650" text-anchor="end">5G  ▮▮  98%</text>
+<rect x="24" y="67" width="48" height="48" rx="14" fill="#574FEA"/>
+<g transform="translate(35 77) scale(1.125)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M12 2 20 6v6c0 5-3 8-8 10-5-2-8-5-8-10V6Z"/><path d="m8.5 12 2.5 2.5L16 9"/></g>
+<text x="84" y="86" font-size="25" fill="#18223A" font-weight="780" >SIM Hub</text>
+<text x="84" y="111" font-size="13" fill="#657086" font-weight="500" >管理控制台</text>
+<g transform="translate(383 77) scale(1.0833333333333333)" fill="none" stroke="#18223A" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 8a7 7 0 0 1 12-2l2 1M4 17l2 1a7 7 0 0 0 12-2"/></g>
+<rect x="23" y="146" width="179" height="44" rx="23" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<g transform="translate(42 157) scale(0.9583333333333334)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M7 2h7l5 5v15H5V4a2 2 0 0 1 2-2Z"/><path d="M9 12h6v6H9z"/></g>
+<text x="73" y="173" font-size="16" fill="#18223A" font-weight="600" >SIM 节点</text>
+<rect x="213" y="146" width="204" height="44" rx="23" fill="#EAE8FF"/>
+<g transform="translate(233 157) scale(0.9583333333333334)" fill="none" stroke="#574FEA" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M12 2 20 6v6c0 5-3 8-8 10-5-2-8-5-8-10V6Z"/><path d="m8.5 12 2.5 2.5L16 9"/></g>
+<text x="263" y="173" font-size="16" fill="#574FEA" font-weight="750" >管理中心</text>
+<path d="M0 207 L440 207" fill="none" stroke="#E1E5F0" stroke-width="1"/>
+<rect x="0" y="803" width="440" height="97" rx="0" fill="#FFFFFF"/>
+<path d="M0 802 L440 802" fill="none" stroke="#E1E5F0" stroke-width="1"/>
+<rect x="28" y="816" width="66" height="34" rx="18" fill="#EAE8FF"/>
+<g transform="translate(49 823) scale(0.9166666666666666)" fill="none" stroke="#574FEA" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="m3 11 9-8 9 8"/><path d="M5 10v11h14V10M10 21v-7h4v7"/></g>
+<text x="60" y="871" font-size="13" fill="#574FEA" font-weight="750" text-anchor="middle">总览</text>
+<g transform="translate(155 823) scale(0.9166666666666666)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M4 4h16v14H8l-4 3V4Z"/><path d="M7 9h10M7 13h7"/></g>
+<text x="166" y="871" font-size="13" fill="#657086" font-weight="500" text-anchor="middle">短信</text>
+<g transform="translate(261 823) scale(0.9166666666666666)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></g>
+<text x="272" y="871" font-size="13" fill="#657086" font-weight="500" text-anchor="middle">设备</text>
+<g transform="translate(367 823) scale(0.9166666666666666)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 1.5v3m0 15v3M1.5 12h3m15 0h3M4.7 4.7l2.1 2.1m10.4 10.4 2.1 2.1M19.3 4.7l-2.1 2.1M6.8 17.2l-2.1 2.1"/></g>
+<text x="378" y="871" font-size="13" fill="#657086" font-weight="500" text-anchor="middle">设置</text>
+<rect x="166" y="891" width="107" height="5" rx="3" fill="#C0C5CC"/>
+<rect x="324" y="222" width="94" height="27" rx="14" fill="#EAE8FF"/>
+<text x="337" y="240" font-size="12" fill="#574FEA" font-weight="650" >● 已授权</text>
+<text x="23" y="242" font-size="23" fill="#18223A" font-weight="780" >管理中心</text>
+
+<text x="24" y="264" font-size="12" fill="#657086" font-weight="400" >admin.example.com · 共享 Vault 已解锁</text>
+<rect x="20" y="281" width="194" height="100" rx="18" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="36" y="307" font-size="12" fill="#657086" font-weight="600" >设备总数</text>
+<text x="36" y="343" font-size="29" fill="#18223A" font-weight="800" >3</text>
+<text x="85" y="342" font-size="11" fill="#657086" font-weight="400" >已授权节点</text>
+<rect x="226" y="281" width="194" height="100" rx="18" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="242" y="307" font-size="12" fill="#657086" font-weight="600" >在线设备</text>
+<text x="242" y="343" font-size="29" fill="#18223A" font-weight="800" >2</text>
+<text x="291" y="342" font-size="11" fill="#657086" font-weight="400" >连接正常</text>
+<rect x="20" y="391" width="194" height="100" rx="18" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="36" y="417" font-size="12" fill="#657086" font-weight="600" >已加载短信</text>
+<text x="36" y="453" font-size="29" fill="#18223A" font-weight="800" >248</text>
+<text x="85" y="452" font-size="11" fill="#657086" font-weight="400" >端侧解密</text>
+<rect x="226" y="391" width="194" height="100" rx="18" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="242" y="417" font-size="12" fill="#657086" font-weight="600" >待处理任务</text>
+<text x="242" y="453" font-size="29" fill="#18223A" font-weight="800" >1</text>
+<text x="291" y="452" font-size="11" fill="#657086" font-weight="400" >等待设备确认</text>
+<rect x="20" y="507" width="400" height="94" rx="20" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="39" y="539" font-size="17" fill="#18223A" font-weight="760" >快捷操作</text>
+<rect x="39" y="550" width="167" height="37" rx="11" fill="#EAE8FF"/>
+<g transform="translate(47 559) scale(0.7916666666666666)" fill="none" stroke="#574FEA" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 8a7 7 0 0 1 12-2l2 1M4 17l2 1a7 7 0 0 0 12-2"/></g>
+<text x="72" y="573" font-size="12" fill="#574FEA" font-weight="700" >刷新加密数据</text>
+<rect x="218" y="550" width="185" height="37" rx="11" fill="#F0F2FB"/>
+<g transform="translate(225 559) scale(0.7916666666666666)" fill="none" stroke="#657086" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></g>
+<text x="249" y="573" font-size="12" fill="#18223A" font-weight="650" >查看远程设备</text>
+<rect x="327" y="629" width="84" height="27" rx="14" fill="#EAE8FF"/>
+<text x="340" y="647" font-size="12" fill="#574FEA" font-weight="650" >1 项待确认</text>
+<rect x="20" y="613" width="400" height="177" rx="20" fill="#FFFFFF" stroke="#E1E5F0" stroke-width="1"/>
+<text x="39" y="647" font-size="17" fill="#18223A" font-weight="760" >远程任务</text>
+
+<rect x="284" y="673" width="86" height="27" rx="14" fill="#EAE8FF"/>
+<text x="297" y="691" font-size="12" fill="#574FEA" font-weight="650" >已下发</text>
+<rect x="38" y="664" width="364" height="112" rx="12" fill="#F0F2FB"/>
+<g transform="translate(50 677) scale(0.9583333333333334)" fill="none" stroke="#574FEA" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"><path d="M2 12h5l3-6 4 12 3-6h5"/></g>
+<text x="85" y="685" font-size="14" fill="#18223A" font-weight="700" >同步最新短信</text>
+<text x="85" y="708" font-size="12" fill="#657086" font-weight="400" >设备：vivo SIM 节点</text>
+
+<text x="85" y="735" font-size="11" fill="#657086" font-weight="400" >排队 ≠ 完成 · 等待设备 ACK</text>
+<text x="85" y="756" font-size="11" fill="#657086" font-weight="400" >最后更新 09:40</text>
+<text x="418" y="789" font-size="10" fill="#657086" font-weight="450" text-anchor="end">DEMO · 模拟数据</text>
+</svg>

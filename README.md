@@ -103,11 +103,11 @@ Open the management URL, log in, initialize the single encrypted Global Vault on
 
 ## Updates and compatibility tools
 
-**Relay:** Web Settings can check GitHub Releases and deploy Sigstore-verified, digest-pinned GHCR images through the separate **Rootless Docker** updater, with database backup and rollback. The Relay never receives the Docker socket. See [deployment](docs/DEPLOYMENT.md).
+**Relay:** Signed, digest-pinned Rootless Docker upgrades with backup and rollback. [Deployment](docs/DEPLOYMENT.md).
 
-**Android:** Signed APK checks work even when unpaired. Eligible Android 16+ nodes can opt into remote self-updates, Wi-Fi-only/low-battery restrictions, package/signature verification and Android installation confirmation. See [remote OTA](docs/REMOTE_OTA.md).
+**Android:** Signed APK checks work without pairing. Android 16+ can enable opt-in remote OTA with platform confirmation. [Remote OTA](docs/REMOTE_OTA.md).
 
-**Compatibility lab:** Inspect system SMS permissions/Provider/AppOps, request supported Companion Device association with system confirmation, open battery settings and authorize **Shizuku** on the phone. The local Shell console runs presets or developer commands, displaying stdout/stderr and exit status. No Relay-side Shell access or Android OTP protection bypass. See [compatibility lab](docs/COMPATIBILITY_LAB.md).
+**Compatibility lab:** On-device Shizuku shell (local authorization only), Companion Device association, SMS Provider/AppOps probes, and redacted logs. No remote Shell access or OTP bypass. [Compatibility lab](docs/COMPATIBILITY_LAB.md).
 
 ## SMS modes and response time
 

@@ -1059,10 +1059,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                             JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",credential))
                                         val uri="/api/v1/devices/"+device.getString("id")
                                         when(action){
-                                            "rename"->api.api(uri,"PATCH",JSONObject().put("name",value))
-                                            "revoke"->api.api(uri,"PATCH",JSONObject().put("revoke",true))
+                                            "rename"->api.api(uri+"/manage","POST",JSONObject()
+                                                .put("action","rename").put("name",value))
+                                            "revoke"->api.api(uri+"/manage","POST",JSONObject()
+                                                .put("action","revoke"))
                                             "purge"->api.api(uri+"/sms","DELETE")
                                             "delete"->api.api(uri,"DELETE")
+                                            else->throw IllegalArgumentException("Unsupported device action")
                                         }
                                     }
                                     pendingManageAction=null

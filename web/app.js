@@ -727,16 +727,31 @@ function syncSendControls(){
   if(activeConversationKey && !hasSmsSending())$('replyComposer').hidden=true;
 }
 function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
+// Indexed once per event-generation rather than re-sorting every decrypted SMS
+// and SIM source label while rendering a conversation.
+let simProfileIndexVersion='',simProfileIndex=new Map();
+function latestSimProfiles(){
+  const version=eventDataGeneration+':'+decryptedEvents.length;
+  if(simProfileIndexVersion===version)return simProfileIndex;
+  const next=new Map();
+  for(const e of decryptedEvents){
+    if(e.kind!=='sim.profile'||!e.payload)continue;
+    const p=e.payload,channel=String(p.channelId||''),revision=Number(p.channelRevision||1);
+    if(!channel)continue;
+    const key=e.deviceId+'|'+channel+'|'+revision,old=next.get(key);
+    if(!old||Number(e.occurredAt||0)>=Number(old.occurredAt||0))next.set(key,e);
+  }
+  simProfileIndex=next;simProfileIndexVersion=version;
+  return next;
+}
 function nodeChannels(d){
   if(!d||!d.state)return[];
   const channels=Array.isArray(d.state.channels)&&d.state.channels.length?d.state.channels:(d.state.subscriptions||[]).map(s=>Object.assign({id:s.channelId||String(s.subscriptionId),localId:String(s.subscriptionId),revision:s.channelRevision||1,kind:'android-sim'},s));
   const phones=d.state._phoneNumbers||[];
-  const profiles=decryptedEvents.filter(e=>e.deviceId===d.id&&e.kind==='sim.profile'&&e.payload)
-    .sort((a,b)=>(b.occurredAt||0)-(a.occurredAt||0));
+  const profiles=latestSimProfiles();
   return channels.map(ch=>{
     const found=phones.find(n=>String(n.channelId)===String(ch.id));
-    const profile=profiles.find(e=>String(e.payload.channelId)===String(ch.id)&&
-      Number(e.payload.channelRevision||1)===Number(ch.revision||ch.channelRevision||1))?.payload;
+    const profile=profiles.get(d.id+'|'+String(ch.id)+'|'+Number(ch.revision||ch.channelRevision||1))?.payload;
     return {...ch,alias:profile?.tag||ch.alias,
       phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||
         (profile?.tail?'••••'+profile.tail:'')).trim()};

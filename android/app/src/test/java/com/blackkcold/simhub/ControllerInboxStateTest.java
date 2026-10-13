@@ -73,6 +73,13 @@ public class ControllerInboxStateTest {
         assertNotEquals(p,ControllerConversation.INSTANCE.key("node1","simA",2,"13800138000"));
     }
 
+    @Test public void firstDeltaLoadMustInitializeHistoricalCursor() {
+        assertTrue(ControllerPagingPolicy.INSTANCE.isInitialPage("delta",0));
+        assertTrue(ControllerPagingPolicy.INSTANCE.isInitialPage("latest",100));
+        assertFalse(ControllerPagingPolicy.INSTANCE.isInitialPage("delta",50));
+        assertFalse(ControllerPagingPolicy.INSTANCE.isInitialPage("older",0));
+        assertFalse(ControllerPagingPolicy.INSTANCE.isInitialPage("older",50));
+    }
     @Test public void sourceLabelsNeverExposeOpaqueChannelIdentifiers() throws Exception {
         org.json.JSONObject channel=new org.json.JSONObject()
             .put("id","c1bb1442-37fa-49e6-9fd8-b54f71298301")

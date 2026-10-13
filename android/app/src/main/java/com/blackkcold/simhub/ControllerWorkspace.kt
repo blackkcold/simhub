@@ -777,7 +777,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 for(i in 0 until members.length()){
                                     val member=members.optJSONObject(i)?:continue
                                     val linked=devices.firstOrNull{it.optString("id")==member.optString("id")}
-                                    val memberName=linked?.optString("name")?.ifBlank{null}
+                                    val memberName=linked?.optString("name")?.takeIf{it.isNotBlank()}
                                         ?:member.optString("name").ifBlank{"SIM Node"}
                                     val status=when {
                                         !member.optBoolean("requested")->hubLabel("待设备启用","Node not enabled")

@@ -1,3 +1,13 @@
+## v0.16.7 — Compact native SIM Node settings and visual UX
+
+- Replace the excessively long SIM Node settings stack with a live operational summary, immediate sync and five categorized native settings destinations: connection/permissions, runtime/synchronization, sharing/privacy, application updates and advanced tools.
+- Provide responsive single-column phone and independently scrolling foldable/tablet master-detail views; retain a stable settings category during tab switches and use Android Back to return to the settings hub.
+- Condense the three energy profiles into compact icon-led selectors. Keep manual latest/older 100-message scans visible; show actual queued events, pending ACKs and last sync, while hiding verbose task metrics until explicitly expanded.
+- Add a cumulative, zero-to-one command-check success indicator only when actual nonzero counters exist; do not invent historical trends. Display current Relay/SMS Provider errors even when diagnostics are collapsed.
+- Move automatic APK update controls out of developer diagnostics. Preserve update checking without enrollment, Android 16+ remote OTA limits, local permissions and system installation confirmation.
+- Supply six matching editable SVG and Android VectorDrawable icons, native settings UI preview, bilingual documentation, and source/asset parity checks.
+- Preserve all existing pairing/reset recovery, relay command delivery, encrypted SMS Vault sharing, companion/full SMS mode rules, developer overrides and underlying background sync logic. OEM, foldable and accessibility validation on physical devices remains necessary.
+
 ## v0.16.6 — Android unpair lifecycle and Relay status recovery
 
 - Clear enrollment-scoped Relay errors, last-success timestamps, upload statistics and command diagnostics when a SIM node is unpaired or newly enrolled; retain system SMS, local SIM status and user device settings.

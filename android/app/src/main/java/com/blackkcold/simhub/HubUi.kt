@@ -43,6 +43,7 @@ private val DarkBg=Color(0xFF0F1321)
 
 class HubViewModel:ViewModel(){
     var tab by mutableStateOf(0)
+    var nodeSettingsPage by mutableIntStateOf(0)
     var controllerTab by mutableIntStateOf(0)
     var controllerRefresh by mutableIntStateOf(0)
     var thread by mutableStateOf<String?>(null)
@@ -138,9 +139,10 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
             ui.drafts["__new__"]=incomingBody
         }
     }
-    BackHandler(enabled=(surface=="controller" && ui.controllerTab!=0) || (surface=="node" && (tools.compatibilityOpen || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0))){
+    BackHandler(enabled=(surface=="controller" && ui.controllerTab!=0) || (surface=="node" && (tools.compatibilityOpen || (ui.tab==3 && ui.nodeSettingsPage!=0) || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0))){
         if(surface=="controller"){ui.controllerTab=0;return@BackHandler}
         if(tools.compatibilityOpen)controller.closeCompatibility()
+        else if(ui.tab==3 && ui.nodeSettingsPage!=0)ui.nodeSettingsPage=0
         else if(ui.tab==1 && ui.thread!=null)ui.thread=null
         else if(ui.tab==2 && ui.simDetail>=0)ui.simDetail=-1
         else ui.tab=0

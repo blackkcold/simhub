@@ -40,6 +40,10 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 </tr>
 </table>
 
+**Android · Compact SIM Node settings hub**
+
+![Illustrative native SIM Node settings hub: live status, immediate sync, categorized configuration](docs/assets/ui-android-settings.svg)
+
 **Mobile Web / PWA · Responsive encrypted conversation**
 
 <p align="center"><img src="docs/assets/ui-mobile.svg" alt="Mobile responsive Web PWA conversation preview" width="43%"></p>
@@ -53,6 +57,8 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 ## Native Android experience
 
 Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. Messages, device details, task history and settings are native rather than nested WebViews. Management-only devices need no telephony permissions.
+
+**SIM Node settings:** A compact live-status hub opens five native categories: connection, runtime/sync, sharing, updates and advanced tools. Foldables use separate scrolling panes. Energy profiles and real sync counters are visual; detailed diagnostics are on demand. All existing Node, Vault and OTA policies remain unchanged.
 
 **Same-phone controller approval:** Scan the management QR or import a trusted HTTPS address; authenticate in the phone's **system browser** with registered Passkey or password/TOTP, unlock the existing Global Vault, confirm the device fingerprint and return to SIM Hub. Native access uses a Keystore signing identity. Browser WebAuthn is not native Credential Manager; optional biometric app locking is not hardware-authenticated Vault decryption.
 
@@ -97,11 +103,11 @@ Open the management URL, log in, initialize the single encrypted Global Vault on
 
 ## Updates and compatibility tools
 
-**Relay:** Web Settings can check GitHub Releases and deploy Sigstore-verified, digest-pinned GHCR images through the separate **Rootless Docker** updater, with database backup and rollback. The Relay never receives the Docker socket. See [deployment](docs/DEPLOYMENT.md).
+**Relay:** Signed, digest-pinned Rootless Docker upgrades with backup and rollback. [Deployment](docs/DEPLOYMENT.md).
 
-**Android:** Signed APK checks work even when unpaired. Eligible Android 16+ nodes can opt into remote self-updates, Wi-Fi-only/low-battery restrictions, package/signature verification and Android installation confirmation. See [remote OTA](docs/REMOTE_OTA.md).
+**Android:** Signed APK checks work without pairing. Android 16+ can enable opt-in remote OTA with platform confirmation. [Remote OTA](docs/REMOTE_OTA.md).
 
-**Compatibility lab:** Inspect system SMS permissions/Provider/AppOps, request supported Companion Device association with system confirmation, open battery settings and authorize **Shizuku** on the phone. The local Shell console runs presets or developer commands, displaying stdout/stderr and exit status. No Relay-side Shell access or Android OTP protection bypass. See [compatibility lab](docs/COMPATIBILITY_LAB.md).
+**Compatibility lab:** On-device Shizuku shell (local authorization only), Companion Device association, SMS Provider/AppOps probes, and redacted logs. No remote Shell access or OTP bypass. [Compatibility lab](docs/COMPATIBILITY_LAB.md).
 
 ## SMS modes and response time
 

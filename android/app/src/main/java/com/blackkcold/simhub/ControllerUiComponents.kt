@@ -149,19 +149,8 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
         HorizontalDivider()
         LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(16.dp),
             verticalArrangement=Arrangement.spacedBy(12.dp)){
-            item{
-                HubCard(Modifier.fillMaxWidth()){
-                    HubSectionTitle(hubLabel("设备概览","Device overview"))
-                    InfoRow("App",device.optString("appVersion","—"))
-                    InfoRow(hubLabel("短信模式","SMS mode"),ControllerNodePolicy.sendModeLabel(device))
-                    InfoRow(hubLabel("短信发送权限","Send permission"),
-                        if(state.optBoolean("smsSendPermission"))hubLabel("已授权","Granted") else hubLabel("未授权","Unavailable"))
-                    InfoRow(hubLabel("远程发送能力","Remote send"),
-                        if(ControllerNodePolicy.canSend(device))hubLabel("可用","Available") else hubLabel("只读或不可用","Read-only / unavailable"))
-                    InfoRow(hubLabel("网络","Network"),state.optString("network","—"))
-                    InfoRow(hubLabel("待上传事件","Pending events"),state.optString("pendingEvents","—"))
-                }
-            }
+            item { ControllerHealthSummary(device) }
+            item { ControllerHealthCommunication(device) }
             item{
                 HubCard(Modifier.fillMaxWidth()){
                     HubSectionTitle(hubLabel("SIM 通道","SIM channels"))
@@ -181,6 +170,9 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
                     }
                 }
             }
+            item { ControllerHealthSync(device) }
+            item { ControllerHealthTimeline(device) }
+            item { ControllerHealthDiagnostics(device) }
             item{
                 HubCard(Modifier.fillMaxWidth()){
                     HubSectionTitle(hubLabel("远程操作","Remote actions"))

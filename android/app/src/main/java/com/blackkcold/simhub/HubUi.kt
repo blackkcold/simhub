@@ -178,7 +178,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                 }
                             },
                             actions={
-                                IconButton(onClick={if(isNode) controller.refresh()
+                                IconButton(onClick={if(isNode) controller.refreshRemote()
                                     else ui.controllerRefresh++}) {
                                     HubIcon(R.drawable.ic_hub_sync,Modifier.size(22.dp),
                                         description=stringResource(R.string.hub_refresh))

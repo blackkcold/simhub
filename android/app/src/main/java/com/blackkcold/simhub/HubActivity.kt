@@ -59,6 +59,7 @@ private object ActivePairing {
 }
 interface HubController {
     fun refresh()
+    fun refreshRemote()
     fun requestAccess()
     fun requestSmsRole()
     fun scan()
@@ -305,6 +306,22 @@ class HubActivity: ComponentActivity(), HubController {
             }finally{loading=false}
         }
     }
+    override fun refreshRemote(){
+        if(!AgentConfig(this).isEnrolled()){refresh();return}
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val api=ApiClient(applicationContext)
+                    api.pollCommands(false)
+                    if(AgentConfig(applicationContext).isEnrolled())api.putState()
+                }
+                toast(actionLabel("已连接服务器并刷新设备信息","Relay checked and device state updated"))
+            }catch(error:Exception){
+                AppLogger.e(this@HubActivity,"ManualRefresh","Immediate refresh failed",error)
+                toast(UiErrors.message(this@HubActivity,error))
+            }finally {refresh()}
+        }
+    }
     override fun requestAccess(){
         val requested=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
@@ -489,6 +506,11 @@ class HubActivity: ComponentActivity(), HubController {
                     val api=ApiClient(app)
                     api.pollCommands(false)
                     api.syncCycle()
+                    // An explicit user request must not wait for maintenance eligibility.
+                    if(AgentConfig(app).isEnrolled()){
+                        api.flushEvents()
+                        api.putState()
+                    }
                     SyncJobService.scheduleNow(app)
                     Pair(inspected,LocalStore.get(app).pendingEventCount())
                 }

@@ -112,11 +112,13 @@ public final class RelayForegroundService extends Service {
         if(exec.isShutdown()||!new AgentConfig(this).alwaysOn())return;
         long plannedEpoch=policyEpoch;
         commandTask=exec.schedule(()->{
-            long next=EnergyPolicy.commandIntervalMs(this);
+            // A running user-enabled foreground relay uses server-held long polling.
+            // Energy modes still govern expensive SMS scans and maintenance, not commands.
+            long next=0L;
             try{
                 if(new AgentConfig(this).isEnrolled()){
                     EnergyPolicy.increment(this,"commandPolls");
-                    new ApiClient(this).pollCommands(EnergyPolicy.isRealtime(this));
+                    new ApiClient(this).pollCommands(true);
                     commandFailures=0;
                 }
             }catch(Exception error){
@@ -131,7 +133,7 @@ public final class RelayForegroundService extends Service {
                     backoff=Math.max(backoff,Math.max(10,failure.retryAfter)*1000L);
                 next=Math.max(next,backoff);
             }finally{
-                // Idle balanced and eco modes do not keep an HTTP long-poll open.
+                // On an active relay, the server holds the request up to 15 s.
                 if(plannedEpoch==policyEpoch)scheduleCommand(next);
             }
         },Math.max(0,delayMs),TimeUnit.MILLISECONDS);

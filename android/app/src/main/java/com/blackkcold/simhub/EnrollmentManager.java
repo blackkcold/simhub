@@ -28,6 +28,13 @@ public final class EnrollmentManager {
         enrollmentActivated(c);
         AppLogger.i(c,"Enrollment","Node enrollment stored successfully version="+version);
     }
+    /** Reset session cadence, not the user's power preference or system SMS data. */
+    static void enrollmentActivated(Context c){
+        EnergyPolicy.resetSchedule(c);
+        DeviceMetadataSync.requestFull(c);
+        SyncJobService.schedule(c);
+        SyncJobService.scheduleNow(c);
+    }
     public static void requestReset(Context c){
         AgentConfig cfg=new AgentConfig(c);
         if(!cfg.isEnrolled()&&!cfg.resetPending()){reset(c);return;}

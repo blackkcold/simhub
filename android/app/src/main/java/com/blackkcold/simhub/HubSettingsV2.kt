@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -173,40 +174,24 @@ private fun PermissionsCard(state:HubSnapshot?,controller:HubController,modifier
 @Composable
 private fun EnergyModeChoice(
     value:String,title:String,summary:String,cadence:String,icon:Int,
-    selected:Boolean,onSelect:()->Unit
+    selected:Boolean,onSelect:()->Unit,modifier:Modifier=Modifier
 ){
     val scheme=MaterialTheme.colorScheme
-    Surface(
-        onClick=onSelect,
-        modifier=Modifier.fillMaxWidth().heightIn(min=108.dp).semantics { this.selected=selected },
-        shape=RoundedCornerShape(18.dp),
+    Surface(onClick=onSelect,modifier=modifier.heightIn(min=104.dp)
+        .semantics { this.selected=selected },shape=RoundedCornerShape(16.dp),
         color=if(selected)scheme.secondaryContainer else scheme.surface,
         border=BorderStroke(if(selected)2.dp else 1.dp,
-            if(selected)scheme.primary else scheme.outlineVariant)
-    ){
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=14.dp),
-            horizontalArrangement=Arrangement.spacedBy(12.dp),
-            verticalAlignment=Alignment.CenterVertically
-        ){
-            Box(
-                Modifier.size(48.dp).background(
-                    if(selected)scheme.primary.copy(alpha=0.10f) else scheme.surfaceVariant,
-                    RoundedCornerShape(14.dp)),
-                contentAlignment=Alignment.Center
-            ){
-                HubIcon(icon,Modifier.size(26.dp),
-                    tint=if(selected)scheme.primary else scheme.onSurfaceVariant)
-            }
-            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
-                Text(title,style=MaterialTheme.typography.titleSmall,
-                    fontWeight=FontWeight.SemiBold)
-                Text(summary,style=MaterialTheme.typography.bodySmall,
-                    color=scheme.onSurfaceVariant)
-                Text(cadence,style=MaterialTheme.typography.labelSmall,
-                    color=if(selected)scheme.primary else scheme.onSurfaceVariant)
-            }
-            RadioButton(selected=selected,onClick=null)
+            if(selected)scheme.primary else scheme.outlineVariant)){
+        Column(Modifier.fillMaxWidth().padding(horizontal=5.dp,vertical=12.dp),
+            verticalArrangement=Arrangement.spacedBy(8.dp),
+            horizontalAlignment=Alignment.CenterHorizontally){
+            HubIcon(icon,Modifier.size(27.dp),
+                tint=if(selected)scheme.primary else scheme.onSurfaceVariant)
+            Text(title,style=MaterialTheme.typography.labelMedium,
+                fontWeight=if(selected)FontWeight.Bold else FontWeight.Medium,
+                maxLines=2,overflow=TextOverflow.Ellipsis)
+            if(selected)Text("✓",style=MaterialTheme.typography.labelSmall,
+                color=scheme.primary) else Spacer(Modifier.height(16.dp))
         }
     }
 }
@@ -222,26 +207,27 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
             style=MaterialTheme.typography.bodySmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
-        Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
-            EnergyModeChoice(
-                EnergyPolicy.ECO,hubLabel("极致省电","Eco"),
-                hubLabel("降低后台网络频率，适合备用手机。","Minimize background network work."),
-                hubLabel("远程命令约每 14 分钟检查","Commands about every 14 minutes"),
-                R.drawable.ic_hub_eco,tools.energyMode==EnergyPolicy.ECO,
-                {controller.setEnergyMode(EnergyPolicy.ECO)})
-            EnergyModeChoice(
-                EnergyPolicy.BALANCED,hubLabel("智能均衡","Balanced"),
-                hubLabel("短信按事件上传，远程命令根据屏幕状态调整。","Event-driven SMS, adaptive remote command checks."),
-                hubLabel("活动约 45 秒 · 待机约 2 分钟","Active ~45s · Idle ~2min"),
-                R.drawable.ic_hub_balanced,tools.energyMode==EnergyPolicy.BALANCED,
-                {controller.setEnergyMode(EnergyPolicy.BALANCED)})
-            EnergyModeChoice(
-                EnergyPolicy.REALTIME,hubLabel("实时优先","Realtime"),
-                hubLabel("保持命令长轮询，响应更快，但耗电较高。","Long-poll commands for lower latency at higher power cost."),
-                hubLabel("约 15 秒长轮询","Up to 15s long polling"),
-                R.drawable.ic_hub_realtime,tools.energyMode==EnergyPolicy.REALTIME,
-                {controller.setEnergyMode(EnergyPolicy.REALTIME)})
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            EnergyModeChoice(EnergyPolicy.ECO,hubLabel("极致省电","Eco"),
+                "", "",R.drawable.ic_hub_eco,tools.energyMode==EnergyPolicy.ECO,
+                {controller.setEnergyMode(EnergyPolicy.ECO)},Modifier.weight(1f))
+            EnergyModeChoice(EnergyPolicy.BALANCED,hubLabel("智能均衡","Balanced"),
+                "", "",R.drawable.ic_hub_balanced,tools.energyMode==EnergyPolicy.BALANCED,
+                {controller.setEnergyMode(EnergyPolicy.BALANCED)},Modifier.weight(1f))
+            EnergyModeChoice(EnergyPolicy.REALTIME,hubLabel("实时优先","Realtime"),
+                "", "",R.drawable.ic_hub_realtime,tools.energyMode==EnergyPolicy.REALTIME,
+                {controller.setEnergyMode(EnergyPolicy.REALTIME)},Modifier.weight(1f))
         }
+        val policyDescription=when(tools.energyMode){
+            EnergyPolicy.ECO->hubLabel("极致省电：远程命令约每 14 分钟检查。",
+                "Eco: commands checked about every 14 minutes.")
+            EnergyPolicy.REALTIME->hubLabel("实时优先：约 15 秒长轮询，耗电可能较高。",
+                "Realtime: approximately 15s long polls; higher power use.")
+            else->hubLabel("智能均衡：活动约 45 秒，待机约 2 分钟检查命令。",
+                "Balanced: commands checked ~45s active, ~2min idle.")
+        }
+        Text(policyDescription,style=MaterialTheme.typography.bodySmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
         Row(verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
@@ -272,6 +258,41 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
             Spacer(Modifier.width(8.dp))
             Text(hubLabel("立即检查命令并同步短信","Check commands & sync SMS"))
         }
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
+            OutlinedButton(onClick={controller.syncHistory(false)},
+                enabled=state?.enrolled==true,modifier=Modifier.weight(1f)){
+                Text(hubLabel("最近 100 条","Latest 100"),maxLines=1)
+            }
+            OutlinedButton(onClick={controller.syncHistory(true)},
+                enabled=state?.enrolled==true,modifier=Modifier.weight(1f)){
+                Text(hubLabel("更早 100 条","Previous 100"),maxLines=1)
+            }
+        }
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            SettingsMetric(R.drawable.ic_hub_sync,hubLabel("待上传","Queued"),
+                state?.pending?.toString()?:"—",Modifier.weight(1f))
+            SettingsMetric(R.drawable.ic_hub_tasks,hubLabel("待确认 ACK","Pending ACK"),
+                state?.state?.optInt("pendingCommandAcks",0)?.toString()?:"—",
+                Modifier.weight(1f))
+            SettingsMetric(R.drawable.ic_hub_network,hubLabel("最近同步","Last sync"),
+                state?.lastSync?.takeIf{it>0L}?.let{
+                    java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
+                        .format(java.util.Date(it*1000))
+                }?:"—",Modifier.weight(1f))
+        }
+        if(state?.transportError?.isNotBlank()==true)
+            Text("Relay: "+state.transportError.take(160),color=MaterialTheme.colorScheme.error,
+                style=MaterialTheme.typography.bodySmall)
+        if(state?.providerError?.isNotBlank()==true)
+            Text("SMS Provider: "+state.providerError.take(160),
+                color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+        var showDetails by rememberSaveable { mutableStateOf(false) }
+        OutlinedButton(onClick={showDetails=!showDetails},modifier=Modifier.fillMaxWidth()){
+            Text(if(showDetails)hubLabel("收起技术指标","Hide technical diagnostics")
+                else hubLabel("展开任务与诊断指标","Show tasks & diagnostics"))
+        }
+        if(showDetails){
         val relayPhase=RelayUiState.phase(state?.enrolled==true,
             state?.resetPending==true,state?.resetRecoveryRequired==true)
         if(RelayUiState.showTransportDiagnostics(relayPhase)){
@@ -303,16 +324,21 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
                 })
             InfoRow(hubLabel("命令检查次数 / 失败","Command checks / errors"),
                 energy.optLong("commandPolls",0L).toString()+" / "+energy.optLong("commandPollErrors",0L))
+            val polls=energy.optLong("commandPolls",0L)
+            val failures=energy.optLong("commandPollErrors",0L)
+            if(polls>0L){
+                val healthy=((polls-failures).coerceAtLeast(0L).toFloat()/polls.toFloat()).coerceIn(0f,1f)
+                LinearProgressIndicator(progress={ healthy },modifier=Modifier.fillMaxWidth(),
+                    color=MaterialTheme.colorScheme.primary)
+                Text(hubLabel("命令检查成功占比（累计计数）","Command checks succeeded (cumulative)"),
+                    style=MaterialTheme.typography.labelSmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             InfoRow(hubLabel("维护 / 补偿扫描次数","Maintenance / reconciliation"),
                 energy.optLong("maintenanceRuns",0L).toString()+" / "+energy.optLong("reconciliationRuns",0L))
         }
         HorizontalDivider(Modifier.padding(vertical=12.dp))
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){
-            OutlinedButton(onClick={controller.syncHistory(false)},enabled=state?.enrolled==true,
-                modifier=Modifier.weight(1f)){Text(hubLabel("最近 100 条","Latest 100"),maxLines=1)}
-            OutlinedButton(onClick={controller.syncHistory(true)},enabled=state?.enrolled==true,
-                modifier=Modifier.weight(1f)){Text(hubLabel("更早 100 条","Previous 100"),maxLines=1)}
-        }
+
         InfoRow(hubLabel("待上传事件","Queued events"),(state?.pending?:0).toString())
         InfoRow(hubLabel("已上传回执（本机）","Uploaded receipts on device"),
             (state?.state?.optInt("uploadedEventReceipts",0)?:0).toString())
@@ -364,6 +390,7 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
         }
         if(state?.providerError?.isNotBlank()==true)
             Text("SMS Provider: "+state.providerError,color=MaterialTheme.colorScheme.error)
+        }
         OutlinedButton(onClick=controller::refreshDiagnostics,modifier=Modifier.fillMaxWidth()){
             Text(hubLabel("采集并同步设备状态","Collect and sync status"))
         }

@@ -11,6 +11,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -108,6 +114,21 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
     var otpOnly by remember { mutableStateOf(false) }
     var sourceFilter by remember { mutableStateOf("") }
     var activeThread by remember { mutableStateOf<String?>(null) }
+    val threadScroll=rememberLazyListState()
+    val conversationScroll=rememberLazyListState()
+    var toolbarHidden by remember { mutableStateOf(false) }
+    LaunchedEffect(activeThread) {
+        val scroll=if(activeThread==null)threadScroll else conversationScroll
+        toolbarHidden=false
+        var previous=0L
+        snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }
+            .collect { (index,offset) ->
+                val position=index.toLong()*100000L+offset
+                if(position>previous+8 && position>48L)toolbarHidden=true
+                else if(position+8<previous)toolbarHidden=false
+                previous=position
+            }
+    }
     BackHandler(enabled=activeThread!=null){ activeThread=null }
     val filtered=state.messages.filter { m ->
         (!otpOnly||m.otp.isNotBlank()) &&
@@ -134,6 +155,8 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
             }
             return@Column
         }
+        AnimatedVisibility(visible=!toolbarHidden || filtersExpanded,
+            enter=fadeIn()+expandVertically(),exit=fadeOut()+shrinkVertically()){
         Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=3.dp),
             verticalAlignment=Alignment.CenterVertically) {
             Text(if(activeThread==null)
@@ -156,6 +179,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 HubIcon(R.drawable.ic_hub_send,Modifier.size(20.dp),
                     description=hubLabel("新建短信","New SMS"))
             }
+        }
         }
         if(!canCompose && filtersExpanded)Text(
             hubLabel("只读或离线节点不会显示发送操作。不接管短信模式默认只读。",
@@ -208,7 +232,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     }
             }
             if(conversation.isEmpty())LaunchedEffect(key){activeThread=null}
-            LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),
+            LazyColumn(Modifier.fillMaxSize(),state=conversationScroll,contentPadding=PaddingValues(16.dp),
                 verticalArrangement=Arrangement.spacedBy(10.dp)){
                 items(conversation,key={it.id}){sms->
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=if(sms.inbound)
@@ -252,7 +276,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
                     Text("暂无已解密短信",color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp),
+            }else LazyColumn(Modifier.weight(1f),state=threadScroll,contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp),
                 verticalArrangement=Arrangement.spacedBy(4.dp)){
                 items(threads,key={it.first.thread}){(latest,count)->
                     HubCard(Modifier.fillMaxWidth().clickable{activeThread=latest.thread}){

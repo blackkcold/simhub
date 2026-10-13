@@ -161,11 +161,11 @@ public final class RemoteOta {
         String status=p.getString("stage","idle");
         if(expected<=0 || "succeeded".equals(status) || "failed".equals(status))return;
         int installed=installedVersionCode(c);
-        if(installed>=expected){
+        if(RemoteOtaPolicy.installedMatchesTarget(installed,expected,status)){
             finish(c,"succeeded","");
         }else if("installing".equals(status)){
             long updated=p.getLong("updatedAt",0);
-            if(updated>0 && System.currentTimeMillis()/1000-updated>=15*60){
+            if(RemoteOtaPolicy.installationNeedsVerification(status,updated,System.currentTimeMillis()/1000)){
                 stage(c,"verification_pending");
             }
         }

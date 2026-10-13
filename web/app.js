@@ -1,4 +1,5 @@
 import {renderNodeDashboard} from './device-dashboard.js';
+import {createToastHost} from './toast.js';
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 const $ = (id) => document.getElementById(id);
 const androidShell = new URLSearchParams(location.search).get('native') === '1';
@@ -41,7 +42,8 @@ function eventAad(deviceId,eventId,kind,occurredAt,subscriptionId,hasOtp){return
 function commandAad(deviceId,commandId,type,createdAt,expiresAt,idempotencyKey){return 'simhub-command-v2|'+field(deviceId)+'|'+field(commandId)+'|'+field(type)+'|'+createdAt+'|'+expiresAt+'|'+field(idempotencyKey);}
 function uuid(){return crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+b64u(crypto.getRandomValues(new Uint8Array(12)));}
 function escapeHtml(v){return String(v==null?'':v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-function toast(msg){const t=$('toast');t.textContent=localizeMessage(msg);t.classList.add('show');clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('show'),2600);}
+const toastHost=createToastHost($('toast'),localizeMessage);
+function toast(msg,options){toastHost.show(msg,options);}
 function fmtTime(ts){if(!ts)return '—';return new Intl.DateTimeFormat(getLocale()==='zh-CN'?'zh-CN':'en',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(ts*1000));}
 function deviceName(id){const d=devices.find(x=>x.id===id);return d?d.name:tr('sim_node');}
 

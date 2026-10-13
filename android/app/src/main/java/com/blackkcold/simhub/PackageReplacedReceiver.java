@@ -8,6 +8,7 @@ public final class PackageReplacedReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context c,Intent intent){
         if(!Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction()))return;
         RemoteOta.reconcileInstalledVersion(c);
+        DeviceMetadataSync.requestFull(c);
         SyncJobService.schedule(c);
         SyncJobService.scheduleNow(c);
         AgentConfig cfg=new AgentConfig(c);

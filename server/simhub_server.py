@@ -2051,6 +2051,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             where.append("(occurred_at<? OR (occurred_at=? AND seq<?))");args.extend([bt,bt,bs])
         if device:where.append("device_id=?");args.append(device)
         if kind:where.append("kind=?");args.append(kind)
+        if q.get("scope",[""])[0]=="sms":where.append("kind LIKE ?");args.append("sms.%")
         args.append(limit+1)
         with open_db() as con:
             rows=con.execute(f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY occurred_at DESC, seq DESC LIMIT ?",args).fetchall()
@@ -2060,6 +2061,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_json(200,{"events":events,"hasMore":has_more,"nextBeforeTime":last["occurred_at"] if last else None,"nextBeforeSeq":last["seq"] if last else None})
 
     def get_events(self,q:dict[str,list[str]]) -> None:
+        if q.get("scope",[""])[0] not in {"","sms"}:
+            self.send_error_json(400,"invalid_scope","Unsupported event scope"); return
         try:
             since=max(0,int(q.get("since",["0"])[0])); limit=max(1,min(int(q.get("limit",["200"])[0]),1000))
         except ValueError:
@@ -2076,6 +2079,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         where=["seq<?" if before else "seq>?" ]; args:list[Any]=[before if before else since]
         if device: where.append("device_id=?"); args.append(device)
         if kind: where.append("kind=?"); args.append(kind)
+        if q.get("scope",[""])[0]=="sms":where.append("kind LIKE ?");args.append("sms.%")
         args.append(limit)
         with open_db() as con:
             rows=con.execute(f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY seq {'DESC' if latest or before else 'ASC'} LIMIT ?",args).fetchall()

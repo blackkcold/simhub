@@ -1,3 +1,12 @@
+## v0.16.1 — OTA completion reconciliation and reliable device version sync
+
+- Reconcile remote Android APK updates with PackageManager-installed versionCode at startup, replacement broadcasts, background synchronization and installer callbacks; never equate submission with installation.
+- Persist OTA revisions across retries; bind installer callbacks to the active PackageInstaller session and show an explicit verification-pending state for stale install requests.
+- Refresh full device inventory on APK replacement and coalesce successful encrypted SMS uploads into version/online metadata heartbeats no more often than two minutes.
+- Atomically synchronize Relay device-list appVersion with full inventory, and let authenticated heartbeat update versionCode without falsely refreshing SIM inventory timestamps.
+- Present the current installed version and actual OTA verification/ACK distinction in Web/PWA and native Android controller. Preserve Android 16+ feature gating, system approval, SMS-role policy, E2EE, Rootless Docker and existing updater behavior.
+- Add Relay version reconciliation tests and Android policy regression tests. Physical OEM Android 16/17 confirmation and low-power behavior remain hardware acceptance tests.
+
 ## v0.16.0 — Native controller UX overhaul and SMS-mode-aware actions
 
 - Introduce dual Material 3 semantic themes: teal for the local SIM node and indigo for the native management center, with dedicated dashboard/device navigation vector icons and matching editable SVG sources.

@@ -8,6 +8,8 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -593,7 +595,213 @@ private fun CompatibilityEntry(controller:HubController,modifier:Modifier){
     }
 }
 
-/** Responsive two-column settings; no transition to any legacy activity. */
+
+@Composable
+private fun UpdatePreferencesCard(tools:HubToolsState,controller:HubController,modifier:Modifier){
+    ToolSection(hubLabel("检查应用更新","Check app updates"),modifier){
+        OutlinedButton(onClick=controller::checkOta,modifier=Modifier.fillMaxWidth()){
+            Text(hubLabel("检查正式版本","Check stable releases"))
+        }
+        if(tools.ota.isNotBlank())Text(tools.ota,style=MaterialTheme.typography.bodySmall)
+    }
+}
+
+/**
+ * Settings hub: keep the bottom navigation unchanged, but show only useful
+ * status and five task-oriented destinations until a category is selected.
+ * Navigation state belongs to HubViewModel so tab/fold changes preserve it.
+ */
+private const val SETTINGS_HOME=0
+private const val SETTINGS_CONNECTION=1
+private const val SETTINGS_RUNTIME=2
+private const val SETTINGS_SHARING=3
+private const val SETTINGS_UPDATES=4
+private const val SETTINGS_ADVANCED=5
+
+@Composable
+private fun SettingsMenuEntry(icon:Int,title:String,summary:String,status:String="",onClick:()->Unit) {
+    Surface(onClick=onClick,modifier=Modifier.fillMaxWidth().heightIn(min=68.dp),
+        color=MaterialTheme.colorScheme.surface,shape=RoundedCornerShape(18.dp),
+        tonalElevation=1.dp) {
+        Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=12.dp),
+            verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer,
+                RoundedCornerShape(13.dp)),contentAlignment=Alignment.Center){
+                HubIcon(icon,Modifier.size(23.dp),
+                    tint=MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
+                Text(title,style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
+                Text(summary,style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2,
+                    overflow=TextOverflow.Ellipsis)
+            }
+            if(status.isNotBlank()) Text(status,style=MaterialTheme.typography.labelSmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+            Text("›",style=MaterialTheme.typography.titleLarge,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun NodeStatusOverview(state:HubSnapshot?,tools:HubToolsState,controller:HubController){
+    val enrolled=state?.enrolled==true
+    val blocked=state?.resetPending==true
+    val recovering=state?.resetRecoveryRequired==true
+    val connectionLabel=when {
+        recovering->hubLabel("解绑异常 · 需恢复","Reset blocked · recovery needed")
+        blocked->hubLabel("正在解除配对","Unpair confirmation pending")
+        !enrolled->hubLabel("尚未配对","Not paired")
+        tools.relayAlive->hubLabel("命令监听运行中","Command listener running")
+        else->hubLabel("已配对 · 前台监听未运行","Paired · listener not running")
+    }
+    HubCard(Modifier.fillMaxWidth()){
+        Row(verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            HubIcon(R.drawable.ic_hub_sim,Modifier.size(28.dp),
+                tint=MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("本机 SIM 节点","Local SIM node"),
+                    style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
+                Text(connectionLabel,style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            StatePill(if(enrolled&&!blocked)hubLabel("已配对","Paired")
+                else hubLabel("需处理","Needs attention"),enrolled&&!blocked)
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            SettingsMetric(R.drawable.ic_hub_shield,
+                hubLabel("短信权限","SMS access"),
+                if(state==null) "—" else if(state.smsRead && state.smsReceive)
+                    hubLabel("已授权","Granted") else hubLabel("需授权","Action needed"),
+                Modifier.weight(1f))
+            SettingsMetric(R.drawable.ic_hub_balanced,
+                hubLabel("能耗策略","Energy policy"),
+                when(tools.energyMode){
+                    EnergyPolicy.ECO->hubLabel("省电","Eco")
+                    EnergyPolicy.REALTIME->hubLabel("实时","Realtime")
+                    else->hubLabel("均衡","Balanced")
+                },Modifier.weight(1f))
+            SettingsMetric(R.drawable.ic_hub_sync,
+                hubLabel("待上传","Queued"),
+                state?.pending?.toString()?:"—",Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(onClick=controller::syncNow,enabled=enrolled&&!blocked,
+            modifier=Modifier.fillMaxWidth()){
+            HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(hubLabel("立即检查命令并同步短信","Check commands & sync SMS"))
+        }
+        val error=state?.transportError.orEmpty().ifBlank {
+            state?.providerError.orEmpty()
+        }
+        if(error.isNotBlank() && enrolled && !blocked){
+            Spacer(Modifier.height(8.dp))
+            Text(hubLabel("需要处理：","Attention: ")+error.take(160),
+                color=MaterialTheme.colorScheme.error,
+                style=MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun SettingsMetric(icon:Int,title:String,value:String,modifier:Modifier=Modifier) {
+    Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant,
+        RoundedCornerShape(12.dp)).padding(horizontal=7.dp,vertical=10.dp),
+        horizontalAlignment=Alignment.CenterHorizontally,
+        verticalArrangement=Arrangement.spacedBy(5.dp)){
+        HubIcon(icon,Modifier.size(19.dp),tint=MaterialTheme.colorScheme.primary)
+        Text(value,style=MaterialTheme.typography.labelMedium,
+            fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
+        Text(title,style=MaterialTheme.typography.labelSmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines=1,overflow=TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun SettingsDestinations(state:HubSnapshot?,tools:HubToolsState,onSelect:(Int)->Unit){
+    val enrolled=state?.enrolled==true
+    SettingsMenuEntry(R.drawable.ic_hub_network,
+        hubLabel("连接与权限","Connection & permissions"),
+        hubLabel("配对 · 短信接管 · 系统权限","Pairing · SMS mode · system access"),
+        if(state?.resetPending==true)hubLabel("待恢复","Pending")
+        else if(enrolled)hubLabel("已配对","Paired") else hubLabel("未配对","Unpaired"),
+        {onSelect(SETTINGS_CONNECTION)})
+    SettingsMenuEntry(R.drawable.ic_hub_balanced,
+        hubLabel("运行与同步","Runtime & synchronization"),
+        hubLabel("能耗策略 · 前台连接 · 历史同步","Energy · foreground relay · SMS history"),
+        when(tools.energyMode){
+            EnergyPolicy.ECO->hubLabel("省电","Eco")
+            EnergyPolicy.REALTIME->hubLabel("实时","Realtime")
+            else->hubLabel("均衡","Balanced")
+        },{onSelect(SETTINGS_RUNTIME)})
+    SettingsMenuEntry(R.drawable.ic_hub_shield,
+        hubLabel("共享与隐私","Sharing & privacy"),
+        hubLabel("共享短信池 · 端到端加密授权","Shared SMS pool · encryption"),
+        if(tools.poolApproved)hubLabel("已授权","Approved")
+        else if(tools.poolEnabled)hubLabel("待批准","Pending")
+        else hubLabel("关闭","Off"),{onSelect(SETTINGS_SHARING)})
+    SettingsMenuEntry(R.drawable.ic_hub_sync,
+        hubLabel("应用更新","App updates"),
+        hubLabel("检查版本 · 自动更新 · 远程 OTA","Version · auto update · remote OTA"),
+        BuildConfig.VERSION_NAME,{onSelect(SETTINGS_UPDATES)})
+    SettingsMenuEntry(R.drawable.ic_hub_settings,
+        hubLabel("系统与高级工具","System & advanced tools"),
+        hubLabel("语言 · 日志 · 兼容实验室","Language · logs · compatibility"),
+        onClick={onSelect(SETTINGS_ADVANCED)})
+}
+
+@Composable
+private fun SettingsCategoryHeader(page:Int,onBack:()->Unit){
+    val title=when(page){
+        SETTINGS_CONNECTION->hubLabel("连接与权限","Connection & permissions")
+        SETTINGS_RUNTIME->hubLabel("运行与同步","Runtime & synchronization")
+        SETTINGS_SHARING->hubLabel("共享与隐私","Sharing & privacy")
+        SETTINGS_UPDATES->hubLabel("应用更新","App updates")
+        else->hubLabel("系统与高级工具","System & advanced tools")
+    }
+    Row(Modifier.fillMaxWidth().heightIn(min=52.dp),
+        verticalAlignment=Alignment.CenterVertically,
+        horizontalArrangement=Arrangement.spacedBy(12.dp)){
+        IconButton(onClick=onBack){
+            Text("‹",style=MaterialTheme.typography.headlineMedium,
+                color=MaterialTheme.colorScheme.onSurface)
+        }
+        Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+    }
+}
+
+private fun LazyListScope.settingsCategoryContent(page:Int,state:HubSnapshot?,
+    pairing:PairingDisplay?,ui:HubViewModel,controller:HubController,tools:HubToolsState){
+    when(page){
+        SETTINGS_CONNECTION->{
+            item(key="pairing"){PairedNodeCard(state,pairing,ui,controller,Modifier.fillMaxWidth())}
+            item(key="permissions"){PermissionsCard(state,controller,Modifier.fillMaxWidth())}
+        }
+        SETTINGS_RUNTIME->item(key="runtime"){
+            RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
+        }
+        SETTINGS_SHARING->item(key="sharing"){
+            SharingCard(state,tools,controller,Modifier.fillMaxWidth())
+        }
+        SETTINGS_UPDATES->{
+            item(key="updates"){UpdatePreferencesCard(tools,controller,Modifier.fillMaxWidth())}
+            item(key="remote_ota"){RemoteOtaCard(state,tools,controller,Modifier.fillMaxWidth())}
+        }
+        SETTINGS_ADVANCED->{
+            item(key="preferences"){PreferencesCard(tools,controller,Modifier.fillMaxWidth())}
+            item(key="diagnostics"){DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())}
+            item(key="lab"){CompatibilityEntry(controller,Modifier.fillMaxWidth())}
+        }
+    }
+}
+
+/** A short single-column home, and independently scrolling master/detail on wide screens. */
 @Composable
 fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                   controller:HubController,tools:HubToolsState,wide:Boolean){
@@ -601,35 +809,49 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
         HubCompatibilityScreen(state,tools,controller,wide)
         return
     }
+    val page=ui.nodeSettingsPage
+    val goHome={ui.nodeSettingsPage=SETTINGS_HOME}
     BoxWithConstraints(Modifier.fillMaxSize()){
-        val twoColumns=wide && maxWidth>=740.dp && maxHeight>=480.dp
-        if(twoColumns){
-            Row(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+        val twoPanes=wide && maxWidth>=740.dp && maxHeight>=480.dp
+        if(twoPanes) {
+            Row(Modifier.fillMaxSize().padding(16.dp),
                 horizontalArrangement=Arrangement.spacedBy(16.dp)){
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
-                    PairedNodeCard(state,pairing,ui,controller,Modifier.fillMaxWidth())
-                    PermissionsCard(state,controller,Modifier.fillMaxWidth())
-                    CompatibilityEntry(controller,Modifier.fillMaxWidth())
-                    PreferencesCard(tools,controller,Modifier.fillMaxWidth())
+                LazyColumn(Modifier.weight(0.95f).fillMaxHeight(),
+                    verticalArrangement=Arrangement.spacedBy(10.dp)){
+                    item(key="status"){NodeStatusOverview(state,tools,controller)}
+                    item(key="destinations"){SettingsDestinations(state,tools){ui.nodeSettingsPage=it}}
+                    item(key="padding"){Spacer(Modifier.height(10.dp))}
                 }
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(14.dp)){
-                    RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
-                    SharingCard(state,tools,controller,Modifier.fillMaxWidth())
-                    RemoteOtaCard(state,tools,controller,Modifier.fillMaxWidth())
-                    DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
+                LazyColumn(Modifier.weight(1.05f).fillMaxHeight(),
+                    verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    if(page==SETTINGS_HOME) {
+                        item(key="hint"){
+                            HubCard(Modifier.fillMaxWidth()){
+                                Text(hubLabel("选择左侧项目进行配置","Choose a category to configure"),
+                                    style=MaterialTheme.typography.titleMedium)
+                                Text(hubLabel("常用状态与立即同步已在左侧。详细设置按需打开。",
+                                    "Status and immediate sync are on the left. Open only the settings you need."),
+                                    style=MaterialTheme.typography.bodySmall,
+                                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }else{
+                        item(key="header"){SettingsCategoryHeader(page,goHome)}
+                        settingsCategoryContent(page,state,pairing,ui,controller,tools)
+                    }
                 }
             }
         }else{
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-                verticalArrangement=Arrangement.spacedBy(14.dp)){
-                PairedNodeCard(state,pairing,ui,controller,Modifier.fillMaxWidth())
-                PermissionsCard(state,controller,Modifier.fillMaxWidth())
-                CompatibilityEntry(controller,Modifier.fillMaxWidth())
-                RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
-                SharingCard(state,tools,controller,Modifier.fillMaxWidth())
-                RemoteOtaCard(state,tools,controller,Modifier.fillMaxWidth())
-                DiagnosticsCard(state,tools,controller,Modifier.fillMaxWidth())
-                PreferencesCard(tools,controller,Modifier.fillMaxWidth())
+            LazyColumn(Modifier.fillMaxSize(),
+                contentPadding=PaddingValues(16.dp),
+                verticalArrangement=Arrangement.spacedBy(12.dp)){
+                if(page==SETTINGS_HOME){
+                    item(key="status"){NodeStatusOverview(state,tools,controller)}
+                    item(key="destinations"){SettingsDestinations(state,tools){ui.nodeSettingsPage=it}}
+                }else{
+                    item(key="header"){SettingsCategoryHeader(page,goHome)}
+                    settingsCategoryContent(page,state,pairing,ui,controller,tools)
+                }
             }
         }
     }

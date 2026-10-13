@@ -92,6 +92,7 @@ public final class EnergyPolicy {
         return stats;
     }
     public static void resetSchedule(Context c) {
-        prefs(c).edit().remove("maintenance").remove("reconciliation").apply();
+        prefs(c).edit().remove("maintenance").remove("reconciliation")
+            .remove("command_fallback").apply();
     }
 }

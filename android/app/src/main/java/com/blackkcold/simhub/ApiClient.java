@@ -379,13 +379,12 @@ public final class ApiClient {
         return raw(url,method,body,auth,deviceId,12000);
     }
     private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId,int readTimeout)throws Exception{
-        HttpURLConnection con=(HttpURLConnection)new URL(url).openConnection();con.setRequestMethod(method);con.setConnectTimeout(8000);con.setReadTimeout(readTimeout);con.setUseCaches(false);con.setRequestProperty("Accept","application/json");if(auth!=null)con.setRequestProperty("Authorization",auth);if(deviceId!=null)con.setRequestProperty("X-SimHub-Device-Id",deviceId);if(body!=null){con.setDoOutput(true);con.setRequestProperty("Content-Type","application/json");con.getOutputStream().write(body.toString().getBytes(StandardCharsets.UTF_8));}int code=con.getResponseCode();InputStream in=code>=400?con.getErrorStream():con.getInputStream();String text=read(in);String retryAfterHeader=con.getHeaderField("Retry-After");con.disconnect();JSONObject out=text.isBlank()?new JSONObject():new JSONObject(text);if(code<200||code>=300){
+        HttpURLConnection con=(HttpURLConnection)new URL(url).openConnection();con.setRequestMethod(method);con.setConnectTimeout(8000);con.setReadTimeout(readTimeout);con.setUseCaches(false);con.setRequestProperty("Accept","application/json");if(auth!=null)con.setRequestProperty("Authorization",auth);if(deviceId!=null)con.setRequestProperty("X-SimHub-Device-Id",deviceId);if(body!=null){con.setDoOutput(true);con.setRequestProperty("Content-Type","application/json");con.getOutputStream().write(body.toString().getBytes(StandardCharsets.UTF_8));}int code=con.getResponseCode();InputStream in=code>=400?con.getErrorStream():con.getInputStream();String text;String retryAfterHeader;try{text=BoundedHttpReader.readUtf8(in,BoundedHttpReader.MAX_JSON_BYTES);retryAfterHeader=con.getHeaderField("Retry-After");}finally{con.disconnect();}JSONObject out=text.isBlank()?new JSONObject():new JSONObject(text);if(code<200||code>=300){
             int retry=60;
             try{retry=Integer.parseInt(retryAfterHeader);}catch(Exception ignored){}
             throw new ApiFailure(code,out.optString("error","http_error"),out.optString("message","HTTP "+code),Math.max(1,Math.min(600,retry)));
         }
         return out;
     }
-    private static String read(InputStream in)throws Exception{if(in==null)return "";try(in;ByteArrayOutputStream b=new ByteArrayOutputStream()){byte[] buf=new byte[4096];int n;while((n=in.read(buf))!=-1)b.write(buf,0,n);return b.toString(StandardCharsets.UTF_8);}}
     private static void requireHttps(String server)throws Exception{URI u=URI.create(server);if(!"https".equalsIgnoreCase(u.getScheme())||u.getHost()==null)throw new SecurityException("SIM Hub server must use HTTPS");}
 }

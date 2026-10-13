@@ -28,30 +28,41 @@ def version_tuple(value):
     return tuple(int(x) for x in match.groups()) if match else (0, 0, 0)
 
 
-def release():
+def release(force: bool = False):
+    """Discover the latest stable release; explicit UI checks bypass the 15-minute cache.
+
+    A five-second coalescing window prevents repeated manual clicks from
+    creating parallel GitHub API requests. Failed checks never replace the
+    last successful cache or silently report an outdated version as current.
+    """
     global _cache
     with _lock:
-        if _cache[1] is not None and time.monotonic() - _cache[0] < 900:
-            return _cache[1]
-    request = urllib.request.Request(API, headers={
-        "Accept": "application/vnd.github+json", "User-Agent": "simhub-updater/0.9.1"
-    })
-    with urllib.request.urlopen(request, timeout=8) as response:
-        result = json.load(response)
-    tag = result.get("tag_name", "")
-    if (not VERSION.fullmatch(tag) or result.get("draft") or result.get("prerelease")
-            or not result.get("published_at")):
-        raise ValueError("Untrusted or invalid stable release")
-    assets = {x["name"]: x["browser_download_url"]
-              for x in result.get("assets", [])
-              if isinstance(x.get("name"), str) and x.get("browser_download_url", "").startswith(
-                  "https://github.com/blackkcold/simhub/releases/download/" + tag + "/")}
-    data = {"version": tag.removeprefix("v"), "tag": tag, "assets": assets,
-            "publishedAt": result["published_at"]}
-    with _lock:
+        age = time.monotonic() - _cache[0]
+        if _cache[1] is not None and age < (5 if force else 900):
+            return {**_cache[1], "fromCache": True, "cacheAgeSeconds": max(0, int(age))}
+        request = urllib.request.Request(API, headers={
+            "Accept": "application/vnd.github+json", "User-Agent": "simhub-updater/0.16"
+        })
+        with urllib.request.urlopen(request, timeout=8) as response:
+            raw = response.read(262145)
+        if len(raw) > 262144:
+            raise ValueError("Release metadata exceeds size limit")
+        result = json.loads(raw)
+        tag = result.get("tag_name", "")
+        if (not isinstance(tag, str) or not VERSION.fullmatch(tag)
+                or result.get("draft") or result.get("prerelease")
+                or not result.get("published_at")):
+            raise ValueError("Untrusted or invalid stable release")
+        prefix = "https://github.com/blackkcold/simhub/releases/download/" + tag + "/"
+        assets = {item["name"]: item["browser_download_url"]
+                  for item in result.get("assets", [])
+                  if isinstance(item, dict) and isinstance(item.get("name"), str)
+                  and isinstance(item.get("browser_download_url"), str)
+                  and item["browser_download_url"].startswith(prefix)}
+        data = {"version": tag.removeprefix("v"), "tag": tag, "assets": assets,
+                "publishedAt": result["published_at"], "checkedAt": int(time.time())}
         _cache = (time.monotonic(), data)
-    return data
-
+        return {**data, "fromCache": False, "cacheAgeSeconds": 0}
 
 def manifest():
     info = release()

@@ -1,4 +1,4 @@
-# SIM Hub public exposure hardening (v0.3.1)
+# SIM Hub public exposure hardening
 
 This guide is for the **publicly exposed administrator PWA** and the separately authenticated Android/Linux node API. It does not configure your DNS provider, reverse-proxy host, firewall, or third-party identity service automatically.
 
@@ -25,7 +25,7 @@ This guide is for the **publicly exposed administrator PWA** and the separately 
 
 | Control | Behavior |
 |---|---|
-| Session expiration | Absolute TTL of 8 h, idle TTL of 15 min by default; SSE and background polling do not extend idle lifetime |
+| Session expiration | Current defaults: absolute TTL of 24 h and idle TTL of 8 h (`SIMHUB_SESSION_TTL=86400`, `SIMHUB_SESSION_IDLE_TTL=28800`); SSE and background polling do not extend idle lifetime. Operators can choose shorter values for high-risk environments. |
 | CSRF | Session-authenticated write requests require `X-SimHub-CSRF`; token returned by login/check and derived from server secret and session nonce |
 | Origin and MIME | Incoming Origin must match configured origins; JSON writes require application/json |
 | Privileged operations | SMS send, node enrollment, revocation, key rotation, event purge, and revoke-all require a recently elevated TOTP browser session (default 120 s) |
@@ -54,3 +54,11 @@ Keep offline Vault recovery material independent of server database backups. Ses
 - [ ] Duplicate/replayed SMS commands cannot bypass device-local quotas.
 - [ ] Reverse proxy never exposes port 8787, database volume, health internals or access tokens.
 - [ ] GitHub CI server, surface-separation, modem and Android jobs pass.
+
+## Security scanning and controlled high-privilege features
+
+- CodeQL Java/Kotlin must compile the actual Android application under JDK 17, Android API 37, and Gradle 9.6; green scan jobs without Kotlin extraction coverage are not sufficient.
+- Shizuku shell diagnostics are an explicit local, developer-authorized operation. They are not a Relay command endpoint. Do not remove this capability merely to silence a generic process-execution warning; review caller identity, permissions, and execution bounds.
+- The example Caddy reverse proxy overwrites `X-Forwarded-For` with the upstream's real client address. Other ingress products must be configured equivalently before forwarded IP headers are trusted.
+- Notification webhooks and push adapters are controlled by the Relay administrator's environment; they are not user-supplied URLs. Prefer fixed HTTPS destinations and limit outbound proxy access.
+- A manual release check bypasses the normal 15-minute cache, while automated discovery remains cached. Update availability, updater readiness, ignored versions, and Release API errors are distinct conditions. A successful remote lookup is not permission to bypass APK signing verification or rootless OCI signature verification.

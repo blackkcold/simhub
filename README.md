@@ -14,7 +14,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 [![Release](https://img.shields.io/github/v/release/blackkcold/simhub)](https://github.com/blackkcold/simhub/releases/latest)
 [![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
 
-Android v0.15.7 builds on the unified SIM node and native controller navigation. First-time management authorization can be completed on the **same phone** using the HTTPS browser's Passkey/biometric support (or password/TOTP), with E2EE Global Vault approval and secure return to the app.
+Android uses **one native Material 3 shell** for SIM Node and Management Center, with distinct role themes, adaptive navigation and on-device end-to-end decryption.
 
 **[Download Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[Quick deployment](docs/QUICKSTART.zh-CN.md)** · [Installation guide](docs/INSTALLATION.md)
 
@@ -41,25 +41,26 @@ Android v0.15.7 builds on the unified SIM node and native controller navigation.
 
 <sub>Illustrative UI mockups using synthetic data; not screenshots from a live account or real messages.</sub>
 
-## Updates (v0.9.1)
+## Native Android experience
 
-Web Settings offers GitHub Release checking, ignore and one-click deployment of **Sigstore-verified GHCR OCI digests**. Automatic updates require a dedicated Rootless Docker daemon, trusted Cosign CLI and one-time **non-root** enrollment (`bash scripts/install-updater.sh`); the retired root updater must be disabled explicitly. The Relay never receives a Docker socket. Each update backs up SQLite, validates readiness and restores the prior image on failure; schema migrations remain supervised. Android Settings can check, ignore and download signed APKs for user-approved installation. See [Rootless migration](docs/DEPLOYMENT.md) and [Android setup](docs/ANDROID_SETUP.md).
+Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. Messages, device details, task history and settings are native rather than nested WebViews. Management-only devices need no telephony permissions.
+
+**Same-phone controller approval:** Scan the management QR or import a trusted HTTPS address; authenticate in the phone's **system browser** with registered Passkey or password/TOTP, unlock the existing Global Vault, confirm the device fingerprint and return to SIM Hub. Native access uses a Keystore signing identity. Browser WebAuthn is not native Credential Manager; optional biometric app locking is not hardware-authenticated Vault decryption.
 
 ## Features
 
 | Capability | What it does |
 |---|---|
-| **SMS and OTP** | Non-default companion mode or optional full SMS-handler mode; multi-SIM receive/send and OTP parsing (Android 17 OTP delay applies to non-default apps) |
-| **Native Android UI** | One Material 3 adaptive interface with foldable panes, SIM tags, messaging, all advanced tools and local diagnostics |
-| **Devices and SIMs** | Android and Linux modem nodes; phone numbers, signal, charging, Wi-Fi and connectivity |
-| **Shared SMS (opt-in)** | Authorized Android devices decrypt a common encrypted pool; latest 100, incremental/older pagination and masked SIM provenance |
-| **History and diagnostics** | Latest 100 rescan, older 100 backfill, auto-loading Web inbox, device health and redacted diagnostics |
-| **Pairing** | Scan the controller QR from Android, or enter the Android eight-digit pairing code and verify the device fingerprint |
-| **Privacy and authentication** | Node-Key end-to-end encryption, username / TOTP / Passkeys, active Vault session recovery |
-| **Offline resilience** | Durable queues, retries, foreground relay and scheduled background recovery |
-| **Android power modes** | Eco / Balanced / Realtime; independent command polling and SMS event wakeups ([energy guide](docs/ENERGY_POLICY.md)) |
+| **SMS and OTP** | Local/remote conversations, OTP extraction for accessible texts, SIM tags, filters and paging; read-only companion mode versus permission-gated full SMS-handler sending |
+| **Native Android UI** | Material 3 dual roles, distinct themes, four-tab navigation, foldable layouts, quick actions and native device detail |
+| **Devices and SIMs** | Android / Linux modem nodes, SIM channel identity, signal, battery, Wi-Fi, installed app version and task states |
+| **Shared SMS (opt-in)** | Authorized members decrypt an encrypted common pool with source attribution, history pagination, revocation and key rotation |
+| **Pairing and security** | QR/link or eight-digit pairing code and fingerprint, one Global Vault, independent Node Keys, password/TOTP/Passkeys, native controller identity |
+| **Reliability** | Encrypted local queue, manual immediate command/SMS sync, older-history rescan, foreground HTTPS long-poll, offline retry and durable acknowledgements |
+| **Reset and OTA** | Remote unpair and recovery states, signed APK self-updates, opt-in Android remote OTA, verified Rootless Docker Relay upgrades |
+| **Diagnostics** | Redacted logs, SMS Provider tests, user-confirmed Companion Device association and locally authorized Shizuku Shell console |
 
-Editable SVG icon sources are in [design/icons](design/icons); the APK uses matching Android VectorDrawables with automated parity checks.
+Editable SVG icons are in [design/icons](design/icons), with matching Android VectorDrawables.
 
 ## How it works
 
@@ -85,21 +86,33 @@ The installer checks DNS / Docker / ports, creates the Admin Token, TOTP and own
 
 Open the management URL, log in, initialize the single encrypted Global Vault once (or unlock it with the existing Vault password), then install the signed Android APK, enroll by QR/code and grant SMS receive/read/send permissions. Keeping the built-in Messages app as default is supported; switching to SIM Hub as the default SMS handler is optional.
 
-## Android system compatibility lab (v0.12.0)
+## Updates and compatibility tools
 
-The Android Agent's **Settings → System compatibility lab** is a separate optional screen for Shizuku 13.1.5 Binder/permission onboarding, Android 13+ user-confirmed self-managed CDM associations, SDK/target and SMS/AppOp read-only diagnostics, SMS Provider permission probes, manual encrypted reconciliation, OEM battery settings and privacy-safe audit logs. No silent OEM Messages disabling, OTP/AppOps permission changes or Android compatibility override is performed. **Neither Shizuku nor CDM alone guarantees real-time protected OTP access.** See [compatibility lab](docs/COMPATIBILITY_LAB.md).
+**Relay:** Web Settings can check GitHub Releases and deploy Sigstore-verified, digest-pinned GHCR images through the separate **Rootless Docker** updater, with database backup and rollback. The Relay never receives the Docker socket. See [deployment](docs/DEPLOYMENT.md).
 
-## Non-default SMS compatibility
+**Android:** Signed APK checks work even when unpaired. Eligible Android 16+ nodes can opt into remote self-updates, Wi-Fi-only/low-battery restrictions, package/signature verification and Android installation confirmation. See [remote OTA](docs/REMOTE_OTA.md).
 
-The Android node listens for `SMS_RECEIVED` and reads the system SMS Provider without replacing the OEM Messages app, when the device grants `RECEIVE_SMS`, `READ_SMS` and `SEND_SMS`. SMS broadcasts wake the existing encrypted sync queue; a six-hour rolling Provider scan reconciles delayed SMS without overwriting the OEM inbox. On Android 17, non-exempt apps can receive protected OTP messages **about three hours late**. Permissions may be withheld by the installer or OEM; live OTP reception is not guaranteed in companion mode. Use the optional default-handler mode where supported if real-time protected OTPs are essential. [Android setup](docs/ANDROID_SETUP.md) explains the limits.
+**Compatibility lab:** Inspect system SMS permissions/Provider/AppOps, request supported Companion Device association with system confirmation, open battery settings and authorize **Shizuku** on the phone. The local Shell console runs presets or developer commands, displaying stdout/stderr and exit status. No Relay-side Shell access or Android OTP protection bypass. See [compatibility lab](docs/COMPATIBILITY_LAB.md).
 
-## Boundaries
+## SMS modes and response time
 
-The relay cannot read SMS or Vault plaintext; Passkeys authenticate users but do not replace Vault recovery keys. Default inactivity is **8 hours** with a **24-hour absolute session limit**; active same-tab refresh can restore the unlocked Vault. Android cellular fallback uses the **OS-configured default data SIM**—ordinary apps cannot force-switch it. **No phone calling; MMS media support remains limited.**
+| Node mode | Receive/read | Send |
+|---|---|---|
+| **Companion — OEM Messages stays default** | Where Android allows SMS access | **Hidden/disabled by default** |
+| **Full default SMS-handler** | Subject to Android permissions | Requires SEND_SMS and valid channel |
+| **Companion developer override** | Same OS restrictions | Explicit time-limited test mode |
+| **Supported modem** | Modem-dependent | Modem/channel capability checks |
+
+Outgoing messages bind to a stable device, SIM Channel ID and Revision, never an assumed current SIM. Android 17 may delay protected OTPs for non-exempt non-default SMS apps by about three hours; Shizuku/CDM cannot override that rule.
+
+Manual **Refresh device status** and **Check commands & sync SMS** directly contact Relay without waiting for routine energy maintenance. When foreground Relay is enabled, lightweight long-polling reacts promptly to remote work; Doze, offline/force-stopped phones and OEM policy still prevent guaranteed instant delivery. Server revocation and the device's local reset acknowledgement are distinct; original phone SMS remain intact.
+
+## Security and boundaries
+
+Relay cannot decrypt SMS or recover a lost Vault key. Passkeys authenticate administrators, not Vault recovery. Global Vault keys remain client-side; individual nodes have separate Node Keys. Shared SMS approval broadens the trusted readers; revocation cannot erase data previously downloaded. Sessions default to **8-hour idle / 24-hour absolute** limits.
+
+No voice calls, complete MMS/RCS media support or privileged default-data-SIM switching. Remote commands are encrypted application actions; Shizuku Shell requires explicit **local** authorization.
 
 ## Documentation
 
 [Quick deployment](docs/QUICKSTART.zh-CN.md) · [Installation](docs/INSTALLATION.md) · [Android setup](docs/ANDROID_SETUP.md) · [Security](docs/SECURITY_ARCHITECTURE.md) · [Shared SMS](docs/SHARED_SMS.md) · [Architecture](docs/ARCHITECTURE.md) · [License](LICENSE)
-
-
-Android 16+ opt-in remote OTA (developer-only override on older Android versions) is documented in [Remote OTA](docs/REMOTE_OTA.md). Silent installation is not guaranteed; PackageInstaller may require user approval.

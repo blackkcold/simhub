@@ -1,3 +1,11 @@
+## v0.16.3 — Categorized device health dashboards
+
+- Reorganize Web/PWA device details into responsive cards for device health, SIM/SMS permissions, real sending capability, sync/ACK queues, network/power, chronological event timestamps and diagnostics. Add inline SVG battery and capability indicators.
+- Upgrade native Android controller device details with Material 3 metrics, native battery gauge, grouped SMS permissions, sync counters, reported activity and diagnostics, preserving all existing sync, remote command, OTA and SIM-channel actions.
+- Keep missing telemetry explicitly unknown and avoid misleading upload percentages or fabricated history curves. Report offline status as last known data and distinguish companion SMS role from effective send authorization.
+- Preserve existing E2EE, SMS delivery, server command protocol, enrollment and background power behaviors. Add Web sanitization/no-data tests and native snapshot unit tests.
+- Android/OEM visual acceptance and accessibility review on physical phones/foldables remain recommended after CI builds.
+
 ## v0.16.2 — Immediate node actions, reset handshakes and Android compatibility lab
 
 - Manual node refresh performs an authenticated Relay request and state upload instead of refreshing only local Compose state. Manual command/SMS checks immediately scan, process acknowledgements and flush encrypted events independent of background maintenance cadence.

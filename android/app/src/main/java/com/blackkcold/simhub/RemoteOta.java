@@ -174,7 +174,7 @@ public final class RemoteOta {
         prefs(c).edit().putInt("sessionId",id).commit();
     }
     public static boolean matchesInstallSession(Context c,int id){
-        return id>0 && active(c) && prefs(c).getInt("sessionId",-1)==id;
+        return id>0 && prefs(c).getInt("sessionId",-1)==id;
     }
     public static void installApprovalRequired(Context c){stage(c,"awaiting_confirmation");}
 }

@@ -40,6 +40,10 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 </tr>
 </table>
 
+**Android · Compact SIM Node settings hub**
+
+![Illustrative native SIM Node settings hub: live status, immediate sync, categorized configuration](docs/assets/ui-android-settings.svg)
+
 **Mobile Web / PWA · Responsive encrypted conversation**
 
 <p align="center"><img src="docs/assets/ui-mobile.svg" alt="Mobile responsive Web PWA conversation preview" width="43%"></p>
@@ -53,6 +57,8 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 ## Native Android experience
 
 Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. Messages, device details, task history and settings are native rather than nested WebViews. Management-only devices need no telephony permissions.
+
+**SIM Node settings:** The settings tab opens a short operational overview (pairing/Relay phase, SMS permissions, energy policy and actual pending-event count) with an immediate manual sync action. Five native destinations keep the full existing configuration available: **Connection & permissions**, **Runtime & synchronization**, **Sharing & privacy**, **App updates**, and **System & advanced tools**. Phones use a single list; unfolded foldables/tablets use independently scrolling categories and detail. Runtime profiles use compact vector cards; diagnostic counters, errors and technical logs remain available on demand, never fabricated as live charts. All original permissions, pairing, developer overrides and APK update policies remain enforced.
 
 **Same-phone controller approval:** Scan the management QR or import a trusted HTTPS address; authenticate in the phone's **system browser** with registered Passkey or password/TOTP, unlock the existing Global Vault, confirm the device fingerprint and return to SIM Hub. Native access uses a Keystore signing identity. Browser WebAuthn is not native Credential Manager; optional biometric app locking is not hardware-authenticated Vault decryption.
 

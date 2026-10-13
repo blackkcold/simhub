@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="900" viewBox="0 0 440 900" role="img" aria-label="Illustrative SIM Hub Android SIM Node settings page with status summary and five category entries">
+<defs><style>text{font-family:Inter,-apple-system,BlinkMacSystemFont,'Noto Sans SC','Segoe UI',sans-serif}</style></defs>
+<rect width="440" height="900" fill="#F6F7FB"/>
+<rect width="440" height="190" fill="#FFFFFF"/>
+<text x="26" y="30" fill="#18223A" font-size="14" font-weight="600">9:41</text>
+<text x="413" y="30" fill="#18223A" text-anchor="end" font-size="13">5G ▮▮ 98%</text>
+<rect x="24" y="59" width="42" height="42" rx="13" fill="#087F74"/>
+<path d="M37 68h12l6 6v17H37zM42 78h8v8h-8z" fill="none" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+<text x="80" y="77" font-size="21" font-weight="750" fill="#18223A">SIM Hub</text>
+<text x="80" y="96" font-size="13" fill="#657086">本机 SIM 节点</text>
+<rect x="24" y="120" width="180" height="43" rx="21" fill="#D8F4EF"/>
+<text x="114" y="147" font-size="15" font-weight="700" text-anchor="middle" fill="#087F74">SIM 节点</text>
+<rect x="213" y="120" width="202" height="43" rx="21" fill="#FFFFFF" stroke="#E1E5F0"/>
+<text x="314" y="147" font-size="15" font-weight="650" text-anchor="middle" fill="#657086">管理中心</text>
+<text x="24" y="220" font-size="24" font-weight="750" fill="#18223A">设置</text>
+<rect x="22" y="239" width="396" height="207" rx="22" fill="#FFFFFF"/>
+<circle cx="50" cy="270" r="13" fill="#D8F4EF"/>
+<path d="M45 270l4 4 7-8" stroke="#087F74" stroke-width="2" fill="none" stroke-linecap="round"/>
+<text x="74" y="269" font-size="16" font-weight="720" fill="#18223A">本机 SIM 节点</text>
+<text x="74" y="287" font-size="12" fill="#657086">命令监听运行中</text>
+<rect x="322" y="254" width="80" height="28" rx="14" fill="#E5F6EE"/>
+<text x="362" y="272" text-anchor="middle" fill="#168358" font-size="12" font-weight="650">已配对</text>
+<g>
+<rect x="39" y="310" width="114" height="68" rx="12" fill="#F0F2FB"/>
+<rect x="163" y="310" width="114" height="68" rx="12" fill="#F0F2FB"/>
+<rect x="287" y="310" width="114" height="68" rx="12" fill="#F0F2FB"/>
+<text x="96" y="338" text-anchor="middle" font-size="14" font-weight="750" fill="#087F74">已授权</text>
+<text x="96" y="359" text-anchor="middle" font-size="12" fill="#657086">短信权限</text>
+<text x="220" y="338" text-anchor="middle" font-size="14" font-weight="750" fill="#087F74">均衡</text>
+<text x="220" y="359" text-anchor="middle" font-size="12" fill="#657086">能耗策略</text>
+<text x="344" y="338" text-anchor="middle" font-size="14" font-weight="750" fill="#087F74">0</text>
+<text x="344" y="359" text-anchor="middle" font-size="12" fill="#657086">待上传</text>
+</g>
+<rect x="39" y="391" width="362" height="41" rx="14" fill="#087F74"/>
+<text x="220" y="417" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">↻ 立即检查命令并同步短信</text>
+<g fill="#FFFFFF">
+<rect x="22" y="460" width="396" height="68" rx="17"/>
+<rect x="22" y="537" width="396" height="68" rx="17"/>
+<rect x="22" y="614" width="396" height="68" rx="17"/>
+<rect x="22" y="691" width="396" height="68" rx="17"/>
+<rect x="22" y="768" width="396" height="68" rx="17"/>
+</g>
+<g fill="#D8F4EF"><rect x="36" y="473" width="42" height="42" rx="12"/><rect x="36" y="550" width="42" height="42" rx="12"/><rect x="36" y="627" width="42" height="42" rx="12"/><rect x="36" y="704" width="42" height="42" rx="12"/><rect x="36" y="781" width="42" height="42" rx="12"/></g>
+<g stroke="#087F74" stroke-width="2" stroke-linecap="round" fill="none">
+<path d="M49 496l7-7 7 7m-7-7v15"/><path d="M48 571h18m-18 5h18"/><path d="M49 649l8 7 8-7-8-8z"/><path d="M57 710v22m-7-7 7 7 7-7"/><path d="M48 792h18v15H48zm3 7 3 2-3 2"/>
+</g>
+<g fill="#18223A" font-size="16" font-weight="660">
+<text x="92" y="491">连接与权限</text><text x="92" y="568">运行与同步</text><text x="92" y="645">共享与隐私</text><text x="92" y="722">应用更新</text><text x="92" y="799">系统与高级工具</text>
+</g>
+<g fill="#657086" font-size="11">
+<text x="92" y="510">配对 · 短信接管 · 系统权限</text><text x="92" y="587">能耗策略 · 前台连接 · 历史同步</text><text x="92" y="664">共享短信池 · 加密授权</text><text x="92" y="741">检查版本 · 自动更新 · 远程 OTA</text><text x="92" y="818">语言 · 日志 · 兼容实验室</text>
+</g>
+<g fill="#657086" font-size="24"><text x="386" y="502">›</text><text x="386" y="579">›</text><text x="386" y="656">›</text><text x="386" y="733">›</text><text x="386" y="810">›</text></g>
+<rect x="0" y="852" width="440" height="48" fill="#FFFFFF"/>
+<text x="55" y="882" font-size="12" text-anchor="middle" fill="#657086">状态</text>
+<text x="165" y="882" font-size="12" text-anchor="middle" fill="#657086">本机短信</text>
+<text x="275" y="882" font-size="12" text-anchor="middle" fill="#657086">SIM 卡</text>
+<text x="385" y="882" font-size="12" font-weight="750" text-anchor="middle" fill="#087F74">设置</text>
+</svg>

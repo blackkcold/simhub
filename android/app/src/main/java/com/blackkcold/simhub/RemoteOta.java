@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities;
 import android.os.BatteryManager;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
 import android.os.Build;
 import org.json.JSONObject;
 
@@ -21,14 +22,28 @@ public final class RemoteOta {
         return RemoteOtaPolicy.supported(Build.VERSION.SDK_INT,DeveloperSettings.isForceRemoteOtaEnabled(c));
     }
     public static boolean wifiOnly(Context c){return prefs(c).getBoolean("wifiOnly",true);}
-    public static void setWifiOnly(Context c,boolean value){prefs(c).edit().putBoolean("wifiOnly",value).putBoolean("stateDirty",true).apply();}
-    public static void capabilityChanged(Context c){prefs(c).edit().putBoolean("stateDirty",true).apply();}
+    private static synchronized void dirty(Context c){
+        SharedPreferences p=prefs(c);
+        p.edit().putLong("revision",p.getLong("revision",0)+1).putBoolean("stateDirty",true).commit();
+        SyncJobService.scheduleNow(c);
+    }
+    public static void setWifiOnly(Context c,boolean value){prefs(c).edit().putBoolean("wifiOnly",value).commit();dirty(c);}
+    public static void capabilityChanged(Context c){dirty(c);}
     public static boolean needsStateUpload(Context c){return prefs(c).getBoolean("stateDirty",false);}
+    public static long currentRevision(Context c){return prefs(c).getLong("revision",0);}
     public static String currentStage(Context c){return prefs(c).getString("stage","idle");}
-    public static void markStateUploaded(Context c,String sentStage){
-        synchronized(RemoteOta.class){
-            if(sentStage.equals(currentStage(c)))
-                prefs(c).edit().putBoolean("stateDirty",false).apply();
+    public static synchronized void markStateUploaded(Context c,long sentRevision){
+        SharedPreferences p=prefs(c);
+        if(sentRevision==p.getLong("revision",0))
+            p.edit().putBoolean("stateDirty",false).commit();
+    }
+    public static int installedVersionCode(Context c){
+        try{
+            PackageInfo info=c.getPackageManager().getPackageInfo(c.getPackageName(),0);
+            return (int)info.getLongVersionCode();
+        }catch(PackageManager.NameNotFoundException e){
+            AppLogger.e(c,"RemoteOTA","Cannot resolve installed package version",e);
+            return 0;
         }
     }
     private static String prerequisites(Context c){
@@ -58,7 +73,7 @@ public final class RemoteOta {
     public static boolean allowed(Context c){return supported(c)&&prefs(c).getBoolean("consent",false);}
     public static void setAllowed(Context c,boolean enabled){
         if(enabled&&!supported(c))throw new SecurityException("Remote OTA requires Android 16+ or developer override");
-        prefs(c).edit().putBoolean("consent",enabled).putBoolean("stateDirty",true).apply();
+        prefs(c).edit().putBoolean("consent",enabled).commit();dirty(c);
         if(!enabled)cancel(c);
     }
     public static JSONObject state(Context c){
@@ -74,7 +89,8 @@ public final class RemoteOta {
              .put("remoteOtaStage",p.getString("stage","idle"))
              .put("remoteOtaTarget",p.getString("target",""))
              .put("remoteOtaError",p.getString("error",""))
-             .put("remoteOtaUpdatedAt",p.getLong("updatedAt",0));
+             .put("remoteOtaUpdatedAt",p.getLong("updatedAt",0))
+             .put("remoteOtaTargetCode",p.getInt("targetCode",0));
         }catch(Exception ignored){}
         return j;
     }
@@ -91,8 +107,9 @@ public final class RemoteOta {
            !("failed".equals(status)||"succeeded".equals(status)))
             throw new IllegalStateException("ota_already_in_progress");
         p.edit().putString(COMMAND,commandId).putString("target",target)
-         .putInt("targetCode",0).putBoolean("cancelRequested",false).putString("stage","checking")
-         .putString("error","").putBoolean("stateDirty",true).putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+         .putInt("targetCode",0).putInt("sessionId",-1).putBoolean("cancelRequested",false).putString("stage","checking")
+         .putString("error","").putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+        dirty(c);
         AppUpdater.check(c,true,(metadata,error)->{
             if(error!=null||metadata==null||!metadata.optBoolean("available")){
                 fail(c,error!=null?"release_unavailable":"no_new_version");return;
@@ -102,6 +119,7 @@ public final class RemoteOta {
             }
             prefs(c).edit().putInt("targetCode",metadata.optInt("versionCode"))
               .putString("target",metadata.optString("versionName")).commit();
+            dirty(c);
             AppUpdater.downloadRemote(c,metadata);
         });
         return new JSONObject().put("submitted",true);
@@ -110,18 +128,19 @@ public final class RemoteOta {
     public static synchronized boolean cancel(Context c){
         String status=prefs(c).getString("stage","idle");
         if(!active(c)||"installing".equals(status)||"awaiting_confirmation".equals(status))return false;
-        prefs(c).edit().putBoolean("cancelRequested",true).putBoolean("stateDirty",true).commit();
+        prefs(c).edit().putBoolean("cancelRequested",true).commit();dirty(c);
         return true;
     }
     public static void stage(Context c,String stage){
-        prefs(c).edit().putString("stage",stage).putBoolean("stateDirty",true).putLong("updatedAt",System.currentTimeMillis()/1000).apply();
-        SyncJobService.scheduleNow(c);
+        prefs(c).edit().putString("stage",stage).putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+        dirty(c);
     }
     private static void finish(Context c,String status,String reason){
         SharedPreferences p=prefs(c);
         String id=p.getString(COMMAND,"");
         p.edit().putString("stage",status).putString("error",reason)
-          .putBoolean("stateDirty",true).putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+          .putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+        dirty(c);
         if(!id.isBlank()){
             try {
                 JSONObject result=new JSONObject();
@@ -131,17 +150,31 @@ public final class RemoteOta {
                 store.queueCommandAck(id,status,result);
             }catch(Exception e){AppLogger.e(c,"RemoteOTA","Unable to persist OTA acknowledgement",e);}
         }
-        SyncJobService.scheduleNow(c);
     }
     public static void fail(Context c,String reason){finish(c,"failed",reason);}
-    public static void onPackageReplaced(Context c){
+    /** Check the real package version at every startup, sync and installer callback.
+     * Never interpret a submitted PackageInstaller session as installation success. */
+    public static synchronized void reconcileInstalledVersion(Context c){
         SharedPreferences p=prefs(c);
         int expected=p.getInt("targetCode",0);
         String status=p.getString("stage","idle");
-        if(expected>0&&!"succeeded".equals(status)&&!"failed".equals(status)){
-            int installed=BuildConfig.VERSION_CODE;
-            if(installed>=expected)finish(c,"succeeded","");
+        if(expected<=0 || "succeeded".equals(status) || "failed".equals(status))return;
+        int installed=installedVersionCode(c);
+        if(installed>=expected){
+            finish(c,"succeeded","");
+        }else if("installing".equals(status)){
+            long updated=p.getLong("updatedAt",0);
+            if(updated>0 && System.currentTimeMillis()/1000-updated>=15*60){
+                stage(c,"verification_pending");
+            }
         }
+    }
+    public static void onPackageReplaced(Context c){reconcileInstalledVersion(c);}
+    public static synchronized void installSession(Context c,int id){
+        prefs(c).edit().putInt("sessionId",id).commit();
+    }
+    public static boolean matchesInstallSession(Context c,int id){
+        return id>0 && active(c) && prefs(c).getInt("sessionId",-1)==id;
     }
     public static void installApprovalRequired(Context c){stage(c,"awaiting_confirmation");}
 }

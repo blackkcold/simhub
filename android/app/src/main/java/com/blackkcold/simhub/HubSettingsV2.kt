@@ -270,6 +270,9 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
             Spacer(Modifier.width(8.dp))
             Text(hubLabel("立即检查命令并同步短信","Check commands & sync SMS"))
         }
+        val relayPhase=RelayUiState.phase(state?.enrolled==true,
+            state?.resetPending==true,state?.resetRecoveryRequired==true)
+        if(RelayUiState.showTransportDiagnostics(relayPhase)){
         val commandAt=state?.state?.optLong("lastCommandFetchAt",0L)?:0L
         InfoRow(hubLabel("上次成功检查命令","Last successful command check"),
             if(commandAt>0)java.text.DateFormat.getDateTimeInstance()
@@ -342,6 +345,21 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
         }?:"—")
         if(state?.transportError?.isNotBlank()==true)
             Text("Relay: "+state.transportError,color=MaterialTheme.colorScheme.error)
+        }else{
+            Text(when(relayPhase){
+                RelayUiState.Phase.UNPAIRED->hubLabel(
+                    "未配对 Relay；历史连接错误和上传指标已隐藏。",
+                    "Relay is unpaired; previous connection and upload diagnostics are hidden.")
+                RelayUiState.Phase.RESET_PENDING->hubLabel(
+                    "解绑确认进行中。查看上方的配对状态和重试操作。",
+                    "Reset confirmation pending; use the enrollment card above.")
+                RelayUiState.Phase.RECOVERY->hubLabel(
+                    "解绑需要恢复；旧 Relay 错误不代表当前连接仍在工作。",
+                    "Reset recovery required; historical errors are not active connectivity.")
+                RelayUiState.Phase.ACTIVE->""
+            },style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if(state?.providerError?.isNotBlank()==true)
             Text("SMS Provider: "+state.providerError,color=MaterialTheme.colorScheme.error)
         OutlinedButton(onClick=controller::refreshDiagnostics,modifier=Modifier.fillMaxWidth()){

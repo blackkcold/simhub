@@ -97,7 +97,7 @@ public final class PairingManager {
             cfg.setNodeEnrollment(session.server,deviceId,"Android SIM Node",deviceToken,keyId,nodeKey);
             cfg.stagePairCompletion(session.id,session.pollToken,proof);
             completePending(c);
-            SyncJobService.schedule(c);SyncJobService.scheduleNow(c);
+            EnrollmentManager.enrollmentActivated(c);
             return true;
         }finally{
             if(nodeKey!=null)Arrays.fill(nodeKey,(byte)0);

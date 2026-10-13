@@ -1,3 +1,12 @@
+## v0.16.6 — Android unpair lifecycle and Relay status recovery
+
+- Clear enrollment-scoped Relay errors, last-success timestamps, upload statistics and command diagnostics when a SIM node is unpaired or newly enrolled; retain system SMS, local SIM status and user device settings.
+- Recognize a deleted device after an HTTP 401 only when a token-bound lifecycle receipt confirms deletion. Never treat an arbitrary unauthorized response as permission to destroy local credentials.
+- Run manual device-unpair confirmation promptly while preserving persisted background retry; no longer report a remote refresh or SMS check as successful when it actually found a reset.
+- Display distinct Android SIM-node connection states for active pairing, reset pending, recovery required and unpaired. Suppress stale transport diagnostics and use contextual actions outside active enrollment.
+- Add JVM regression tests for lifecycle presentation and enrollment telemetry cleanup. Keep existing Relay 409/410 reset protocol, token tombstones, encrypted SMS storage and signed release pipeline unchanged.
+- Requires real Android handset/OEM acceptance testing for process death, network loss during reset and manufacturer-specific JobScheduler delays.
+
 ## v0.16.5 — Reliable update discovery and security scan coverage
 
 - Fix manual server update checks so they refresh the published stable GitHub Release rather than reusing the normal 15-minute background cache; coalesce rapid repeated checks and cap release metadata downloads.

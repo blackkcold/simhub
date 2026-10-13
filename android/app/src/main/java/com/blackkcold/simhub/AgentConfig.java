@@ -92,19 +92,21 @@ public final class AgentConfig {
     public void clearSmsProviderError(){prefs.edit().remove("sms_provider_error").apply();}
     public String smsProviderError(){return prefs.getString("sms_provider_error","");}
     public void recordCommandFetch(int count){
+        if(!isEnrolled())return;
         prefs.edit().putLong("last_command_fetch_at",System.currentTimeMillis()/1000)
                 .putInt("last_command_fetch_count",Math.max(0,count))
                 .remove("last_command_fetch_error").apply();
     }
     public void recordCommandFetchError(String reason){
+        if(!isEnrolled())return;
         prefs.edit().putString("last_command_fetch_error",
                 reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();
     }
     public long lastCommandFetchAt(){return prefs.getLong("last_command_fetch_at",0);}
     public int lastCommandFetchCount(){return prefs.getInt("last_command_fetch_count",0);}
     public String lastCommandFetchError(){return prefs.getString("last_command_fetch_error","");}
-    public void recordSyncSuccess(){prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
-    public void recordSyncError(String reason){prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
+    public void recordSyncSuccess(){if(!isEnrolled())return;prefs.edit().putLong("last_sync_success_at",System.currentTimeMillis()/1000).remove("last_sync_error").apply();}
+    public void recordSyncError(String reason){if(!isEnrolled()&&!resetPending())return;prefs.edit().putString("last_sync_error",reason==null?"unknown":reason.substring(0,Math.min(80,reason.length()))).apply();}
     public void recordSmsBroadcast(){
         prefs.edit().putLong("last_sms_broadcast_at",System.currentTimeMillis()/1000).apply();
     }
@@ -130,10 +132,10 @@ public final class AgentConfig {
         }
     }
     public long lastSmsProviderChangeAt(){return prefs.getLong("last_sms_provider_change",0L);}
-    public void recordUploadAttempt(){prefs.edit().putLong("last_upload_attempt_at",System.currentTimeMillis()/1000).apply();}
+    public void recordUploadAttempt(){if(!isEnrolled())return;prefs.edit().putLong("last_upload_attempt_at",System.currentTimeMillis()/1000).apply();}
     public long lastUploadAttemptAt(){return prefs.getLong("last_upload_attempt_at",0L);}
     public synchronized void recordUploadSuccess(int uploaded){
-        if(uploaded<=0)return;
+        if(uploaded<=0||!isEnrolled())return;
         prefs.edit().putLong("last_upload_at",System.currentTimeMillis()/1000)
             .putInt("last_upload_count",uploaded)
             .putLong("uploaded_total",prefs.getLong("uploaded_total",0L)+uploaded)
@@ -142,10 +144,10 @@ public final class AgentConfig {
     public long lastUploadAt(){return prefs.getLong("last_upload_at",0L);}
     public int lastUploadCount(){return prefs.getInt("last_upload_count",0);}
     public long uploadedTotal(){return prefs.getLong("uploaded_total",0L);}
-    public void recordUploadError(String code){prefs.edit().putString("last_upload_error",safeError(code)).apply();}
+    public void recordUploadError(String code){if(!isEnrolled())return;prefs.edit().putString("last_upload_error",safeError(code)).apply();}
     public String lastUploadError(){return prefs.getString("last_upload_error","");}
     public void clearUploadError(){prefs.edit().remove("last_upload_error").apply();}
-    public void recordEventQueueError(String code){prefs.edit().putString("last_queue_error",safeError(code)).apply();}
+    public void recordEventQueueError(String code){if(!isEnrolled())return;prefs.edit().putString("last_queue_error",safeError(code)).apply();}
     public String lastEventQueueError(){return prefs.getString("last_queue_error","");}
     private static String safeError(String code){return code==null?"unknown":code.replaceAll("[^A-Za-z0-9_.-]","_").substring(0,Math.min(64,code.length()));}
 
@@ -193,6 +195,9 @@ public final class AgentConfig {
     }
 
     private void setBaseEnrollment(String server,String deviceId,String deviceName,String token)throws Exception{
+        // The next enrollment must not inherit the previous node\u0027s relay errors or receipts.
+        if(!clearEnrollmentTelemetry(prefs.edit()).commit())
+            throw new IllegalStateException("Unable to clear stale enrollment diagnostics");
         prefs.edit().remove("remote_reset_notified").putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").remove("reconcile_cursor_date").remove("reconcile_cursor_id").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
         localQueueKey();
@@ -220,13 +225,23 @@ public final class AgentConfig {
         secrets.remove(SECRET_VAULT_KEY);
     }
 
+    /**
+     * Telemetry is scoped to a device enrollment, not the SIM hardware.
+     * Keep local SMS Provider observations and energy preferences intact.
+     * Also clear on a new enrollment to migrate devices reset by older APKs.
+     */
+    private static SharedPreferences.Editor clearEnrollmentTelemetry(SharedPreferences.Editor editor){
+        for(String key:EnrollmentTelemetryKeys.forReset())editor.remove(key);
+        return editor;
+    }
+
     public void clearEnrollment(){
         // Clear secrets BEFORE declaring this node unpaired in preferences. Failed
         // Keystore writes must never leave the UI showing a successful reset.
         for(String name:new String[]{SECRET_DEVICE_TOKEN,SECRET_PENDING_DEVICE_TOKEN,SECRET_VAULT_KEY,
                 SECRET_NODE_KEY,SECRET_LOCAL_QUEUE_KEY,"pending_pair_token","pending_pair_proof"})
             secrets.remove(name);
-        if(!prefs.edit().remove("server").remove("device_id").remove("device_name")
+        if(!clearEnrollmentTelemetry(prefs.edit()).remove("server").remove("device_id").remove("device_name")
                 .remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id")
                 .remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id")
                 .remove("reconcile_cursor_date").remove("reconcile_cursor_id")

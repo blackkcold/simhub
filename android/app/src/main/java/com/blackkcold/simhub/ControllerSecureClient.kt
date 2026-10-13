@@ -169,8 +169,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
             val status=connection.responseCode
             if(status in 300..399)throw SecurityException("Refused redirect from controller origin")
             val response=(if(status in 200..299)connection.inputStream else connection.errorStream)
-                ?.use{it.bufferedReader().readText()} ?: "{}"
-            if(response.length>2_000_000)throw IllegalStateException("Controller response too large")
+                ?.use{BoundedHttpReader.readUtf8(it,BoundedHttpReader.MAX_JSON_BYTES)} ?: "{}"
             val json=JSONObject(response)
             if(status !in 200..299) {
                 if(status==401 && authenticated){cookie="";csrf=""}

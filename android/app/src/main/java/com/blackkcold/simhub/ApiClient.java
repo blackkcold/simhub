@@ -47,6 +47,7 @@ public final class ApiClient {
             return;
         }
         if(!cfg.isEnrolled())return;
+        RemoteOta.reconcileInstalledVersion(c);
         // Nodes without a foreground relay require an independent, durable
         // command check. Android may defer this work in Doze.
         if(!RelayForegroundService.isRunning())SyncJobService.scheduleAfter(c,EnergyPolicy.commandFallbackIntervalMs(c));
@@ -71,7 +72,7 @@ public final class ApiClient {
         boolean poolRetry=new SharedPoolClient(c).retryDue();
         boolean commandFallback=!RelayForegroundService.isRunning() &&
                 EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
-        boolean outstanding=poolRetry || RemoteOta.needsStateUpload(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
+        boolean outstanding=poolRetry || RemoteOta.needsStateUpload(c) || DeviceMetadataSync.fullDirty(c) || DeviceMetadataSync.needsLight(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
         if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding&&!commandFallback){
             SYNC_BUSY.set(false);return;
@@ -139,13 +140,20 @@ public final class ApiClient {
                     new SharedPoolClient(c).scheduleRetry(poolError);
                 }
             }
-            if(maintenance||RemoteOta.needsStateUpload(c)){
-                String otaStage=RemoteOta.currentStage(c);
+            // Full inventory only on maintenance or a real device/OTA change.
+            // Capture revisions before I/O: an intervening event must remain pending.
+            if(maintenance||RemoteOta.needsStateUpload(c)||DeviceMetadataSync.fullDirty(c)){
+                long otaRevision=RemoteOta.currentRevision(c);
+                long metadataRevision=DeviceMetadataSync.revision(c);
                 putState();
-                if(RemoteOta.needsStateUpload(c))RemoteOta.markStateUploaded(c,otaStage);
+                RemoteOta.markStateUploaded(c,otaRevision);
+                DeviceMetadataSync.reported(c,metadataRevision,true);
+            }else if(DeviceMetadataSync.needsLight(c)){
+                long metadataRevision=DeviceMetadataSync.revision(c);
+                heartbeat();
+                DeviceMetadataSync.reported(c,metadataRevision,false);
             }
             if(maintenance){
-                heartbeat();
                 EnergyPolicy.mark(c,"maintenance",System.currentTimeMillis());
                 EnergyPolicy.increment(c,"maintenanceRuns");
             }
@@ -329,7 +337,10 @@ public final class ApiClient {
             throw uploadError;
         }finally{
             cfg.recordUploadSuccess(sent);
-            if(sent>0)AppLogger.i(c,"EventUpload","Relay acknowledged encrypted events="+sent+" remaining="+store.pendingEventCount());
+            if(sent>0){
+                DeviceMetadataSync.requestLight(c);
+                AppLogger.i(c,"EventUpload","Relay acknowledged encrypted events="+sent+" remaining="+store.pendingEventCount());
+            }
         }
     }
     public boolean waitForCommands()throws Exception{
@@ -346,7 +357,7 @@ public final class ApiClient {
     public void flushCommandAcks()throws Exception{int sent=0;for(JSONObject a:LocalStore.get(c).pendingCommandAcks(100)){String id=a.getString("commandId"),state=a.getString("state");request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+id+"/ack",new JSONObject().put("state",state).put("result",a.optJSONObject("result")==null?new JSONObject():a.optJSONObject("result")));LocalStore.get(c).markCommandAckSent(id,state);sent++;}if(sent>0)AppLogger.i(c,"ApiClient","Uploaded command acknowledgements count="+sent);}
     public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");cfg.recordCommandFetch(arr==null?0:arr.length());if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
     public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}
-    public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("osVersion",Build.VERSION.RELEASE));}
+    public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("appVersionCode",RemoteOta.installedVersionCode(c)).put("osVersion",Build.VERSION.RELEASE));}
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}
     JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
     private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}

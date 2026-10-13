@@ -813,12 +813,12 @@ function resetEventCache(){
   $('smsLayout').classList.remove('conversation-open');
 }
 let updatePolling=null;
-async function refreshUpdateInfo(){
+async function refreshUpdateInfo(force=false){
   const zh=getLocale()==='zh-CN', el=$('updateStatus');
   if(!el)return;
   el.textContent=zh?'正在查询版本信息…':'Checking available updates…';
   let result;
-  try{result=await api('/api/v1/update');}catch(error){el.textContent=error.message;return;}
+  try{result=await api('/api/v1/update'+(force?'?refresh=1':''));}catch(error){el.textContent=(zh?'检查失败：':'Check failed: ')+error.message;return;}
   const phase=result.phase||'idle', latest=result.latest||null;
   const states={queued:'排队中',checking:'检查版本',downloading:'下载中',
     verifying_image:'验证签名并拉取镜像',verified_image:'已验证镜像',backup:'备份数据',switching:'切换容器',
@@ -828,18 +828,24 @@ async function refreshUpdateInfo(){
   const status=states[phase]||phase;
   const ignored=result.ignoredLatest;
   const version=latest||'—';
+  const discovery=result.releaseError
+    ?(zh?' · 检查失败：':' · Release check failed: ')+result.releaseError
+    :(result.latestFromCache
+      ?(zh?' · 缓存 ':' · Cached ')+Math.max(0,Number(result.cacheAgeSeconds||0))+'s'
+      :(result.latestCheckedAt?(zh?' · 刚刚已检查':' · Checked just now'):'')); 
   el.textContent=(zh?'服务端 ':'Server ')+'v'+(result.installed||'?')+
-      (zh?' · 最新 v':' · Latest v')+version+' · '+status+
+      (zh?' · 最新 ':' · Latest ')+(latest?'v'+latest:'—')+' · '+status+
+      (result.available?(zh?' · 发现新版本':' · Update available'):'')+
       (ignored?(zh?'（已忽略）':' (ignored)'):'')+
-      (result.error?' · '+result.error:'');
-  $('applyUpdateBtn').hidden=!result.agent||result.mode!=='rootless-verified'||!result.available||ignored||
+      discovery+(result.error?' · '+result.error:'');
+  $('applyUpdateBtn').hidden=!result.canInstall||
     ['queued','checking','downloading','building','verifying_image','verified_image','backup','switching','verifying','rolling_back'].includes(phase);
   $('ignoreUpdateBtn').hidden=!latest||!result.available;
   $('ignoreUpdateBtn').textContent=ignored?(zh?'恢复提醒':'Restore reminders'):(zh?'忽略此版本':'Ignore this version');
   $('updateAgentHelp').textContent=(result.agent&&result.mode==='rootless-verified')?'':(zh?
     '安全更新未启用：请迁移到 Rootless Docker，以普通用户运行 scripts/install-updater.sh；不支持旧版 root 更新器。':
     'Verified updater unavailable. Configure rootless Docker and run scripts/install-updater.sh without sudo; legacy root updater is disabled.');
-  if(result.releaseError)$('updateAgentHelp').textContent+=' · '+result.releaseError;
+  if(result.agentError)$('updateAgentHelp').textContent+=' · '+result.agentError;
   clearTimeout(updatePolling);
   if(['queued','checking','downloading','building','verifying_image','verified_image','backup','switching','verifying','rolling_back'].includes(phase))
     updatePolling=setTimeout(()=>refreshUpdateInfo().catch(e=>toast(e.message)),3500);
@@ -1875,7 +1881,7 @@ function wire(){
   $('deviceDetailContent').onclick=e=>{const b=e.target.closest('button[data-action]');if(b)handleDeviceAction(b).catch(err=>toast(err.message));};
   $('refreshCommandActivity').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
   $('refreshPoolBtn').onclick=()=>loadPool().catch(e=>toast(e.message));
-  $('checkUpdateBtn').onclick=()=>refreshUpdateInfo().catch(e=>toast(e.message));
+  $('checkUpdateBtn').onclick=()=>refreshUpdateInfo(true).catch(e=>toast(e.message));
   $('applyUpdateBtn').onclick=()=>applyServerUpdate().catch(e=>toast(e.message));
   $('ignoreUpdateBtn').onclick=()=>toggleIgnoreUpdate().catch(e=>toast(e.message));
   $('smsPoolMembers').onclick=e=>{const button=e.target.closest('[data-pool-action]');if(!button)return;

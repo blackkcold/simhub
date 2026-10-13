@@ -1,0 +1,40 @@
+name: Correct published release notes
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release/notes/*.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  update-release-description:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Update notes only (immutable tag and assets remain untouched)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only HEAD^ HEAD | grep -E '^\.github/release/notes/v[0-9]+\.[0-9]+\.[0-9]+\.trigger$' || true)
+          if [[ "${#changed[@]}" -ne 1 ]]; then
+            echo "::error::Exactly one versioned release-note trigger is required"
+            exit 1
+          fi
+          TRIGGER="${changed[0]}"
+          VERSION="${TRIGGER##*/}"
+          VERSION="${VERSION#v}"
+          VERSION="${VERSION%.trigger}"
+          [[ "$(tr -d '[:space:]' < "$TRIGGER")" == "$VERSION" ]] || exit 1
+          gh release view "v${VERSION}" >/dev/null
+          python3 scripts/release_notes.py --version "$VERSION" --output release-notes.md
+          gh release edit "v${VERSION}" --notes-file release-notes.md
+          echo "Corrected v${VERSION} release description; immutable assets and tag unchanged."

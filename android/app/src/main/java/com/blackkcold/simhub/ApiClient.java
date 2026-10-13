@@ -211,13 +211,25 @@ public final class ApiClient {
     }
     /** Reset notifications outrank normal HTTP backoff and polling intervals. */
     private boolean handleResetConflict(Exception error){
-        if(!(error instanceof ApiFailure failure) || failure.status!=409 ||
-                !"device_reset_pending".equals(failure.code))return false;
-        cfg.markRemoteResetPending();
-        EnrollmentManager.notifyStateChanged(c);
-        AppLogger.i(c,"Enrollment","Relay requested reset; bypassing ordinary sync backoff");
-        performPendingReset();
-        return true;
+        if(!(error instanceof ApiFailure failure))return false;
+        if(failure.status==409 && "device_reset_pending".equals(failure.code)){
+            cfg.markRemoteResetPending();
+            EnrollmentManager.notifyStateChanged(c);
+            AppLogger.i(c,"Enrollment","Relay requested reset; bypassing ordinary sync backoff");
+            performPendingReset();
+            return true;
+        }
+        // Force-deletion can revoke a token while a normal request is in flight.
+        // A 401 alone is NOT a reset receipt: only a token-bound lifecycle 410
+        // (or a lifecycle resetRequired response) may clear local credentials.
+        if(failure.status==401 && "unauthorized".equals(failure.code) && cfg.isEnrolled()){
+            try{
+                if(checkServerReset())return true;
+            }catch(Exception verificationError){
+                AppLogger.w(c,"Enrollment","401 lifecycle check inconclusive; keeping local credentials");
+            }
+        }
+        return false;
     }
     private boolean checkServerReset()throws Exception{
         try{

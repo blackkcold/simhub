@@ -58,18 +58,19 @@ internal fun ControllerHealthSummary(device:JSONObject){
                         R.drawable.ic_hub_sync,Modifier.weight(1f))
                 }
             }else{
-                Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    ControllerMetric(hubLabel("设备电量","Battery"),battery?.let{"$it%"}?:"—",
-                        R.drawable.ic_hub_battery,Modifier.weight(1f))
-                    ControllerMetric(hubLabel("短信数量","Messages"),
-                        if(device.has("smsCount"))device.optString("smsCount") else "—",
-                        R.drawable.ic_hub_messages,Modifier.weight(1f))
+                Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+                    Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                        ControllerMetric(hubLabel("设备电量","Battery"),battery?.let{"$it%"}?:"—",
+                            R.drawable.ic_hub_battery,Modifier.weight(1f))
+                        ControllerMetric(hubLabel("短信数量","Messages"),
+                            if(device.has("smsCount"))device.optString("smsCount") else "—",
+                            R.drawable.ic_hub_messages,Modifier.weight(1f))
+                    }
+                    ControllerMetric(hubLabel("待上传事件","Pending events"),
+                        ControllerHealthFacts.knownNumber(state,"pendingEvents"),
+                        R.drawable.ic_hub_sync,Modifier.fillMaxWidth())
                 }
-                Spacer(Modifier.height(0.dp))
             }
-        }
-        if(battery==null){
-            if(false)Text("") // no indicator for an unreported battery
         }
         HubCard(Modifier.fillMaxWidth()){
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){

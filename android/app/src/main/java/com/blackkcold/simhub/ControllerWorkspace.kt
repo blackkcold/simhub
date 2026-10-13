@@ -257,8 +257,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         val rounds=if(delta)8 else 1
                         for(batchIndex in 0 until rounds){
                             val events=if(delta)
-                                api.api("/api/v1/events?since=$sequence&limit=50")
-                            else api.api("/api/v1/events?order=occurred&limit=50"+suffix)
+                                api.api("/api/v1/events?since=$sequence&scope=sms&limit=50")
+                            else api.api("/api/v1/events?order=occurred&scope=sms&limit=50"+suffix)
                             val rows=events.optJSONArray("events")?:JSONArray()
                             if(rows.length()>50)throw IllegalStateException("Relay batch exceeds negotiated limit")
                             val messages=JSONArray()

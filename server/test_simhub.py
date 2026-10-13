@@ -47,6 +47,31 @@ class ApiTest(unittest.TestCase):
         if v==2:x['kid']='abcdefgh1234'
         return x
 
+    def test_sms_scoped_history_and_delta_ignore_non_sms_events(self):
+        node=self.enroll("Scoped history")
+        did=node["deviceId"];tok=node["deviceToken"]
+        now=int(time.time())
+        for idx,kind in enumerate(("sms.received","diagnostics.report","sms.history","sim.profile","sms.sent")):
+            ev={"eventId":f"scoped-{did}-{idx}","kind":kind,"occurredAt":now+idx,
+                "subscriptionId":"1","hasOtp":False,"ciphertext":self.cipher(2)}
+            self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/events",
+                ev,device_token=tok,admin=False)[0],201)
+        for url in (f"/api/v1/events?device={did}&scope=sms&since=0&limit=20",
+                    f"/api/v1/events?device={did}&scope=sms&order=occurred&limit=20"):
+            st,page,_=self.req("GET",url)
+            self.assertEqual(st,200)
+            self.assertEqual(len(page["events"]),3)
+            self.assertTrue(all(e["kind"].startswith("sms.") for e in page["events"]))
+        st,page,_=self.req("GET",
+            f"/api/v1/events?device={did}&scope=sms&order=occurred&limit=2")
+        self.assertEqual(st,200)
+        self.assertTrue(page["hasMore"])
+        st,older,_=self.req("GET",f"/api/v1/events?device={did}&scope=sms&order=occurred&limit=2&beforeTime={page['nextBeforeTime']}&beforeSeq={page['nextBeforeSeq']}")
+        self.assertEqual(st,200)
+        self.assertEqual(len(older["events"]),1)
+        self.assertFalse(older["hasMore"])
+        self.assertEqual(self.req("GET","/api/v1/events?scope=unknown")[0],400)
+
     def test_expired_command_is_finalized_without_device_poll(self):
         node=self.enroll("Expiry-regression")
         ts=int(time.time())

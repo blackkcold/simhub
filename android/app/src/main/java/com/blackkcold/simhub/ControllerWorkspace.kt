@@ -1102,10 +1102,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 else->hubLabel("取消待处理更新","Cancel pending update")})},
             text={
                 Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
-                    Text(if(action=="ota-install")
-                        hubLabel("仅请求安装最新签名版本；安卓系统仍可能要求在设备上确认。任务入队不等于更新成功。",
+                    Text(when(action){
+                        "restore-history"->hubLabel("将重置本机历史短信上传索引并从最新短信重新导入。已有短信按 ID 去重，后续可重复使用“同步更早短信”补齐；服务端明确清除的短信仍不可恢复。",
+                            "Reset the local upload index and replay recent history. Older history can be requested in pages. Explicit relay purges remain irreversible.")
+                        "ota-install"->hubLabel("仅请求安装最新签名版本；安卓系统仍可能要求在设备上确认。任务入队不等于更新成功。",
                             "Only a newer signed build is requested. Android may still require confirmation; queued is not installed.")
-                        else hubLabel("仅能取消尚未提交系统安装器的更新。","Cancellation is limited to updates not yet committed to Android."),
+                        else->hubLabel("仅能取消尚未提交系统安装器的更新。","Cancellation is limited to updates not yet committed to Android.")},
                         style=MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(sensitiveCredential,{sensitiveCredential=it},
                         label={Text(if(secondFactorTotp)hubLabel("二次验证 TOTP","TOTP")

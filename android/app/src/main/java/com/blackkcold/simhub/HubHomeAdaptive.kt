@@ -44,7 +44,7 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
                 if(state?.transportError?.isNotBlank()==true)
                     Text(state.transportError,style=MaterialTheme.typography.bodySmall,
                         color=MaterialTheme.colorScheme.error)
-                OutlinedButton(onClick=controller::refresh,modifier=Modifier.fillMaxWidth()){
+                OutlinedButton(onClick=controller::refreshRemote,modifier=Modifier.fillMaxWidth()){
                     Text(hubLabel("刷新设备状态","Refresh device status"))
                 }
             }

@@ -79,7 +79,7 @@ public final class CompatibilityManager {
                     }
                 }catch(Exception permissionError){state.put("shizukuAuthorized",false);}
             }else state.put("shizukuAuthorized",false);
-            state.put("associationSupported",Build.VERSION.SDK_INT>=33);
+            state.put("associationSupported",supportsSelfManagedAssociation(context));
             state.put("associations",associationCount(context));
             if(providerProbe){
                 if(!granted(context,Manifest.permission.READ_SMS))state.put("providerProbe","permission_missing");
@@ -102,8 +102,13 @@ public final class CompatibilityManager {
     private static boolean granted(Context c,String permission){
         return c.checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED;
     }
+    public static boolean supportsSelfManagedAssociation(Context c){
+        return Build.VERSION.SDK_INT>=33 && c.getPackageManager().hasSystemFeature(
+                PackageManager.FEATURE_COMPANION_DEVICE_SETUP) &&
+                c.getSystemService(CompanionDeviceManager.class)!=null;
+    }
     public static int associationCount(Context c){
-        if(Build.VERSION.SDK_INT<33)return 0;
+        if(!supportsSelfManagedAssociation(c))return 0;
         try{
             CompanionDeviceManager manager=c.getSystemService(CompanionDeviceManager.class);
             if(manager==null)return 0;
@@ -117,7 +122,7 @@ public final class CompatibilityManager {
         }catch(Exception unsupported){return 0;}
     }
     public static boolean removeSimHubAssociations(Context c){
-        if(Build.VERSION.SDK_INT<33)return false;
+        if(!supportsSelfManagedAssociation(c))return false;
         CompanionDeviceManager manager=c.getSystemService(CompanionDeviceManager.class);
         if(manager==null)return false;
         boolean removed=false;

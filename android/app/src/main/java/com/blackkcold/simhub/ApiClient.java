@@ -164,6 +164,7 @@ public final class ApiClient {
             if(pendingBefore>0)
                 AppLogger.i(c,"ApiClient","Sync cycle pendingBefore="+pendingBefore+" pendingAfter="+store.pendingEventCount());
         }catch(Exception error){
+            if(handleResetConflict(error))return;
             String reason=error instanceof ApiFailure f?"HTTP "+f.status+" "+f.code:error.getClass().getSimpleName();
             if(pendingBefore>0 || store.pendingEventCount()>0)cfg.recordUploadError(reason);
             cfg.recordSyncError(reason);AppLogger.e(c,"ApiClient","Sync cycle failed",error);
@@ -183,7 +184,9 @@ public final class ApiClient {
         if(!cfg.isEnrolled()||cfg.resetPending())return;
         if(longPoll){
             // Do not keep the global sync lease while the server is waiting.
-            boolean received=waitForCommands();
+            boolean received;
+            try{received=waitForCommands();}
+            catch(ApiFailure e){if(handleResetConflict(e))return;throw e;}
             if(received||LocalStore.get(c).pendingCommandAckCount()>0)
                 RelayForegroundService.kick(c);
             return;
@@ -199,11 +202,22 @@ public final class ApiClient {
         boolean pending=false;
         try{
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
-            fetchCommands();
+            try{fetchCommands();}
+            catch(ApiFailure e){if(handleResetConflict(e))return;throw e;}
             if(LocalStore.get(c).pendingCommandAckCount()>0)flushCommandAcks();
             pending=LocalStore.get(c).pendingEventCount()>0;
         }finally{SYNC_BUSY.set(false);}
         if(pending)RelayForegroundService.kick(c);
+    }
+    /** Reset notifications outrank normal HTTP backoff and polling intervals. */
+    private boolean handleResetConflict(Exception error){
+        if(!(error instanceof ApiFailure failure) || failure.status!=409 ||
+                !"device_reset_pending".equals(failure.code))return false;
+        cfg.markRemoteResetPending();
+        EnrollmentManager.notifyStateChanged(c);
+        AppLogger.i(c,"Enrollment","Relay requested reset; bypassing ordinary sync backoff");
+        performPendingReset();
+        return true;
     }
     private boolean checkServerReset()throws Exception{
         try{

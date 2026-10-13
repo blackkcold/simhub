@@ -152,12 +152,52 @@ fun HubCompatibilityScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
+            val authorized=status?.optBoolean("shizukuAuthorized")==true
+            Text(hubLabel("一键诊断任务","One-tap diagnostics"),style=MaterialTheme.typography.labelLarge)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                OutlinedButton(onClick={controller.runShellCommand("getprop ro.build.version.sdk")},
+                    enabled=authorized&&!tools.shellRunning,modifier=Modifier.weight(1f)){
+                    Text(hubLabel("系统版本","OS version"),maxLines=1)
+                }
+                OutlinedButton(onClick={controller.runShellCommand("cmd role get-role-holders android.app.role.SMS")},
+                    enabled=authorized&&!tools.shellRunning,modifier=Modifier.weight(1f)){
+                    Text(hubLabel("短信角色","SMS role"),maxLines=1)
+                }
+            }
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                OutlinedButton(onClick={controller.runShellCommand("getprop ro.product.manufacturer")},
+                    enabled=authorized&&!tools.shellRunning,modifier=Modifier.weight(1f)){
+                    Text(hubLabel("设备厂商","Manufacturer"),maxLines=1)
+                }
+                OutlinedButton(onClick={controller.runShellCommand("cmd appops get --uid "+android.os.Process.myUid()+" READ_OTP_SMS")},
+                    enabled=authorized&&!tools.shellRunning,modifier=Modifier.weight(1f)){
+                    Text("AppOps",maxLines=1)
+                }
+            }
+            if(tools.developer){
+                OutlinedTextField(value=tools.shellCommand,onValueChange={tools.shellCommand=it.take(2048)},
+                    label={Text(hubLabel("自定义 Shell 命令（本机执行）","Custom local Shell command"))},
+                    minLines=2,maxLines=4,modifier=Modifier.fillMaxWidth())
+                Button(onClick={controller.runShellCommand(tools.shellCommand)},
+                    enabled=authorized&&!tools.shellRunning&&tools.shellCommand.isNotBlank(),
+                    modifier=Modifier.fillMaxWidth()){
+                    Text(hubLabel("执行命令（仅本机）","Execute locally"))
+                }
+            }
+            if(tools.shellRunning)LinearProgressIndicator(Modifier.fillMaxWidth())
+            if(tools.shellOutput.isNotBlank()){
+                Text(hubLabel("命令窗口 · 标准输出 / 错误日志","Console · stdout / stderr"),
+                    style=MaterialTheme.typography.labelLarge)
+                Text(tools.shellOutput,style=MaterialTheme.typography.bodySmall,
+                    modifier=Modifier.fillMaxWidth().heightIn(max=250.dp)
+                        .verticalScroll(rememberScrollState()))
+            }
             OutlinedButton(onClick=controller::copyAdbDiagnostics,modifier=Modifier.fillMaxWidth()){
-                Text(hubLabel("复制只读 ADB / Rish 检查命令","Copy read-only ADB / Rish diagnostics"))
+                Text(hubLabel("复制外部 ADB 命令（备用）","Copy external ADB commands (fallback)"))
             }
             Text(hubLabel(
-                "Shizuku 授权后只显示状态和手动诊断；不自动执行 shell、停用系统组件或修改验证码安全策略。",
-                "Authorization enables status checks only here. No automatic shell operations, package disabling or OTP policy changes."
+                "命令在 Shizuku 授权的 Shell 身份执行，不代表获得短信权限或 OTP 豁免。执行结果仅在当前页面展示；服务器无法远程调用。",
+                "Commands run under the locally authorized Shizuku shell identity. This grants neither SMS nor OTP exemptions. Output stays in this view; the Relay cannot invoke shell commands."
             ),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
@@ -175,7 +215,7 @@ fun HubCompatibilityScreen(
             ),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(9.dp))
             Button(onClick=controller::startCompanionAssociation,
-                enabled=state?.enrolled==true&&Build.VERSION.SDK_INT>=33,
+                enabled=state?.enrolled==true&&status?.optBoolean("associationSupported")==true,
                 modifier=Modifier.fillMaxWidth()){
                 Text(hubLabel("由系统确认创建伴侣关联","Request companion association"))
             }

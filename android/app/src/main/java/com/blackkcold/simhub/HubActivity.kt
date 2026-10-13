@@ -59,6 +59,7 @@ private object ActivePairing {
 }
 interface HubController {
     fun refresh()
+    fun refreshRemote()
     fun requestAccess()
     fun requestSmsRole()
     fun scan()
@@ -101,6 +102,7 @@ interface HubController {
     fun requestShizukuAuthorization()
     fun openShizukuManager()
     fun copyAdbDiagnostics()
+    fun runShellCommand(command:String)
     fun startCompanionAssociation()
     fun removeCompanionAssociations()
     fun openBatteryOptimization()
@@ -305,6 +307,22 @@ class HubActivity: ComponentActivity(), HubController {
             }finally{loading=false}
         }
     }
+    override fun refreshRemote(){
+        if(!AgentConfig(this).isEnrolled()){refresh();return}
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val api=ApiClient(applicationContext)
+                    api.pollCommands(false)
+                    if(AgentConfig(applicationContext).isEnrolled())api.putState()
+                }
+                toast(actionLabel("已连接服务器并刷新设备信息","Relay checked and device state updated"))
+            }catch(error:Exception){
+                AppLogger.e(this@HubActivity,"ManualRefresh","Immediate refresh failed",error)
+                toast(UiErrors.message(this@HubActivity,error))
+            }finally {refresh()}
+        }
+    }
     override fun requestAccess(){
         val requested=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
@@ -489,6 +507,11 @@ class HubActivity: ComponentActivity(), HubController {
                     val api=ApiClient(app)
                     api.pollCommands(false)
                     api.syncCycle()
+                    // An explicit user request must not wait for maintenance eligibility.
+                    if(AgentConfig(app).isEnrolled()){
+                        api.flushEvents()
+                        api.putState()
+                    }
                     SyncJobService.scheduleNow(app)
                     Pair(inspected,LocalStore.get(app).pendingEventCount())
                 }
@@ -841,6 +864,44 @@ class HubActivity: ComponentActivity(), HubController {
             tools.compatibilityError=hubError("shizuku_open_failed")
         }
     }
+    override fun runShellCommand(command:String){
+        if(tools.shellRunning)return
+        if(command.isBlank()||command.length>2048){tools.compatibilityError="命令长度应为 1–2048 字符";return}
+        if(!tools.developer && command !in setOf(
+            "getprop ro.build.version.sdk", "getprop ro.product.manufacturer",
+            "cmd role get-role-holders android.app.role.SMS",
+            "cmd appops get --uid "+android.os.Process.myUid()+" READ_OTP_SMS"
+        )){tools.compatibilityError="自定义命令仅在开发者选项中开放";return}
+        // 'adb shell' is a host-side prefix; Shizuku already runs inside Android.
+        val actual=if(command.trimStart().startsWith("adb shell "))
+            command.trim().removePrefix("adb shell ").trim() else command.trim()
+        tools.shellRunning=true
+        tools.shellOutput="> "+command+"\nConnecting to Shizuku…"
+        tools.compatibilityError=""
+        try{
+            ShizukuShellClient.execute(this,actual){result,error->
+                tools.shellRunning=false
+                if(error!=null){
+                    tools.shellOutput="> "+command+"\nError: "+error
+                    auditCompatibility("shizuku_execute","failed")
+                }else{
+                    try {
+                        val r=org.json.JSONObject(result?:"{}")
+                        tools.shellOutput="> "+command+"\nexit="+r.optInt("exitCode",-1)+
+                            "  elapsed="+r.optLong("durationMs")+"ms"+
+                            (if(r.optBoolean("timedOut"))" [TIMEOUT]" else "")+
+                            "\nstdout:\n"+r.optString("stdout")+"\nstderr:\n"+r.optString("stderr")
+                        if(r.has("error"))tools.shellOutput+="\nError: "+r.optString("error")
+                        auditCompatibility("shizuku_execute",if(r.optInt("exitCode",-1)==0)"completed" else "failed")
+                    }catch(parse:Exception){tools.shellOutput="Command result unavailable";auditCompatibility("shizuku_execute","failed")}
+                }
+            }
+        }catch(error:Exception){
+            tools.shellRunning=false
+            tools.shellOutput="Shizuku: "+error.javaClass.simpleName
+            auditCompatibility("shizuku_execute","failed")
+        }
+    }
     override fun copyAdbDiagnostics(){
         val uid=android.os.Process.myUid()
         val commands=listOf(
@@ -857,8 +918,9 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun startCompanionAssociation(){
         if(!CompatibilityPolicy.canOfferSelfManagedAssociation(
-                Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled())){
-            tools.compatibilityError="需要 Android 13 以上系统以及已配对的 Relay。"
+                Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled()) ||
+                !CompatibilityManager.supportsSelfManagedAssociation(this)){
+            tools.compatibilityError="需要 Android 13+、已配对 Relay，且 ROM 支持 Companion Device Setup。"
             return
         }
         if(CompatibilityManager.associationCount(this)>0){
@@ -889,12 +951,16 @@ class HubActivity: ComponentActivity(), HubController {
                         }
                         override fun onFailure(errorMessage:CharSequence?){
                             auditCompatibility("companion_association","failed")
-                            tools.compatibilityError="关联失败，可能被厂商系统拒绝；请导出诊断日志。"
+                            tools.compatibilityError="系统拒绝伴侣关联："+
+                                (errorMessage?.toString()?.take(200) ?: "unknown")
+                            AppLogger.w(this@HubActivity,"Companion","Association callback failed")
                         }
                     })
                 }catch(error:Exception){
                     auditCompatibility("companion_association","failed")
-                    tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName
+                    AppLogger.e(this@HubActivity,"Companion","Association request rejected",error)
+                    tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName+
+                        (error.message?.take(180)?.let{" · "+it} ?: "")
                 }
             }.show()
     }

@@ -34,7 +34,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.16.1"
+APP_VERSION = "0.16.2"
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -2180,6 +2180,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not pending:
                 with _stream_condition:
                     _stream_condition.wait_for(lambda:_stream_epoch!=initial,timeout=wait)
+        # A reset can arrive while an existing long-poll request is asleep.
+        # Re-check after wakeup so the Android client sees the lifecycle signal
+        # immediately instead of waiting for the next command request.
+        with open_db() as con:
+            lifecycle=con.execute("SELECT reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
+        if lifecycle is None or lifecycle["reset_requested_at"]:
+            self.send_error_json(409,"device_reset_pending","Only a reset acknowledgement is allowed"); return
         ts=now()
         try: limit=max(1,min(int(q.get("limit",["50"])[0]),200))
         except ValueError: limit=50

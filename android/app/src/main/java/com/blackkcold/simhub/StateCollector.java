@@ -34,6 +34,7 @@ public final class StateCollector {
                     .put("sdk",Build.VERSION.SDK_INT)
                     .put("model",Build.MANUFACTURER+" "+Build.MODEL)
                     .put("appVersion",BuildConfig.VERSION_NAME)
+                    .put("appVersionCode",RemoteOta.installedVersionCode(c))
                     .put("energyMode",EnergyPolicy.mode(c))
                     .put("effectiveEnergyMode",EnergyPolicy.effectiveMode(c))
                     .put("foregroundRelay",RelayForegroundService.isRunning())

@@ -495,7 +495,8 @@ function lockVault(broadcast=true){
   purgeSensitiveUI();
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
   vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
-  poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();lastSeq=0;oldestSeq=0;
+  poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();
+  simProfileIndex.clear();simProfileIndexVersion='';lastSeq=0;oldestSeq=0;
   initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
   clearTimeout(refreshTimer);refreshTimer=null;
@@ -825,6 +826,7 @@ async function loadLifecycleHistory(){
 function resetEventCache(){
   eventDataGeneration++;
   events=[];decryptedEvents=[];eventIds.clear();
+  simProfileIndex.clear();simProfileIndexVersion='';
   lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   activeConversationKey=null;
   $('smsLayout').classList.remove('conversation-open');

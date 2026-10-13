@@ -1,5 +1,7 @@
 import {renderNodeDashboard} from './device-dashboard.js';
 import {createToastHost} from './toast.js';
+import {NotificationCenter} from './notifications.js';
+import {bindNotificationUI} from './notification-ui.js';
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 const $ = (id) => document.getElementById(id);
 const androidShell = new URLSearchParams(location.search).get('native') === '1';
@@ -44,6 +46,10 @@ function uuid(){return crypto.randomUUID?crypto.randomUUID():String(Date.now())+
 function escapeHtml(v){return String(v==null?'':v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 const toastHost=createToastHost($('toast'),localizeMessage);
 function toast(msg,options){toastHost.show(msg,options);}
+let notificationUI;
+const notificationCenter=new NotificationCenter(()=>notificationUI?.render());
+const offlineTimers=new Map(),offlineNotified=new Set(),knownCommandStates=new Map();
+let commandsSnapshotInitialized=false;
 function fmtTime(ts){if(!ts)return '—';return new Intl.DateTimeFormat(getLocale()==='zh-CN'?'zh-CN':'en',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(ts*1000));}
 function deviceName(id){const d=devices.find(x=>x.id===id);return d?d.name:tr('sim_node');}
 
@@ -439,7 +445,7 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
+function showUnlocked(){notificationCenter.locale=getLocale();notificationCenter.setScope($('username').value||'admin').catch(()=>{});if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
@@ -475,7 +481,10 @@ function purgeSensitiveUI(){
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
   const lifecycle=$('lifecycleHistory');if(lifecycle)lifecycle.replaceChildren();
-  const badge=$('otpBadge');if(badge){badge.textContent='';badge.hidden=true;}
+  const badge=$('smsUnreadBadge');if(badge){badge.textContent='';badge.hidden=true;}
+  if($('notifyHistoryList'))$('notifyHistoryList').replaceChildren();
+  for(const timer of offlineTimers.values())clearTimeout(timer);
+  offlineTimers.clear();offlineNotified.clear();knownCommandStates.clear();commandsSnapshotInitialized=false;
 }
 function lockVault(broadcast=true){
   securityEpoch++;androidNativePage=0;
@@ -1084,8 +1093,7 @@ function renderInbox(){
   $('emptyInbox').hidden=!!show.length;
   $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleCount;
   $('loadNewerBtn').hidden=true;
-  const otpCount=threads.reduce((n,t)=>n+t.messages.filter(e=>eventIsInbound(e)&&e.payload?.otp?.value).length,0);
-  $('otpBadge').hidden=!otpCount;$('otpBadge').textContent=otpCount?String(otpCount):'';
+  notificationUI?.render();
   $('inboxItems').innerHTML=show.map(t=>{
     const e=t.latest,p=e.payload||{},who=p.contactName||messageAddress(e)||tr('unknown');
     const body=e.decryptError?'['+tr('decrypt_failed')+']':p.body||'';
@@ -1249,6 +1257,7 @@ function openConversation(key){
   const selected=buildThreads(collapseMessageEvents(decryptedEvents)).find(x=>x.key===key);
   if(!selected)return;
   activeConversationKey=key;
+  notificationCenter.markRead(selected.messages.filter(e=>e.kind==='sms.received').map(e=>'sms:'+e.deviceId+':'+e.eventId)).catch(()=>{});
   const last=selected.latest,number=messageAddress(last);
   const eligible=[...selected.messages].reverse().find(e=>{
     const d=devices.find(x=>x.id===e.deviceId);
@@ -1592,7 +1601,15 @@ async function approveDevicePairCode(){
 async function rotateDeviceKey(deviceId){await ensureStepUp();const d=devices.find(x=>x.id===deviceId);if(!d||d.keyId)throw new Error('Device already uses an independent node key.');if(d.pendingKeyId)throw new Error('A node-key rotation is already pending.');const raw=crypto.getRandomValues(new Uint8Array(32)),kid=await keyIdForRaw(raw),wrapped=await wrapNodeKey(raw,kid);await api('/api/v1/devices/'+encodeURIComponent(deviceId),{method:'PATCH',body:{pendingKeyId:kid,pendingWrappedKey:wrapped}});try{await queueCommand(deviceId,'node.rotate_key',{keyId:kid,nodeKey:b64u(raw)},300);}finally{raw.fill(0);}toast('Node-key rotation queued. It will activate after the device confirms the new key.');}
 async function copy(text,msg){await navigator.clipboard.writeText(text);toast(msg||tr('copied'));}
 function updateCharCount(){const value=$('sendBody').value;$('smsCount').textContent=tr('chars_parts',{chars:value.length,parts:countSmsSegments(value)});}
-function maybeNotify(e){if(e.kind!=='sms.received'||Notification.permission!=='granted'||document.visibilityState==='visible')return;const p=e.payload||{};new Notification('SIM Hub',{body:tr(p.otp&&p.otp.value?'new_otp':'new_sms'),icon:'/icon.svg',tag:e.deviceId+':'+e.eventId});}
+function maybeNotify(e){
+  if(e.kind!=='sms.received'||!vaultKey)return;
+  const id='sms:'+e.deviceId+':'+e.eventId;
+  notificationCenter.record({id,kind:e.payload?.otp?.value?'otp':'sms',
+    deviceId:e.deviceId,sourceEventId:e.eventId,createdAt:Date.now()}).then(()=>{
+    if(document.visibilityState==='visible'&&$('view-inbox')?.classList.contains('active')&&activeConversationKey===threadKey(e))
+      notificationCenter.markRead([id]).catch(()=>{});
+  }).catch(()=>{});
+}
 async function refreshDiagnostics(){
   if(!diagnosticsDeviceId||!vaultKey)return;
   const epoch=securityEpoch;
@@ -1698,7 +1715,7 @@ function syncResponsiveConversation(){
   layout.classList.toggle('conversation-open',mobile&&inbox&&!!activeConversationKey);
 }
 function switchView(name){
-  if(name==='settings'&&vaultKey)refreshUpdateInfo().catch(()=>{});
+  if(name==='settings'&&vaultKey){refreshUpdateInfo().catch(()=>{});notificationUI?.render();}
   if(name!=='inbox'){
     // Preserve the selected thread for desktop, but never leave a mobile overlay
     // floating above another section or behind the persistent bottom dock.
@@ -1710,6 +1727,7 @@ function relocalizeDynamic(){
   applyI18n();
   const active=document.querySelector('.nav.active')?.dataset.view||'inbox';
   switchView(active);
+  notificationCenter.locale=getLocale();notificationUI?.render();
   setConnected($('relayDot').classList.contains('ok'));
   $('gateHint').textContent=globalVault?.initialized?'已连接共享 Vault':'等待连接管理中心';
   if(vaultKey)$('vaultStatus').textContent=tr('vault_unlocked');
@@ -1807,7 +1825,7 @@ function wire(){
   $('copyEnroll').onclick=()=>copy($('enrollLink').value,tr('enrollment_link_copied')).catch(e=>toast(e.message));
   $('approvePairCode').onclick=async()=>{const b=$('approvePairCode');if(b.disabled)return;b.disabled=true;try{await approveDevicePairCode();}catch(e){$('pairCodeStatus').textContent=e.message;toast(e.message);}finally{b.disabled=false;}};
   $('exportKeyBtn').onclick=async()=>{try{if(!vaultRaw)throw new Error(tr('vault_locked'));await ensureStepUp();if(!confirm('恢复密钥可解密所有短信。确认复制到系统剪贴板？'))return;await copy('SIMHUB-RECOVERY-V1:'+b64u(vaultRaw),tr('recovery_key_copied'));}catch(e){toast(e.message);}};
-  $('notifyBtn').onclick=async()=>{const p=await Notification.requestPermission();toast(tr(p==='granted'?'browser_notifications_enabled':'notification_permission_denied'));};
+  notificationUI=bindNotificationUI({center:notificationCenter,getLocale,tr,toast,switchView,isUnlocked:()=>!!vaultKey,deviceName});
   $('setAdminPassword').onclick=()=>setAdminPassword().catch(e=>toast(e.message));
   $('revokeAllBtn').onclick=async()=>{if(confirm('撤销所有管理员会话，包括本设备？')){await ensureStepUp();await api('/api/v1/auth/revoke-all',{method:'POST',body:{confirm:true}});csrfToken='';lockVault();toast('所有管理员会话已撤销');}};
   $('forgetBtn').onclick=async()=>{if(confirm(tr('confirm_forget'))){await logoutSession();localStorage.removeItem(VAULT_STORE);localStorage.removeItem(PHONE_OVERRIDES_STORE);lockVault();toast(tr('credentials_forgotten'));}};

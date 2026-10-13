@@ -91,6 +91,22 @@ public final class LocalStore extends SQLiteOpenHelper {
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
+    /**
+     * Explicitly requested disaster-recovery import only. Normal scans must
+     * preserve receipts to remain idempotent across process and Relay retries.
+     * Server-side purge tombstones still suppress intentionally erased SMS.
+     */
+    public synchronized int resetProviderUploadReceiptsForRestore(){
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try {
+            int deleted=db.delete("uploaded_event_ids","id LIKE ?",
+                new String[]{"sms-provider-%"});
+            db.setTransactionSuccessful();
+            return deleted;
+        }finally{db.endTransaction();}
+    }
+
     public synchronized int uploadedEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM uploaded_event_ids",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingCommandAckCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM command_acks",null)){return c.moveToFirst()?c.getInt(0):0;}}

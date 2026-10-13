@@ -13,6 +13,7 @@
 <rect x="213" y="120" width="202" height="43" rx="21" fill="#FFFFFF" stroke="#E1E5F0"/>
 <text x="314" y="147" font-size="15" font-weight="650" text-anchor="middle" fill="#657086">管理中心</text>
 <text x="24" y="220" font-size="24" font-weight="750" fill="#18223A">设置</text>
+<text x="415" y="222" text-anchor="end" font-size="11" fill="#657086">DEMO · 模拟数据</text>
 <rect x="22" y="239" width="396" height="207" rx="22" fill="#FFFFFF"/>
 <circle cx="50" cy="270" r="13" fill="#D8F4EF"/>
 <path d="M45 270l4 4 7-8" stroke="#087F74" stroke-width="2" fill="none" stroke-linecap="round"/>

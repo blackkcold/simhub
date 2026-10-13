@@ -4,7 +4,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 root=Path(__file__).resolve().parents[1]
-names=("home","messages","sim","settings","sync","send","add","qr","shield","signal","dashboard","devices","tasks","battery","network","link","share","update","terminal","chevron")
+names=("home","messages","sim","settings","sync","send","add","qr","shield","signal","dashboard","devices","tasks","battery","network","link","share","update","terminal","chevron","back")
 for name in names:
     svg=ET.parse(root/"design/icons"/f"{name}.svg").getroot()
     android=ET.parse(root/"android/app/src/main/res/drawable"/f"ic_hub_{name}.xml").getroot()

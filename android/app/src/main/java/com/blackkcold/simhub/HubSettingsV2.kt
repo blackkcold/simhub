@@ -804,8 +804,8 @@ private fun SettingsCategoryHeader(page:Int,onBack:()->Unit){
         verticalAlignment=Alignment.CenterVertically,
         horizontalArrangement=Arrangement.spacedBy(12.dp)){
         IconButton(onClick=onBack){
-            Text("‹",style=MaterialTheme.typography.headlineMedium,
-                color=MaterialTheme.colorScheme.onSurface)
+            HubIcon(R.drawable.ic_hub_back,Modifier.size(22.dp),
+                description=hubLabel("返回设置总览","Back to settings overview"))
         }
         Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
     }

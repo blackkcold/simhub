@@ -23,6 +23,59 @@ class UpdateBridgeTests(unittest.TestCase):
         self.assertLess(bridge.version_tuple("0.9.0"),bridge.version_tuple("0.9.1"))
         self.assertEqual(bridge.version_tuple("bad"),(0,0,0))
 
+    def test_release_manual_refresh_bypasses_background_cache(self):
+        """A fresh manual request must not remain on a 15-minute-old release."""
+        def payload(version):
+            return io.BytesIO(json.dumps({
+                "tag_name": "v" + version, "draft": False,
+                "prerelease": False, "published_at": "2026-10-13T04:30:23Z",
+                "assets": [{"name": "update-manifest.json",
+                            "browser_download_url": "https://github.com/blackkcold/simhub/releases/download/v"
+                            + version + "/update-manifest.json"}]
+            }).encode())
+        old_cache = bridge._cache
+        try:
+            bridge._cache = (0, None)
+            with patch.object(bridge.time, "monotonic", return_value=100), patch.object(
+                    bridge.urllib.request, "urlopen", return_value=payload("0.16.4")) as fetch:
+                first = bridge.release()
+                self.assertEqual(first["version"], "0.16.4")
+                self.assertFalse(first["fromCache"])
+                self.assertEqual(bridge.release()["version"], "0.16.4")
+                self.assertTrue(bridge.release()["fromCache"])
+                self.assertEqual(fetch.call_count, 1)
+            with patch.object(bridge.time, "monotonic", return_value=107), patch.object(
+                    bridge.urllib.request, "urlopen", return_value=payload("0.16.5")) as fetch:
+                latest = bridge.release(force=True)
+                self.assertEqual(latest["version"], "0.16.5")
+                self.assertFalse(latest["fromCache"])
+                self.assertEqual(fetch.call_count, 1)
+        finally:
+            bridge._cache = old_cache
+
+    def test_failed_refresh_preserves_previous_release_without_claiming_success(self):
+        old_cache = bridge._cache
+        try:
+            bridge._cache = (100, {"version": "0.16.4", "tag": "v0.16.4"})
+            with patch.object(bridge.time, "monotonic", return_value=150), patch.object(
+                    bridge.urllib.request, "urlopen", side_effect=OSError("GitHub offline")):
+                with self.assertRaises(OSError):
+                    bridge.release(force=True)
+            self.assertEqual(bridge._cache[1]["version"], "0.16.4")
+        finally:
+            bridge._cache = old_cache
+
+    def test_release_metadata_is_bounded(self):
+        old_cache = bridge._cache
+        try:
+            bridge._cache = (0, None)
+            with patch.object(bridge.urllib.request, "urlopen",
+                              return_value=io.BytesIO(b"x" * 262145)):
+                with self.assertRaises(ValueError):
+                    bridge.release(force=True)
+        finally:
+            bridge._cache = old_cache
+
     def test_manifest_to_android_ota(self):
         assets={"update-manifest.json":"https://github.com/blackkcold/simhub/releases/download/v0.9.1/update-manifest.json",
                 "simhub-agent-v0.9.1-release.apk":"https://github.com/blackkcold/simhub/releases/download/v0.9.1/simhub-agent-v0.9.1-release.apk"}

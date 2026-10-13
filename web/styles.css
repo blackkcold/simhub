@@ -600,3 +600,13 @@ html.simhub-android-shell #newSmsBtn{display:none!important}
 }
 
 html.simhub-android-shell #appContent[hidden]{display:none!important}
+
+
+/* A modal dialog owns the active toast in the browser top-layer. */
+#toast{display:flex;align-items:flex-start;gap:10px;z-index:999;max-width:min(420px,calc(100vw - 28px));min-height:42px;background:var(--panel);color:var(--text);border:1px solid var(--line);box-shadow:0 16px 45px rgba(0,0,0,.24);padding:12px 15px;line-height:1.45;font-size:13px;font-weight:550;pointer-events:none;overflow-wrap:anywhere}
+#toast .toast-symbol{display:grid;place-items:center;width:19px;height:19px;flex:none;color:var(--accent)}
+#toast .toast-symbol svg{width:19px;height:19px}
+#toast[data-kind="error"] .toast-symbol{color:var(--danger)}
+#toast[data-kind="success"] .toast-symbol{color:var(--good)}
+dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));margin:0}
+@media(max-width:760px){dialog #toast{bottom:calc(20px + env(safe-area-inset-bottom));}}

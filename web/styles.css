@@ -610,3 +610,37 @@ html.simhub-android-shell #appContent[hidden]{display:none!important}
 #toast[data-kind="success"] .toast-symbol{color:var(--good)}
 dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));margin:0}
 @media(max-width:760px){dialog #toast{bottom:calc(20px + env(safe-area-inset-bottom));}}
+
+
+/* Notification center: same cards, spacing and accessibility as the main workspace. */
+.nav-glyph{position:relative;isolation:isolate}
+.nav-unread-badge{position:absolute;top:-9px;right:-11px;display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:var(--accent);color:var(--accentText);font-size:10px;line-height:1;font-weight:750;font-variant-numeric:tabular-nums;box-shadow:0 0 0 2px var(--panel);white-space:nowrap}
+.nav-unread-badge[hidden]{display:none!important}
+.sidebar .nav .nav-label{flex:1;min-width:0;text-align:left}
+.notification-settings{display:grid;gap:0;min-width:0}
+.notification-settings>h2{margin:0 0 8px}
+.notify-section{padding:18px 0;border-top:1px solid var(--line)}
+.notify-heading{display:flex;justify-content:space-between;align-items:start;gap:16px}
+.notify-section h3{font-size:15px;margin:0 0 5px}
+.notify-section .hint{font-size:12px;line-height:1.55;margin:4px 0 12px}
+.notify-permission{display:inline-flex;flex:none;padding:4px 9px;border:1px solid var(--line);border-radius:999px;font-size:11px;background:var(--panel2);color:var(--muted)}
+.notify-permission[data-state="granted"]{color:var(--good)}
+.notify-permission[data-state="denied"]{color:var(--warn)}
+.notify-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.notify-toggle{display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);font-size:13px;min-height:48px;color:var(--text)}
+.notify-toggle input{width:18px;height:18px;flex:none;accent-color:var(--accent)}
+.notify-toggle-highlight{grid-column:1/-1}
+.notify-history-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0}
+.notify-history-actions select{flex:1 1 130px;max-width:220px;padding:8px 10px}
+.notify-history-actions button{min-height:35px}
+.notify-history-list{display:grid;gap:8px;max-height:520px;overflow-y:auto;overscroll-behavior:contain}
+.notify-entry{display:flex;align-items:center;gap:12px;width:100%;min-width:0;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;color:var(--text)}
+.notify-entry:hover{border-color:var(--accent)}
+.notify-entry-icon{display:grid;place-items:center;width:32px;height:32px;flex:none;background:color-mix(in srgb,var(--accent) 14%,var(--panel));border-radius:10px;color:var(--accent)}
+.notify-entry-icon svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.8;fill:none;stroke-linejoin:round;stroke-linecap:round}
+.notify-entry-content{flex:1;min-width:0;display:grid;gap:2px}
+.notify-entry-title{font-size:13px;font-weight:600}
+.notify-entry-meta{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notify-entry-time{font-size:11px;color:var(--muted);white-space:nowrap}
+.notify-entry-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--accent)}
+@media(max-width:760px){.sidebar .nav .nav-label{flex:none;text-align:center}.nav-unread-badge{right:-12px;top:-7px}.notify-options{grid-template-columns:1fr}.notify-history-actions select{max-width:100%}.notify-section{padding:14px 0}}

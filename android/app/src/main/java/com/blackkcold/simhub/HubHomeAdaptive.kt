@@ -28,24 +28,55 @@ fun HubHomeAdaptive(state:HubSnapshot?,loading:Boolean,ui:HubViewModel,controlle
             HubCard {
                 Text(hubLabel("设备与 Relay","Device & Relay"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
+                val phase=RelayUiState.phase(state?.enrolled==true,
+                    state?.resetPending==true,state?.resetRecoveryRequired==true)
                 val now=System.currentTimeMillis()/1000
                 val ttl=if(state?.realtime==true)180L else 3600L
-                val online=state?.enrolled==true&&state.smsRead&&state.smsReceive&&
-                    state.transportError.isBlank()&&state.lastSync>0&&now>=state.lastSync&&
-                    now-state.lastSync<=ttl
-                StatePill(if(online)hubLabel("Relay 已连接","Relay connected") else hubLabel("需要检查","Needs attention"),online)
+                val online=phase==RelayUiState.Phase.ACTIVE&&state!=null&&
+                    state.smsRead&&state.smsReceive&&state.transportError.isBlank()&&
+                    state.lastSync>0&&now>=state.lastSync&&now-state.lastSync<=ttl
+                val status=when(phase){
+                    RelayUiState.Phase.ACTIVE->if(online)hubLabel("Relay 已连接","Relay connected")
+                        else hubLabel("需要检查","Needs attention")
+                    RelayUiState.Phase.RESET_PENDING->hubLabel("正在解除配对","Unpair in progress")
+                    RelayUiState.Phase.RECOVERY->hubLabel("解绑需要恢复","Reset requires recovery")
+                    RelayUiState.Phase.UNPAIRED->hubLabel("未配对","Unpaired")
+                }
+                StatePill(status,online)
                 Spacer(Modifier.height(8.dp))
-                Text(state?.device.orEmpty().ifBlank{hubLabel("未连接设备","No device connected")},
+                Text(if(phase==RelayUiState.Phase.UNPAIRED)
+                        hubLabel("当前未连接 Relay","No Relay enrolled")
+                    else state?.device.orEmpty().ifBlank{hubLabel("Android SIM 节点","Android SIM node")},
                     style=MaterialTheme.typography.bodyMedium)
-                InfoRow(hubLabel("最后同步","Last sync"),state?.lastSync?.takeIf{it>0}?.let{
-                    DateFormat.getDateTimeInstance().format(Date(it*1000))
-                }?:"—")
-                InfoRow(hubLabel("待处理事件","Pending events"),(state?.pending?:0).toString())
-                if(state?.transportError?.isNotBlank()==true)
-                    Text(state.transportError,style=MaterialTheme.typography.bodySmall,
-                        color=MaterialTheme.colorScheme.error)
-                OutlinedButton(onClick=controller::refreshRemote,modifier=Modifier.fillMaxWidth()){
-                    Text(hubLabel("刷新设备状态","Refresh device status"))
+                if(RelayUiState.showTransportDiagnostics(phase)){
+                    InfoRow(hubLabel("最后同步","Last sync"),state?.lastSync?.takeIf{it>0}?.let{
+                        DateFormat.getDateTimeInstance().format(Date(it*1000))
+                    }?:"—")
+                    InfoRow(hubLabel("待处理事件","Pending events"),(state?.pending?:0).toString())
+                    if(state?.transportError?.isNotBlank()==true)
+                        Text(state.transportError,style=MaterialTheme.typography.bodySmall,
+                            color=MaterialTheme.colorScheme.error)
+                }else if(phase==RelayUiState.Phase.RESET_PENDING||phase==RelayUiState.Phase.RECOVERY){
+                    Text(if(phase==RelayUiState.Phase.RECOVERY)
+                            hubLabel("Relay 确认失败；本地凭据仍保留，请在设置中恢复。",
+                                "Reset confirmation failed; local credentials remain.")
+                        else hubLabel("正常 Relay 同步已停止，正在确认撤销。",
+                            "Normal Relay sync stopped; confirming revocation."),
+                        style=MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(
+                    onClick=when(phase){
+                        RelayUiState.Phase.ACTIVE->controller::refreshRemote
+                        RelayUiState.Phase.RESET_PENDING,RelayUiState.Phase.RECOVERY->controller::retryReset
+                        RelayUiState.Phase.UNPAIRED->{ { ui.tab=3 } }
+                    },
+                    modifier=Modifier.fillMaxWidth()){
+                    Text(when(phase){
+                        RelayUiState.Phase.ACTIVE->hubLabel("刷新设备状态","Refresh device status")
+                        RelayUiState.Phase.RESET_PENDING,RelayUiState.Phase.RECOVERY->
+                            hubLabel("重试解绑确认","Retry reset confirmation")
+                        RelayUiState.Phase.UNPAIRED->hubLabel("前往设备配对","Set up device pairing")
+                    })
                 }
             }
         }

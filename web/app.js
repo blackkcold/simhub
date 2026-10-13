@@ -1089,7 +1089,9 @@ function canonicalAddress(value){
   const intl=clean.startsWith('00')?'+'+clean.slice(2):clean;
   return /^\+861[3-9]\d{9}$/.test(intl)?intl.slice(3):intl;
 }
-function threadKey(e){return canonicalAddress(messageAddress(e));}
+// The same correspondent on different Nodes/SIM revisions is a distinct conversation.
+// Keep the physical source in the stable key; never silently pick a sending SIM.
+function threadKey(e){return eventSimKey(e)+'|'+canonicalAddress(messageAddress(e));}
 function eventSimKey(e){
   const p=e.payload||{},ch=String(p.channelId||''),rev=Number(p.channelRevision||0);
   return e.deviceId+'|'+(ch&&rev?ch+'|'+rev:'unverified:'+String(p.subscriptionId??e.subscriptionId??-1));

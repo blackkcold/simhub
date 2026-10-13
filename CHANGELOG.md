@@ -1,3 +1,12 @@
+## v0.16.2 — Immediate node actions, reset handshakes and Android compatibility lab
+
+- Manual node refresh performs an authenticated Relay request and state upload instead of refreshing only local Compose state. Manual command/SMS checks immediately scan, process acknowledgements and flush encrypted events independent of background maintenance cadence.
+- Foreground user-enabled Relay service checks encrypted commands via server-held HTTPS long polling across energy modes. Without a running service or push wake signal, Android Doze/OEM restrictions still prevent guaranteed instant remote delivery.
+- Relay wakes in-flight command polls when an administrator requests reset, and Android recognizes the reset-specific HTTP 409 signal, immediately attempts the authenticated reset acknowledgement, and bypasses normal sync backoff. Offline devices cannot confirm removal until next contact; no premature acknowledgement is claimed.
+- Add a local-only Shizuku UserService/AIDL Shell runner and native Compose diagnostics console (presets, developer commands, stdout/stderr, exit codes and bounded execution). No HTTP or Relay endpoint can call privileged Shell; Shizuku does not grant SMS/OTP exemptions.
+- Declare and probe Android Companion Device Setup feature, keep the self-managed association behind system confirmation and surface OEM SecurityException details for diagnostics.
+- Add lifecycle long-poll reset unit tests and Android CI coverage. Physical Android 16/17, Shizuku and OEM association behavior require device acceptance tests.
+
 ## v0.16.1 — OTA completion reconciliation and reliable device version sync
 
 - Reconcile remote Android APK updates with PackageManager-installed versionCode at startup, replacement broadcasts, background synchronization and installer callbacks; never equate submission with installation.

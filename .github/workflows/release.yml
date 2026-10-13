@@ -278,7 +278,7 @@ jobs:
           db_schema=int(schema.group(1))
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
-              "notes":"Immediate manual node actions, lifecycle-safe unpair acknowledgements, local Shizuku diagnostics and Companion Device association compatibility",
+              "notes":__import__("subprocess").check_output(["python3","scripts/release_notes.py","--version",version,"--summary"],text=True).strip(),
               "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
@@ -298,36 +298,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > release/RELEASE_NOTES.md <<EOF
-          # SIM Hub v${VERSION}
-
-          Immediate node actions, reliable server-initiated unpairing, and Android compatibility tools.
-
-          ## Changes
-          - Manual refresh and SMS/command checks immediately contact the Relay.
-          - Running user-enabled foreground relays hold a lightweight encrypted command
-            long-poll and respond to admin reset events without maintenance delays.
-          - Resolve reset-specific HTTP 409 into an authenticated reset ACK, with
-            server-side wake of in-flight long polls and offline-device safeguards.
-          - Shizuku gains an on-device, locally authorized Shell diagnostics console
-            with bounded execution, stdout/stderr and audit-only metadata.
-          - Declare and verify Companion Device Setup before requesting an association,
-            with actionable ROM SecurityException diagnostics.
-          - Regression tests cover Relay reset wakeup and preserve encrypted SMS privacy.
-
-          ## Security and validation boundaries
-          - Passkey and Vault recovery still use trusted HTTPS web operations.
-          - Android local biometric gate does not yet bind unwrapping to the
-            user-authenticated Keystore key; do not claim that protection.
-          - Hardware SIM, OEM background and foldable acceptance require
-            separate device validation; CI does not certify these paths.
-
-          ## Upgrade
-          Existing Relay volumes and controller identities are retained.
-          Legacy pairing v1 retirement remains 2027-02-11 UTC.
-          Details: CHANGELOG.md, docs/ANDROID_CONTROLLER_UI_0.16.md.
-
-          EOF
+          python3 scripts/release_notes.py --version "$VERSION" --output release/RELEASE_NOTES.md
           ASSETS=(
             "release/simhub-agent-v${VERSION}-release.apk"
             "release/simhub-agent-v${VERSION}-release.apk.sha256"

@@ -674,8 +674,8 @@ private fun SettingsMenuEntry(icon:Int,title:String,summary:String,status:String
             }
             if(status.isNotBlank()) Text(status,style=MaterialTheme.typography.labelSmall,
                 color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-            Text("›",style=MaterialTheme.typography.titleLarge,
-                color=MaterialTheme.colorScheme.onSurfaceVariant)
+            HubIcon(R.drawable.ic_hub_chevron,Modifier.size(18.dp),
+                tint=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -761,7 +761,7 @@ private fun SettingsMetric(icon:Int,title:String,value:String,modifier:Modifier=
 @Composable
 private fun SettingsDestinations(state:HubSnapshot?,tools:HubToolsState,onSelect:(Int)->Unit){
     val enrolled=state?.enrolled==true
-    SettingsMenuEntry(R.drawable.ic_hub_network,
+    SettingsMenuEntry(R.drawable.ic_hub_link,
         hubLabel("连接与权限","Connection & permissions"),
         hubLabel("配对 · 短信接管 · 系统权限","Pairing · SMS mode · system access"),
         if(state?.resetPending==true)hubLabel("待恢复","Pending")
@@ -775,17 +775,17 @@ private fun SettingsDestinations(state:HubSnapshot?,tools:HubToolsState,onSelect
             EnergyPolicy.REALTIME->hubLabel("实时","Realtime")
             else->hubLabel("均衡","Balanced")
         },{onSelect(SETTINGS_RUNTIME)})
-    SettingsMenuEntry(R.drawable.ic_hub_shield,
+    SettingsMenuEntry(R.drawable.ic_hub_share,
         hubLabel("共享与隐私","Sharing & privacy"),
         hubLabel("共享短信池 · 端到端加密授权","Shared SMS pool · encryption"),
         if(tools.poolApproved)hubLabel("已授权","Approved")
         else if(tools.poolEnabled)hubLabel("待批准","Pending")
         else hubLabel("关闭","Off"),{onSelect(SETTINGS_SHARING)})
-    SettingsMenuEntry(R.drawable.ic_hub_sync,
+    SettingsMenuEntry(R.drawable.ic_hub_update,
         hubLabel("应用更新","App updates"),
         hubLabel("检查版本 · 自动更新 · 远程 OTA","Version · auto update · remote OTA"),
         BuildConfig.VERSION_NAME,{onSelect(SETTINGS_UPDATES)})
-    SettingsMenuEntry(R.drawable.ic_hub_settings,
+    SettingsMenuEntry(R.drawable.ic_hub_terminal,
         hubLabel("系统与高级工具","System & advanced tools"),
         hubLabel("语言 · 日志 · 兼容实验室","Language · logs · compatibility"),
         onClick={onSelect(SETTINGS_ADVANCED)})

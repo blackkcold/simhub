@@ -59,7 +59,7 @@ TOTP_SECRET = os.getenv("SIMHUB_TOTP_SECRET", "").strip().replace(" ", "")
 ENROLL_TTL = int(os.getenv("SIMHUB_ENROLL_TTL", "600"))
 COMMAND_TTL = int(os.getenv("SIMHUB_COMMAND_TTL", "120"))
 OFFLINE_AFTER = int(os.getenv("SIMHUB_OFFLINE_AFTER", "180"))
-EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "30")))
+EVENT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_EVENT_RETENTION_DAYS", "0")))
 AUDIT_RETENTION_DAYS = max(0, int(os.getenv("SIMHUB_AUDIT_RETENTION_DAYS", "180")))
 COMMAND_RETENTION_DAYS = max(1, int(os.getenv("SIMHUB_COMMAND_RETENTION_DAYS", "30")))
 MAINTENANCE_INTERVAL = max(300, min(int(os.getenv("SIMHUB_MAINTENANCE_INTERVAL", "3600")), 86400))
@@ -106,6 +106,7 @@ ALLOWED_COMMANDS = {
     "sms.sync_history",
     "sms.sync_recent",
     "sms.sync_older",
+    "sms.restore_history",
     "device.network_policy",
     "device.refresh_state",
     "subscription.refresh",
@@ -1412,7 +1413,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             body=self.read_json()
             if body is None:return
-            if str(body.get("type","")) in {"sms.send","node.rotate_key","device.network_policy","ota.install","ota.cancel"} and not self.require_stepup():return
+            if str(body.get("type","")) in {"sms.send","sms.restore_history","node.rotate_key","device.network_policy","ota.install","ota.cancel"} and not self.require_stepup():return
             self.create_command(p[3],body); return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return

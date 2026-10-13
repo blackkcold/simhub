@@ -190,6 +190,36 @@ chars_parts:'{chars} characters · approx. {parts} SMS part(s)',confirm_send:'Se
 err_passphrase_min:'Use a vault passphrase of at least 10 characters.',err_recovery_format:'Recovery key format is invalid.',err_recovery_length:'Recovery key length is invalid.',recovery_imported:'Recovery key imported and wrapped locally',err_no_vault:'No vault exists in this browser. Create or import one first.',err_bad_passphrase:'Vault passphrase is incorrect or the local vault is damaged.',err_admin_required:'Admin token is required for a new session.',err_choose_node:'Choose an online SIM Node and SMS channel.',err_recipient:'Recipient number format is invalid.',err_empty_message:'Message is empty.',err_node_sms_unavailable:'The selected node reports SMS unavailable. Check SMS read/receive/send permissions and SIM status; the default SMS role is optional.',err_vault_unlock:'Vault must be unlocked.',err_key_exists:'Device already uses an independent node key.',err_rotation_pending:'A node-key rotation is already pending.',
 enroll_modem_done:'One-time modem enrollment package created for 10 minutes',enroll_android_done:'One-time Android enrollment link created for 10 minutes'
 }};
+Object.assign(dict['zh-CN'],{
+  notify_browser_heading:'浏览器系统通知',notify_browser_help:'网页或 PWA 仍在运行时可显示提醒。关闭浏览器后的推送需要单独的 Web Push 服务。',
+  notify_test:'发送测试通知',notify_categories:'通知类型',notify_categories_help:'类型开关控制当前浏览器的系统提醒；通知历史独立保留。',
+  notify_master:'浏览器系统提醒',notify_otp:'新验证码',notify_sms:'普通短信',notify_device_offline:'设备离线',notify_device_recovered:'设备恢复连接',
+  notify_task_failed:'远程任务失败',notify_task_done:'远程任务完成',notify_update_failed:'远程升级失败',notify_update_done:'远程升级完成',
+  notify_badge:'显示短信导航未读数',notify_history:'通知历史',notify_privacy:'本机仅存最近 30 天、最多 500 条事件元数据，不保存明文短信或验证码。',
+  notify_all:'全部',notify_unread:'未读',notify_sms_filter:'短信',notify_device_filter:'设备',notify_task_filter:'任务',
+  notify_mark_all:'全部标记已读',notify_clear:'清空记录',notify_empty:'暂无通知历史',notify_clear_confirm:'清空此浏览器中的所有 SIM Hub 通知历史？',
+  notify_permission_granted:'已授权',notify_permission_denied:'已拒绝',notify_permission_default:'未授权',notify_permission_unsupported:'不支持',
+  notify_permission_help_granted:'权限已开启；可在下方选择提醒类型。',notify_permission_help_denied:'通知已被浏览器拒绝。请在浏览器站点权限设置中重新允许。',
+  notify_permission_help_default:'点击启用以请求浏览器授权；需使用 HTTPS 或可信本地地址。',
+  notify_permission_help_unsupported:'当前浏览器或访问环境不支持系统通知；应用内历史和未读仍可用。',
+  notify_test_sent:'已发送测试通知',notify_test_failed:'无法显示系统通知，请检查浏览器及网站权限。'
+});
+Object.assign(dict.en,{
+  notify_browser_heading:'Browser notifications',notify_browser_help:'Notifications work while the site or PWA is running. Closed-browser push needs a separate Web Push service.',
+  notify_test:'Send test notification',notify_categories:'Alert categories',notify_categories_help:'Switches control system alerts on this browser; local history remains independent.',
+  notify_master:'Browser alerts',notify_otp:'New verification codes',notify_sms:'New ordinary SMS',notify_device_offline:'Device offline',notify_device_recovered:'Device recovered',
+  notify_task_failed:'Remote task failed',notify_task_done:'Remote task finished',notify_update_failed:'Remote update failed',notify_update_done:'Remote update finished',
+  notify_badge:'Show unread SMS badge',notify_history:'Notification history',notify_privacy:'Stores up to 500 event metadata records for 30 days on this browser. No SMS text or OTP values.',
+  notify_all:'All',notify_unread:'Unread',notify_sms_filter:'SMS',notify_device_filter:'Devices',notify_task_filter:'Tasks',
+  notify_mark_all:'Mark all read',notify_clear:'Clear history',notify_empty:'No notifications yet',notify_clear_confirm:'Clear SIM Hub notification history on this browser?',
+  notify_permission_granted:'Allowed',notify_permission_denied:'Blocked',notify_permission_default:'Not authorized',notify_permission_unsupported:'Unsupported',
+  notify_permission_help_granted:'Permission is enabled; choose alert categories below.',
+  notify_permission_help_denied:'Notifications were blocked. Allow this site in your browser permission settings.',
+  notify_permission_help_default:'Request permission using the button above; HTTPS or trusted local context required.',
+  notify_permission_help_unsupported:'System notifications are unsupported here; local history and unread badges remain available.',
+  notify_test_sent:'Test notification sent',notify_test_failed:'Unable to show a system notification. Check browser and site permissions.'
+});
+
 export function getLocale(){const saved=localStorage.getItem(STORE);if(saved==='zh-CN'||saved==='en')return saved;return String(navigator.language||'').toLowerCase().startsWith('zh')?'zh-CN':'en';}
 export function tr(key,vars={}){let text=(dict[getLocale()]||dict.en)[key]??dict.en[key]??key;for(const [k,v] of Object.entries(vars))text=text.replaceAll('{'+k+'}',String(v));return text;}
 export function setLocale(locale){localStorage.setItem(STORE,locale==='en'?'en':'zh-CN');applyI18n();}

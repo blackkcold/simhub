@@ -445,7 +445,17 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){notificationCenter.locale=getLocale();notificationCenter.setScope($('username').value||'admin').catch(()=>{});if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);}
+function showUnlocked(){notificationCenter.locale=getLocale();notificationCenter.setScope($('username').value||'admin').catch(()=>{});if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);
+  // Respect a notification deep link after authentication / Vault unlock.
+  if(!samePhoneControllerApproval){
+    const requested=new URLSearchParams(location.search).get('view');
+    if(['inbox','devices','settings'].includes(requested)){
+      switchView(requested);
+      const clean=new URL(location.href);clean.searchParams.delete('view');
+      history.replaceState(history.state,'',clean.pathname+clean.search+clean.hash);
+    }
+  }
+}
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
@@ -1921,7 +1931,12 @@ function wire(){
       button.dataset.poolAction==='approve'?grantPoolDevice(button.dataset.id):revokePoolDevice(button.dataset.id);
     task.catch(err=>toast(err.message));};
   $('inboxList').onclick=e=>{const b=e.target.closest('button[data-thread]');if(b)openConversation(b.dataset.thread);};
-  if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js')
+    .then(()=>notificationUI?.render())
+    .catch(error=>{
+      console.warn('SIM Hub notification worker registration failed',error?.name||'error');
+      notificationUI?.setWorkerError();
+    });
   relocalizeDynamic();
 }
 wire();

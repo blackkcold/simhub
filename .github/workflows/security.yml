@@ -9,8 +9,11 @@ on:
     - cron: '0 4 * * 1'
   workflow_dispatch:
 
+# Code scanning results compares the PR with the three configurations on main.
+# A PR analysis runs on refs/pull/<n>/merge while a push analysis supplies the
+# branch-head SARIF. Never cancel push results when a PR check is queued.
 concurrency:
-  group: security-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: security-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

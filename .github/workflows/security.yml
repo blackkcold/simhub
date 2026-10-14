@@ -9,9 +9,7 @@ on:
     - cron: '0 4 * * 1'
   workflow_dispatch:
 
-# Code scanning results compares the PR with the three configurations on main.
-# A PR analysis runs on refs/pull/<n>/merge while a push analysis supplies the
-# branch-head SARIF. Never cancel push results when a PR check is queued.
+# Keep branch-head and PR-merge analyses independent; both are required for Code Scanning.
 concurrency:
   group: security-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -20,7 +18,11 @@ permissions:
   contents: read
 
 jobs:
-  codeql-scripts:
+  # Preserve the original Code Scanning configuration identity present on main:
+  # .github/workflows/security.yml:codeql/language:{java-kotlin,javascript-typescript,python}
+  # Splitting into codeql-scripts/codeql-android renamed the categories and caused
+  # GitHub's native pull-request CodeQL check to report three missing configurations.
+  codeql:
     name: codeql (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -30,95 +32,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python, javascript-typescript]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-extended
-          build-mode: none
-      - uses: github/codeql-action/analyze@v4
-        with:
-          output: codeql-results
-      # Historical main-branch scans used the category /codeql/language:*, while
-      # current CodeQL job IDs produce codeql-scripts/language:*. Publish the
-      # identical analysis in the legacy category until main can be migrated.
-      # Never weaken/remove a security query or bypass a Code Scanning check.
-      - name: Publish legacy-matched CodeQL category
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: codeql-results
-          category: "/codeql/language:${{ matrix.language }}"
-      - name: Summarize CodeQL findings (rule, severity, source location only)
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import glob, json
-          paths = glob.glob("codeql-results/**/*.sarif", recursive=True)
-          if not paths:
-              print("No local CodeQL SARIF; review the analysis task for build/upload errors.")
-          for path in paths:
-              with open(path, encoding="utf-8") as handle:
-                  data = json.load(handle)
-              for run in data.get("runs", []):
-                  for result in run.get("results", [])[:150]:
-                      locs = result.get("locations", [])
-                      physical = locs[0].get("physicalLocation", {}) if locs else {}
-                      where = physical.get("artifactLocation", {}).get("uri", "?")
-                      line = physical.get("region", {}).get("startLine", "?")
-                      sev = result.get("properties", {}).get("security-severity", result.get("level", "unknown"))
-                      print(f"CODEQL_FINDING rule={result.get('ruleId', '?')} severity={sev} file={where}:{line}")
-          PY
-
-  codeql-android:
-    name: codeql (java-kotlin)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      security-events: write
+        language: [python, javascript-typescript, java-kotlin]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        if: matrix.language == 'java-kotlin'
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        if: matrix.language == 'java-kotlin'
         with:
           packages: 'platform-tools'
       - name: Install Android API 37
+        if: matrix.language == 'java-kotlin'
         run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        if: matrix.language == 'java-kotlin'
         with:
           gradle-version: '9.6.0'
       - uses: github/codeql-action/init@v4
         with:
-          languages: java-kotlin
+          languages: ${{ matrix.language }}
           queries: security-extended
-          build-mode: manual
-      # Kotlin is omitted by CodeQL's build-mode:none. CI builds with the same
-      # toolchain. This must be a real compilation observed by the extractor.
+          build-mode: ${{ matrix.language == 'java-kotlin' && 'manual' || 'none' }}
       - name: Compile Java and Kotlin under CodeQL instrumentation
+        if: matrix.language == 'java-kotlin'
         run: gradle -p android :app:compileDebugKotlin :app:compileDebugJavaWithJavac --no-build-cache --rerun-tasks --stacktrace
       - uses: github/codeql-action/analyze@v4
         with:
           output: codeql-results
-      # Mirror the old java-kotlin analysis category expected on main.
-      - name: Publish legacy-matched CodeQL category
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: codeql-results
-          category: "/codeql/language:java-kotlin"
-      - name: Summarize CodeQL findings (rule, severity, source location only)
+      - name: Summarize CodeQL findings (rule and location only)
         if: always()
         run: |
           python3 - <<'PY'
           import glob, json
-          paths = glob.glob("codeql-results/**/*.sarif", recursive=True)
-          if not paths:
-              print("No local CodeQL SARIF; review the analysis task for build/upload errors.")
-          for path in paths:
+          for path in glob.glob("codeql-results/**/*.sarif", recursive=True):
               with open(path, encoding="utf-8") as handle:
                   data = json.load(handle)
               for run in data.get("runs", []):
@@ -127,6 +76,5 @@ jobs:
                       physical = locs[0].get("physicalLocation", {}) if locs else {}
                       where = physical.get("artifactLocation", {}).get("uri", "?")
                       line = physical.get("region", {}).get("startLine", "?")
-                      sev = result.get("properties", {}).get("security-severity", result.get("level", "unknown"))
-                      print(f"CODEQL_FINDING rule={result.get('ruleId', '?')} severity={sev} file={where}:{line}")
+                      print(f"CODEQL_FINDING rule={result.get('ruleId', '?')} file={where}:{line}")
           PY

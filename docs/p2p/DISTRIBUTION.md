@@ -15,7 +15,8 @@ Plan Play App Signing/upgrade certificates before a public store release.
 
 Foreground specialUse purpose and local network permissions need store review
 and platform-specific testing. A new transport cannot bypass Android protected
-SMS/OTP or background restrictions. An eventual public connection service needs
-operational abuse controls, privacy disclosures, retention rules, cost limits
-and independently validated TLS/TURN deployment. Source code and build tests
-alone do not satisfy those requirements.
+SMS/OTP or background restrictions. The preview uses the existing third-party PeerJS Cloud and public STUN services
+for automatic discovery, with no default TURN or content relay. Their availability
+is outside SIM Hub control; high-traffic distribution should evaluate an operated
+signaling provider, capacity and abuse controls. Source tests do not establish
+real-SIM/OEM reliability or store acceptance.

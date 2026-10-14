@@ -1,72 +1,37 @@
-# Peer protocol and security boundary
+# Peer protocol and independent authorization
 
-Version 1 is preview-only. Independent application ID, signing identity and stores
-prevent test installation from migrating the stable app's Enrollment or Vault.
+## Pairing and frames
 
-## Trust and cryptography
+Long-term P-256 signing identities use Android Keystore alias `simhub-p2p-identity-v1`. IDs are base64url SHA-256 of DER public keys. Signed double QR and ephemeral ECDH bind the session, expiry, both identities/ephemeral keys and the exact permissions. HKDF-SHA256 derives a pair-specific content root, independently Keystore-wrapped from Enrollment, Node Key and Global Vault.
 
-- Long-term P-256 signing key: Android Keystore alias `simhub-p2p-identity-v1`.
-- Peer ID: base64url SHA-256 of DER SubjectPublicKeyInfo.
-- Double QR: signed node offer, signed controller response; ephemeral P-256 ECDH.
-- Transcript binds session ID, expiry, both identity and ephemeral public keys,
-  and the exact permission set. HKDF-SHA256 domain `simhub-peer-v1` derives a
-  per-pair content root. The root is Keystore-wrapped, separate from all Relay keys.
-- Direct TCP: authenticated encrypted hello with fresh ECDH on every RPC,
-  ephemeral session key bound to identities and hello ID, AES-256-GCM frames.
-- WebRTC: authenticated encrypted SDP/candidates, built-in ICE/DTLS and additional
-  application-layer AES-256-GCM. The bridge only executes bundled HTML and only
-  accepts messages from the exact appassets main-frame origin.
-- Mailbox: pair content root encrypts short-lived frames. This provides content
-  confidentiality and identity binding, but retained ciphertext has no ratchet
-  forward secrecy if that root is later compromised. Never claim otherwise.
+TCP uses an authenticated fresh ECDH hello for each RPC. WebRTC uses DTLS plus application AES-256-GCM. Frames bind domain, sender, recipient, logical request ID and expiry. Bounded frame sizes, timeouts and worker/queue quotas apply. The bridge accepts only the bundled appassets main-frame origin.
 
-Every frame binds protocol domain, sender, recipient, request ID and expiry.
-Frame limits, socket timeouts, bounded workers and queue quotas apply before SMS
-provider access. Source/destination switches and wrong domains fail closed.
+## Default public discovery
 
-## Authorization and exactly-once boundary
+The WSS endpoint is `wss://0.peerjs.com/peerjs`; public STUN endpoints are Google `stun:stun.l.google.com:19302` and Cloudflare `stun:stun.cloudflare.com:3478`. No user configuration is required. QR `networkMode: PUBLIC_DIRECT_V1` advertises consent to discovery; old pairings require explicitly enabling it.
 
-Peer profile separates local role, permissions, pair state, connection policy,
-connection-service binding and actual transport. P2P does not grant Legacy Relay
-permission. The service separately authenticates each identity by signed nonce.
+Room IDs use pair-root HKDF with salt `simhub-discovery-v1`, info `simhub-peer-v1|peerjs-room|<identity>`, then an opaque UUID with RFC UUID version/variant bits. Every pair has separate directional rooms.
 
-`read`, `history`, `state`, `send` grants are explicit; `send` defaults off.
-Every SMS send also passes Android role/permission, Channel ID/Revision and rate
-limit checks. A durable receipt is claimed before calling SmsManager. Reusing a
-request ID with changed payload fails; a crash after claim returns indeterminate
-and does not blindly retry. This is at-most-once dispatch, not guaranteed
-exactly-once delivery by the mobile network.
+PeerJS Cloud requires a normal data OFFER envelope. The outer payload contains constant placeholder SDP (`v=0`), data-channel labels and `metadata.simhub` carrying the authenticated encrypted real signal. Encrypted signal actions contain only OFFER/ANSWER/CANDIDATE. They cannot carry SMS, RPC or arbitrary application content. Receivers verify the exact source/destination rooms, frame authentication and signal type; replay IDs are bounded and remembered. The placeholder SDP never participates in the actual RTC connection.
 
-Direct, WebRTC and mailbox route attempts retain the same logical command ID.
-P2P callback IDs are excluded from the Legacy Relay command-ACK queue.
-Events are encrypted per peer in a separate durable SQLite queue; ACK deletion
-is scoped to that peer. Provider history has its own descending `(date,_id)`
-cursor and never advances the existing Relay history cursor.
+Signaling READY and transport DIRECT are distinct states. ICE selected-pair confirmation precedes data processing. Delayed stats are retried briefly; old connection callbacks are ignored. Disconnects permit a fresh connection; network changes reconnect discovery. No default TURN, HTTPS content relay or mailbox is used.
 
-## Services and metadata
+PeerJS/STUN operators can observe connection IP, timing, opaque room IDs, packet size and STUN mapping. PeerJS receives encrypted real SDP/ICE, not plaintext fingerprints or candidate IPs. The remote paired peer necessarily learns its counterpart's usable ICE candidates. Pair-root encryption of signaling/Relay-carried frames does not supply a ratchet or forward secrecy after root compromise.
 
-`/api/v2/p2p/` is a separate process and database. It can be routed alongside an
-existing Relay domain; it cannot read Global Vault, Enrollment or Node Key.
-The public service operator is not implemented by a domain placeholder.
-STUN/TURN URLs and TURN shared secret must be deliberately configured.
+## Optional existing Relay
 
-Directory entries include only explicitly registered relationships. An unseen
-P2P-only device cannot be shown by a server. `activeTransport` is a client's
-reported state, not server verification of network path.
+A signed QR/state hint contains only Relay origin/device ID, never credentials. Association requires an already authorized local Relay controller, any required local unlock, and Relay state advertising the same P2P identity. The user can cancel the association. Relay authorization remains separate from P2P grants.
 
-Registration needs proof of possession, short-lived challenge and rate limiting.
-Mailbox requires both registered peers' fallback consent. Frames have TTL, byte
-and count quotas; tokens expire and rotate. TURN credentials expire in five
-minutes. TLS termination is mandatory outside the localhost sandbox.
-Server metadata includes public-key IDs, counterpart IDs, connection IP/time,
-byte count and transport reports. No content decryption keys are accepted.
+When configured and authorized, Relay is preferred. `peer.rpc` wraps a P2P AEAD request in the existing Node Key encrypted command. Carrier IDs use an independent `pw-` digest namespace; inner logical IDs are preserved on direct retries. Device-authenticated POST stores a bounded short-lived ciphertext response; admin-authenticated GET reads it. Responses are immutable, request-digest bound and scoped to device/command; reset/revocation rejects access. The server neither accepts content keys nor exposes responses in ordinary command history.
 
-## Preview limitations
+Deploy the feature branch's compatible Relay server for this optional carrier. An older server may reject `peer.rpc`, allowing direct P2P to be attempted. Public P2P does not require deploying any server. The historical independent `peer_connect.py`/TURN/mailbox source remains available for compatibility tests and is not the default flow.
 
-There is no operated public endpoint, external security audit, real-SIM/OEM
-certification or application-store approval. QR authority depends on the user
-physically selecting the intended two phones. Pair root rotation and recovery
-require a fresh pairing; multi-controller key distribution is not a shared Vault.
-Background operation depends on user-enabled foreground service and Android/OEM
-policy. Revocation is locally enforced immediately; offline UI on the other
-phone may remain stale until reconnect.
+## Grants and receipts
+
+Explicit grants are `read`, `history`, `state` and optional `send` (off by default). Every send also needs the device's SMS role/permission, matching Channel ID/Revision and rate budget. An atomic durable receipt precedes dispatch. A reused ID with changed payload is rejected; a crash after claim returns indeterminate and never blindly resends. A known receipt remains authoritative after request expiry. This is at-most-once dispatch, not guaranteed mobile-network delivery.
+
+Outbound requests are encrypted and keep their original expiry. Unconfirmed expired submissions require status resolution, not another send. Callback command IDs are excluded from Legacy Relay ACKs. Events and ACKs are peer-scoped; history uses a separate descending `(date,_id)` cursor, leaving Relay history untouched. Revocation deletes the peer key/outbox/events; stale callbacks cannot restore the grant. Re-pairing creates fresh content keys.
+
+A Relay directory lists only enrolled devices. Reported P2P backup capability cannot reveal an unregistered P2P-only device, grant a browser permission or prove a live route.
+
+References: [PeerServer Cloud](https://peerjs.com/server/cloud), [ICE RFC 8445](https://www.rfc-editor.org/rfc/rfc8445).

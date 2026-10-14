@@ -132,5 +132,4 @@ No voice calls, complete MMS/RCS media support or privileged default-data-SIM sw
 
 [Quick deployment](docs/QUICKSTART.zh-CN.md) · [Installation](docs/INSTALLATION.md) · [Android setup](docs/ANDROID_SETUP.md) · [Security](docs/SECURITY_ARCHITECTURE.md) · [Shared SMS](docs/SHARED_SMS.md) · [Architecture](docs/ARCHITECTURE.md) · [License](LICENSE)
 
-
-[P2P preview test guide](docs/p2p/TEST_GUIDE.zh-CN.md)
+[P2P 公网测试](docs/p2p/TEST_GUIDE.zh-CN.md)

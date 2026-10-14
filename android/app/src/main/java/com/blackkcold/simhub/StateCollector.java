@@ -31,7 +31,10 @@ public final class StateCollector {
         try{
             AgentConfig cfg=new AgentConfig(c);
             com.blackkcold.simhub.p2p.PeerStore peers=com.blackkcold.simhub.p2p.PeerStore.get(c);
-            if(peers.list().length()>0)o.put("p2pIdentityId",peers.myId()).put("peerRpcVersion",1);
+            JSONArray peerRows=peers.list();int activeControllers=0;
+            for(int i=0;i<peerRows.length();i++){JSONObject peer=peerRows.getJSONObject(i);if("NODE".equals(peer.optString("localRole"))&&"ACTIVE".equals(peer.optString("pairState")))activeControllers++;}
+            o.put("p2pPairedControllers",activeControllers);
+            if(peerRows.length()>0)o.put("p2pIdentityId",peers.myId()).put("peerRpcVersion",1);
             o.put("androidVersion",Build.VERSION.RELEASE)
                     .put("sdk",Build.VERSION.SDK_INT)
                     .put("model",Build.MANUFACTURER+" "+Build.MODEL)

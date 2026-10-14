@@ -25,10 +25,18 @@ public final class DirectPeerTransport implements HubTransport {
     private JSONObject call(JSONObject peer,String host,int port,String id,JSONObject req)throws Exception{
         if(host.isBlank()||host.length()>200||port<1024||port>65535)throw new SecurityException("invalid_peer_endpoint");
         // Numeric endpoint only: never resolves an untrusted QR to internal DNS names.
-        if(!host.matches("[0-9a-fA-F:.%a-zA-Z_-]+")||(!host.contains(":")&&!host.matches("[0-9.]+")))throw new SecurityException("numeric_peer_address_required");
+        if(host.indexOf(':')>=0){
+            // IPv6 address with an optional numeric/local interface zone (e.g. fe80::1%3).
+            if(!host.matches("[0-9a-fA-F:.]+(%[0-9A-Za-z_.-]{1,24})?"))
+                throw new SecurityException("numeric_ipv6_required");
+        }else if(!host.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}")){
+            throw new SecurityException("numeric_ipv4_required");
+        }
+        // Resolving a syntactically numeric address cannot perform untrusted hostname lookup.
+        final InetAddress ip=InetAddress.getByName(host);
         String from=store.myId(),to=peer.getString("id"),helloId=UUID.randomUUID().toString();byte[] root=store.key(to),session=null;KeyPair eph=PeerCrypto.ephemeral();
         try(Socket socket=new Socket()){
-            socket.connect(new InetSocketAddress(host,port),1000);socket.setSoTimeout(15000);
+            socket.connect(new InetSocketAddress(ip,port),1000);socket.setSoTimeout(15000);
             long exp=System.currentTimeMillis()/1000+120;
             write(socket.getOutputStream(),PeerProtocol.seal(root,from,to,helloId,exp,new JSONObject().put("action","hello").put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded()))));
             JSONObject answer=read(socket.getInputStream());if(!helloId.equals(answer.optString("id")))throw new SecurityException("peer_hello_id_mismatch");

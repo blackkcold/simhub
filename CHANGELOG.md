@@ -1,3 +1,13 @@
+## v0.17.1 — Notification diagnostics and consistent settings layout
+
+- Correct native Android SIM-node settings destination spacing in both compact and foldable/tablet layouts without changing pairing, SMS modes or encrypted data.
+- Apply a consistent Web settings form rhythm, fixing nested shared-Vault password inputs and action spacing across responsive layouts.
+- Align browser notification permission labels with actual grant/deny/paused states, refresh state on focus and permission changes, and make test actions report worker and delivery-request failures.
+- Add optional system notifications while the management page is visible; bound Service Worker readiness waits to five seconds and report failed registration rather than silently suppressing errors.
+- Preserve metadata-only browser notification privacy, retire expired history entries, and restore notification deep links after administrator login and Vault unlock.
+- Expand automated Web regression coverage for permission controls, foreground preferences, history retention, Vault geometry and cold notification deep links.
+- Browser notifications still require the Web/PWA to be running; closed-browser Web Push and guaranteed operating-system banners are not implied. Physical-device notification and foldable acceptance remain separate from CI.
+
 ## v0.17.0 — Encrypted history recovery, source-safe threads and fluid controller UX
 
 - Keep encrypted SMS history on new Relay installations by default (configurable via `SIMHUB_EVENT_RETENTION_DAYS`; existing deployments preserve their configured retention). A recovery command can replay locally retained Android Provider messages after automatic expiry without bypassing explicit server-side purge tombstones.

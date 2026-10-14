@@ -28,11 +28,15 @@ function transact(db,mode,fn){
 }
 export class NotificationStore {
   constructor(){this.dbPromise=openDb();}
-  async list(scope){
+  async all(scope){
     const db=await this.dbPromise;
     if(!db)return [...memory.values()].filter(row=>row.scope===scope).sort((a,b)=>b.createdAt-a.createdAt);
     const rows=await transact(db,'readonly',(store,done)=>{const req=store.getAll();req.onsuccess=()=>done(req.result);});
     return (rows||[]).filter(row=>row.scope===scope).sort((a,b)=>b.createdAt-a.createdAt);
+  }
+  async list(scope){
+    const cutoff=Date.now()-AGE;
+    return (await this.all(scope)).filter(row=>row.createdAt>=cutoff).slice(0,LIMIT);
   }
   async insert(scope,item){
     const key=scope+'|'+item.id,db=await this.dbPromise;
@@ -56,12 +60,12 @@ export class NotificationStore {
     return pending.length;
   }
   async clear(scope){
-    const rows=await this.list(scope),db=await this.dbPromise;
+    const rows=await this.all(scope),db=await this.dbPromise;
     if(db)await transact(db,'readwrite',store=>{for(const row of rows)store.delete(row.key);});
     else for(const row of rows)memory.delete(row.key);
   }
   async prune(scope){
-    const rows=await this.list(scope),cut=Date.now()-AGE;
+    const rows=await this.all(scope),cut=Date.now()-AGE;
     const drop=rows.filter((row,i)=>i>=LIMIT||row.createdAt<cut);
     if(!drop.length)return;
     const db=await this.dbPromise;

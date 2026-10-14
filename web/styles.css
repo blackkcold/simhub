@@ -705,3 +705,14 @@ dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:c
 @media (hover:none) {
   .device-card:hover {transform:none;}
 }
+
+/* Shared settings form rhythm: nested Vault controls are not direct card children. */
+.vault-password-change { display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:16px; }
+.vault-password-change > h3 { margin:0; }
+.vault-password-change > .hint { margin:0; }
+.vault-password-change > label { display:grid;gap:8px;min-width:0; }
+.vault-password-change > button { justify-self:start;margin-top:0;max-width:100%; }
+.settings-panel > label + button { margin-top:12px; }
+.settings-panel > label { min-width:0; }
+.settings-panel > button + button { margin-left:8px; }
+@media(max-width:480px) { .vault-password-change > button { width:100%; } }

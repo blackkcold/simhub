@@ -1,6 +1,8 @@
 # Isolated P2P preview
 
-Baseline: cf36ffba5caf940c3529e9caade4c4890798872b (0.17.0).
+Initial baseline: cf36ffba5caf940c3529e9caade4c4890798872b (0.17.0).
+Updated test baseline: main f3bcd706e17df0acb9ff8fd92bc22c482bd1a5e6 (0.17.1).
+The main update is imported into the feature branch only.
 Branch: feature/p2p-isolated-preview. Never merge or enable auto-merge without user instruction.
 
 Implement a separate peer trust store, double QR pairing, encrypted direct RPC,

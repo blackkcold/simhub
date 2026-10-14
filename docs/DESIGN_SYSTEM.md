@@ -73,6 +73,6 @@ If replacing them with real screenshots, capture on test devices with mock messa
 | Inbox | SMS threads, reply in selected conversation, right-aligned new-message action, locally decrypted search | `web/app.js` |
 | Devices | Compact responsive summary cards, SIM/channel detail dialog, two-path QR/link or eight-digit-code setup wizard, sync diagnostics and safety controls | `web/app.js`, `web/styles.css` |
 | Networking | OS-default data SIM fallback policy validation; system mobile settings shortcut (Android) | `android/app/src/main/java/com/blackkcold/simhub/NetworkFailoverPolicy.java` |
-| Settings | Categorized account/security, notification and system/update views; no node enrollment controls | `web/index.html`, `android/app/src/main/res/layout/activity_main.xml` |
+| Settings | Categorized account/security, notification and system/update views; no node enrollment controls | `web/index.html`, `android/app/src/main/java/com/blackkcold/simhub/HubSettingsV2.kt`, `android/app/src/main/java/com/blackkcold/simhub/ControllerWorkspace.kt` |
 
 **Documentation screenshots must not invent support for privileged Android data-SIM switching, background push-delivered OTP content, full MMS, or call handling.** UI messages and responsive behavior should be tested at desktop/phone/foldable widths. The repository runs Playwright screenshots for multiple browser sizes and light/dark themes in CI; these are regression artifacts, not proof of a fully provisioned physical SIM.

@@ -105,7 +105,7 @@ class PeerActivity:ComponentActivity(){
     private fun beginWrite(to:String=""){recipient=to;body="";sendId=null;sendRequest=null;channelIndex=0;compose=true}
     private fun send(){val p=selected?:return;val channels=remoteState?.optJSONArray("channels")?:return;val ch=channels.optJSONObject(channelIndex)?:return
         if(sendId==null){sendId=UUID.randomUUID().toString();sendRequest=JSONObject().put("action","sms.send").put("to",recipient).put("body",body).put("channelId",ch.getString("id")).put("channelRevision",ch.getLong("revision")).put("commandExpires",System.currentTimeMillis()/1000+120)}
-        work{withContext(Dispatchers.IO){store().queueOutbound(p.getString("id"),sendId!!,sendRequest!!)};val result=rpc(p,sendId!!,sendRequest!!);if(result.optString("state") in listOf("submitted","failed","expired"))withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),sendId!!)};notice="短信状态：${result.optString("state")}";if(result.optString("state")=="submitted"){compose=false;load(false)}}
+        work{val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),sendId!!,sendRequest!!)};notice="短信状态：${result.optString("state")}";if(result.optString("state") in listOf("submitted","sent","delivered","succeeded")){compose=false;load(false)}else if(result.optString("state") in listOf("indeterminate","claimed","unknown"))notice="发送结果待确认。已保留原命令，不会产生新的发送请求。请在设备卡片查看状态。"}
     }
     @Composable private fun Screen(){
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)){
@@ -154,7 +154,7 @@ class PeerActivity:ComponentActivity(){
             Text("身份指纹：${p.optString("id").take(16)}",style=MaterialTheme.typography.labelSmall)
             if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
                 val pending=withContext(Dispatchers.IO){store().outbound(p.getString("id"))};if(pending.length()==0){notice="没有待确认的发送命令"}else{
-                    val cmd=pending.getJSONObject(0);if(cmd.optString("state")=="expired"){withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),cmd.getString("id"))};notice="命令已过期，不会补发"}else{val result=rpc(p,cmd.getString("id"),cmd.getJSONObject("request"));notice="原命令状态：${result.optString("state")}";if(result.optString("state") in listOf("submitted","failed","expired"))withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),cmd.getString("id"))}}
+                    val cmd=pending.getJSONObject(0);if(cmd.optString("state")=="expired"){val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",cmd.getString("id")));val state=result.optString("state");notice="过期命令状态：$state；不会重新发送";if(state in listOf("submitted","sent","delivered","succeeded","failed","expired"))withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),cmd.getString("id"))}}else{val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),cmd.getString("id"),cmd.getJSONObject("request"))};notice="原命令状态：${result.optString("state")}"}
                 }
             }}){Text("检查 / 重试待确认命令")}
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){

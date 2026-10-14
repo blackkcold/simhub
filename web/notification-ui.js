@@ -111,5 +111,7 @@ export function bindNotificationUI({center,getLocale,tr,toast,switchView,isUnloc
   if(navigator.permissions?.query)navigator.permissions.query({name:'notifications'})
     .then(status=>status.addEventListener?.('change',render)).catch(()=>{});
   render();
-  return {render};
+  return {render,setWorkerError(){
+    lastDiagnostic=tr('notify_test_reason_worker_unavailable');render();
+  }};
 }

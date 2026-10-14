@@ -30,7 +30,9 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     private volatile boolean online;
     public PeerWebRtcTransport(Context c,JSONObject profile,boolean consent,Signals signals)throws Exception{this.store=PeerStore.get(c);this.profile=profile;this.consent=consent;this.signals=signals;CompletableFuture<Void> ready=new CompletableFuture<>();main.post(()->{try{create(c);ready.complete(null);}catch(Exception e){ready.completeExceptionally(e);}});ready.get(10,TimeUnit.SECONDS);}
     @SuppressLint("SetJavaScriptEnabled") private void create(Context c){
-        if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))throw new UnsupportedOperationException("update_android_system_webview");
+        if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE))
+            throw new UnsupportedOperationException("update_android_system_webview");
         view=new WebView(c);WebSettings settings=view.getSettings();settings.setJavaScriptEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setDomStorageEnabled(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setBlockNetworkLoads(true);
         view.setWebViewClient(new WebViewClient(){public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
             public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
@@ -54,7 +56,14 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     }catch(Exception ignored){/* Content and crypto failures are never logged. */}}
     public void init(JSONArray servers,boolean initiator)throws Exception{if(!loaded.await(10,TimeUnit.SECONDS))throw new IOException("peer_webview_not_ready");command(new JSONObject().put("type","init").put("servers",servers).put("fallback",consent).put("initiator",initiator));}
     public void signal(JSONObject payload)throws Exception{command(new JSONObject().put("type","signal").put("payload",payload));}
-    private void command(JSONObject cmd){main.post(()->{if(!closed&&view!=null)view.evaluateJavascript("window.peerCommand("+cmd.toString()+")",null);});}
+    /** Send typed data to the exact trusted main-frame origin; never splice JSON into JavaScript. */
+    private void command(JSONObject cmd){
+        final String payload=cmd.toString();
+        main.post(()->{
+            if(!closed&&view!=null)
+                WebViewCompat.postWebMessage(view,new WebMessageCompat(payload),Uri.parse(ORIGIN));
+        });
+    }
     public String route(){return route;}
     public boolean online(){return online;}
     public void restart()throws Exception{command(new JSONObject().put("type","restart"));}

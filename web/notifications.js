@@ -67,7 +67,7 @@ export class NotificationCenter{
   }
   setScope(name){this.scope=String(name||'admin').trim().slice(0,64)||'admin';return this.refresh();}
   publish(broadcast=true){this.onChange(this.rows,getNotificationPrefs());if(broadcast)try{this.channel?.postMessage({changed:true});}catch{}}
-  async refresh(){this.rows=await this.store.list(this.scope);this.publish(false);return this.rows;}
+  async refresh(){await this.store.prune(this.scope);this.rows=await this.store.list(this.scope);this.publish(false);return this.rows;}
   async record({id,kind,deviceId='',sourceEventId='',createdAt=Date.now()}){
     if(!CATEGORIES.includes(kind))return false;
     const scope=this.scope,inserted=await this.store.insert(scope,{id,kind,deviceId,sourceEventId,createdAt});

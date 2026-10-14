@@ -67,7 +67,10 @@ jobs:
           path: p2p-public-${{ matrix.role }}.json
 
   android-sandbox:
-    needs: public-p2p
+    needs: [public-p2p, preview]
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -107,7 +110,8 @@ jobs:
             cp android/app/build/outputs/apk/p2pPreview/app-p2pPreview.apk SIMHub-P2P-0.17.1-public-preview.apk
             cp docs/p2p/TEST_GUIDE.zh-CN.md P2P-TEST-GUIDE.md
             sha256sum SIMHub-P2P-0.17.1-public-preview.apk > p2p-apk-sha256.txt
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - id: tested_apk
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: simhub-p2p-tested-package
@@ -117,3 +121,13 @@ jobs:
             android-sandbox-results.txt
             p2p-apk-sha256.txt
             public-evidence/*.json
+
+      - name: Attach passing preview APK to the existing draft PR
+        if: success()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_APK_URL: ${{ steps.tested_apk.outputs.artifact-url }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/84/comments" \
+            -f "body=✅ P2P isolated preview validation passed at \`${{ github.sha }}\`. Public two-runner DIRECT, Android sandbox and preview checks passed. **Test APK:** ${TEST_APK_URL} (download the simhub-p2p-tested-package artifact and verify p2p-apk-sha256.txt). This is a test package; PR #84 stays draft and must not merge to main without a new user instruction."

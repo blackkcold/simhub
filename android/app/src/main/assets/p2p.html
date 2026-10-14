@@ -49,12 +49,13 @@ async function command(c){try{
  }
  if(c.type==='close'){dc?.close();pc?.close();ready=false;for(const a of assembling.values())clearTimeout(a.timer);assembling.clear();}
  }catch(_){native('error',{reason:'rtc_command_failed'});}}
-// Android sends structured commands over an origin-scoped native WebMessage, not JS evaluation.
-window.addEventListener('message',event=>{try{
+// The trusted Android host answers via the origin-scoped PeerBridge object.
+// Do not accept global window message events from untrusted frames or origins.
+PeerBridge.onmessage=event=>{try{
  if(typeof event.data!=='string'||event.data.length>MAX)return;
  const cmd=JSON.parse(event.data);
  if(!cmd||typeof cmd!=='object'||typeof cmd.type!=='string')return;
  void command(cmd);
-}catch(_){native('error',{reason:'native_command_invalid'});}});
+}catch(_){native('error',{reason:'native_command_invalid'});}};
 window.peerCommand=command;native('loaded');
 </script>

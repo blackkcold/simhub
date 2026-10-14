@@ -1804,6 +1804,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             out.append({
                 "id":r["id"],"name":r["name"],"group":r["group_name"],"model":r["model"],"osVersion":r["os_version"],"appVersion":r["app_version"],
                 "appVersionCode":reported_state.get("appVersionCode"),"stateUpdatedAt":r["state_updated_at"],
+                "connectionPolicy":"RELAY_ONLY","authorizationDomain":"LEGACY_RELAY",
                 "nodeType":r["node_type"],"capabilities":safe_json_loads(r["capabilities_json"],[]),"keyId":r["key_id"] or None,"tokenIssuedAt":r["token_issued_at"],
                 "wrappedKey":safe_json_loads(r["wrapped_key_json"],{}) if r["key_id"] else None,
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,

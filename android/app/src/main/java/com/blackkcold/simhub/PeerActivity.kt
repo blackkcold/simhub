@@ -149,6 +149,10 @@ class PeerActivity:ComponentActivity(){
         items(peers,key={it.optString("id")}){p->HubCard(Modifier.fillMaxWidth()){
             Text(p.optString("name"),style=MaterialTheme.typography.titleMedium);Text("${if(p.optString("localRole")=="NODE")"授权的管理手机" else "SIM 节点"} · ${p.optString("pairState")}")
             Text("注册模式：${p.optString("policy")}\n当前链路：${routeLabel(p.optString("activeTransport"))}\n中继绑定：${p.optString("relayBindingState")}")
+            if(selected?.optString("id")==p.optString("id"))remoteState?.let{state->
+                Text("电量 ${state.opt("batteryPct")?:"—"}% · ${if(state.optBoolean("charging"))"充电中" else "电池供电"} · ${state.optString("network","未知网络")}")
+                Text("Android ${state.optString("androidVersion")} · ${state.optString("appVersion")} · ${if(state.optBoolean("smsSendAllowed"))"系统允许发送" else "当前仅允许读取"}")
+            }
             Text("身份指纹：${p.optString("id").take(16)}",style=MaterialTheme.typography.labelSmall)
             if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
                 val pending=withContext(Dispatchers.IO){store().outbound(p.getString("id"))};if(pending.length()==0){notice="没有待确认的发送命令"}else{
@@ -156,7 +160,10 @@ class PeerActivity:ComponentActivity(){
                 }
             }}){Text("检查 / 重试待确认命令")}
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")Button(onClick={select(p)}){Text("管理短信")}
+                if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
+                    Button(onClick={select(p)}){Text("管理短信")}
+                    OutlinedButton(onClick={selected=p;work{remoteState=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state")).optJSONObject("device");notice="设备状态已刷新"}}){Text("设备状态")}
+                }
                 if(p.optString("pairState")!="REVOKED")TextButton(onClick={work{withContext(Dispatchers.IO){store().revoke(p.getString("id"));PeerInboxCache.clear(applicationContext,p.getString("id"))};if(selected?.optString("id")==p.optString("id")){inbox.clear();selected=null};connector?.close();connector=null;notice="本机已立即撤销此授权；远端旧凭据无法继续访问"}}){Text("撤销授权")}
             }
         }}
@@ -165,9 +172,11 @@ class PeerActivity:ComponentActivity(){
         item{HubCard(Modifier.fillMaxWidth()){
             Text("局域网 / 公网直连",style=MaterialTheme.typography.titleMedium);Text("双机扫码无需服务器。同 Wi-Fi 或同一手机热点可直接连接；可达公网地址也可直接连接。公网 NAT 穿透需要连接服务。")
             Text("纯 P2P：失败即离线。中继备用：仅在明确授权并绑定连接服务后启用。实际路径始终显示。")
+            Text("选择要绑定的已配对设备",style=MaterialTheme.typography.labelLarge)
+            peers.filter{it.optString("pairState")!="REVOKED"}.forEach{p->FilterChip(selected=selected?.optString("id")==p.optString("id"),onClick={selected=p;connectUrl=p.optString("connectionService");useFallback=p.optBoolean("fallbackConsent")},label={Text("${p.optString("name")} · ${if(p.optString("localRole")=="NODE")"管理手机" else "SIM 节点"}")})}
             OutlinedTextField(connectUrl,{connectUrl=it},label={Text("可选连接服务 HTTPS 地址")},modifier=Modifier.fillMaxWidth())
             Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Switch(useFallback,{useFallback=it});Text("授权 TURN 与短期加密信箱回退")}
-            Button(onClick={work{val peer=selected?:peers.firstOrNull{it.optString("pairState")!="REVOKED"}?:throw IllegalStateException("pair_first");connector?.close();connector=PeerInternetConnector(this@PeerActivity,peer.getString("id"));withContext(Dispatchers.IO){connector!!.connect(connectUrl,useFallback)};notice="连接服务已绑定；仅交换密文和必要连接元数据"}},enabled=connectUrl.startsWith("https://")){Text("绑定所选设备并连接")}
+            Button(onClick={work{val peer=selected?:throw IllegalStateException("select_peer_first");connector?.close();connector=PeerInternetConnector(this@PeerActivity,peer.getString("id"));withContext(Dispatchers.IO){connector!!.connect(connectUrl,useFallback)};notice="连接服务已绑定；仅交换密文和必要连接元数据"}},enabled=connectUrl.startsWith("https://")){Text("绑定所选设备并连接")}
             OutlinedButton(onClick={work{selected?.let{p->val fresh=store().peer(p.getString("id"));fresh.put("policy","P2P_ONLY").put("fallbackConsent",false).put("relayBindingState","SUSPENDED").put("connectionEnabled",false);store().update(fresh)};connector?.close();connector=null;notice="已停用此设备的网络服务与中继回退"}}){Text("恢复纯直连")}
             Text("未配置公共服务地址。不会静默连接未知公共服务器。连接服务与现有 Relay Enrollment / Global Vault 完全分离。",style=MaterialTheme.typography.bodySmall)
         }}

@@ -46,7 +46,7 @@ public final class PeerPairingManager {
         byte[] root=PeerCrypto.derive(shared,PeerCrypto.utf8(PeerCrypto.digest(PeerCrypto.utf8(transcript))),"content-root");
         try{store.save(profile(id,controller,response.optString("name","Controller"),"NODE",offer,"ACTIVE"),root);secrets.remove("p2p.pair.offer");secrets.remove("p2p.pair.ephemeral");return id;}finally{Arrays.fill(der,(byte)0);Arrays.fill(shared,(byte)0);Arrays.fill(root,(byte)0);}
     }
-    private void requireNew(String id)throws Exception{JSONArray peers=store.list();for(int i=0;i<peers.length();i++)if(id.equals(peers.getJSONObject(i).getString("id")))throw new SecurityException("peer_already_known_revoke_and_reset_before_repair");}
+    private void requireNew(String id)throws Exception{JSONArray peers=store.list();for(int i=0;i<peers.length();i++)if(id.equals(peers.getJSONObject(i).getString("id"))&&!"REVOKED".equals(peers.getJSONObject(i).optString("pairState")))throw new SecurityException("peer_already_known_revoke_before_repair");}
     private JSONObject profile(String id,String pub,String name,String role,JSONObject offer,String state)throws Exception{
         return new JSONObject().put("id",id).put("publicKey",pub).put("name",name).put("localRole",role).put("permissions",offer.getString("permissions")).put("pairState",state).put("policy","P2P_ONLY").put("fallbackConsent",false).put("relayBindingState","NONE").put("activeTransport","OFFLINE").put("endpoints",role.equals("CONTROLLER")?offer.getJSONArray("endpoints"):new JSONArray());
     }

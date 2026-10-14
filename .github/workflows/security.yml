@@ -2,9 +2,9 @@ name: Security scan
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/p2p-isolated-preview]
   push:
-    branches: [main]
+    branches: [main, feature/p2p-isolated-preview]
   schedule:
     - cron: '0 4 * * 1'
   workflow_dispatch:

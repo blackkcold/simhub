@@ -153,3 +153,11 @@ Relay 无法读取短信和 Vault 明文；Passkey 用于认证，不代替 Vaul
 ## 文档
 
 [一键部署](docs/QUICKSTART.zh-CN.md) · [完整安装](docs/INSTALLATION.md) · [Android 设置](docs/ANDROID_SETUP.md) · [安全设计](docs/SECURITY_ARCHITECTURE.md) · [共享短信](docs/SHARED_SMS.md) · [架构与协议](docs/ARCHITECTURE.md) · [开源协议](LICENSE)
+
+## 独立 P2P 测试分支
+
+`feature/p2p-isolated-preview` 提供双向扫码、独立 Peer 授权、局域网加密直连、
+原生短信分页及可选 WebRTC/TURN/加密信箱。测试 APK 包名为
+`com.blackkcold.simhub.p2ptest`，可与正式版并存，现有 Relay/Vault 授权不迁移。
+公网连接服务需要实际部署与明确绑定，项目未提供正在运营的公共端点。
+详见 [测试指南](docs/p2p/TEST_GUIDE.zh-CN.md) 和 [协议边界](docs/p2p/PROTOCOL.md)。

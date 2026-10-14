@@ -37,9 +37,9 @@ public final class PeerStore extends SQLiteOpenHelper {
     public String myId()throws Exception{return PeerCrypto.digest(identity().getPublic().getEncoded());}
     public synchronized void save(JSONObject p,byte[] key)throws Exception{
         String id=p.getString("id");if(!id.equals(PeerCrypto.digest(PeerCrypto.publicKey(p.getString("publicKey")).getEncoded())))throw new SecurityException("peer_id_mismatch");
-        try(Cursor existing=getReadableDatabase().rawQuery("SELECT id FROM peers WHERE id=?",new String[]{id})){if(existing.moveToFirst())throw new SecurityException("peer_already_known");}
+        try(Cursor existing=getReadableDatabase().rawQuery("SELECT profile FROM peers WHERE id=?",new String[]{id})){if(existing.moveToFirst()&&!"REVOKED".equals(new JSONObject(existing.getString(0)).optString("pairState")))throw new SecurityException("peer_already_known");}
         new SecretStore(context).putBytes("p2p.content."+id,key);
-        ContentValues v=new ContentValues();v.put("id",id);v.put("profile",p.toString());getWritableDatabase().insertOrThrow("peers",null,v);
+        ContentValues v=new ContentValues();v.put("id",id);v.put("profile",p.toString());if(getWritableDatabase().insertWithOnConflict("peers",null,v,SQLiteDatabase.CONFLICT_REPLACE)==-1)throw new IllegalStateException("peer_profile_not_durable");
     }
     public synchronized JSONObject peer(String id)throws Exception{try(Cursor c=getReadableDatabase().rawQuery("SELECT profile FROM peers WHERE id=?",new String[]{id})){if(!c.moveToFirst())throw new SecurityException("peer_not_authorized");return new JSONObject(c.getString(0));}}
     public synchronized JSONArray list(){JSONArray a=new JSONArray();try(Cursor c=getReadableDatabase().rawQuery("SELECT profile FROM peers ORDER BY id",null)){while(c.moveToNext())try{a.put(new JSONObject(c.getString(0)));}catch(Exception e){throw new IllegalStateException(e);}}return a;}

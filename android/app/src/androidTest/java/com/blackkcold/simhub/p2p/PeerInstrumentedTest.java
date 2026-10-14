@@ -4,6 +4,8 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import org.junit.Before;
 import org.junit.After;
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TestName;
 import static org.junit.Assert.*;
 import android.content.*;
 import android.net.Uri;
@@ -16,6 +18,7 @@ import java.util.*;
 /** Runs production Keystore, SQLite, double-scan parser, server and provider on Android. */
 @SuppressWarnings("deprecation")
 public final class PeerInstrumentedTest {
+    @Rule public TestName testName=new TestName();
     private PeerStore store;
     private PeerNodeServer server;
     private String controllerId;
@@ -23,7 +26,7 @@ public final class PeerInstrumentedTest {
     @Before public void setUp()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();store=PeerStore.get(c);server=new PeerNodeServer(store);new Thread(server::run).start();
         KeyPair identity=PeerCrypto.ephemeral(),ephemeral=PeerCrypto.ephemeral();String pub=PeerCrypto.b64(identity.getPublic().getEncoded()),epub=PeerCrypto.b64(ephemeral.getPublic().getEncoded());controllerId=PeerCrypto.digest(identity.getPublic().getEncoded());
-        PeerPairingManager manager=new PeerPairingManager(c);String offerQr=manager.offer("Sandbox Node",false,new JSONArray());
+        PeerPairingManager manager=new PeerPairingManager(c);String offerQr=manager.offer("Sandbox Node","testSmsReceiptSurvivesRouteSwitchAndExpiry".equals(testName.getMethodName()),new JSONArray());
         JSONObject qr=new JSONObject(new String(PeerCrypto.unb64(offerQr.substring(12)),java.nio.charset.StandardCharsets.UTF_8));String offerBody=qr.getString("body");
         JSONObject offer=new JSONObject(new String(PeerCrypto.unb64(offerBody),java.nio.charset.StandardCharsets.UTF_8));PeerCrypto.verify(offer.getString("publicKey"),offerBody,qr.getString("signature"));
         JSONObject response=new JSONObject().put("v",1).put("kind","response").put("offer",offerBody).put("offerHash",PeerCrypto.digest(PeerCrypto.utf8(offerBody))).put("publicKey",pub).put("ephemeral",epub).put("name","Sandbox Controller");
@@ -35,7 +38,10 @@ public final class PeerInstrumentedTest {
     }
     @After public void tearDown()throws Exception{PeerCloudConnector.closePeer(controllerId);server.close();store.revoke(controllerId);Arrays.fill(root,(byte)0);}
     private JSONObject rpc(JSONObject req)throws Exception{
-        String to=store.myId(),helloId=UUID.randomUUID().toString(),id=UUID.randomUUID().toString();long expires=System.currentTimeMillis()/1000+120;KeyPair eph=PeerCrypto.ephemeral();
+        return rpc(UUID.randomUUID().toString(),req);
+    }
+    private JSONObject rpc(String id,JSONObject req)throws Exception{
+        String to=store.myId(),helloId=UUID.randomUUID().toString();long expires=System.currentTimeMillis()/1000+120;KeyPair eph=PeerCrypto.ephemeral();
         try(Socket socket=new Socket("127.0.0.1",server.port())){socket.setSoTimeout(10000);
             DirectPeerTransport.write(socket.getOutputStream(),PeerProtocol.seal(root,controllerId,to,helloId,expires,new JSONObject().put("action","hello").put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded()))));
             JSONObject answer=PeerProtocol.open(root,to,controllerId,DirectPeerTransport.read(socket.getInputStream()),System.currentTimeMillis()/1000);
@@ -55,6 +61,19 @@ public final class PeerInstrumentedTest {
         assertEquals("indeterminate",store.claim(controllerId,id,"payload-a").getString("state"));
         store.finish(controllerId,id,new JSONObject().put("state","submitted"));assertEquals("submitted",store.claim(controllerId,id,"payload-a").getString("state"));
         try{store.claim(controllerId,id,"payload-b");fail("payload rebinding accepted");}catch(SecurityException expected){}
+    }
+    @Test public void testSmsReceiptSurvivesRouteSwitchAndExpiry()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();long now=System.currentTimeMillis()/1000;String id=UUID.randomUUID().toString();
+        // Revision zero is invalid before SmsManager; this test cannot send a real SMS.
+        JSONObject req=new JSONObject().put("action","sms.send").put("to","+15550001111").put("body","sandbox-only").put("channelId","nonexistent-sandbox-channel").put("channelRevision",0).put("commandExpires",now+120);
+        JSONObject sealed=PeerRelayRpc.execute(c,PeerProtocol.seal(root,controllerId,store.myId(),id,now+120,req));
+        assertEquals("failed",PeerProtocol.open(root,store.myId(),controllerId,sealed,now).getJSONObject("result").getString("state"));
+        assertEquals("failed",rpc(id,req).getString("state"));
+        assertEquals("failed",rpc(new JSONObject().put("action","command.status").put("commandId",id)).getString("state"));
+        try{new PeerRpc(store).dispatch(controllerId,id,new JSONObject(req.toString()).put("body","changed"));fail("Route switch changed original payload");}catch(SecurityException expected){}
+        String expiredId=UUID.randomUUID().toString();JSONObject old=new JSONObject(req.toString()).put("commandExpires",now-1);
+        assertNull(store.claim(controllerId,expiredId,PeerCrypto.digest(PeerCrypto.utf8(old.toString()))));store.finish(controllerId,expiredId,new JSONObject().put("state","submitted"));
+        assertEquals("submitted",new PeerRpc(store).dispatch(controllerId,expiredId,old).getString("state"));
     }
     @Test public void testEncryptedEventsRequirePeerScopedAck()throws Exception{
         String event="sandbox-event-"+UUID.randomUUID();store.event(controllerId,event,"sms.received",System.currentTimeMillis()/1000,new JSONObject().put("body","private sandbox event"));

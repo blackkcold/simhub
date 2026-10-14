@@ -140,6 +140,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var composeMessage by remember(selected){mutableStateOf("")}
     var composeSubmittedDraft by remember(selected){mutableStateOf("")}
     var composeCommandId by remember(selected){mutableStateOf(UUID.randomUUID().toString())}
+    var composePeerId by remember(selected){mutableStateOf<String?>(null)}
     var composeDeviceIdx by remember(selected){mutableIntStateOf(0)}
     var composeChannelIdx by remember(selected){mutableIntStateOf(0)}
     var showReset by remember{mutableStateOf(false)}
@@ -165,6 +166,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var localUnlocked by remember(selected){mutableStateOf(!requireLocalUnlock)}
     var localAuthError by remember(selected){mutableStateOf("")}
     var lastCommandId by remember(selected){mutableStateOf("")}
+    var lastCommandPeer by remember(selected){mutableStateOf("")}
     var lastCommandState by remember(selected){mutableStateOf("")}
     var lastCommandDevice by remember(selected){mutableStateOf("")}
     var commandHistory by remember(selected){mutableStateOf<List<JSONObject>>(emptyList())}
@@ -372,8 +374,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 if(e !is SecurityException && selected!=null){
                     val peers=PeerHubGateway.linked(context,selected!!)
                     if(peers.isNotEmpty())try{
-                        val batch=withContext(Dispatchers.IO){
+                        val fallback=withContext(Dispatchers.IO){
                             val messages=JSONArray();var more=false;var accepted=0
+                            val reachable=mutableListOf<JSONObject>()
                             for(peer in peers){
                                 val peerId=peer.getString("id")
                                 if(mode=="older"&&peerBackupActive&&peerBackupCursors.containsKey(peerId)&&peerBackupCursors[peerId]==null)continue
@@ -382,15 +385,22 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 val result=runCatching{PeerHubGateway.request(context,peerId,UUID.randomUUID().toString(),request,false)}.getOrNull()?:continue
                                 if(result.optString("state")!="succeeded")continue
                                 accepted++;val rows=result.optJSONArray("messages")?:JSONArray();for(i in 0 until rows.length())messages.put(rows.getJSONObject(i))
+                                val status=runCatching{PeerHubGateway.request(context,peerId,UUID.randomUUID().toString(),JSONObject().put("action","device.state"),false)}.getOrNull()
+                                status?.optJSONObject("device")?.let{state->
+                                    val relayId=peer.optString("relayDeviceId")
+                                    val previous=devices.firstOrNull{it.optString("id")==relayId}
+                                    reachable.add(JSONObject().put("id",relayId).put("name",previous?.optString("name")?:peer.optString("name")).put("online",true).put("state",state).put("peerSendGranted",peer.optString("permissions").split(",").contains("send")))
+                                }
                                 peerBackupCursors[peerId]=if(result.optBoolean("hasMore"))result.optJSONObject("cursor") else null
                                 more=more||result.optBoolean("hasMore")
                             }
                             if(accepted==0)throw java.io.IOException("已授权 P2P 节点也不可达")
-                            JSONObject().put("type","snapshot").put("v",1).put("messages",messages).put("hasMore",more).toString()
+                            JSONObject().put("type","snapshot").put("v",1).put("messages",messages).put("hasMore",more).toString() to reachable
                         }
                         if(requireLocalUnlock&&!localUnlocked)return@launch
                         if(!peerBackupActive||mode!="older")inbox.clear()
-                        if(!inbox.accept(batch,append=peerBackupActive&&mode=="older",preferOlder=mode=="older"))throw java.io.IOException("P2P 短信批次未接收")
+                        if(!inbox.accept(fallback.first,append=peerBackupActive&&mode=="older",preferOlder=mode=="older"))throw java.io.IOException("P2P 短信批次未接收")
+                        devices=fallback.second
                         if(!peerBackupActive){page=0;cursors=emptyList();lastEventSeq=0}
                         if(mode=="older")page++
                         peerBackupActive=true;peerBackupUntil=System.currentTimeMillis()+20000
@@ -481,7 +491,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             .put("expiresAt",end).put("ciphertext",cipher))
                     id
                 }
-                lastCommandId=commandId;lastCommandDevice=device.optString("name")
+                lastCommandId=commandId;lastCommandPeer="";lastCommandDevice=device.optString("name")
                 lastCommandState="任务已入队，等待设备领取及最终 ACK"
                 commandTick++
             }catch(e:Exception){actionError=e.message?:"任务下发失败，请检查网络及设备状态"}
@@ -538,13 +548,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         while(true){
             if(!busy){
                 try{
+                    if(lastCommandPeer.isNotEmpty()&&lastCommandId.isNotEmpty()){
+                        val status=withContext(Dispatchers.IO){PeerHubGateway.request(context,lastCommandPeer,UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",lastCommandId))}
+                        lastCommandState=status.optString("state","unknown")
+                    }
                     val recent=withContext(Dispatchers.IO){
                         api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")?:JSONArray()
                     }
                     commandHistory=(0 until recent.length()).mapNotNull{recent.optJSONObject(it)}
                     commandHistoryError=""
                     val current=commandHistory.firstOrNull{it.optString("commandId")==lastCommandId}
-                    if(current!=null)
+                    if(current!=null&&lastCommandPeer.isEmpty())
                         lastCommandState=ControllerCommandProgress.describe(current)
                 }catch(e:Exception){
                     commandHistoryError=e.message?:"任务状态暂不可用，稍后将继续重试"
@@ -1175,10 +1189,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val messageCommandId=composeCommandId
         val deviceIdx=composeDeviceIdx
         val channelIdx=composeChannelIdx
-        val possible=devices.filter{ControllerNodePolicy.canSend(it)}
+        val possible=devices.filter{ControllerNodePolicy.canSend(it)&&(!peerBackupActive||it.optBoolean("peerSendGranted"))}
         val current=possible.getOrNull(deviceIdx)
         val channels=current?.let{ControllerNodePolicy.channels(it)}?:JSONArray()
         val currentDraft=(current?.optString("id")?:"")+"|"+deviceIdx+"|"+channelIdx+"|"+recipient+"|"+message
+        val pairedSender=selected?.let{origin->PeerHubGateway.linked(context,origin).firstOrNull{it.optString("relayDeviceId")==current?.optString("id")&&it.optString("permissions").split(",").contains("send")}}
         var stepUp by remember{mutableStateOf("")}
         Dialog(onDismissRequest={showWrite=false},
             properties=DialogProperties(usePlatformDefaultWidth=false)){
@@ -1219,24 +1234,31 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     }
                     OutlinedTextField(recipient,{composeRecipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
                     OutlinedTextField(message,{composeMessage=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
-                    OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
+                    if((composePeerId?:pairedSender?.optString("id")).isNullOrEmpty())OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
                         singleLine=true,visualTransformation=PasswordVisualTransformation())
+                    else Text("使用独立 P2P 发送授权；已配置 Relay 时优先 Relay，失败后使用 P2P。",style=MaterialTheme.typography.bodySmall)
                 }
                     }
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
                         Button(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && ControllerNodePolicy.canSend(current) && recipient.isNotBlank() && message.isNotBlank(),
                 onClick={
                     if(submittedDraft.isEmpty())composeSubmittedDraft=currentDraft
+                    val sendPeer=composePeerId?:pairedSender?.optString("id").orEmpty().also{composePeerId=it}
                     sending=true;sendError=""
                     scope.launch{
                         try {
-                            val queuedId=withContext(Dispatchers.IO){
-                                // Server always independently enforces second factor for sms.send.
-                                if(stepUp.isNotEmpty())client!!.api("/api/v1/auth/elevate","POST",
-                                    JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",stepUp))
+                            val outcome=withContext(Dispatchers.IO){
                                 val channel=channels.optJSONObject(channelIdx)?:throw IllegalStateException("SIM 未选择")
                                 val id=messageCommandId
                                 val now=System.currentTimeMillis()/1000
+                                if(sendPeer.isNotEmpty()){
+                                    val result=PeerHubGateway.send(context,sendPeer,id,JSONObject().put("action","sms.send").put("to",recipient).put("body",message).put("channelId",channel.optString("id")).put("channelRevision",channel.optInt("revision",1)).put("commandExpires",now+120))
+                                    if(result.optString("state") in listOf("indeterminate","claimed","unknown"))throw java.io.IOException("发送状态未确认，请保留原任务查看状态")
+                                    return@withContext id to result.optString("state")
+                                }
+                                // Server always independently enforces second factor for sms.send.
+                                if(stepUp.isNotEmpty())client!!.api("/api/v1/auth/elevate","POST",
+                                    JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",stepUp))
                                 val expires=now+1200
                                 val payload=JSONObject().put("v",2).put("action","sms.send")
                                     .put("commandId",id).put("issuedAt",now).put("expiresAt",expires)
@@ -1248,14 +1270,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     JSONObject().put("commandId",id).put("idempotencyKey",id)
                                         .put("type","sms.send").put("createdAt",now)
                                         .put("expiresAt",expires).put("ciphertext",cipher))
-                                id
+                                id to "等待设备连接并领取任务"
                             }
-                            lastCommandId=queuedId
+                            lastCommandId=outcome.first;lastCommandPeer=sendPeer;commandTick++
                             lastCommandDevice=current?.optString("name").orEmpty()
-                            lastCommandState="等待设备连接并领取任务"
+                            lastCommandState=outcome.second
                             showWrite=false;error=""
                             composeRecipient="";composeMessage=""
                             composeSubmittedDraft=""
+                            composePeerId=null
                             composeCommandId=UUID.randomUUID().toString()
                         }catch(e:Exception){
                             sendError=(e.message?:"请求失败")+

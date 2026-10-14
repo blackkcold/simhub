@@ -26,7 +26,7 @@ public final class PeerRpc {
                 case "events.page" -> {require(grants,"read");yield store.events(peerId,request.optLong("after",0));}
                 case "events.ack" -> {require(grants,"read");store.ackEvents(peerId,request.getJSONArray("sequences"));yield new JSONObject().put("state","acknowledged");}
                 case "sms.send" -> {require(grants,"send");yield send(peerId,id,request);}
-                case "command.status" -> {require(grants,"send");String command=request.getString("commandId");String localId="p2p-"+PeerCrypto.digest(PeerCrypto.utf8(peerId+"|"+command));yield new JSONObject().put("state",Optional.ofNullable(LocalStore.get(c).commandState(localId)).orElse("unknown"));}
+                case "command.status" -> {require(grants,"send");String command=request.getString("commandId");String localId="p2p-"+PeerCrypto.digest(PeerCrypto.utf8(peerId+"|"+command));String status=LocalStore.get(c).commandState(localId);JSONObject receipt=store.receipt(peerId,command,null);yield new JSONObject().put("state",status!=null?status:receipt!=null?receipt.optString("state","unknown"):"unknown");}
                 case "peer.revoke" -> {store.revoke(peerId);yield new JSONObject().put("state","revoked");}
                 default -> throw new SecurityException("unsupported_peer_action");
             };
@@ -35,7 +35,7 @@ public final class PeerRpc {
     private static void require(Set<String> grants,String permission){if(!grants.contains(permission))throw new SecurityException("peer_permission_denied");}
     private JSONObject state()throws Exception{
         JSONObject full=StateCollector.collect(c),state=new JSONObject();
-        for(String field:List.of("androidVersion","sdk","model","appVersion","batteryPct","charging","network","smsRoleHeld","smsMode","smsReadPermission","smsSendAllowed","subscriptions","channels","smsReceiveOperational"))if(full.has(field))state.put(field,full.get(field));
+        for(String field:List.of("androidVersion","sdk","model","appVersion","batteryPct","charging","network","smsRoleHeld","smsMode","smsReadPermission","smsSendPermission","smsSendAllowed","smsDeveloperOverride","subscriptions","channels","smsReceiveOperational"))if(full.has(field))state.put(field,full.get(field));
         return new JSONObject().put("state","succeeded").put("device",state).put("id",store.myId()).put("relayHint",PeerPairingManager.relayHint(c));
     }
     private JSONObject page(JSONObject peer,JSONObject req)throws Exception{
@@ -63,8 +63,9 @@ public final class PeerRpc {
     }
     private JSONObject send(String peer,String id,JSONObject req)throws Exception{
         long now=System.currentTimeMillis()/1000,expires=req.getLong("commandExpires");
+        String digest=PeerCrypto.digest(PeerCrypto.utf8(req.toString()));JSONObject receipt=store.receipt(peer,id,digest);if(receipt!=null)return receipt;
         if(expires<now||expires>now+300)return new JSONObject().put("state","expired");
-        String digest=PeerCrypto.digest(PeerCrypto.utf8(req.toString()));JSONObject existing=store.claim(peer,id,digest);if(existing!=null)return existing;
+        JSONObject existing=store.claim(peer,id,digest);if(existing!=null)return existing;
         JSONObject result;
         String localId="p2p-"+PeerCrypto.digest(PeerCrypto.utf8(peer+"|"+id));
         try{

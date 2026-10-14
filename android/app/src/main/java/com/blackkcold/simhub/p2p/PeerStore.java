@@ -48,7 +48,15 @@ public final class PeerStore extends SQLiteOpenHelper {
     public byte[] key(String id)throws Exception{JSONObject p=peer(id);if("REVOKED".equals(p.optString("pairState")))throw new SecurityException("peer_revoked");byte[] key=new SecretStore(context).getBytes("p2p.content."+id);if(key==null||key.length!=32)throw new SecurityException("peer_key_unavailable");return key;}
     public synchronized void revoke(String id)throws Exception{JSONObject p=peer(id);p.put("pairState","REVOKED").put("activeTransport","OFFLINE");update(p);new SecretStore(context).remove("p2p.content."+id);getWritableDatabase().delete("outbox","peer=?",new String[]{id});getWritableDatabase().delete("peer_events","peer=?",new String[]{id});}
     /** Atomic durable claim. A crash after dispatch remains 'indeterminate', never blindly resends. */
+    public synchronized JSONObject receipt(String peer,String id,String digest)throws Exception{
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT digest,result FROM receipts WHERE peer=? AND id=?",new String[]{peer,id})){
+            if(!c.moveToFirst())return null;
+            if(digest!=null&&!digest.equals(c.getString(0)))throw new SecurityException("peer_request_id_reused");
+            return c.isNull(1)?new JSONObject().put("state","indeterminate").put("reason","previous_dispatch_unconfirmed"):new JSONObject(c.getString(1));
+        }
+    }
     public synchronized JSONObject claim(String peer,String id,String digest)throws Exception{
+        JSONObject previous=receipt(peer,id,digest);if(previous!=null)return previous;
         ContentValues v=new ContentValues();v.put("peer",peer);v.put("id",id);v.put("digest",digest);v.put("state","claimed");
         try(Cursor total=getReadableDatabase().rawQuery("SELECT count(*) FROM receipts WHERE peer=?",new String[]{peer})){total.moveToFirst();if(total.getInt(0)>=100000)throw new SecurityException("peer_command_capacity");}
         if(getWritableDatabase().insertWithOnConflict("receipts",null,v,SQLiteDatabase.CONFLICT_IGNORE)!=-1)return null;
@@ -96,6 +104,13 @@ public final class PeerStore extends SQLiteOpenHelper {
                 rows.put(row);
             }
         }return rows;
+    }
+    public synchronized JSONObject outbound(String peer,String id)throws Exception{
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT cipher,expires FROM outbox WHERE peer=? AND id=?",new String[]{peer,id})){
+            if(!c.moveToFirst())return null;
+            if(c.getLong(1)<System.currentTimeMillis()/1000)return new JSONObject().put("state","expired");
+            byte[] key=key(peer);try{return new JSONObject().put("request",PeerProtocol.open(key,myId(),peer,new JSONObject(c.getString(0)),System.currentTimeMillis()/1000));}finally{java.util.Arrays.fill(key,(byte)0);}
+        }
     }
     public synchronized void clearOutbound(String peer,String id){getWritableDatabase().delete("outbox","peer=? AND id=?",new String[]{peer,id});}
     public synchronized void markTransport(String id,String route)throws Exception{JSONObject p=peer(id);if(!"ACTIVE".equals(p.optString("pairState")))return;p.put("activeTransport",route).put("lastSyncAt",System.currentTimeMillis()/1000);update(p);}

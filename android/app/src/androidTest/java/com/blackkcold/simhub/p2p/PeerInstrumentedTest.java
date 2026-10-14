@@ -62,6 +62,25 @@ public final class PeerInstrumentedTest {
         store.ackEvents("other-peer-1234567890",new JSONArray().put(seq));assertEquals(1,store.events(controllerId,0).getJSONArray("events").length());
         assertEquals("acknowledged",rpc(new JSONObject().put("action","events.ack").put("sequences",new JSONArray().put(seq))).getString("state"));assertEquals(0,store.events(controllerId,0).getJSONArray("events").length());
     }
+    @Test public void testRelayResetPreservesPeerKeysPendingSmsAndReceipts()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        com.blackkcold.simhub.AgentConfig config=new com.blackkcold.simhub.AgentConfig(c);
+        byte[] nodeKey=PeerCrypto.random(32);config.setNodeEnrollment("https://legacy.invalid","legacy-sandbox","Legacy node","sandbox-token-with-at-least-forty-characters-1234567890",com.blackkcold.simhub.CryptoBox.keyId(nodeKey),nodeKey);
+        com.blackkcold.simhub.LocalStore local=com.blackkcold.simhub.LocalStore.get(c);String id="p2p-"+UUID.randomUUID();
+        try{
+            assertTrue(local.claimCommand(id,"sms.send"));
+            JSONObject payload=new JSONObject().put("commandId",id).put("body","private pending sandbox SMS");
+            JSONObject cipher=com.blackkcold.simhub.PendingSmsCrypto.encrypt(c,payload);
+            assertEquals("p2p-local-pending-v1",cipher.getString("domain"));
+            local.createPendingSms(id,"",1,cipher,-1);
+            local.queueCommandAck(id,"submitted",new JSONObject());assertEquals(0,local.pendingCommandAckCount());
+            local.resetForReenrollment();config.clearEnrollment();
+            assertFalse(config.isEnrolled());assertTrue(Arrays.equals(root,store.key(controllerId)));
+            assertEquals("claimed",local.commandState(id));
+            com.blackkcold.simhub.LocalStore.PendingStatus status=local.recordSentPart(id,0,true,0);
+            assertTrue(status.exists);assertEquals("private pending sandbox SMS",com.blackkcold.simhub.PendingSmsCrypto.decrypt(c,status.eventCipher).getString("body"));
+        }finally{local.removePendingSms(id);config.clearEnrollment();Arrays.fill(nodeKey,(byte)0);}
+    }
     @Test public void testMoreThan1000ProviderRowsThroughEncryptedPagination()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();List<Uri> inserted=new ArrayList<>();
         try{

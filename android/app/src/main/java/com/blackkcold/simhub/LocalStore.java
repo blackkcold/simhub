@@ -135,6 +135,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         getWritableDatabase().execSQL("DELETE FROM processed_commands WHERE processed_at < ?",new Object[]{System.currentTimeMillis()/1000-30L*86400});
     }
     public synchronized void queueCommandAck(String id,String state,JSONObject result){
+        if(id.startsWith("p2p-"))return; // P2P has its own durable receipt domain.
         ContentValues v=new ContentValues();v.put("command_id",id);v.put("state",state);v.put("result_json",result==null?"{}":result.toString());v.put("updated_at",System.currentTimeMillis()/1000);
         getWritableDatabase().insertWithOnConflict("command_acks",null,v,SQLiteDatabase.CONFLICT_REPLACE);
     }
@@ -256,7 +257,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try{
-            db.delete("events",null,null);db.delete("uploaded_event_ids",null,null);db.delete("processed_commands",null,null);db.delete("command_acks",null,null);db.delete("sms_part_status",null,null);db.delete("pending_sms",null,null);
+            db.delete("events",null,null);db.delete("uploaded_event_ids",null,null);db.delete("processed_commands","id NOT LIKE ?",new String[]{"p2p-%"});db.delete("command_acks",null,null);db.delete("sms_part_status","command_id NOT LIKE ?",new String[]{"p2p-%"});db.delete("pending_sms","command_id NOT LIKE ?",new String[]{"p2p-%"});
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }

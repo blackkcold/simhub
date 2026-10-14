@@ -39,6 +39,28 @@ jobs:
           queries: security-extended
           build-mode: none
       - uses: github/codeql-action/analyze@v4
+        with:
+          output: codeql-results
+      - name: Summarize CodeQL findings (rule, severity, source location only)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          paths = glob.glob("codeql-results/**/*.sarif", recursive=True)
+          if not paths:
+              print("No local CodeQL SARIF; review the analysis task for build/upload errors.")
+          for path in paths:
+              with open(path, encoding="utf-8") as handle:
+                  data = json.load(handle)
+              for run in data.get("runs", []):
+                  for result in run.get("results", [])[:150]:
+                      locs = result.get("locations", [])
+                      physical = locs[0].get("physicalLocation", {}) if locs else {}
+                      where = physical.get("artifactLocation", {}).get("uri", "?")
+                      line = physical.get("region", {}).get("startLine", "?")
+                      sev = result.get("properties", {}).get("security-severity", result.get("level", "unknown"))
+                      print(f"CODEQL_FINDING rule={result.get('ruleId', '?')} severity={sev} file={where}:{line}")
+          PY
 
   codeql-android:
     name: codeql (java-kotlin)
@@ -71,3 +93,25 @@ jobs:
       - name: Compile Java and Kotlin under CodeQL instrumentation
         run: gradle -p android :app:compileDebugKotlin :app:compileDebugJavaWithJavac --no-build-cache --rerun-tasks --stacktrace
       - uses: github/codeql-action/analyze@v4
+        with:
+          output: codeql-results
+      - name: Summarize CodeQL findings (rule, severity, source location only)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          paths = glob.glob("codeql-results/**/*.sarif", recursive=True)
+          if not paths:
+              print("No local CodeQL SARIF; review the analysis task for build/upload errors.")
+          for path in paths:
+              with open(path, encoding="utf-8") as handle:
+                  data = json.load(handle)
+              for run in data.get("runs", []):
+                  for result in run.get("results", [])[:150]:
+                      locs = result.get("locations", [])
+                      physical = locs[0].get("physicalLocation", {}) if locs else {}
+                      where = physical.get("artifactLocation", {}).get("uri", "?")
+                      line = physical.get("region", {}).get("startLine", "?")
+                      sev = result.get("properties", {}).get("security-severity", result.get("level", "unknown"))
+                      print(f"CODEQL_FINDING rule={result.get('ruleId', '?')} severity={sev} file={where}:{line}")
+          PY

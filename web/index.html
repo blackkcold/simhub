@@ -44,7 +44,7 @@
 <h2 data-i18n="notifications">通知</h2>
 <section class="notify-section"><div class="notify-heading"><div><h3 data-i18n="notify_browser_heading">浏览器系统通知</h3><p class="hint" data-i18n="notify_browser_help">网页或 PWA 运行时可提醒，关闭后推送需另行配置。</p></div><span id="notifyPermission" class="notify-permission" role="status"></span></div>
 <div class="row wrap"><button id="notifyBtn" type="button" class="ghost" data-i18n="enable_notifications">启用浏览器通知</button><button id="notifyTestBtn" type="button" class="ghost" data-i18n="notify_test">发送测试通知</button></div>
-<p id="notifyPermissionHelp" class="hint notify-help" aria-live="polite"></p></section>
+<p id="notifyPermissionHelp" class="hint notify-help" aria-live="polite"></p><p id="notifyTestResult" class="hint notify-diagnostic" role="status" aria-live="polite"></p></section>
 <section class="notify-section"><h3 data-i18n="notify_categories">通知类型</h3><p class="hint" data-i18n="notify_categories_help">仅控制此浏览器的系统提醒，事件历史独立保留。</p>
 <div class="notify-options">
 <label class="notify-toggle"><span data-i18n="notify_master">浏览器系统提醒</span><input data-notify-pref="enabled" type="checkbox"></label>
@@ -56,6 +56,7 @@
 <label class="notify-toggle"><span data-i18n="notify_task_done">远程任务完成</span><input data-notify-pref="task_done" type="checkbox"></label>
 <label class="notify-toggle"><span data-i18n="notify_update_failed">远程升级失败</span><input data-notify-pref="update_failed" type="checkbox"></label>
 <label class="notify-toggle"><span data-i18n="notify_update_done">远程升级完成</span><input data-notify-pref="update_done" type="checkbox"></label>
+<label class="notify-toggle"><span data-i18n="notify_foreground">页面开启时也发送系统提醒</span><input data-notify-pref="foreground" type="checkbox"></label>
 <label class="notify-toggle notify-toggle-highlight"><span data-i18n="notify_badge">显示短信导航未读数</span><input data-notify-pref="badge" type="checkbox"></label>
 </div></section>
 <section class="notify-section"><div class="notify-heading"><div><h3 data-i18n="notify_history">通知历史</h3><p class="hint" data-i18n="notify_privacy">本机保留最近 30 天、最多 500 条元数据，不保存短信正文或验证码。</p></div></div>

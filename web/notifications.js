@@ -2,7 +2,7 @@ import {NotificationStore} from './notification-store.js';
 const KEY='simhub_notify_preferences_v1';
 export const CATEGORIES=['otp','sms','device_offline','device_recovered','task_failed','task_done','update_failed','update_done'];
 export const DEFAULT_PREFERENCES=Object.freeze({enabled:true,otp:true,sms:true,device_offline:true,
-  device_recovered:false,task_failed:true,task_done:false,update_failed:true,update_done:false,badge:true});
+  device_recovered:false,task_failed:true,task_done:false,update_failed:true,update_done:false,badge:true,foreground:true});
 export const TITLES={
   zh:{otp:'收到新验证码',sms:'收到新短信',device_offline:'设备离线',device_recovered:'设备已恢复连接',
     task_failed:'远程任务失败',task_done:'远程任务完成',update_failed:'远程升级失败',update_done:'远程升级完成'},
@@ -26,18 +26,37 @@ export function notificationPermission(){
   if(!('Notification' in globalThis)||!globalThis.isSecureContext)return 'unsupported';
   return Notification.permission;
 }
-export async function displayBrowserNotification(kind,id,locale='zh-CN',force=false){
+// The Web Notification API cannot confirm that an OS banner was actually rendered.
+// Return structured diagnostics instead of mistaking permission for delivery.
+export async function sendBrowserNotification(kind,id,locale='zh-CN',force=false){
   const prefs=getNotificationPrefs();
-  if(!force&&(!prefs.enabled||!prefs[kind]||document.visibilityState==='visible'))return false;
-  if(notificationPermission()!=='granted'||!('serviceWorker' in navigator))return false;
+  if(!force&&(!prefs.enabled||!prefs[kind]))return {ok:false,reason:'disabled'};
+  if(!force&&!prefs.foreground&&document.visibilityState==='visible')return {ok:false,reason:'foreground_paused'};
+  if(notificationPermission()!=='granted')return {ok:false,reason:'permission'};
+  if(!('serviceWorker' in navigator))return {ok:false,reason:'worker_unsupported'};
   const title=TITLES[locale==='en'?'en':'zh'][kind]||'SIM Hub';
   try{
-    const registration=await navigator.serviceWorker.ready;
-    await registration.showNotification('SIM Hub · '+title,{body:locale==='en'?'Open SIM Hub to review the event.':'打开 SIM Hub 查看详情。',
+    // ready remains unresolved when registration/install fails; never leave the test button spinning.
+    const registration=await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error('worker_timeout')),5000);
+      Promise.resolve(navigator.serviceWorker.ready).then(value=>{clearTimeout(timer);resolve(value);},
+        error=>{clearTimeout(timer);reject(error);});
+    });
+    if(!registration?.active||typeof registration.showNotification!=='function')
+      return {ok:false,reason:'worker_unavailable'};
+    await registration.showNotification('SIM Hub · '+title,{
+      body:locale==='en'?'Open SIM Hub to review the event.':'打开 SIM Hub 查看详情。',
       icon:'/icon.svg',badge:'/icon.svg',tag:'simhub-'+id,renotify:false,
       data:{url:kind==='otp'||kind==='sms'?'/?view=inbox':'/?view=devices'}});
-    return true;
-  }catch(error){console.warn('SIM Hub browser notification unavailable',error.name);return false;}
+    return {ok:true,reason:'accepted'};
+  }catch(error){
+    const reason=error?.message==='worker_timeout'?'worker_timeout':'delivery_failed';
+    console.warn('SIM Hub browser notification unavailable',error?.name||reason);
+    return {ok:false,reason};
+  }
+}
+export async function displayBrowserNotification(kind,id,locale='zh-CN',force=false){
+  return (await sendBrowserNotification(kind,id,locale,force)).ok;
 }
 export class NotificationCenter{
   constructor(onChange=()=>{}){

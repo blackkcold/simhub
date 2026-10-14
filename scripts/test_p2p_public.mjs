@@ -9,7 +9,7 @@ assert(session&&['node','controller'].includes(role));
 // Deliberately non-production, run-scoped test key; never sends user data.
 const key=crypto.createHash('sha256').update('simhub-public-sandbox/'+session).digest();
 const me='sandbox-public-'+role+'-identity',other='sandbox-public-'+(role==='node'?'controller':'node')+'-identity',domain='simhub-peer-v1';
-const room=id=>{const prk=crypto.createHmac('sha256','simhub-discovery-v1').update(key).digest();return 'sh'+crypto.createHmac('sha256',prk).update(domain+'|peerjs-room|'+id).update(Buffer.from([1])).digest('hex')};
+const room=id=>{const prk=crypto.createHmac('sha256','simhub-discovery-v1').update(key).digest();const b=crypto.createHmac('sha256',prk).update(domain+'|peerjs-room|'+id).update(Buffer.from([1])).digest().subarray(0,16);b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;const h=b.toString('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`};
 const seal=(from,to,id,payload)=>{const expires=Math.floor(Date.now()/1000)+60,iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);c.setAAD(Buffer.from(`${domain}|${from}|${to}|${id}|${expires}`));const ct=Buffer.concat([c.update(JSON.stringify(payload)),c.final(),c.getAuthTag()]);return {v:1,domain,from,to,id,expires,iv:iv.toString('base64url'),ct:ct.toString('base64url')}};
 const open=(f,signaling=false)=>{assert.equal(f.domain,domain);assert.equal(f.from,signaling?room(other):other);assert.equal(f.to,signaling?room(me):me);assert(f.expires>=Date.now()/1000-1);const ct=Buffer.from(f.ct,'base64url'),c=crypto.createDecipheriv('aes-256-gcm',key,Buffer.from(f.iv,'base64url'));c.setAAD(Buffer.from(`${domain}|${f.from}|${f.to}|${f.id}|${f.expires}`));c.setAuthTag(ct.subarray(-16));return JSON.parse(Buffer.concat([c.update(ct.subarray(0,-16)),c.final()]).toString())};
 const html=await readFile(new URL('../android/app/src/main/assets/p2p.html',import.meta.url));
@@ -20,7 +20,7 @@ const id='public-message-1234567890',payload={action:'sandbox.ping',body:'x'.rep
 const sendSignal=signal=>{if(signal.candidate){if(!/ typ srflx(?: |$)/.test(signal.candidate.candidate))return;srflx++;localAddresses.add(signal.candidate.candidate.split(" ")[4]);}
   if(signal.description)signal.description.sdp=signal.description.sdp.split('\r\n').filter(s=>!/^a=candidate:.* typ (host|relay)(?: |$)/.test(s)).join('\r\n');
   const type=signal.description?(signal.description.type==='offer'?'OFFER':'ANSWER'):'CANDIDATE';
-  const frame=seal(room(me),room(other),crypto.randomUUID(),{action:'signal',payload:signal});socket.send(JSON.stringify({type,dst:room(other),payload:{type:'data',connectionId:'simhub-p2p-v1',simhub:frame}}));signalCount++;
+  const frame=seal(room(me),room(other),crypto.randomUUID(),{action:'signal',payload:signal});socket.send(JSON.stringify({type,dst:room(other),payload:{type:'data',connectionId:'dc_simhub_p2p_v1',simhub:frame}}));signalCount++;
 };
 try{
   await page.exposeFunction('nativeEvent',async raw=>{const e=JSON.parse(raw);if(e.type==='error')nativeErrors++;
@@ -42,7 +42,7 @@ try{
   timer=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send('{"type":"HEARTBEAT"}');if(started&&!ready&&role==='controller')page.evaluate(()=>peerCommand({type:'restart'})).catch(e=>{error=e})},10000);
   const deadline=Date.now()+120000;let sent=false;
   while(Date.now()<deadline&&!received){if(error)throw error;if(ready&&role==='controller'&&!sent){sent=true;await page.evaluate(frame=>peerCommand({type:'send',frame}),JSON.stringify(seal(me,other,id,payload)));}await new Promise(r=>setTimeout(r,100));}
-  console.log(JSON.stringify({diagnostic:true,role,started,ready,received,signalCount,signalsReceived,srflx,nativeErrors,serverTypes}));
+  console.log(JSON.stringify({diagnostic:true,role,started,ready,received,signalCount,signalsReceived,srflx,nativeErrors,serverTypes,localRoom:room(me),remoteRoom:room(other),session}));
   assert(received,'Public DIRECT session did not exchange authenticated data');assert(srflx>0,'No public STUN candidate was forwarded');assert([...remoteAddresses].some(ip=>!localAddresses.has(ip)),'Runners did not demonstrate distinct public endpoints');
   const result={publicP2p:'passed',role,route:'DIRECT',signalCount,srflx,bytes:128000,hostCandidatesForwarded:0,turnServers:0,distinctPublicEndpoints:true,session};
   await writeFile(`p2p-public-${role}.json`,JSON.stringify(result,null,2));console.log(JSON.stringify(result));

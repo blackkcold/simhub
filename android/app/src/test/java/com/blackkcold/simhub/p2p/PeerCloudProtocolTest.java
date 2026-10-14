@@ -11,7 +11,7 @@ public class PeerCloudProtocolTest {
     private JSONObject wire(byte[] key)throws Exception{return PeerCloudProtocol.outgoing(key,"node-sandbox-identity000","controller-sandbox-identity000",offer(),NOW).put("src",PeerCloudProtocol.room(key,"node-sandbox-identity000"));}
     @Test public void opaqueRoomsArePairAndDirectionScoped()throws Exception{
         byte[] a=PeerCrypto.random(32),b=PeerCrypto.random(32);String id=PeerCloudProtocol.room(a,"node-sandbox-identity000");
-        assertTrue(id.matches("sh[0-9a-f]{64}"));assertEquals(id,PeerCloudProtocol.room(a,"node-sandbox-identity000"));
+        assertTrue(id.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"));assertEquals(id,PeerCloudProtocol.room(a,"node-sandbox-identity000"));
         assertNotEquals(id,PeerCloudProtocol.room(a,"controller-sandbox-identity000"));assertNotEquals(id,PeerCloudProtocol.room(b,"node-sandbox-identity000"));
     }
     @Test public void signalsRoundTripWithoutPlainSdp()throws Exception{byte[] key=PeerCrypto.random(32);JSONObject w=wire(key);assertFalse(w.toString().contains("fingerprint"));assertEquals(offer().toString(),PeerCloudProtocol.incoming(key,"node-sandbox-identity000","controller-sandbox-identity000",w,NOW).toString());}

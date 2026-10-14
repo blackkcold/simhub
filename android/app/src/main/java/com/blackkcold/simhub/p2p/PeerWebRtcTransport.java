@@ -2,7 +2,6 @@ package com.blackkcold.simhub.p2p;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.net.Uri;
 import android.os.*;
 import android.webkit.*;
 import androidx.webkit.*;
@@ -25,13 +24,13 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     private final Signals signals;
     private final boolean consent;
     private WebView view;
+    private volatile JavaScriptReplyProxy commandReply;
     private volatile String route="DIRECT";
     private volatile boolean closed;
     private volatile boolean online;
     public PeerWebRtcTransport(Context c,JSONObject profile,boolean consent,Signals signals)throws Exception{this.store=PeerStore.get(c);this.profile=profile;this.consent=consent;this.signals=signals;CompletableFuture<Void> ready=new CompletableFuture<>();main.post(()->{try{create(c);ready.complete(null);}catch(Exception e){ready.completeExceptionally(e);}});ready.get(10,TimeUnit.SECONDS);}
     @SuppressLint("SetJavaScriptEnabled") private void create(Context c){
-        if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)||
-            !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE))
+        if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             throw new UnsupportedOperationException("update_android_system_webview");
         view=new WebView(c);WebSettings settings=view.getSettings();settings.setJavaScriptEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setDomStorageEnabled(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setBlockNetworkLoads(true);
         view.setWebViewClient(new WebViewClient(){public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
@@ -41,6 +40,8 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
             }});
         WebViewCompat.addWebMessageListener(view,"PeerBridge",Set.of(ORIGIN),(v,message,source,mainFrame,reply)->{
             if(closed||!mainFrame||!ORIGIN.equals(source.toString().replaceAll("/$","")))return;String data=message.getData();if(data==null||data.length()>800_000)return;
+            // The proxy is bound to the authenticated, bundled main-frame JavaScript object.
+            commandReply=reply;
             try{dispatch.execute(()->handle(data));}catch(RejectedExecutionException ignored){/* Close may race a queued WebView callback. */}
         });view.loadUrl(ORIGIN+"/p2p.html");
     }
@@ -56,12 +57,12 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     }catch(Exception ignored){/* Content and crypto failures are never logged. */}}
     public void init(JSONArray servers,boolean initiator)throws Exception{if(!loaded.await(10,TimeUnit.SECONDS))throw new IOException("peer_webview_not_ready");command(new JSONObject().put("type","init").put("servers",servers).put("fallback",consent).put("initiator",initiator));}
     public void signal(JSONObject payload)throws Exception{command(new JSONObject().put("type","signal").put("payload",payload));}
-    /** Send typed data to the exact trusted main-frame origin; never splice JSON into JavaScript. */
+    /** Send data only to the verified bundled-page PeerBridge; never execute dynamic scripts. */
     private void command(JSONObject cmd){
         final String payload=cmd.toString();
         main.post(()->{
-            if(!closed&&view!=null)
-                WebViewCompat.postWebMessage(view,new WebMessageCompat(payload),Uri.parse(ORIGIN));
+            JavaScriptReplyProxy target=commandReply;
+            if(!closed&&view!=null&&target!=null)target.postMessage(payload);
         });
     }
     public String route(){return route;}
@@ -87,5 +88,5 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
             }
         }finally{Arrays.fill(key,(byte)0);}
     }
-    public void close(){closed=true;online=false;connected.completeExceptionally(new IOException("peer_transport_closed"));dispatch.shutdownNow();for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_transport_closed"));pending.clear();main.post(()->{if(view!=null){view.destroy();view=null;}});}
+    public void close(){closed=true;commandReply=null;online=false;connected.completeExceptionally(new IOException("peer_transport_closed"));dispatch.shutdownNow();for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_transport_closed"));pending.clear();main.post(()->{if(view!=null){view.destroy();view=null;}});}
 }

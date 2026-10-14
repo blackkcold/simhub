@@ -58,13 +58,14 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     public boolean online(){return online;}
     public void restart()throws Exception{command(new JSONObject().put("type","restart"));}
     public JSONObject request(JSONObject peer,String id,JSONObject req)throws Exception{
-        if(!connected.await(8,TimeUnit.SECONDS)||closed)throw new IOException("peer_ice_not_connected");
+        if(!connected.await(8,TimeUnit.SECONDS)||closed||!online)throw new IOException("peer_ice_not_connected");
         JSONObject current=store.peer(peer.getString("id"));
         if(!ConnectionPolicy.valueOf(current.getString("policy")).permits(route,current.optBoolean("fallbackConsent"),"ACTIVE".equals(current.optString("relayBindingState"))))throw new SecurityException("peer_route_not_authorized");
         CompletableFuture<JSONObject> future=new CompletableFuture<>();if(pending.putIfAbsent(id,future)!=null)throw new IllegalStateException("request_already_pending");byte[] key=store.key(peer.getString("id"));
         try{JSONObject frame=PeerProtocol.seal(key,store.myId(),peer.getString("id"),id,System.currentTimeMillis()/1000+120,req);command(new JSONObject().put("type","send").put("frame",frame.toString()));return future.get(20,TimeUnit.SECONDS);}finally{pending.remove(id);Arrays.fill(key,(byte)0);}
     }
     private void incoming(JSONObject frame)throws Exception{
+        if(!online)throw new SecurityException("peer_route_unconfirmed");
         String peerId=profile.getString("id");JSONObject current=store.peer(peerId);byte[] key=store.key(peerId);
         try{
             JSONObject plaintext=PeerProtocol.open(key,peerId,store.myId(),frame,System.currentTimeMillis()/1000);String id=frame.getString("id");

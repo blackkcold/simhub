@@ -15,7 +15,8 @@ public final class DirectPeerTransport implements HubTransport {
     public JSONObject request(JSONObject peer,String id,JSONObject req)throws Exception{
         JSONArray endpoints=peer.optJSONArray("endpoints");if(endpoints==null)throw new IOException("no_direct_endpoint");
         Exception last=new IOException("peer_offline_no_direct_endpoint");
-        for(int i=0;i<endpoints.length();i++){
+        long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(4);
+        for(int i=0;i<endpoints.length()&&System.nanoTime()<deadline;i++){
             JSONObject ep=endpoints.getJSONObject(i);
             try{return call(peer,ep.getString("host"),ep.getInt("port"),id,req);}catch(Exception e){last=e;if(e instanceof SecurityException)throw e;}
         }
@@ -27,7 +28,7 @@ public final class DirectPeerTransport implements HubTransport {
         if(!host.matches("[0-9a-fA-F:.%a-zA-Z_-]+")||(!host.contains(":")&&!host.matches("[0-9.]+")))throw new SecurityException("numeric_peer_address_required");
         String from=store.myId(),to=peer.getString("id"),helloId=UUID.randomUUID().toString();byte[] root=store.key(to),session=null;KeyPair eph=PeerCrypto.ephemeral();
         try(Socket socket=new Socket()){
-            socket.connect(new InetSocketAddress(host,port),3500);socket.setSoTimeout(15000);
+            socket.connect(new InetSocketAddress(host,port),1000);socket.setSoTimeout(15000);
             long exp=System.currentTimeMillis()/1000+120;
             write(socket.getOutputStream(),PeerProtocol.seal(root,from,to,helloId,exp,new JSONObject().put("action","hello").put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded()))));
             JSONObject answer=read(socket.getInputStream());if(!helloId.equals(answer.optString("id")))throw new SecurityException("peer_hello_id_mismatch");

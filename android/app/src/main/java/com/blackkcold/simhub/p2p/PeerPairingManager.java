@@ -14,7 +14,7 @@ public final class PeerPairingManager {
     public PeerPairingManager(Context c){store=PeerStore.get(c);secrets=new SecretStore(c);}
     public String offer(String name,boolean allowSend,JSONArray endpoints)throws Exception{
         KeyPair eph=PeerCrypto.ephemeral();String sid=UUID.randomUUID().toString();long expires=System.currentTimeMillis()/1000+300;
-        JSONObject body=new JSONObject().put("v",1).put("kind","offer").put("sid",sid).put("expires",expires).put("publicKey",store.publicKey()).put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded())).put("name",name.substring(0,Math.min(name.length(),80))).put("permissions",allowSend?"read,history,state,send":"read,history,state").put("endpoints",endpoints);
+        JSONObject body=new JSONObject().put("v",1).put("kind","offer").put("sid",sid).put("expires",expires).put("publicKey",store.publicKey()).put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded())).put("name",name.substring(0,Math.min(name.length(),80))).put("networkMode",PeerCloudProtocol.MODE).put("relayHint",relayHint(store.context())).put("permissions",allowSend?"read,history,state,send":"read,history,state").put("endpoints",endpoints);
         String packed=PeerCrypto.b64(PeerCrypto.utf8(body.toString()));
         secrets.putString("p2p.pair.offer",packed);secrets.putBytes("p2p.pair.ephemeral",eph.getPrivate().getEncoded());
         return encode(packed,PeerCrypto.sign(store.identity().getPrivate(),packed));
@@ -47,8 +47,12 @@ public final class PeerPairingManager {
         try{store.save(profile(id,controller,response.optString("name","Controller"),"NODE",offer,"ACTIVE"),root);secrets.remove("p2p.pair.offer");secrets.remove("p2p.pair.ephemeral");return id;}finally{Arrays.fill(der,(byte)0);Arrays.fill(shared,(byte)0);Arrays.fill(root,(byte)0);}
     }
     private void requireNew(String id)throws Exception{JSONArray peers=store.list();for(int i=0;i<peers.length();i++)if(id.equals(peers.getJSONObject(i).getString("id"))&&!"REVOKED".equals(peers.getJSONObject(i).optString("pairState")))throw new SecurityException("peer_already_known_revoke_before_repair");}
+    public static JSONObject relayHint(Context c)throws Exception{
+        com.blackkcold.simhub.AgentConfig cfg=new com.blackkcold.simhub.AgentConfig(c);
+        JSONObject hint=new JSONObject();if(cfg.isEnrolled())hint.put("origin",cfg.server()).put("deviceId",cfg.deviceId());return hint;
+    }
     private JSONObject profile(String id,String pub,String name,String role,JSONObject offer,String state)throws Exception{
-        return new JSONObject().put("id",id).put("publicKey",pub).put("name",name).put("localRole",role).put("permissions",offer.getString("permissions")).put("pairState",state).put("policy","P2P_ONLY").put("fallbackConsent",false).put("relayBindingState","NONE").put("activeTransport","OFFLINE").put("endpoints",role.equals("CONTROLLER")?offer.getJSONArray("endpoints"):new JSONArray());
+        return new JSONObject().put("id",id).put("publicKey",pub).put("name",name).put("localRole",role).put("permissions",offer.getString("permissions")).put("pairState",state).put("policy","P2P_ONLY").put("publicDiscoveryEnabled",PeerCloudProtocol.MODE.equals(offer.optString("networkMode"))).put("discoveryState","WAITING").put("relayHint",role.equals("CONTROLLER")?offer.optJSONObject("relayHint"):new JSONObject()).put("fallbackConsent",false).put("relayBindingState","NONE").put("activeTransport","OFFLINE").put("endpoints",role.equals("CONTROLLER")?offer.getJSONArray("endpoints"):new JSONArray());
     }
     public static String kind(String qr)throws Exception{return new JSONObject(new String(PeerCrypto.unb64(decode(qr)),java.nio.charset.StandardCharsets.UTF_8)).getString("kind");}
     private static String encode(String body,String sig)throws Exception{return "simhub-peer:"+PeerCrypto.b64(PeerCrypto.utf8(new JSONObject().put("body",body).put("signature",sig).toString()));}

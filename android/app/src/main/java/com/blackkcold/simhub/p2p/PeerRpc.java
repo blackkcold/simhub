@@ -36,7 +36,7 @@ public final class PeerRpc {
     private JSONObject state()throws Exception{
         JSONObject full=StateCollector.collect(c),state=new JSONObject();
         for(String field:List.of("androidVersion","sdk","model","appVersion","batteryPct","charging","network","smsRoleHeld","smsMode","smsReadPermission","smsSendAllowed","subscriptions","channels","smsReceiveOperational"))if(full.has(field))state.put(field,full.get(field));
-        return new JSONObject().put("state","succeeded").put("device",state).put("id",store.myId());
+        return new JSONObject().put("state","succeeded").put("device",state).put("id",store.myId()).put("relayHint",PeerPairingManager.relayHint(c));
     }
     private JSONObject page(JSONObject peer,JSONObject req)throws Exception{
         if(!SmsAccessPolicy.canRead(c))return new JSONObject().put("state","rejected").put("reason","read_sms_permission_missing");

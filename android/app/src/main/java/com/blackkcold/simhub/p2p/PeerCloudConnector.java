@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /** Automatic public signaling, STUN-only ICE. Never opens TURN or a data mailbox. */
-public final class PeerCloudConnector implements AutoCloseable {
+public final class PeerCloudConnector implements HubTransport,AutoCloseable {
     private static final Map<String,PeerCloudConnector> ACTIVE=new ConcurrentHashMap<>();
     private static final OkHttpClient HTTP=new OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(10,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS).pingInterval(15,TimeUnit.SECONDS).build();
@@ -18,6 +18,7 @@ public final class PeerCloudConnector implements AutoCloseable {
     }
     public static void closeAll(){for(PeerCloudConnector c:new ArrayList<>(ACTIVE.values()))c.close();}
     public static void closePeer(String id){PeerCloudConnector c=ACTIVE.get(id);if(c!=null)c.close();}
+    public static void networkChangedAll(){for(PeerCloudConnector c:ACTIVE.values())c.networkChanged();}
     private final PeerStore store;
     private final String peerId,token=UUID.randomUUID().toString();
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
@@ -29,6 +30,13 @@ public final class PeerCloudConnector implements AutoCloseable {
     private int failures;
     private PeerCloudConnector(Context c,String id){store=PeerStore.get(c);peerId=id;}
     public HubTransport transport(){return rtc;}
+    public String route(){return "DIRECT";}
+    public JSONObject request(JSONObject peer,String id,JSONObject request)throws Exception{
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(12);
+        while(!closed&&rtc==null&&System.nanoTime()<deadline)Thread.sleep(100);
+        PeerWebRtcTransport current=rtc;if(closed||current==null)throw new IOException("public_peer_unavailable");
+        return current.request(peer,id,request);
+    }
     private void start(){worker.scheduleWithFixedDelay(this::tick,0,5,TimeUnit.SECONDS);}
     private boolean allowed()throws Exception{JSONObject p=store.peer(peerId);return !"REVOKED".equals(p.optString("pairState"))&&p.optBoolean("publicDiscoveryEnabled");}
     private void tick(){if(closed)return;try{

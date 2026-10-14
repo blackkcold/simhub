@@ -21,6 +21,8 @@ public final class PeerCloudConnector implements HubTransport,AutoCloseable {
     public static void closeAll(){for(PeerCloudConnector c:new ArrayList<>(ACTIVE.values()))c.close();}
     public static void closePeer(String id){PeerCloudConnector c=ACTIVE.get(id);if(c!=null)c.close();}
     public static void networkChangedAll(){for(PeerCloudConnector c:ACTIVE.values())c.networkChanged();}
+    /** User-requested reconnect affects only the selected device. */
+    public static void reconnect(String id){PeerCloudConnector c=ACTIVE.get(id);if(c!=null)c.networkChanged();}
     private final PeerStore store;
     private final String peerId,token=UUID.randomUUID().toString();
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();

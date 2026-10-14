@@ -73,7 +73,7 @@ public final class PeerCloudConnector implements HubTransport,AutoCloseable {
         try{if(!socket.send(PeerCloudProtocol.outgoing(key,store.myId(),peerId,signal,System.currentTimeMillis()/1000).toString()))lost(socket);}finally{Arrays.fill(key,(byte)0);}
     }catch(Exception ignored){}}
     private void lost(WebSocket ws){if(ws!=socket)return;socket=null;opened=false;nextConnect=System.currentTimeMillis()/1000+Math.min(60,1L<<Math.min(++failures,5));status("UNAVAILABLE","public_signaling_unavailable");}
-    public void networkChanged(){submit(()->{WebSocket old=socket;if(old!=null)old.cancel();socket=null;opened=false;nextConnect=0;lastOffer=0;if(rtc!=null&&!rtc.online()){rtc.close();rtc=null;}tick();});}
-    private void status(String state,String error){try{JSONObject p=store.peer(peerId);p.put("discoveryState",state).put("connectionError",error);store.update(p);}catch(Exception ignored){}}
+    public void networkChanged(){submit(()->{WebSocket old=socket;if(old!=null)old.cancel();socket=null;opened=false;nextConnect=0;lastOffer=0;if(rtc!=null){rtc.close();rtc=null;}tick();});}
+    private void status(String state,String error){try{synchronized(store){JSONObject p=store.peer(peerId);p.put("discoveryState",state).put("connectionError",error);store.update(p);}}catch(Exception ignored){}}
     public void close(){if(closed)return;closed=true;ACTIVE.remove(peerId,this);WebSocket old=socket;socket=null;if(old!=null)old.cancel();if(rtc!=null)rtc.close();worker.shutdownNow();status("STOPPED","");}
 }

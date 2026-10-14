@@ -134,6 +134,11 @@ public final class PeerInstrumentedTest {
         PeerCloudConnector.ensure(c,controllerId);long deadline=System.currentTimeMillis()+20000;
         while(System.currentTimeMillis()<deadline&&!"READY".equals(store.peer(controllerId).optString("discoveryState")))Thread.sleep(100);
         assertEquals("READY",store.peer(controllerId).getString("discoveryState"));assertEquals("P2P_ONLY",store.peer(controllerId).getString("policy"));assertFalse(PeerCloudProtocol.iceServers().toString().contains("turn:"));
+        PeerCloudConnector connector=PeerCloudConnector.active(controllerId);deadline=System.currentTimeMillis()+15000;
+        while(connector.transport()==null&&System.currentTimeMillis()<deadline)Thread.sleep(100);
+        HubTransport original=connector.transport();assertNotNull(original);PeerCloudConnector.networkChangedAll();deadline=System.currentTimeMillis()+20000;
+        while(System.currentTimeMillis()<deadline&&(connector.transport()==null||connector.transport()==original||!"READY".equals(store.peer(controllerId).optString("discoveryState"))))Thread.sleep(100);
+        assertNotNull(connector.transport());assertNotSame("Old network ICE session must be rebuilt",original,connector.transport());assertEquals("READY",store.peer(controllerId).getString("discoveryState"));
     }
     @Test public void testMoreThan1000ProviderRowsThroughEncryptedPagination()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();List<Uri> inserted=new ArrayList<>();

@@ -18,7 +18,8 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     private final PeerStore store;
     private final JSONObject profile;
     private final Handler main=new Handler(Looper.getMainLooper());
-    private final CountDownLatch loaded=new CountDownLatch(1),connected=new CountDownLatch(1);
+    private final CountDownLatch loaded=new CountDownLatch(1);
+    private volatile CompletableFuture<Void> connected=new CompletableFuture<>();
     private final Map<String,CompletableFuture<JSONObject>> pending=new ConcurrentHashMap<>();
     private final ExecutorService dispatch=Executors.newSingleThreadExecutor();
     private final Signals signals;
@@ -44,10 +45,10 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     private void handle(String raw){try{
         JSONObject msg=new JSONObject(raw);switch(msg.getString("type")){
             case "loaded" -> loaded.countDown();
-            case "connected" -> {String selected=msg.getString("route");if("TURN".equals(selected)&&!consent){close();return;}route=selected;online=true;connected.countDown();}
+            case "connected" -> {String selected=msg.getString("route");if("TURN".equals(selected)&&!consent){close();return;}route=selected;online=true;connected.complete(null);}
             case "signal" -> signals.send(msg.getJSONObject("payload"));
             case "data" -> incoming(new JSONObject(msg.getString("frame")));
-            case "closed","error" -> {online=false;for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_channel_closed"));}
+            case "closed","error" -> {online=false;if(connected.isDone())connected=new CompletableFuture<>();for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_channel_closed"));}
             default -> {}
         }
     }catch(Exception ignored){/* Content and crypto failures are never logged. */}}
@@ -58,7 +59,8 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     public boolean online(){return online;}
     public void restart()throws Exception{command(new JSONObject().put("type","restart"));}
     public JSONObject request(JSONObject peer,String id,JSONObject req)throws Exception{
-        if(!connected.await(8,TimeUnit.SECONDS)||closed||!online)throw new IOException("peer_ice_not_connected");
+        try{connected.get(8,TimeUnit.SECONDS);}catch(TimeoutException e){throw new IOException("peer_ice_not_connected",e);}
+        if(closed||!online)throw new IOException("peer_ice_not_connected");
         JSONObject current=store.peer(peer.getString("id"));
         if(!ConnectionPolicy.valueOf(current.getString("policy")).permits(route,current.optBoolean("fallbackConsent"),"ACTIVE".equals(current.optString("relayBindingState"))))throw new SecurityException("peer_route_not_authorized");
         CompletableFuture<JSONObject> future=new CompletableFuture<>();if(pending.putIfAbsent(id,future)!=null)throw new IllegalStateException("request_already_pending");byte[] key=store.key(peer.getString("id"));

@@ -15,7 +15,7 @@ const open=(f,signaling=false)=>{assert.equal(f.domain,domain);assert.equal(f.fr
 const html=await readFile(new URL('../android/app/src/main/assets/p2p.html',import.meta.url));
 const server=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'text/html'});res.end(html)});await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const browser=await chromium.launch({headless:true,args:['--no-sandbox']});const page=await browser.newPage();
-let signalsReceived=0,nativeErrors=0;const serverTypes={};let socket,ready=false,received=false,started=false,signalCount=0,srflx=0,timer,error;const localAddresses=new Set(),remoteAddresses=new Set();
+let signalsReceived=0,nativeErrors=0;const serverTypes={},nativeFailures=[];let socket,ready=false,received=false,started=false,signalCount=0,srflx=0,timer,error;const localAddresses=new Set(),remoteAddresses=new Set();
 const id='public-message-1234567890',payload={action:'sandbox.ping',body:'x'.repeat(128000)};
 const sendSignal=signal=>{if(signal.candidate){if(!/ typ srflx(?: |$)/.test(signal.candidate.candidate))return;srflx++;localAddresses.add(signal.candidate.candidate.split(" ")[4]);}
   if(signal.description)signal.description.sdp=signal.description.sdp.split('\r\n').filter(s=>!/^a=candidate:.* typ (host|relay)(?: |$)/.test(s)).join('\r\n');
@@ -23,7 +23,7 @@ const sendSignal=signal=>{if(signal.candidate){if(!/ typ srflx(?: |$)/.test(sign
   const frame=seal(room(me),room(other),crypto.randomUUID(),{action:'signal',kind:type,payload:signal});socket.send(JSON.stringify({type:'OFFER',dst:room(other),payload:{type:'data',connectionId:'dc_simhub_p2p_v1',label:'simhub-p2p',serialization:'json',reliable:true,sdp:{type:'offer',sdp:'v=0\r\n'},metadata:{simhub:frame}}}));signalCount++;
 };
 try{
-  await page.exposeFunction('nativeEvent',async raw=>{const e=JSON.parse(raw);if(e.type==='error')nativeErrors++;
+  await page.exposeFunction('nativeEvent',async raw=>{const e=JSON.parse(raw);if(e.type==='error'){nativeErrors++;nativeFailures.push(e.reason||'unknown');}
     if(e.type==='signal')sendSignal(e.payload);
     if(e.type==='connected'){assert.equal(e.route,'DIRECT');ready=true;}
     if(e.type==='data'){const f=JSON.parse(e.frame),p=open(f);assert.equal(f.id,id);
@@ -42,7 +42,7 @@ try{
   timer=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send('{"type":"HEARTBEAT"}');if(started&&!ready&&role==='controller')page.evaluate(()=>peerCommand({type:'restart'})).catch(e=>{error=e})},10000);
   const deadline=Date.now()+120000;let sent=false;
   while(Date.now()<deadline&&!received){if(error)throw error;if(ready&&role==='controller'&&!sent){sent=true;await page.evaluate(frame=>peerCommand({type:'send',frame}),JSON.stringify(seal(me,other,id,payload)));}await new Promise(r=>setTimeout(r,100));}
-  console.log(JSON.stringify({diagnostic:true,role,started,ready,received,signalCount,signalsReceived,srflx,nativeErrors,serverTypes,localRoom:room(me),remoteRoom:room(other),session}));
+  console.log(JSON.stringify({diagnostic:true,role,started,ready,received,signalCount,signalsReceived,srflx,nativeErrors,nativeFailures,serverTypes,localRoom:room(me),remoteRoom:room(other),session}));
   assert(received,'Public DIRECT session did not exchange authenticated data');assert(srflx>0,'No public STUN candidate was forwarded');assert([...remoteAddresses].some(ip=>!localAddresses.has(ip)),'Runners did not demonstrate distinct public endpoints');
   const result={publicP2p:'passed',role,route:'DIRECT',signalCount,srflx,bytes:128000,hostCandidatesForwarded:0,turnServers:0,distinctPublicEndpoints:true,session};
   await writeFile(`p2p-public-${role}.json`,JSON.stringify(result,null,2));console.log(JSON.stringify(result));

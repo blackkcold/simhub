@@ -202,7 +202,16 @@ Object.assign(dict['zh-CN'],{
   notify_permission_help_granted:'权限已开启；可在下方选择提醒类型。',notify_permission_help_denied:'通知已被浏览器拒绝。请在浏览器站点权限设置中重新允许。',
   notify_permission_help_default:'点击启用以请求浏览器授权；需使用 HTTPS 或可信本地地址。',
   notify_permission_help_unsupported:'当前浏览器或访问环境不支持系统通知；应用内历史和未读仍可用。',
-  notify_test_sent:'已发送测试通知',notify_test_failed:'无法显示系统通知，请检查浏览器及网站权限。'
+  notify_foreground:'页面开启时也发送系统通知',
+  notify_permission_action_granted:'通知权限已开启',notify_permission_action_paused:'权限已开启 · 提醒已暂停',
+  notify_permission_action_default:'启用浏览器通知',notify_permission_action_denied:'查看浏览器权限说明',
+  notify_permission_action_unsupported:'当前环境不支持通知',
+  notify_test_reason_permission:'尚未获得系统通知权限',notify_test_reason_disabled:'提醒已暂停',
+  notify_test_reason_foreground_paused:'前台通知已暂停',notify_test_reason_worker_unsupported:'当前浏览器不支持 Service Worker',
+  notify_test_reason_worker_timeout:'通知服务未就绪（等待超时），请检查 HTTPS、Service Worker 状态并重试',
+  notify_test_reason_worker_unavailable:'通知服务未激活，请重新加载页面再试',
+  notify_test_reason_delivery_failed:'浏览器未能接受通知请求，请检查通知权限和系统通知设置',
+  notify_test_sent:'已提交测试通知，请检查系统通知中心',notify_test_failed:'无法显示系统通知，请检查浏览器及网站权限。'
 });
 Object.assign(dict.en,{
   notify_browser_heading:'Browser notifications',notify_browser_help:'Notifications work while the site or PWA is running. Closed-browser push needs a separate Web Push service.',
@@ -217,7 +226,16 @@ Object.assign(dict.en,{
   notify_permission_help_denied:'Notifications were blocked. Allow this site in your browser permission settings.',
   notify_permission_help_default:'Request permission using the button above; HTTPS or trusted local context required.',
   notify_permission_help_unsupported:'System notifications are unsupported here; local history and unread badges remain available.',
-  notify_test_sent:'Test notification sent',notify_test_failed:'Unable to show a system notification. Check browser and site permissions.'
+  notify_foreground:'Show system notifications even while the page is open',
+  notify_permission_action_granted:'Notification permission enabled',notify_permission_action_paused:'Allowed · alerts paused',
+  notify_permission_action_default:'Enable browser notifications',notify_permission_action_denied:'View permission instructions',
+  notify_permission_action_unsupported:'Notifications unsupported',
+  notify_test_reason_permission:'Permission is not granted',notify_test_reason_disabled:'Alerts are paused',
+  notify_test_reason_foreground_paused:'Foreground alerts are paused',notify_test_reason_worker_unsupported:'Service Worker is unsupported',
+  notify_test_reason_worker_timeout:'Notification worker timed out. Check HTTPS, Service Worker status, then retry.',
+  notify_test_reason_worker_unavailable:'Notification worker is not active. Reload the page and retry.',
+  notify_test_reason_delivery_failed:'Browser rejected the notification request. Check browser and OS notification settings.',
+  notify_test_sent:'Test notification submitted; check the OS notification center',notify_test_failed:'Unable to show a system notification. Check browser and site permissions.'
 });
 
 export function getLocale(){const saved=localStorage.getItem(STORE);if(saved==='zh-CN'||saved==='en')return saved;return String(navigator.language||'').toLowerCase().startsWith('zh')?'zh-CN':'en';}

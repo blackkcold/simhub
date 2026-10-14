@@ -65,7 +65,7 @@ try {
             await page.locator("#stepupDialog").evaluate(d=>d.close());
       await page.waitForFunction(()=>document.getElementById('toast').parentElement===document.body);
       assert.equal(await page.locator('#smsUnreadBadge').count(),1);
-      assert.equal(await page.locator('[data-notify-pref]').count(),10);
+      assert.equal(await page.locator('[data-notify-pref]').count(),11);
       assert.equal(await page.locator('#notifyHistoryList').count(),1);
       const notifyContract=await page.evaluate(async()=>{
         const m=await import('/notifications.js');
@@ -82,6 +82,40 @@ try {
         return {count,length,unreadAfter,cleared:n.rows.length};
       });
       assert.deepEqual(notifyContract,{count:1,length:1,unreadAfter:0,cleared:0});
+      // Foreground preference and browser permission must be independent states.
+      const notificationState=await page.evaluate(async()=>{
+        const m=await import('/notifications.js');
+        m.setNotificationPref('foreground',false);
+        const paused=await m.sendBrowserNotification('sms','test-foreground','zh-CN');
+        m.setNotificationPref('foreground',true);
+        const saved=Object.getOwnPropertyDescriptor(window,'Notification');
+        Object.defineProperty(window,'Notification',{configurable:true,value:{permission:'granted'}});
+        try{
+          window.dispatchEvent(new Event('focus'));
+          const button=document.getElementById('notifyBtn');
+          return {paused:paused.reason,permission:document.getElementById('notifyPermission').dataset.state,
+            disabled:button.disabled,label:button.textContent.trim(),testDisabled:document.getElementById('notifyTestBtn').disabled};
+        }finally{
+          if(saved)Object.defineProperty(window,'Notification',saved);
+          else delete window.Notification;
+          window.dispatchEvent(new Event('focus'));
+        }
+      });
+      assert.equal(notificationState.paused,'foreground_paused');
+      assert.equal(notificationState.permission,'granted');
+      assert.equal(notificationState.disabled,true);
+      assert.equal(notificationState.testDisabled,false);
+      assert.ok(notificationState.label&&!notificationState.label.includes('启用浏览器通知'),
+        'Granted state must not advertise requesting permission');
+      const retention=await page.evaluate(async()=>{
+        const {NotificationStore}=await import('/notification-store.js');
+        const store=new NotificationStore(),scope='expiry-fixture-'+Math.random().toString(36).slice(2);
+        await store.insert(scope,{id:'old',kind:'sms',createdAt:Date.now()-31*86400000});
+        const visible=(await store.list(scope)).length;
+        await store.prune(scope);
+        return {visible,stored:(await store.all(scope)).length};
+      });
+      assert.deepEqual(retention,{visible:0,stored:0});
 
       await page.evaluate(()=>{
         document.querySelector("#lockedPanel").hidden=true;
@@ -95,6 +129,19 @@ try {
         })),consoleErrors,httpErrors,errors);
       }
       assert.equal(await page.locator("#simFilter").count(),1,"SIM source filter must exist");
+      await page.locator('.nav[data-view="settings"]').click();
+      await page.locator('[data-settings-link="security"]').click();
+      const vaultGap=await page.evaluate(()=>{
+        const input=document.getElementById('confirmVaultPassphrase').getBoundingClientRect();
+        const action=document.getElementById('changeVaultPassphrase').getBoundingClientRect();
+        return {gap:action.top-input.bottom,actionRight:action.right};
+      });
+      assert.ok(vaultGap.gap>=14,'Vault action touches password field: '+JSON.stringify(vaultGap));
+      assert.ok(vaultGap.actionRight<=width+2,'Vault action overflows viewport');
+      await page.locator('.nav[data-view="inbox"]').click();
+      // The real navigation correctly re-hides New SMS without a send-capable node;
+      // restore the visual fixture before testing the read-only action guard.
+      await page.evaluate(()=>{document.getElementById('newSmsBtn').hidden=false;});
       // No enrolled send-capable device: forcing the button visible for this
       // layout fixture must not bypass the read-only sender policy.
       await page.locator("#newSmsBtn").click();
@@ -322,7 +369,7 @@ try {
   // unlock the one Relay-registered root using the existing password.
   const fresh=await browser.newContext({viewport:{width:1100,height:800}});
   const freshPage=await fresh.newPage();
-  await freshPage.goto("http://127.0.0.1:"+port+"/",{waitUntil:"domcontentloaded"});
+  await freshPage.goto("http://127.0.0.1:"+port+"/?view=devices",{waitUntil:"domcontentloaded"});
   await freshPage.locator("#username").fill("admin");
   await freshPage.locator("#adminToken").fill("A".repeat(48));
   await freshPage.locator("#unlockBtn").click();
@@ -332,6 +379,9 @@ try {
   await freshPage.locator("#passphrase").fill("session-resume-test-passphrase");
   await freshPage.locator("#vaultUnlockBtn").click();
   await freshPage.waitForFunction(()=>!document.getElementById("appContent").hidden,null,{timeout:12000});
+  assert.equal(await freshPage.locator('#view-devices').evaluate(el=>el.classList.contains('active')),true,
+    'Cold notification deep link must survive login and Vault unlock');
+  assert.equal(new URL(freshPage.url()).searchParams.has('view'),false);
   await fresh.close();
   // Exercise the real ES-module application through a synthetic Relay API
   // response, not inaccessible module-local browser variables. The final item

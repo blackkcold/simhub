@@ -760,6 +760,7 @@ private fun SettingsMetric(icon:Int,title:String,value:String,modifier:Modifier=
 
 @Composable
 private fun SettingsDestinations(state:HubSnapshot?,tools:HubToolsState,onSelect:(Int)->Unit){
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
     val enrolled=state?.enrolled==true
     SettingsMenuEntry(R.drawable.ic_hub_link,
         hubLabel("连接与权限","Connection & permissions"),
@@ -789,6 +790,7 @@ private fun SettingsDestinations(state:HubSnapshot?,tools:HubToolsState,onSelect
         hubLabel("系统与高级工具","System & advanced tools"),
         hubLabel("语言 · 日志 · 兼容实验室","Language · logs · compatibility"),
         onClick={onSelect(SETTINGS_ADVANCED)})
+    }
 }
 
 @Composable

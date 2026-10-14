@@ -52,7 +52,7 @@ public final class SmsHistorySync {
      * Later invocations consume new messages in ascending (date,id) order.
      */
     private static boolean canRead(Context c){
-        if(c.checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED)return true;
+        if(SmsAccessPolicy.canRead(c))return true;
         new AgentConfig(c).recordSmsProviderError("READ_SMS_PERMISSION_MISSING");return false;
     }
     private static void scanFailed(Context c,Exception error,String operation){

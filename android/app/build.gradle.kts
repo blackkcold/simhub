@@ -17,6 +17,7 @@ android {
         versionCode = 50
         versionName = "0.17.0"
         buildConfigField("boolean", "P2P_PREVIEW", "false")
+        buildConfigField("boolean", "STORE_CHANNEL", "false")
     }
     buildFeatures { buildConfig = true; compose = true; aidl = true; resValues = true }
     if (providers.gradleProperty("p2pAndroidSandbox").orNull == "true") testBuildType = "p2pPreview"
@@ -37,6 +38,14 @@ android {
             versionNameSuffix = "-p2p-preview.1"
             buildConfigField("boolean", "P2P_PREVIEW", "true")
             resValue("string", "app_name", "SIM Hub P2P Test")
+            matchingFallbacks += listOf("debug")
+        }
+        create("storePreview") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".storetest"
+            versionNameSuffix = "-store-preview.1"
+            buildConfigField("boolean", "STORE_CHANNEL", "true")
+            resValue("string", "app_name", "SIM Hub Store Test")
             matchingFallbacks += listOf("debug")
         }
         release {

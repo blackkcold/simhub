@@ -584,6 +584,7 @@ private fun PreferencesCard(tools:HubToolsState,controller:HubController,modifie
 
 @Composable
 private fun CompatibilityEntry(controller:HubController,modifier:Modifier){
+    if(BuildConfig.STORE_CHANNEL)return
     ToolSection(hubLabel("系统兼容实验室（高级可选）","System compatibility lab (optional)"),modifier){
         Text(hubLabel("独立管理 Shizuku、伴侣设备关联、系统短信探测及脱敏日志。不会影响普通配对与短信权限。",
             "Separate Shizuku, companion pairing, SMS diagnostics and redacted audit. Normal pairing and SMS settings remain unchanged."),

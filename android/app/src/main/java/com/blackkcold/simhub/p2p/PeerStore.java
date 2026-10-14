@@ -37,6 +37,7 @@ public final class PeerStore extends SQLiteOpenHelper {
     public String myId()throws Exception{return PeerCrypto.digest(identity().getPublic().getEncoded());}
     public synchronized void save(JSONObject p,byte[] key)throws Exception{
         String id=p.getString("id");if(!id.equals(PeerCrypto.digest(PeerCrypto.publicKey(p.getString("publicKey")).getEncoded())))throw new SecurityException("peer_id_mismatch");
+        try(Cursor existing=getReadableDatabase().rawQuery("SELECT id FROM peers WHERE id=?",new String[]{id})){if(existing.moveToFirst())throw new SecurityException("peer_already_known");}
         new SecretStore(context).putBytes("p2p.content."+id,key);
         ContentValues v=new ContentValues();v.put("id",id);v.put("profile",p.toString());getWritableDatabase().insertOrThrow("peers",null,v);
     }
@@ -48,6 +49,7 @@ public final class PeerStore extends SQLiteOpenHelper {
     /** Atomic durable claim. A crash after dispatch remains 'indeterminate', never blindly resends. */
     public synchronized JSONObject claim(String peer,String id,String digest)throws Exception{
         ContentValues v=new ContentValues();v.put("peer",peer);v.put("id",id);v.put("digest",digest);v.put("state","claimed");
+        try(Cursor total=getReadableDatabase().rawQuery("SELECT count(*) FROM receipts WHERE peer=?",new String[]{peer})){total.moveToFirst();if(total.getInt(0)>=100000)throw new SecurityException("peer_command_capacity");}
         if(getWritableDatabase().insertWithOnConflict("receipts",null,v,SQLiteDatabase.CONFLICT_IGNORE)!=-1)return null;
         try(Cursor c=getReadableDatabase().rawQuery("SELECT digest,result FROM receipts WHERE peer=? AND id=?",new String[]{peer,id})){
             if(!c.moveToFirst()||!digest.equals(c.getString(0)))throw new SecurityException("peer_request_id_reused");
@@ -65,11 +67,12 @@ public final class PeerStore extends SQLiteOpenHelper {
         }finally{java.util.Arrays.fill(key,(byte)0);}
     }
     public synchronized JSONObject events(String peer,long after)throws Exception{
-        JSONArray rows=new JSONArray();byte[] key=key(peer);
+        JSONArray rows=new JSONArray();int bytes=0;byte[] key=key(peer);
         try(Cursor c=getReadableDatabase().rawQuery("SELECT seq,event,kind,cipher,occurred FROM peer_events WHERE peer=? AND seq>? ORDER BY seq LIMIT 100",new String[]{peer,String.valueOf(Math.max(0,after))})){
             while(c.moveToNext()){
                 JSONObject cipher=new JSONObject(c.getString(3));JSONObject payload=new JSONObject(new String(PeerCrypto.crypt(false,key,PeerCrypto.unb64(cipher.getString("iv")),"event|"+peer+"|"+c.getString(1)+"|"+c.getString(2),PeerCrypto.unb64(cipher.getString("ct"))),java.nio.charset.StandardCharsets.UTF_8));
-                rows.put(new JSONObject().put("seq",c.getLong(0)).put("id",c.getString(1)).put("kind",c.getString(2)).put("occurred",c.getLong(4)).put("payload",payload));
+                JSONObject row=new JSONObject().put("seq",c.getLong(0)).put("id",c.getString(1)).put("kind",c.getString(2)).put("occurred",c.getLong(4)).put("payload",payload);
+                int size=PeerCrypto.utf8(row.toString()).length;if(bytes+size>300000)break;bytes+=size;rows.put(row);
             }
         }finally{java.util.Arrays.fill(key,(byte)0);}
         return new JSONObject().put("state","succeeded").put("events",rows);
@@ -77,5 +80,22 @@ public final class PeerStore extends SQLiteOpenHelper {
     public synchronized void ackEvents(String peer,JSONArray sequences)throws Exception{
         if(sequences.length()>100)throw new SecurityException("too_many_event_acks");SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(int i=0;i<sequences.length();i++)db.delete("peer_events","peer=? AND seq=?",new String[]{peer,String.valueOf(sequences.getLong(i))});db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
+    public synchronized void queueOutbound(String peer,String id,JSONObject request)throws Exception{
+        byte[] key=key(peer);long expires=request.getLong("commandExpires");try{
+            JSONObject frame=PeerProtocol.seal(key,myId(),peer,id,expires,request);ContentValues values=new ContentValues();values.put("peer",peer);values.put("id",id);values.put("cipher",frame.toString());values.put("expires",expires);
+            getWritableDatabase().insertWithOnConflict("outbox",null,values,SQLiteDatabase.CONFLICT_IGNORE);
+        }finally{java.util.Arrays.fill(key,(byte)0);}
+    }
+    public synchronized JSONArray outbound(String peer)throws Exception{
+        JSONArray rows=new JSONArray();try(Cursor c=getReadableDatabase().rawQuery("SELECT id,cipher,expires FROM outbox WHERE peer=? ORDER BY expires LIMIT 16",new String[]{peer})){
+            while(c.moveToNext()){
+                JSONObject row=new JSONObject().put("id",c.getString(0)).put("expires",c.getLong(2));
+                if(c.getLong(2)<System.currentTimeMillis()/1000)row.put("state","expired");
+                else{byte[] key=key(peer);try{row.put("request",PeerProtocol.open(key,myId(),peer,new JSONObject(c.getString(1)),System.currentTimeMillis()/1000));}finally{java.util.Arrays.fill(key,(byte)0);}}
+                rows.put(row);
+            }
+        }return rows;
+    }
+    public synchronized void clearOutbound(String peer,String id){getWritableDatabase().delete("outbox","peer=? AND id=?",new String[]{peer,id});}
     public Context context(){return context;}
 }

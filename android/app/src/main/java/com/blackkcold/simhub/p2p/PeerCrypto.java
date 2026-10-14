@@ -20,7 +20,9 @@ public final class PeerCrypto {
     public static PublicKey publicKey(String s)throws GeneralSecurityException{
         byte[] der=unb64(s);if(der.length>256)throw new SecurityException("bad_peer_key");
         PublicKey k=KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(der));
-        if(!(k instanceof java.security.interfaces.ECPublicKey ec)||ec.getParams().getCurve().getField().getFieldSize()!=256)throw new SecurityException("bad_peer_curve");
+        if(!(k instanceof java.security.interfaces.ECPublicKey ec))throw new SecurityException("bad_peer_curve");
+        AlgorithmParameters params=AlgorithmParameters.getInstance("EC");params.init(new ECGenParameterSpec("secp256r1"));ECParameterSpec expected=params.getParameterSpec(ECParameterSpec.class),actual=ec.getParams();
+        if(!actual.getCurve().equals(expected.getCurve())||!actual.getGenerator().equals(expected.getGenerator())||!actual.getOrder().equals(expected.getOrder())||actual.getCofactor()!=expected.getCofactor())throw new SecurityException("bad_peer_curve");
         return k;
     }
     public static byte[] dh(PrivateKey key,PublicKey peer)throws GeneralSecurityException{KeyAgreement a=KeyAgreement.getInstance("ECDH");a.init(key);a.doPhase(peer,true);return a.generateSecret();}

@@ -16,7 +16,7 @@ public final class SmsSendPolicy {
                 != PackageManager.PERMISSION_GRANTED) return false;
         RoleManager roles = context.getSystemService(RoleManager.class);
         boolean defaultSms = roles != null && roles.isRoleHeld(RoleManager.ROLE_SMS);
-        return allowed(defaultSms, true, DeveloperSettings.isForceSmsEnabled(context));
+        return allowed(defaultSms, true, !BuildConfig.STORE_CHANNEL&&DeveloperSettings.isForceSmsEnabled(context));
     }
 
     public static void requireCanSend(Context context) {

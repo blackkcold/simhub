@@ -19,6 +19,7 @@ public final class IncomingSmsReceiver extends BroadcastReceiver {
     }
     private void handle(Context c,Intent intent){
         if(Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(intent.getAction())){
+            if(BuildConfig.STORE_CHANNEL)return;
             // The system default SMS app owns provider writes. We only wake provider
             // reconciliation; never insert an SMS or duplicate SMS_DELIVER here.
             try{

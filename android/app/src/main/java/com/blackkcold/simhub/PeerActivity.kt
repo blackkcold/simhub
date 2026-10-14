@@ -70,7 +70,7 @@ class PeerActivity:ComponentActivity(){
     override fun onDestroy(){if(!PeerService.enabled())connector?.close();super.onDestroy()}
     private fun reload(){peers=(0 until store().list().length()).map{store().list().getJSONObject(it)};listening=PeerService.enabled();selected?.let{p->selected=peers.find{it.optString("id")==p.optString("id")}}}
     private fun work(task:suspend ()->Unit){if(busy)return;busy=true;notice="";lifecycleScope.launch{try{task()}catch(e:Exception){notice=when(e){is SecurityException->"安全或权限校验未通过：${e.message?.take(80)}";else->"设备暂时不可达。请确认节点已开启直连、网络权限及连接服务。"}}finally{busy=false;reload()}}}
-    private fun requestAccess(){val list=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,Manifest.permission.READ_PHONE_STATE);if(Build.VERSION.SDK_INT>=33)list.add(Manifest.permission.POST_NOTIFICATIONS);if(Build.VERSION.SDK_INT>=37)list.add("android.permission.ACCESS_LOCAL_NETWORK");if(SmsSendPolicy.canSend(this)||getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true)list.add(Manifest.permission.SEND_SMS);permissions.launch(list.toTypedArray())}
+    private fun requestAccess(){if(!SmsAccessPolicy.rolePermitsAccess(this)){getSystemService(RoleManager::class.java)?.let{role.launch(it.createRequestRoleIntent(RoleManager.ROLE_SMS))};return};val list=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,Manifest.permission.READ_PHONE_STATE);if(Build.VERSION.SDK_INT>=33)list.add(Manifest.permission.POST_NOTIFICATIONS);if(Build.VERSION.SDK_INT>=37)list.add("android.permission.ACCESS_LOCAL_NETWORK");if(SmsSendPolicy.canSend(this)||getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true)list.add(Manifest.permission.SEND_SMS);permissions.launch(list.toTypedArray())}
     private fun startNode(){if(Build.VERSION.SDK_INT>=37&&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")!=PackageManager.PERMISSION_GRANTED){permissions.launch(arrayOf("android.permission.ACCESS_LOCAL_NETWORK"));notice="授权后请再次开启直连";return};PeerService.start(this);lifecycleScope.launch{delay(800);reload();notice=PeerService.error()}}
     private fun scan(){IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt("扫描另一台手机的 P2P 二维码").setBeepEnabled(false).setOrientationLocked(false).initiateScan()}
     @Deprecated("ZXing compatibility") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);val result:IntentResult?=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);val contents=result?.contents?:return
@@ -81,13 +81,33 @@ class PeerActivity:ComponentActivity(){
     }
     private suspend fun load(older:Boolean){val p=selected?:return;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
         val page=rpc(p,UUID.randomUUID().toString(),req);if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
-        if(!older)remoteState=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state")).optJSONObject("device")
+        if(!older){
+            remoteState=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state")).optJSONObject("device")
+            acceptEvents(p)
+            withContext(Dispatchers.IO){PeerInboxCache.save(applicationContext,p.getString("id"),inbox)}
+        }
     }
-    private fun select(p:JSONObject){selected=p;tab=1;qr="";cursor=null;historyMode=false;inbox.clear();work{load(false)}}
+    private suspend fun acceptEvents(p:JSONObject){
+        val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","events.page"))
+        val events=result.optJSONArray("events")?:return;val rows=JSONArray();val ack=JSONArray()
+        for(i in 0 until events.length()){
+            val event=events.getJSONObject(i);val payload=event.getJSONObject("payload");val eventId=event.getString("id");val address=payload.optString("sender",payload.optString("recipient"));val sub=payload.optInt("subscriptionId",-1)
+            val provider=payload.optLong("providerId",-1).takeIf{it>=0}?.toString()?:Regex("^sms-provider-([0-9]+).*$").find(eventId)?.groupValues?.get(1)
+            rows.put(JSONObject().put("id",if(provider!=null)"peer-${p.getString("id")}-$provider" else "peer-event-${p.getString("id")}-${eventId}")
+                .put("thread",PeerCrypto.digest(PeerCrypto.utf8("${p.getString("id")}|$sub|$address"))).put("sender",address).put("body",payload.optString("body")).put("timestamp",event.optLong("occurred"))
+                .put("inbound",payload.optString("direction")=="in").put("device",p.optString("name")).put("sim",payload.optString("simTag","SIM $sub")).put("sourceId","${p.getString("id")}-$sub").put("otp",payload.optJSONObject("otp")?.optString("value")?:"").put("failed",event.optString("kind")=="sms.failed"))
+            ack.put(event.getLong("seq"))
+        }
+        if(rows.length()>0&&inbox.accept(JSONObject().put("type","snapshot").put("v",1).put("messages",rows).put("incremental",true).toString(),true)){
+            withContext(Dispatchers.IO){PeerInboxCache.save(applicationContext,p.getString("id"),inbox)}
+            rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","events.ack").put("sequences",ack))
+        }
+    }
+    private fun select(p:JSONObject){selected=p;tab=1;qr="";cursor=null;historyMode=false;inbox.clear();PeerInboxCache.restore(applicationContext,p.getString("id"),inbox);work{load(false)}}
     private fun beginWrite(to:String=""){recipient=to;body="";sendId=null;sendRequest=null;channelIndex=0;compose=true}
     private fun send(){val p=selected?:return;val channels=remoteState?.optJSONArray("channels")?:return;val ch=channels.optJSONObject(channelIndex)?:return
         if(sendId==null){sendId=UUID.randomUUID().toString();sendRequest=JSONObject().put("action","sms.send").put("to",recipient).put("body",body).put("channelId",ch.getString("id")).put("channelRevision",ch.getLong("revision")).put("commandExpires",System.currentTimeMillis()/1000+120)}
-        work{val result=rpc(p,sendId!!,sendRequest!!);notice="短信状态：${result.optString("state")}";if(result.optString("state")=="submitted"){compose=false;load(false)}}
+        work{withContext(Dispatchers.IO){store().queueOutbound(p.getString("id"),sendId!!,sendRequest!!)};val result=rpc(p,sendId!!,sendRequest!!);if(result.optString("state") in listOf("submitted","failed","expired"))withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),sendId!!)};notice="短信状态：${result.optString("state")}";if(result.optString("state")=="submitted"){compose=false;load(false)}}
     }
     @Composable private fun Screen(){
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)){
@@ -130,9 +150,14 @@ class PeerActivity:ComponentActivity(){
             Text(p.optString("name"),style=MaterialTheme.typography.titleMedium);Text("${if(p.optString("localRole")=="NODE")"授权的管理手机" else "SIM 节点"} · ${p.optString("pairState")}")
             Text("注册模式：${p.optString("policy")}\n当前链路：${routeLabel(p.optString("activeTransport"))}\n中继绑定：${p.optString("relayBindingState")}")
             Text("身份指纹：${p.optString("id").take(16)}",style=MaterialTheme.typography.labelSmall)
+            if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
+                val pending=withContext(Dispatchers.IO){store().outbound(p.getString("id"))};if(pending.length()==0){notice="没有待确认的发送命令"}else{
+                    val cmd=pending.getJSONObject(0);if(cmd.optString("state")=="expired"){withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),cmd.getString("id"))};notice="命令已过期，不会补发"}else{val result=rpc(p,cmd.getString("id"),cmd.getJSONObject("request"));notice="原命令状态：${result.optString("state")}";if(result.optString("state") in listOf("submitted","failed","expired"))withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),cmd.getString("id"))}}
+                }
+            }}){Text("检查 / 重试待确认命令")}
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")Button(onClick={select(p)}){Text("管理短信")}
-                if(p.optString("pairState")!="REVOKED")TextButton(onClick={work{withContext(Dispatchers.IO){store().revoke(p.getString("id"))};if(selected?.optString("id")==p.optString("id")){inbox.clear();selected=null};connector?.close();connector=null;notice="本机已立即撤销此授权；远端旧凭据无法继续访问"}}){Text("撤销授权")}
+                if(p.optString("pairState")!="REVOKED")TextButton(onClick={work{withContext(Dispatchers.IO){store().revoke(p.getString("id"));PeerInboxCache.clear(applicationContext,p.getString("id"))};if(selected?.optString("id")==p.optString("id")){inbox.clear();selected=null};connector?.close();connector=null;notice="本机已立即撤销此授权；远端旧凭据无法继续访问"}}){Text("撤销授权")}
             }
         }}
     }}

@@ -24,6 +24,6 @@ public final class ConnectionCoordinator {
     }
     private JSONObject accept(JSONObject peer,HubTransport transport,String id,JSONObject req)throws Exception{
         JSONObject result=transport.request(peer,id,req);peer=store.peer(peer.getString("id"));if("REVOKED".equals(peer.optString("pairState")))throw new SecurityException("peer_revoked");
-        peer.put("activeTransport",transport.route());if("PENDING".equals(peer.optString("pairState")))peer.put("pairState","ACTIVE");store.update(peer);return result;
+        peer.put("activeTransport",transport.route()).put("lastSyncAt",System.currentTimeMillis()/1000);if("PENDING".equals(peer.optString("pairState")))peer.put("pairState","ACTIVE");store.update(peer);return result;
     }
 }

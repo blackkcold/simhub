@@ -200,6 +200,13 @@ class PeerConnect:
             db.execute("DELETE FROM frames WHERE (src=? AND dst=?) OR (src=? AND dst=?)", (actor["identity"], actor["peer"], actor["peer"], actor["identity"]))
         return {"state": "revoked"}
 
+    def prune(self):
+        now = int(self.clock())
+        with self.db() as db:
+            db.execute("DELETE FROM frames WHERE expires<?", (now,))
+            db.execute("DELETE FROM challenges WHERE expires<?", (now,))
+            db.execute("DELETE FROM registrations WHERE expires<?", (now,))
+
     def directory(self):
         now = int(self.clock())
         with self.db() as db:
@@ -309,4 +316,12 @@ class BoundedServer(ThreadingHTTPServer):
 if __name__ == "__main__":
     path = os.environ.get("P2P_DB", "peer-connect.db")
     service = PeerConnect(path, turn_secret=os.environ.get("P2P_TURN_SECRET"), stun_urls=os.environ.get("P2P_STUN_URLS", "").split(), turn_urls=os.environ.get("P2P_TURN_URLS", "").split())
+    def janitor():
+        while True:
+            time.sleep(30)
+            try:
+                service.prune()
+            except sqlite3.Error:
+                pass
+    threading.Thread(target=janitor, daemon=True, name="peer-ttl-janitor").start()
     BoundedServer((os.environ.get("P2P_BIND", "127.0.0.1"), int(os.environ.get("P2P_PORT", "8787"))), handler(service)).serve_forever()

@@ -56,6 +56,12 @@ public final class PeerInstrumentedTest {
         store.finish(controllerId,id,new JSONObject().put("state","submitted"));assertEquals("submitted",store.claim(controllerId,id,"payload-a").getString("state"));
         try{store.claim(controllerId,id,"payload-b");fail("payload rebinding accepted");}catch(SecurityException expected){}
     }
+    @Test public void testEncryptedEventsRequirePeerScopedAck()throws Exception{
+        String event="sandbox-event-"+UUID.randomUUID();store.event(controllerId,event,"sms.received",System.currentTimeMillis()/1000,new JSONObject().put("body","private sandbox event"));
+        JSONObject page=rpc(new JSONObject().put("action","events.page"));JSONArray rows=page.getJSONArray("events");assertEquals(1,rows.length());assertEquals("private sandbox event",rows.getJSONObject(0).getJSONObject("payload").getString("body"));long seq=rows.getJSONObject(0).getLong("seq");
+        store.ackEvents("other-peer-1234567890",new JSONArray().put(seq));assertEquals(1,store.events(controllerId,0).getJSONArray("events").length());
+        assertEquals("acknowledged",rpc(new JSONObject().put("action","events.ack").put("sequences",new JSONArray().put(seq))).getString("state"));assertEquals(0,store.events(controllerId,0).getJSONArray("events").length());
+    }
     @Test public void testMoreThan1000ProviderRowsThroughEncryptedPagination()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();List<Uri> inserted=new ArrayList<>();
         try{

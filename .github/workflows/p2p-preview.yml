@@ -20,9 +20,13 @@ jobs:
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with: {gradle-version: '9.6.0'}
-      - run: gradle -p android :app:testP2pPreviewUnitTest :app:assembleP2pPreview --stacktrace
+      - run: gradle -p android -Pp2pAndroidSandbox=true :app:testP2pPreviewUnitTest :app:assembleP2pPreview --stacktrace
       - run: python3 -m pip install -r server/requirements.txt
       - run: python3 scripts/test_p2p_sandbox.py
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with: {node-version: '22'}
+      - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - run: node scripts/test_p2p_webrtc.mjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: simhub-p2p-preview
@@ -42,7 +46,7 @@ jobs:
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with: {gradle-version: '9.6.0'}
-      - run: gradle -p android :app:assembleP2pPreview :app:assembleP2pPreviewAndroidTest --stacktrace
+      - run: gradle -p android -Pp2pAndroidSandbox=true :app:assembleP2pPreview :app:assembleP2pPreviewAndroidTest --stacktrace
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -60,7 +64,7 @@ jobs:
             adb shell pm grant com.blackkcold.simhub.p2ptest android.permission.READ_SMS
             adb shell pm grant com.blackkcold.simhub.p2ptest android.permission.RECEIVE_SMS
             adb shell pm grant com.blackkcold.simhub.p2ptest android.permission.READ_PHONE_STATE
-            adb shell am instrument -w -e class com.blackkcold.simhub.p2p.PeerInstrumentedTest com.blackkcold.simhub.p2ptest.test/android.test.InstrumentationTestRunner | tee android-sandbox-results.txt
+            adb shell am instrument -w -e class com.blackkcold.simhub.p2p.PeerInstrumentedTest com.blackkcold.simhub.p2ptest.test/androidx.test.runner.AndroidJUnitRunner | tee android-sandbox-results.txt
             grep -q 'OK (4 tests)' android-sandbox-results.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()

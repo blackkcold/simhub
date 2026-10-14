@@ -11,6 +11,9 @@ import java.util.concurrent.*;
 
 /** Explicit, replaceable connection service. It never calls Legacy Relay APIs. */
 public final class PeerInternetConnector implements AutoCloseable {
+    private static final Map<String,PeerInternetConnector> ACTIVE=new ConcurrentHashMap<>();
+    public static PeerInternetConnector active(String id){return ACTIVE.get(id);}
+    public static void closeAll(){for(PeerInternetConnector c:new ArrayList<>(ACTIVE.values()))c.close();}
     private final PeerStore store;
     private final String peerId;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
@@ -19,6 +22,7 @@ public final class PeerInternetConnector implements AutoCloseable {
     private String origin,token;
     private PeerWebRtcTransport rtc;
     private boolean fallback;
+    private long tokenExpires,lastRestart;
     public PeerInternetConnector(Context c,String peerId){store=PeerStore.get(c);this.peerId=peerId;}
     public void connect(String url,boolean fallback)throws Exception{
         this.fallback=fallback;origin=requireOrigin(url);
@@ -27,10 +31,11 @@ public final class PeerInternetConnector implements AutoCloseable {
         String policy=fallback?"P2P_RELAY_FALLBACK":"P2P_ONLY",challengeId=challenge.getString("challenge");
         String transcript="register|"+challengeId+"|"+peerId+"|"+policy+"|"+fallback+"|"+store.myId();
         JSONObject response=http("POST","/api/v2/p2p/register",new JSONObject().put("identity",store.publicKey()).put("peer",peerId).put("policy",policy).put("fallbackConsent",fallback).put("challenge",challengeId).put("signature",PeerCrypto.sign(store.identity().getPrivate(),transcript)));
-        token=response.getString("token");profile.put("policy",policy).put("fallbackConsent",fallback).put("relayBindingState","ACTIVE").put("connectionService",origin);store.update(profile);
+        token=response.getString("token");tokenExpires=response.getLong("expires");profile.put("policy",policy).put("fallbackConsent",fallback).put("relayBindingState","ACTIVE").put("connectionService",origin).put("connectionEnabled",true);store.update(profile);
         JSONArray servers=response.optJSONArray("iceServers");if(servers==null)servers=new JSONArray();
         rtc=new PeerWebRtcTransport(store.context(),profile,fallback,payload->{if(!closed)worker.execute(()->{try{send("signal",UUID.randomUUID().toString(),new JSONObject().put("action","signal").put("payload",payload));}catch(Exception ignored){}});});
         rtc.init(servers,"CONTROLLER".equals(profile.optString("localRole")));
+        PeerInternetConnector previous=ACTIVE.put(peerId,this);if(previous!=null&&previous!=this)previous.close();
         new Thread(this::poll,"simhub-peer-connect-poll").start();
     }
     public HubTransport transport(String id){return id.equals(peerId)?rtc:null;}
@@ -58,7 +63,12 @@ public final class PeerInternetConnector implements AutoCloseable {
             // The server keeps data until a successfully authenticated frame is processed.
             http("POST","/api/v2/p2p/ack",new JSONObject().put("seq",row.getLong("seq")));cursor=row.getLong("seq");
         }
-        if(rtc!=null)http("POST","/api/v2/p2p/status",new JSONObject().put("activeTransport",rtc.route()));
+        if(rtc!=null){
+            http("POST","/api/v2/p2p/status",new JSONObject().put("activeTransport",rtc.online()?rtc.route():"OFFLINE"));
+            long now=System.currentTimeMillis()/1000;
+            if(!rtc.online()&&now-lastRestart>25&&"CONTROLLER".equals(store.peer(peerId).optString("localRole"))){lastRestart=now;rtc.restart();}
+            if(now+60>tokenExpires){renew();}
+        }
         if(rows.length()==0)Thread.sleep(1500);
     }catch(Exception e){try{Thread.sleep(3000);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();return;}}}}
     private JSONObject http(String method,String path,JSONObject body)throws Exception{
@@ -72,5 +82,11 @@ public final class PeerInternetConnector implements AutoCloseable {
         }finally{con.disconnect();}
     }
     private static String requireOrigin(String url){URI uri=URI.create(url.trim());if(!"https".equals(uri.getScheme())||uri.getHost()==null||uri.getUserInfo()!=null||uri.getQuery()!=null||uri.getFragment()!=null||(uri.getPath()!=null&&!uri.getPath().isEmpty()&&!uri.getPath().equals("/")))throw new SecurityException("connection_service_https_origin_required");return url.trim().replaceAll("/+$","");}
-    public void close(){closed=true;worker.shutdownNow();if(rtc!=null)rtc.close();for(CompletableFuture<JSONObject> f:pendingMailbox.values())f.completeExceptionally(new IOException("mailbox_closed"));pendingMailbox.clear();token=null;}
+    private void renew()throws Exception{
+        JSONObject profile=store.peer(peerId);JSONObject challenge=http("GET","/api/v2/p2p/challenge",null);String challengeId=challenge.getString("challenge");String policy=profile.getString("policy");boolean consent=profile.optBoolean("fallbackConsent");
+        String transcript="register|"+challengeId+"|"+peerId+"|"+policy+"|"+consent+"|"+store.myId();
+        JSONObject response=http("POST","/api/v2/p2p/register",new JSONObject().put("identity",store.publicKey()).put("peer",peerId).put("policy",policy).put("fallbackConsent",consent).put("challenge",challengeId).put("signature",PeerCrypto.sign(store.identity().getPrivate(),transcript)));
+        token=response.getString("token");tokenExpires=response.getLong("expires");
+    }
+    public void close(){closed=true;ACTIVE.remove(peerId,this);worker.shutdownNow();if(rtc!=null)rtc.close();for(CompletableFuture<JSONObject> f:pendingMailbox.values())f.completeExceptionally(new IOException("mailbox_closed"));pendingMailbox.clear();token=null;}
 }

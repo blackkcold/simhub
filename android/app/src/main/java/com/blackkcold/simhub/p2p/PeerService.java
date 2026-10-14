@@ -44,9 +44,16 @@ public final class PeerService extends Service {
             nsd=getSystemService(NsdManager.class);NsdServiceInfo info=new NsdServiceInfo();info.setServiceName("simhub_"+PeerStore.get(this).myId().substring(0,16));info.setServiceType("_simhub-peer._tcp.");info.setPort(server.port());
             registration=new NsdManager.RegistrationListener(){public void onRegistrationFailed(NsdServiceInfo i,int e){}public void onUnregistrationFailed(NsdServiceInfo i,int e){}public void onServiceRegistered(NsdServiceInfo i){}public void onServiceUnregistered(NsdServiceInfo i){}};
             nsd.registerService(info,NsdManager.PROTOCOL_DNS_SD,registration);
+            com.blackkcold.simhub.AgentExecutors.io().execute(()->{
+                JSONArray peers=PeerStore.get(this).list();for(int i=0;i<peers.length();i++)try{
+                    JSONObject p=peers.getJSONObject(i);if("NODE".equals(p.optString("localRole"))&&"ACTIVE".equals(p.optString("pairState"))&&p.optBoolean("connectionEnabled")&&PeerInternetConnector.active(p.getString("id"))==null){
+                        PeerInternetConnector connector=new PeerInternetConnector(this,p.getString("id"));connector.connect(p.getString("connectionService"),p.optBoolean("fallbackConsent"));
+                    }
+                }catch(Exception ignored){}
+            });
         }catch(Exception e){failure=e instanceof SecurityException?"local_network_permission_required":"listener_start_failed";stopSelf();}
     }
     public int onStartCommand(Intent i,int flags,int id){return START_NOT_STICKY;}
-    public void onDestroy(){running=null;if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    public void onDestroy(){running=null;PeerInternetConnector.closeAll();if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
     public IBinder onBind(Intent i){return null;}
 }

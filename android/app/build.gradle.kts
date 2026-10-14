@@ -13,13 +13,13 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
-        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 50
         versionName = "0.17.0"
         buildConfigField("boolean", "P2P_PREVIEW", "false")
     }
     buildFeatures { buildConfig = true; compose = true; aidl = true; resValues = true }
-    testBuildType = "p2pPreview"
+    if (providers.gradleProperty("p2pAndroidSandbox").orNull == "true") testBuildType = "p2pPreview"
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -70,6 +70,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

@@ -67,7 +67,7 @@ class PeerActivity:ComponentActivity(){
         }}
     }
     override fun onStop(){super.onStop();inbox.clear();remoteState=null}
-    override fun onDestroy(){connector?.close();super.onDestroy()}
+    override fun onDestroy(){if(!PeerService.enabled())connector?.close();super.onDestroy()}
     private fun reload(){peers=(0 until store().list().length()).map{store().list().getJSONObject(it)};listening=PeerService.enabled();selected?.let{p->selected=peers.find{it.optString("id")==p.optString("id")}}}
     private fun work(task:suspend ()->Unit){if(busy)return;busy=true;notice="";lifecycleScope.launch{try{task()}catch(e:Exception){notice=when(e){is SecurityException->"安全或权限校验未通过：${e.message?.take(80)}";else->"设备暂时不可达。请确认节点已开启直连、网络权限及连接服务。"}}finally{busy=false;reload()}}}
     private fun requestAccess(){val list=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,Manifest.permission.READ_PHONE_STATE);if(Build.VERSION.SDK_INT>=33)list.add(Manifest.permission.POST_NOTIFICATIONS);if(Build.VERSION.SDK_INT>=37)list.add("android.permission.ACCESS_LOCAL_NETWORK");if(SmsSendPolicy.canSend(this)||getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true)list.add(Manifest.permission.SEND_SMS);permissions.launch(list.toTypedArray())}
@@ -77,7 +77,7 @@ class PeerActivity:ComponentActivity(){
         work{val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL);"response"->{manager.accept(contents);""};else->throw SecurityException("peer_qr_kind_rejected")}};qr=resultQr;notice=if(resultQr.isBlank())"双向扫码已确认，管理手机现在可以连接" else "请让 SIM 节点扫描此响应二维码，随后在管理手机刷新设备"}
     }
     private suspend fun rpc(p:JSONObject,id:String,request:JSONObject):JSONObject{
-        return withContext(Dispatchers.IO){val coordinator=ConnectionCoordinator(store());connector?.transport(p.optString("id"))?.let{coordinator.internet(it)};connector?.mailbox(p.optString("id"))?.let{coordinator.mailbox(it)};coordinator.request(p.getString("id"),id,request)}
+        return withContext(Dispatchers.IO){val coordinator=ConnectionCoordinator(store());(connector?:PeerInternetConnector.active(p.optString("id")))?.transport(p.optString("id"))?.let{coordinator.internet(it)};(connector?:PeerInternetConnector.active(p.optString("id")))?.mailbox(p.optString("id"))?.let{coordinator.mailbox(it)};coordinator.request(p.getString("id"),id,request)}
     }
     private suspend fun load(older:Boolean){val p=selected?:return;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
         val page=rpc(p,UUID.randomUUID().toString(),req);if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
@@ -143,7 +143,7 @@ class PeerActivity:ComponentActivity(){
             OutlinedTextField(connectUrl,{connectUrl=it},label={Text("可选连接服务 HTTPS 地址")},modifier=Modifier.fillMaxWidth())
             Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Switch(useFallback,{useFallback=it});Text("授权 TURN 与短期加密信箱回退")}
             Button(onClick={work{val peer=selected?:peers.firstOrNull{it.optString("pairState")!="REVOKED"}?:throw IllegalStateException("pair_first");connector?.close();connector=PeerInternetConnector(this@PeerActivity,peer.getString("id"));withContext(Dispatchers.IO){connector!!.connect(connectUrl,useFallback)};notice="连接服务已绑定；仅交换密文和必要连接元数据"}},enabled=connectUrl.startsWith("https://")){Text("绑定所选设备并连接")}
-            OutlinedButton(onClick={work{selected?.let{p->val fresh=store().peer(p.getString("id"));fresh.put("policy","P2P_ONLY").put("fallbackConsent",false).put("relayBindingState","SUSPENDED");store().update(fresh)};connector?.close();connector=null;notice="已停用此设备的网络服务与中继回退"}}){Text("恢复纯直连")}
+            OutlinedButton(onClick={work{selected?.let{p->val fresh=store().peer(p.getString("id"));fresh.put("policy","P2P_ONLY").put("fallbackConsent",false).put("relayBindingState","SUSPENDED").put("connectionEnabled",false);store().update(fresh)};connector?.close();connector=null;notice="已停用此设备的网络服务与中继回退"}}){Text("恢复纯直连")}
             Text("未配置公共服务地址。不会静默连接未知公共服务器。连接服务与现有 Relay Enrollment / Global Vault 完全分离。",style=MaterialTheme.typography.bodySmall)
         }}
         item{Text("测试版 ${BuildConfig.VERSION_NAME}\n包名 ${packageName}\n真实短信与后台可达性仍受 Android 权限、ROM、电量及网络影响。",style=MaterialTheme.typography.bodySmall)}

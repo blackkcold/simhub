@@ -27,6 +27,7 @@ async function command(c){try{
    const s=c.payload;if(s.description){await pc.setRemoteDescription(s.description);for(const candidate of candidateQueue)await pc.addIceCandidate(candidate);candidateQueue=[];if(s.description.type==='offer'){await pc.setLocalDescription(await pc.createAnswer());native('signal',{payload:{description:pc.localDescription.toJSON()}});}}
    if(s.candidate){if(pc.remoteDescription)await pc.addIceCandidate(s.candidate);else if(candidateQueue.length<128)candidateQueue.push(s.candidate);}return;
  }
+ if(c.type==='restart'){ready=false;pc.restartIce();await pc.setLocalDescription(await pc.createOffer({iceRestart:true}));native('signal',{payload:{description:pc.localDescription.toJSON()}});return;}
  if(c.type==='send'){
    if(!ready||typeof c.frame!=='string'||c.frame.length>MAX||dc.bufferedAmount>2000000)throw Error();const id=JSON.parse(c.frame).id,n=Math.ceil(c.frame.length/CHUNK);for(let i=0;i<n;i++)dc.send(JSON.stringify({id,i,n,d:c.frame.slice(i*CHUNK,(i+1)*CHUNK)}));return;
  }

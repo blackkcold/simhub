@@ -26,6 +26,7 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     private WebView view;
     private volatile String route="DIRECT";
     private volatile boolean closed;
+    private volatile boolean online;
     public PeerWebRtcTransport(Context c,JSONObject profile,boolean consent,Signals signals)throws Exception{this.store=PeerStore.get(c);this.profile=profile;this.consent=consent;this.signals=signals;CompletableFuture<Void> ready=new CompletableFuture<>();main.post(()->{try{create(c);ready.complete(null);}catch(Exception e){ready.completeExceptionally(e);}});ready.get(10,TimeUnit.SECONDS);}
     @SuppressLint("SetJavaScriptEnabled") private void create(Context c){
         if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))throw new UnsupportedOperationException("update_android_system_webview");
@@ -43,10 +44,10 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     private void handle(String raw){try{
         JSONObject msg=new JSONObject(raw);switch(msg.getString("type")){
             case "loaded" -> loaded.countDown();
-            case "connected" -> {String selected=msg.getString("route");if("TURN".equals(selected)&&!consent){close();return;}route=selected;connected.countDown();}
+            case "connected" -> {String selected=msg.getString("route");if("TURN".equals(selected)&&!consent){close();return;}route=selected;online=true;connected.countDown();}
             case "signal" -> signals.send(msg.getJSONObject("payload"));
             case "data" -> incoming(new JSONObject(msg.getString("frame")));
-            case "closed","error" -> {for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_channel_closed"));}
+            case "closed","error" -> {online=false;for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_channel_closed"));}
             default -> {}
         }
     }catch(Exception ignored){/* Content and crypto failures are never logged. */}}
@@ -54,6 +55,8 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     public void signal(JSONObject payload)throws Exception{command(new JSONObject().put("type","signal").put("payload",payload));}
     private void command(JSONObject cmd){main.post(()->{if(!closed&&view!=null)view.evaluateJavascript("window.peerCommand("+cmd.toString()+")",null);});}
     public String route(){return route;}
+    public boolean online(){return online;}
+    public void restart()throws Exception{command(new JSONObject().put("type","restart"));}
     public JSONObject request(JSONObject peer,String id,JSONObject req)throws Exception{
         if(!connected.await(8,TimeUnit.SECONDS)||closed)throw new IOException("peer_ice_not_connected");
         JSONObject current=store.peer(peer.getString("id"));
@@ -72,5 +75,5 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
             }
         }finally{Arrays.fill(key,(byte)0);}
     }
-    public void close(){closed=true;dispatch.shutdownNow();for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_transport_closed"));pending.clear();main.post(()->{if(view!=null){view.destroy();view=null;}});}
+    public void close(){closed=true;online=false;dispatch.shutdownNow();for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_transport_closed"));pending.clear();main.post(()->{if(view!=null){view.destroy();view=null;}});}
 }

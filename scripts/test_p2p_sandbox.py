@@ -5,6 +5,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 
@@ -19,7 +20,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="simhub-peer-jvm-") as folder:
         source = ROOT / "android/app/src/main/java/com/blackkcold/simhub/p2p"
         runner = ROOT / "scripts/PeerCryptoSandbox.java"
-        subprocess.run(["javac", "-d", folder, str(source / "PeerCrypto.java"), str(source / "ConnectionPolicy.java"), str(runner)], check=True)
+        compiler=["javac"] if shutil.which("javac") else ["java", "-m", "jdk.compiler/com.sun.tools.javac.Main"]
+        subprocess.run([*compiler, "-d", folder, str(source / "PeerCrypto.java"), str(source / "ConnectionPolicy.java"), str(runner)], check=True)
         output = subprocess.check_output(["java", "-cp", folder, "PeerCryptoSandbox"], text=True)
     summary = {"jvm": json.loads(output), "server": "passed", "real_android_devices": "not_run", "public_service": "not_operated", "legacy_relay": "see_ci_regression_results"}
     (ROOT / "p2p-sandbox-results.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")

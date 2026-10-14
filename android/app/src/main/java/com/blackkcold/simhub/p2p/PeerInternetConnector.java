@@ -58,13 +58,14 @@ public final class PeerInternetConnector implements AutoCloseable {
             else if("mailbox".equals(row.getString("kind"))){
                 if(!fallback||!current.optBoolean("fallbackConsent"))throw new SecurityException("mailbox_not_authorized");
                 if("CONTROLLER".equals(current.optString("localRole"))){CompletableFuture<JSONObject> f=pendingMailbox.get(id);if(f!=null)f.complete(payload);}
-                else{JSONObject result=new PeerRpc(store).dispatch(peerId,id,payload);send("mailbox",id,result);}
+                else{JSONObject result=new PeerRpc(store).dispatch(peerId,id,payload);store.markTransport(peerId,"MAILBOX");send("mailbox",id,result);}
             }
             // The server keeps data until a successfully authenticated frame is processed.
             http("POST","/api/v2/p2p/ack",new JSONObject().put("seq",row.getLong("seq")));cursor=row.getLong("seq");
         }
         if(rtc!=null){
-            http("POST","/api/v2/p2p/status",new JSONObject().put("activeTransport",rtc.online()?rtc.route():"OFFLINE"));
+            JSONObject current=store.peer(peerId);long seen=current.optLong("lastSyncAt");String reported=System.currentTimeMillis()/1000-seen<30?current.optString("activeTransport","OFFLINE"):(rtc.online()?rtc.route():"OFFLINE");
+            http("POST","/api/v2/p2p/status",new JSONObject().put("activeTransport",reported));
             long now=System.currentTimeMillis()/1000;
             if(!rtc.online()&&now-lastRestart>25&&"CONTROLLER".equals(store.peer(peerId).optString("localRole"))){lastRestart=now;rtc.restart();}
             if(now+60>tokenExpires){renew();}

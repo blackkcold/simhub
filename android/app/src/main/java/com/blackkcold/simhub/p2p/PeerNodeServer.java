@@ -27,6 +27,8 @@ public final class PeerNodeServer implements AutoCloseable {
             JSONObject frame=DirectPeerTransport.read(socket.getInputStream());JSONObject req=PeerProtocol.open(session,from,to,frame,System.currentTimeMillis()/1000);
             // Recheck revocation immediately before business dispatch.
             JSONObject result=new PeerRpc(store).dispatch(from,frame.getString("id"),req);
+            InetAddress address=socket.getInetAddress();String numeric=address.getHostAddress().toLowerCase(java.util.Locale.ROOT);
+            store.markTransport(from,address.isSiteLocalAddress()||address.isLinkLocalAddress()||address.isLoopbackAddress()||numeric.matches("f[cd].*")?"LAN":"DIRECT");
             DirectPeerTransport.write(socket.getOutputStream(),PeerProtocol.seal(session,to,from,frame.getString("id"),frame.getLong("expires"),result));
         }catch(Exception ignored){/* Never log request, SMS, OTP, keys or attacker input. */}
         finally{if(root!=null)Arrays.fill(root,(byte)0);if(session!=null)Arrays.fill(session,(byte)0);}

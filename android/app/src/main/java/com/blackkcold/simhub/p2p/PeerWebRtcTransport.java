@@ -71,7 +71,7 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
             if("CONTROLLER".equals(current.optString("localRole"))){CompletableFuture<JSONObject> f=pending.get(id);if(f!=null)f.complete(plaintext);}
             else{
                 if("TURN".equals(route)&&(!current.optBoolean("fallbackConsent")||!"P2P_RELAY_FALLBACK".equals(current.optString("policy"))))throw new SecurityException("peer_fallback_not_allowed");
-                JSONObject result=new PeerRpc(store).dispatch(peerId,id,plaintext);JSONObject response=PeerProtocol.seal(key,store.myId(),peerId,id,frame.getLong("expires"),result);command(new JSONObject().put("type","send").put("frame",response.toString()));
+                JSONObject result=new PeerRpc(store).dispatch(peerId,id,plaintext);store.markTransport(peerId,route);JSONObject response=PeerProtocol.seal(key,store.myId(),peerId,id,frame.getLong("expires"),result);command(new JSONObject().put("type","send").put("frame",response.toString()));
             }
         }finally{Arrays.fill(key,(byte)0);}
     }

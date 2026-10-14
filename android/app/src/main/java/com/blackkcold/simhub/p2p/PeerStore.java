@@ -97,5 +97,6 @@ public final class PeerStore extends SQLiteOpenHelper {
         }return rows;
     }
     public synchronized void clearOutbound(String peer,String id){getWritableDatabase().delete("outbox","peer=? AND id=?",new String[]{peer,id});}
+    public synchronized void markTransport(String id,String route)throws Exception{JSONObject p=peer(id);if(!"ACTIVE".equals(p.optString("pairState")))return;p.put("activeTransport",route).put("lastSyncAt",System.currentTimeMillis()/1000);update(p);}
     public Context context(){return context;}
 }

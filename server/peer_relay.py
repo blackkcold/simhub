@@ -30,8 +30,13 @@ def store_response(con, device, command, frame, timestamp):
         raise ValueError("peer_command_unavailable")
     existing = con.execute("SELECT 1 FROM peer_rpc_responses WHERE device_id=? AND command_id=?", (device, command)).fetchone()
     if not existing:
-        if con.execute("SELECT COUNT(*) FROM peer_rpc_responses WHERE device_id=?", (device,)).fetchone()[0] >= 32:
+        if con.execute("SELECT COUNT(*) FROM peer_rpc_responses WHERE device_id=?", (device,)).fetchone()[0] >= 128:
             raise ValueError("peer_response_capacity")
+        size = len(json.dumps(frame))
+        if con.execute("SELECT COALESCE(SUM(length(frame_json)),0) FROM peer_rpc_responses WHERE device_id=?", (device,)).fetchone()[0] + size > 16 * 1024 * 1024:
+            raise ValueError("peer_response_byte_capacity")
+        if con.execute("SELECT COALESCE(SUM(length(frame_json)),0) FROM peer_rpc_responses").fetchone()[0] + size > 64 * 1024 * 1024:
+            raise ValueError("peer_response_global_capacity")
         con.execute("INSERT INTO peer_rpc_responses(device_id,command_id,frame_json,expires_at) VALUES(?,?,?,?)",
                     (device, command, json.dumps(frame, separators=(",", ":")), min(frame["expires"], row["expires_at"])))
 

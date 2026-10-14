@@ -33,7 +33,7 @@ public final class PeerInstrumentedTest {
         assertEquals(controllerId,manager.accept(replyQr));assertTrue(Arrays.equals(root,store.key(controllerId)));
         try{manager.accept(replyQr);fail("replayed QR must fail");}catch(SecurityException expected){}
     }
-    @After public void tearDown()throws Exception{server.close();store.revoke(controllerId);Arrays.fill(root,(byte)0);}
+    @After public void tearDown()throws Exception{PeerCloudConnector.closePeer(controllerId);server.close();store.revoke(controllerId);Arrays.fill(root,(byte)0);}
     private JSONObject rpc(JSONObject req)throws Exception{
         String to=store.myId(),helloId=UUID.randomUUID().toString(),id=UUID.randomUUID().toString();long expires=System.currentTimeMillis()/1000+120;KeyPair eph=PeerCrypto.ephemeral();
         try(Socket socket=new Socket("127.0.0.1",server.port())){socket.setSoTimeout(10000);
@@ -80,6 +80,41 @@ public final class PeerInstrumentedTest {
             com.blackkcold.simhub.LocalStore.PendingStatus status=local.recordSentPart(id,0,true,0);
             assertTrue(status.exists);assertEquals("private pending sandbox SMS",com.blackkcold.simhub.PendingSmsCrypto.decrypt(c,status.eventCipher).getString("body"));
         }finally{local.removePendingSms(id);config.clearEnrollment();Arrays.fill(nodeKey,(byte)0);}
+    }
+    @Test public void testRelayCarrierStillRequiresP2PGrant()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();String id=UUID.randomUUID().toString();long now=System.currentTimeMillis()/1000;
+        JSONObject request=new JSONObject().put("action","device.state");
+        JSONObject response=PeerRelayRpc.execute(c,PeerProtocol.seal(root,controllerId,store.myId(),id,now+120,request));
+        JSONObject result=PeerProtocol.open(root,store.myId(),controllerId,response,now);
+        assertEquals("succeeded",result.getJSONObject("result").getString("state"));assertEquals(PeerCrypto.digest(PeerCrypto.utf8(request.toString())),result.getString("requestDigest"));
+        try{PeerRelayRpc.execute(c,PeerProtocol.seal(root,controllerId,store.myId(),UUID.randomUUID().toString(),now+120,new JSONObject().put("action","sms.send")));fail("Relay bypassed P2P send grant");}catch(SecurityException expected){}
+        store.revoke(controllerId);try{PeerRelayRpc.execute(c,PeerProtocol.seal(root,controllerId,store.myId(),id,now+120,request));fail("Relay bypassed revocation");}catch(SecurityException expected){}
+    }
+    @Test public void testConfiguredRelayIsPreferredAndP2PIsBackup()throws Exception{
+        JSONObject profile=store.peer(controllerId);profile.put("relayConfigured",true);store.update(profile);int[] calls={0,0};
+        ConnectionCoordinator coordinator=new ConnectionCoordinator(store);
+        coordinator.relay(new HubTransport(){public String route(){return "LEGACY_RELAY";}public JSONObject request(JSONObject p,String id,JSONObject req)throws Exception{calls[0]++;if(calls[0]>1)throw new java.io.IOException("relay unavailable");return new JSONObject().put("path","relay");}});
+        coordinator.internet(new HubTransport(){public String route(){return "DIRECT";}public JSONObject request(JSONObject p,String id,JSONObject req)throws Exception{calls[1]++;return new JSONObject().put("path","p2p");}});
+        assertEquals("relay",coordinator.request(controllerId,UUID.randomUUID().toString(),new JSONObject()).getString("path"));assertEquals(0,calls[1]);
+        assertEquals("p2p",coordinator.request(controllerId,UUID.randomUUID().toString(),new JSONObject()).getString("path"));assertEquals(1,calls[1]);assertEquals("DIRECT",store.peer(controllerId).getString("activeTransport"));
+    }
+    @Test public void testUnconfiguredRelayIsNeverUsed()throws Exception{
+        ConnectionCoordinator coordinator=new ConnectionCoordinator(store);int[] calls={0};
+        coordinator.relay(new HubTransport(){public String route(){return "LEGACY_RELAY";}public JSONObject request(JSONObject p,String id,JSONObject req){calls[0]++;return new JSONObject();}});
+        coordinator.internet(new HubTransport(){public String route(){return "DIRECT";}public JSONObject request(JSONObject p,String id,JSONObject req)throws Exception{throw new java.io.IOException("p2p blocked");}});
+        try{coordinator.request(controllerId,UUID.randomUUID().toString(),new JSONObject());fail("Unconfigured backup used");}catch(java.io.IOException expected){}
+        assertEquals(0,calls[0]);assertEquals("OFFLINE",store.peer(controllerId).getString("activeTransport"));
+    }
+    @Test public void testStaleMetadataCannotRestoreRevokedGrant()throws Exception{
+        JSONObject old=store.peer(controllerId);store.revoke(controllerId);old.put("discoveryState","READY");
+        try{store.update(old);fail("Stale network callback restored authorization");}catch(SecurityException expected){}
+        assertEquals("REVOKED",store.peer(controllerId).getString("pairState"));
+    }
+    @Test public void testDefaultPublicSignalingStartsWithoutRelayOrAddress()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();assertFalse(new com.blackkcold.simhub.AgentConfig(c).isEnrolled());
+        PeerCloudConnector.ensure(c,controllerId);long deadline=System.currentTimeMillis()+20000;
+        while(System.currentTimeMillis()<deadline&&!"READY".equals(store.peer(controllerId).optString("discoveryState")))Thread.sleep(100);
+        assertEquals("READY",store.peer(controllerId).getString("discoveryState"));assertEquals("P2P_ONLY",store.peer(controllerId).getString("policy"));assertFalse(PeerCloudProtocol.iceServers().toString().contains("turn:"));
     }
     @Test public void testMoreThan1000ProviderRowsThroughEncryptedPagination()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();List<Uri> inserted=new ArrayList<>();

@@ -96,7 +96,7 @@ jobs:
             adb shell pm grant com.blackkcold.simhub.p2ptest android.permission.RECEIVE_SMS
             adb shell pm grant com.blackkcold.simhub.p2ptest android.permission.READ_PHONE_STATE
             adb shell am instrument -w -e class com.blackkcold.simhub.p2p.PeerInstrumentedTest com.blackkcold.simhub.p2ptest.test/androidx.test.runner.AndroidJUnitRunner | tee android-sandbox-results.txt
-            grep -q 'OK (6 tests)' android-sandbox-results.txt
+            grep -q 'OK (11 tests)' android-sandbox-results.txt
             cp android/app/build/outputs/apk/p2pPreview/app-p2pPreview.apk SIMHub-P2P-0.17.1-preview.apk
             cp docs/p2p/TEST_GUIDE.zh-CN.md P2P-TEST-GUIDE.md
             sha256sum SIMHub-P2P-0.17.1-preview.apk > p2p-apk-sha256.txt

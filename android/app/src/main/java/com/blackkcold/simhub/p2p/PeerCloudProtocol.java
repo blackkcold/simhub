@@ -28,7 +28,7 @@ public final class PeerCloudProtocol {
     }
     public static JSONObject outgoing(byte[] key,String from,String to,JSONObject signal,long now)throws Exception {
         String kind=type(signal),id=UUID.randomUUID().toString();
-        JSONObject frame=PeerProtocol.seal(key,from,to,id,now+60,new JSONObject().put("action","signal").put("payload",signal));
+        JSONObject frame=PeerProtocol.seal(key,room(key,from),room(key,to),id,now+60,new JSONObject().put("action","signal").put("payload",signal));
         JSONObject message=new JSONObject().put("type",kind).put("dst",room(key,to)).put("payload",
             new JSONObject().put("type","data").put("connectionId","simhub-p2p-v1").put("simhub",frame));
         if(message.toString().length()>MAX_SIGNAL)throw new SecurityException("signal_too_large");
@@ -37,7 +37,7 @@ public final class PeerCloudProtocol {
     public static JSONObject incoming(byte[] key,String from,String to,JSONObject message,long now)throws Exception {
         if(message.toString().length()>MAX_SIGNAL||!room(key,from).equals(message.optString("src"))||
             !room(key,to).equals(message.optString("dst")))throw new SecurityException("wrong_signal_route");
-        JSONObject payload=PeerProtocol.open(key,from,to,message.getJSONObject("payload").getJSONObject("simhub"),now);
+        JSONObject payload=PeerProtocol.open(key,room(key,from),room(key,to),message.getJSONObject("payload").getJSONObject("simhub"),now);
         if(!"signal".equals(payload.optString("action")))throw new SecurityException("only_peer_signaling_allowed");
         JSONObject signal=payload.getJSONObject("payload");if(!type(signal).equals(message.getString("type")))throw new SecurityException("signal_type_mismatch");
         return signal;

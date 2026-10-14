@@ -8,6 +8,7 @@ import com.blackkcold.simhub.SecretStore;
 import org.json.*;
 import java.security.*;
 import java.security.spec.ECGenParameterSpec;
+import java.util.List;
 
 /** Entirely separate from AgentConfig, ControllerProfiles, enrollment and Global Vault. */
 public final class PeerStore extends SQLiteOpenHelper {

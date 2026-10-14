@@ -21,7 +21,7 @@ async function command(c){try{
    if(pc)pc.close();candidateQueue=[];ready=false;relayAllowed=!!c.fallback;const servers=c.servers.filter(s=>Array.isArray(s.urls)&&s.urls.every(u=>typeof u==='string'&&(/^(stun|stuns):/.test(u)||(c.fallback&&/^(turn|turns):/.test(u)))));
    pc=new RTCPeerConnection({iceServers:servers,iceTransportPolicy:'all'});
    pc.onicecandidate=e=>{if(e.candidate)native('signal',{payload:{candidate:e.candidate.toJSON()}})};
-   pc.ondatachannel=e=>attach(e.channel);pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='closed')native('closed')};
+   pc.ondatachannel=e=>attach(e.channel);pc.onconnectionstatechange=()=>{if(pc.connectionState==='connected'&&dc?.readyState==='open')route();if(pc.connectionState==='disconnected'||pc.connectionState==='failed'||pc.connectionState==='closed'){ready=false;native('closed')}};
    if(c.initiator){attach(pc.createDataChannel('simhub-peer-v1',{ordered:true}));await pc.setLocalDescription(await pc.createOffer());native('signal',{payload:{description:pc.localDescription.toJSON()}});}return;
  }
  if(c.type==='signal'){

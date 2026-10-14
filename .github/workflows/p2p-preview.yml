@@ -42,7 +42,31 @@ jobs:
             docs/p2p/TEST_GUIDE.zh-CN.md
             p2p-sandbox-results.json
 
+  public-p2p:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [node, controller]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with: {node-version: '22'}
+      - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - name: Independent runners, public encrypted signaling, STUN-only DIRECT
+        env:
+          P2P_PUBLIC_ROLE: ${{ matrix.role }}
+          P2P_PUBLIC_SESSION: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/test_p2p_public.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: simhub-public-p2p-${{ matrix.role }}
+          path: p2p-public-${{ matrix.role }}.json
+
   android-sandbox:
+    needs: public-p2p
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

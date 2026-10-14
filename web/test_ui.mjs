@@ -139,6 +139,9 @@ try {
       assert.ok(vaultGap.gap>=14,'Vault action touches password field: '+JSON.stringify(vaultGap));
       assert.ok(vaultGap.actionRight<=width+2,'Vault action overflows viewport');
       await page.locator('.nav[data-view="inbox"]').click();
+      // The real navigation correctly re-hides New SMS without a send-capable node;
+      // restore the visual fixture before testing the read-only action guard.
+      await page.evaluate(()=>{document.getElementById('newSmsBtn').hidden=false;});
       // No enrolled send-capable device: forcing the button visible for this
       // layout fixture must not bypass the read-only sender policy.
       await page.locator("#newSmsBtn").click();

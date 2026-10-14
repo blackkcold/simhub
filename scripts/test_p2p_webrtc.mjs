@@ -11,6 +11,7 @@ const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
 const contexts=await Promise.all([browser.newContext(),browser.newContext()]);
 const pages=await Promise.all(contexts.map(c=>c.newPage()));
 const events=[[],[]];let signalTasks=[];
+const servers=JSON.parse(process.env.P2P_TEST_ICE||'[]'),forceRelay=process.env.P2P_TEST_FORCE_RELAY==='1',expectedRoute=forceRelay?'TURN':'DIRECT';
 try{
   for(let i=0;i<2;i++){
     await pages[i].exposeFunction('nativeEvent',async raw=>{
@@ -20,14 +21,14 @@ try{
         signalTasks.push(task);await task;
       }
     });
-    await pages[i].addInitScript(()=>{window.PeerBridge={postMessage:raw=>window.nativeEvent(raw)}});
+    await pages[i].addInitScript(force=>{window.PeerBridge={postMessage:raw=>window.nativeEvent(raw)};if(force){const Original=window.RTCPeerConnection;window.RTCPeerConnection=class extends Original{constructor(config){super({...config,iceTransportPolicy:'relay'})}}}},forceRelay);
     await pages[i].goto(`http://127.0.0.1:${server.address().port}/p2p.html`);
   }
-  await pages[1].evaluate(()=>window.peerCommand({type:'init',servers:[],fallback:false,initiator:false}));
-  await pages[0].evaluate(()=>window.peerCommand({type:'init',servers:[],fallback:false,initiator:true}));
+  await pages[1].evaluate(config=>window.peerCommand({type:'init',servers:config.servers,fallback:config.forceRelay,initiator:false}),{servers,forceRelay});
+  await pages[0].evaluate(config=>window.peerCommand({type:'init',servers:config.servers,fallback:config.forceRelay,initiator:true}),{servers,forceRelay});
   const until=Date.now()+15000;
   while(Date.now()<until&&!events.every(e=>e.some(x=>x.type==='connected')))await new Promise(r=>setTimeout(r,100));
-  assert(events.every(e=>e.some(x=>x.type==='connected'&&x.route==='DIRECT')),'Real ICE/DTLS connection did not open');
+  assert(events.every(e=>e.some(x=>x.type==='connected'&&x.route===expectedRoute)),'Real ICE/DTLS connection did not open');
   const frame=JSON.stringify({id:'sandbox-message-123456789',ct:'x'.repeat(500000)});
   await pages[0].evaluate(frame=>window.peerCommand({type:'send',frame}),frame);
   const deadline=Date.now()+15000;
@@ -39,7 +40,7 @@ try{
   const replyDeadline=Date.now()+5000;
   while(Date.now()<replyDeadline&&!events[0].some(x=>x.type==='data'))await new Promise(r=>setTimeout(r,100));
   assert.equal(events[0].find(x=>x.type==='data')?.frame,reply);
-  console.log(JSON.stringify({webrtc:'passed',engines:2,route:'DIRECT',largeFrameBytes:frame.length,reply:'passed'}));
+  console.log(JSON.stringify({webrtc:'passed',engines:2,route:expectedRoute,largeFrameBytes:frame.length,reply:'passed'}));
 }finally{
   await browser.close();await new Promise(resolve=>server.close(resolve));
 }

@@ -132,11 +132,5 @@ No voice calls, complete MMS/RCS media support or privileged default-data-SIM sw
 
 [Quick deployment](docs/QUICKSTART.zh-CN.md) · [Installation](docs/INSTALLATION.md) · [Android setup](docs/ANDROID_SETUP.md) · [Security](docs/SECURITY_ARCHITECTURE.md) · [Shared SMS](docs/SHARED_SMS.md) · [Architecture](docs/ARCHITECTURE.md) · [License](LICENSE)
 
-## Isolated P2P preview branch
 
-`feature/p2p-isolated-preview` adds double QR pairing, independent Peer grants,
-encrypted direct LAN RPC, native SMS pagination and explicitly authorized
-WebRTC/TURN/encrypted-mailbox fallback. The preview APK uses
-`com.blackkcold.simhub.p2ptest` alongside the stable app, without migrating Relay
-Enrollment or Vault. No operated public connection endpoint is supplied.
-See the [test guide](docs/p2p/TEST_GUIDE.zh-CN.md) and [protocol boundaries](docs/p2p/PROTOCOL.md).
+[P2P preview test guide](docs/p2p/TEST_GUIDE.zh-CN.md)

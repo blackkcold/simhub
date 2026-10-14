@@ -21,7 +21,10 @@ async function route(attempt=0){
    if(attempt<20)setTimeout(()=>{if(pc===connection&&epoch===own)route(attempt+1)},100);
    else{ready=false;channel.close();connection.close();native('error',{reason:'route_unconfirmed'});}return;
  }
- const transport=local.candidateType==='relay'||remote.candidateType==='relay'?'TURN':'DIRECT';
+ // Host-to-host on private addresses is a LAN path. Other non-relay ICE
+ // candidates prove peer-to-peer, but not necessarily a cross-internet path.
+ const privateHost=c=>{const address=String(c?.address||c?.ip||'').toLowerCase();const v4=address.match(/^(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)$/);return v4?Number(v4[1])===10||(Number(v4[1])===172&&Number(v4[2])>=16&&Number(v4[2])<=31)||(Number(v4[1])===192&&Number(v4[2])===168)||Number(v4[1])===169&&Number(v4[2])===254:/^(fe80:|fc[0-9a-f]{2}:|fd[0-9a-f]{2}:)/.test(address)};
+ const transport=local.candidateType==='relay'||remote.candidateType==='relay'?'TURN':local.candidateType==='host'&&remote.candidateType==='host'&&privateHost(local)&&privateHost(remote)?'LAN':'DIRECT';
  if(transport==='TURN'&&!relayAllowed){ready=false;channel.close();connection.close();native('error',{reason:'turn_not_allowed'});return;}
  const changed=!ready;ready=true;if(changed)native('connected',{route:transport});
 }

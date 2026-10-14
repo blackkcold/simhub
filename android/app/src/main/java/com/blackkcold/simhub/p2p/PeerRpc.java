@@ -23,6 +23,8 @@ public final class PeerRpc {
             return switch(action){
                 case "device.state" -> {require(grants,"state");yield state();}
                 case "sms.page" -> {require(grants,"read");require(grants,"history");yield page(peer,request);}
+                case "events.page" -> {require(grants,"read");yield store.events(peerId,request.optLong("after",0));}
+                case "events.ack" -> {require(grants,"read");store.ackEvents(peerId,request.getJSONArray("sequences"));yield new JSONObject().put("state","acknowledged");}
                 case "sms.send" -> {require(grants,"send");yield send(peerId,id,request);}
                 case "command.status" -> {require(grants,"send");String command=request.getString("commandId");String localId="p2p-"+PeerCrypto.digest(PeerCrypto.utf8(peerId+"|"+command));yield new JSONObject().put("state",Optional.ofNullable(LocalStore.get(c).commandState(localId)).orElse("unknown"));}
                 case "peer.revoke" -> {store.revoke(peerId);yield new JSONObject().put("state","revoked");}
@@ -50,7 +52,7 @@ public final class PeerRpc {
                 long providerId=cur.getLong(0),date=cur.getLong(3);int type=cur.getInt(4),sub=cur.isNull(5)?-1:cur.getInt(5);String address=cur.getString(1),body=cur.getString(2);if(address==null)address="";if(body==null)body="";
                 ChannelIdentity.Channel ch=ChannelIdentity.forHistoricalSubscription(c,sub,date);String sim="SIM "+sub;
                 if(ch!=null){JSONObject tags=SimTagStore.get(c,ch.channelId,ch.revision);sim=tags.optString("tag",sim);}
-                OtpParser.Result otp=type==Telephony.Sms.MESSAGE_TYPE_INBOX?OtpParser.parse(body):new OtpParser.Result(false,null,0);
+                OtpParser.Result otp=type==Telephony.Sms.MESSAGE_TYPE_INBOX?OtpParser.parse(body):OtpParser.parse("");
                 rows.put(new JSONObject().put("id","peer-"+store.myId()+"-"+providerId).put("thread",PeerCrypto.digest(PeerCrypto.utf8(store.myId()+"|"+sub+"|"+address))).put("sender",address).put("body",body.substring(0,Math.min(4000,body.length()))).put("timestamp",date/1000).put("inbound",type==Telephony.Sms.MESSAGE_TYPE_INBOX).put("device",android.os.Build.MODEL).put("sim",sim).put("sourceId",store.myId()+"-"+sub).put("otp",otp.detected?otp.value:"").put("failed",type==Telephony.Sms.MESSAGE_TYPE_FAILED));lastDate=date;lastId=providerId;
             }
         }

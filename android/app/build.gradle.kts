@@ -18,7 +18,8 @@ android {
         versionName = "0.17.0"
         buildConfigField("boolean", "P2P_PREVIEW", "false")
     }
-    buildFeatures { buildConfig = true; compose = true; aidl = true }
+    buildFeatures { buildConfig = true; compose = true; aidl = true; resValues = true }
+    testBuildType = "p2pPreview"
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {

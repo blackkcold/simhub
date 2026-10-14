@@ -75,6 +75,8 @@ class PeerActivity:ComponentActivity(){
     private suspend fun rpc(p:JSONObject,id:String,request:JSONObject):JSONObject{
         return withContext(Dispatchers.IO){
             val coordinator=ConnectionCoordinator(store())
+            if(!p.optBoolean("relayConfigured")&&!p.optBoolean("relayAssociationDisabled"))runCatching{PeerRelayTransport.associate(applicationContext,p)}
+            PeerRelayTransport.configured(applicationContext,store().peer(p.getString("id")))?.let{coordinator.relay(it)}
             if(p.optBoolean("publicDiscoveryEnabled")){PeerCloudConnector.ensure(applicationContext,p.getString("id"));PeerCloudConnector.active(p.getString("id"))?.let{coordinator.internet(it)}}
             coordinator.request(p.getString("id"),id,request)
         }
@@ -82,7 +84,9 @@ class PeerActivity:ComponentActivity(){
     private suspend fun load(older:Boolean){val p=selected?:return;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
         val page=rpc(p,UUID.randomUUID().toString(),req);if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
         if(!older){
-            remoteState=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state")).optJSONObject("device")
+            val stateResult=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"))
+            remoteState=stateResult.optJSONObject("device")
+            stateResult.optJSONObject("relayHint")?.let{hint->withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayHint",hint);store().update(fresh)}}
             acceptEvents(p)
             withContext(Dispatchers.IO){PeerInboxCache.save(applicationContext,p.getString("id"),inbox)}
         }
@@ -148,7 +152,7 @@ class PeerActivity:ComponentActivity(){
         }}
         items(peers,key={it.optString("id")}){p->HubCard(Modifier.fillMaxWidth()){
             Text(p.optString("name"),style=MaterialTheme.typography.titleMedium);Text("${if(p.optString("localRole")=="NODE")"授权的管理手机" else "SIM 节点"} · ${p.optString("pairState")}")
-            Text("注册模式：${p.optString("policy")}\n当前链路：${routeLabel(p.optString("activeTransport"))}\n公网发现：${p.optString("discoveryState")}")
+            Text("注册模式：${p.optString("policy")}\n当前链路：${routeLabel(p.optString("activeTransport"))}\n公网发现：${p.optString("discoveryState")}\n${if(p.optBoolean("relayConfigured"))"Relay 优先 · P2P 备用" else "未配置 Relay · 仅 P2P"}")
             if(selected?.optString("id")==p.optString("id"))remoteState?.let{state->
                 Text("电量 ${state.opt("batteryPct")?:"—"}% · ${if(state.optBoolean("charging"))"充电中" else "电池供电"} · ${state.optString("network","未知网络")}")
                 Text("Android ${state.optString("androidVersion")} · ${state.optString("appVersion")} · ${if(state.optBoolean("smsSendAllowed"))"系统允许发送" else "当前仅允许读取"}")
@@ -176,13 +180,17 @@ class PeerActivity:ComponentActivity(){
             Text("Relay 独立配置；同时配置时优先 Relay，失败后尝试已授权 P2P。")
             peers.filter{it.optString("pairState")!="REVOKED"}.forEach{p->
                 Text("${p.optString("name")} · ${p.optString("discoveryState","WAITING")}")
+                if(p.optString("localRole")=="CONTROLLER"){
+                    if(p.optBoolean("relayConfigured"))OutlinedButton(onClick={work{withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayConfigured",false).remove("relayOrigin");fresh.remove("relayDeviceId");fresh.put("relayAssociationDisabled",true);store().update(fresh)};notice="已取消此节点 Relay 关联，仅使用 P2P"}}){Text("取消此节点 Relay 关联")}
+                    else OutlinedButton(onClick={work{val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"));withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayHint",result.optJSONObject("relayHint")?:JSONObject()).put("relayAssociationDisabled",false);store().update(fresh);if(!PeerRelayTransport.associate(applicationContext,fresh))throw IllegalStateException("此节点未完成 Relay 独立授权或服务器未更新")};notice="已验证同一节点身份；Relay 优先，P2P 备用"}}){Text("关联此节点已授权的 Relay")}
+                }
                 if(!p.optBoolean("publicDiscoveryEnabled"))OutlinedButton(onClick={work{withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("publicDiscoveryEnabled",true);store().update(fresh)};PeerService.start(this@PeerActivity);notice="已允许此配对使用上述公共信令发现；两端均需启用"}}){Text("允许此旧配对使用公网发现")}
             }
             OutlinedButton(onClick={startActivity(Intent(this@PeerActivity,ControllerActivity::class.java))}){Text("配置 Relay（可选）")}
         }}
         item{Text("测试版 ${BuildConfig.VERSION_NAME}\n包名 ${packageName}\n公网直连受 NAT、防火墙、Android 权限及后台状态影响。",style=MaterialTheme.typography.bodySmall)}
     }}
-    private fun routeLabel(route:String)=when(route){"LAN"->"局域网直连";"DIRECT"->"公网直连";"TURN"->"加密 TURN 中继";"MAILBOX"->"加密信箱";else->"离线"}
+    private fun routeLabel(route:String)=when(route){"LAN"->"局域网直连";"DIRECT"->"公网直连";"TURN"->"加密 TURN 中继";"MAILBOX"->"加密信箱";"LEGACY_RELAY"->"已配置 Relay";else->"离线"}
 }
 
 @Composable fun PeerEntryCard(){val context=androidx.compose.ui.platform.LocalContext.current;HubCard(Modifier.fillMaxWidth()){

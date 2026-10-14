@@ -217,3 +217,14 @@ CREATE TABLE IF NOT EXISTS admin_credentials(
   password_hash TEXT NOT NULL,
   changed_at INTEGER NOT NULL
 );
+
+-- P2P replies remain encrypted under a separate pair key, expire quickly, and
+-- never enter the SMS event store or shared Vault.
+CREATE TABLE IF NOT EXISTS peer_rpc_responses(
+  device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  command_id TEXT NOT NULL,
+  frame_json TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY(device_id,command_id)
+);
+CREATE INDEX IF NOT EXISTS idx_peer_rpc_responses_expiry ON peer_rpc_responses(expires_at);

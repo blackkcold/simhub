@@ -43,6 +43,8 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     var lastError:String=""
         private set
 
+    class ApiError(val status:Int,val code:String,message:String):IllegalStateException(message)
+
     data class PairStatus(val requestId:String,val code:String)
     data class DecodedMessage(val id:String,val thread:String,val sender:String,val body:String,
         val timestamp:Long,val inbound:Boolean,val device:String,val sim:String,
@@ -175,7 +177,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
                 if(status==401 && authenticated){cookie="";csrf=""}
                 if(status==401 && path.startsWith("/api/v1/controllers/login/"))
                     throw SecurityException("管理终端授权已失效，请在网页重新批准")
-                throw IllegalStateException(json.optString("message","HTTP $status").take(180))
+                throw ApiError(status,json.optString("error"),json.optString("message","HTTP $status").take(180))
             }
             if(path=="/api/v1/controllers/login/verify"){
                 val setCookie=connection.getHeaderField("Set-Cookie")?:""

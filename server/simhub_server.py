@@ -2,6 +2,7 @@
 """SIM Hub personal relay server with Argon2id and WebAuthn dependencies."""
 from __future__ import annotations
 
+import peer_relay
 import base64
 import hashlib
 import hmac
@@ -102,6 +103,7 @@ PUSH_TICKLE_BEARER = os.getenv("SIMHUB_PUSH_TICKLE_BEARER", "").strip()
 OTA_FILE = Path(os.getenv("SIMHUB_OTA_FILE", "/data/ota.json"))
 MAX_JSON_BODY = 1_048_576
 ALLOWED_COMMANDS = {
+    "peer.rpc",
     "sms.send",
     "sms.sync_history",
     "sms.sync_recent",
@@ -449,6 +451,7 @@ def run_maintenance() -> dict[str,int]:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
         if AUDIT_RETENTION_DAYS>0:
             result["audit"]=con.execute("DELETE FROM audit WHERE occurred_at<?",(ts-AUDIT_RETENTION_DAYS*86400,)).rowcount
+        con.execute("DELETE FROM peer_rpc_responses WHERE expires_at<?",(ts,))
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         con.execute("DELETE FROM admin_login_challenges WHERE expires_at<=?",(ts,))
@@ -676,7 +679,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","appVersionCode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaTargetCode","remoteOtaError","remoteOtaUpdatedAt"}
+    scalar = {"p2pIdentityId","peerRpcVersion","androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","appVersionCode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaTargetCode","remoteOtaError","remoteOtaUpdatedAt"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -881,7 +884,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def read_json(self) -> dict[str,Any] | None:
         path=self.route()[0]
-        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state|events/batch|pool/messages)$",path) else 65536
+        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state|events/batch|pool/messages|peer-response)$",path) else 65536
         try:
             length=int(self.headers.get("Content-Length","0"))
         except ValueError:
@@ -956,6 +959,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if re.fullmatch(r"/api/v1/devices/[^/]+/(?:events(?:/batch)?|state|heartbeat|token/(?:prepare|commit))", path):
             return method == "POST"
         if re.fullmatch(r"/api/v1/devices/[^/]+/pool(?:/(?:request|messages))?",path): return method in {"GET","POST"}
+        if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/peer-response",path):return method == "POST"
         if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/ack", path):
             return method == "POST"
         return False
@@ -1142,6 +1146,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if path=="/api/v1/audit":
             if not self.require_admin(): return
             self.get_audit(q); return
+        if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="peer-response":
+            if not self.require_admin():return
+            with open_db() as con:frame=peer_relay.response(con,p[3],p[5],now())
+            if frame is None:self.send_error_json(404,"peer_response_pending","P2P response unavailable");return
+            self.send_json(200,{"frame":frame});return
         if path=="/api/v1/commands/recent":
             if not self.require_admin(): return
             self.get_recent_commands(q); return
@@ -1415,6 +1424,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None:return
             if str(body.get("type","")) in {"sms.send","sms.restore_history","node.rotate_key","device.network_policy","ota.install","ota.cancel"} and not self.require_stepup():return
             self.create_command(p[3],body); return
+        if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="peer-response":
+            if not self.require_device(p[3]):return
+            body=self.read_json()
+            if body is None:return
+            try:
+                with open_db() as con:peer_relay.store_response(con,p[3],p[5],body.get("frame"),now())
+            except (ValueError,TypeError,KeyError) as error:
+                self.send_error_json(400,"invalid_peer_response",str(error));return
+            signal_stream();self.send_json(200,{"ok":True});return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return
             body=self.read_json()

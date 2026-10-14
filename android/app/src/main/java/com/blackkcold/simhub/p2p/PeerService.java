@@ -16,6 +16,7 @@ import java.util.*;
 /** User-started listener. No boot auto-start or background service launch. */
 public final class PeerService extends Service {
     private PeerNodeServer server;
+    private final java.util.concurrent.ScheduledExecutorService relayPump=java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     private NsdManager nsd;
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networkCallback;
@@ -58,14 +59,20 @@ public final class PeerService extends Service {
             networkCallback=new ConnectivityManager.NetworkCallback(){public void onAvailable(Network n){PeerCloudConnector.networkChangedAll();}public void onLost(Network n){PeerCloudConnector.networkChangedAll();}};
             connectivity.registerDefaultNetworkCallback(networkCallback);
             refresh();
+            relayPump.scheduleWithFixedDelay(()->{try{
+                if(new com.blackkcold.simhub.AgentConfig(this).isEnrolled()&&!com.blackkcold.simhub.RelayForegroundService.isRunning()){
+                    com.blackkcold.simhub.ApiClient api=new com.blackkcold.simhub.ApiClient(this);api.fetchCommands();api.flushCommandAcks();
+                }
+            }catch(Exception ignored){}},1,5,java.util.concurrent.TimeUnit.SECONDS);
         }catch(Exception e){failure=e instanceof SecurityException?"local_network_permission_required":"listener_start_failed";stopSelf();}
     }
     private void refresh(){com.blackkcold.simhub.AgentExecutors.io().execute(()->{
         JSONArray peers=PeerStore.get(this).list();for(int i=0;i<peers.length();i++)try{
             JSONObject p=peers.getJSONObject(i);if(!"REVOKED".equals(p.optString("pairState"))&&p.optBoolean("publicDiscoveryEnabled"))PeerCloudConnector.ensure(this,p.getString("id"));
         }catch(Exception ignored){}
+        try{if(new com.blackkcold.simhub.AgentConfig(this).isEnrolled())new com.blackkcold.simhub.ApiClient(this).putState();}catch(Exception ignored){}
     });}
     public int onStartCommand(Intent i,int flags,int id){refresh();return START_NOT_STICKY;}
-    public void onDestroy(){running=null;PeerCloudConnector.closeAll();PeerInternetConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    public void onDestroy(){running=null;relayPump.shutdownNow();PeerCloudConnector.closeAll();PeerInternetConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
     public IBinder onBind(Intent i){return null;}
 }

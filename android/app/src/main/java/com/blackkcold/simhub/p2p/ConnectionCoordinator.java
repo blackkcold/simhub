@@ -7,14 +7,19 @@ public final class ConnectionCoordinator {
     private final PeerStore store;
     private HubTransport internet;
     private HubTransport mailbox;
+    private HubTransport relay;
     public ConnectionCoordinator(PeerStore store){this.store=store;}
     public void internet(HubTransport value){internet=value;}
     public void mailbox(HubTransport value){mailbox=value;}
+    public void relay(HubTransport value){if(value!=null&&!"LEGACY_RELAY".equals(value.route()))throw new SecurityException("invalid_relay_adapter");relay=value;}
     public JSONObject request(String peerId,String requestId,JSONObject request)throws Exception{
         JSONObject peer=store.peer(peerId);if("REVOKED".equals(peer.optString("pairState")))throw new SecurityException("peer_revoked");
         ConnectionPolicy policy=ConnectionPolicy.valueOf(peer.getString("policy"));
         if(policy==ConnectionPolicy.RELAY_ONLY)throw new SecurityException("use_legacy_relay_workspace");
         Exception failed;
+        if(relay!=null&&peer.optBoolean("relayConfigured")){
+            try{return accept(peer,relay,requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;}
+        }
         try{return accept(peer,new DirectPeerTransport(store),requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;failed=e;}
         if(internet!=null&&policy.permits(internet.route(),peer.optBoolean("fallbackConsent"),"ACTIVE".equals(peer.optString("relayBindingState")))){
             try{return accept(peer,internet,requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;failed=e;}

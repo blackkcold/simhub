@@ -30,6 +30,8 @@ public final class StateCollector {
         JSONObject o=new JSONObject();
         try{
             AgentConfig cfg=new AgentConfig(c);
+            com.blackkcold.simhub.p2p.PeerStore peers=com.blackkcold.simhub.p2p.PeerStore.get(c);
+            if(peers.list().length()>0)o.put("p2pIdentityId",peers.myId()).put("peerRpcVersion",1);
             o.put("androidVersion",Build.VERSION.RELEASE)
                     .put("sdk",Build.VERSION.SDK_INT)
                     .put("model",Build.MANUFACTURER+" "+Build.MODEL)

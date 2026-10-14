@@ -380,6 +380,10 @@ public final class ApiClient {
             new CommandProcessor(c,this).process(commands);
         return commands!=null&&commands.length()>0;
     }
+    public void storePeerResponse(String commandId,JSONObject frame)throws Exception{
+        if(!commandId.matches("[A-Za-z0-9_-]{16,80}"))throw new SecurityException("invalid_peer_carrier_id");
+        request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+commandId+"/peer-response",new JSONObject().put("frame",frame));
+    }
     public void flushCommandAcks()throws Exception{int sent=0;for(JSONObject a:LocalStore.get(c).pendingCommandAcks(100)){String id=a.getString("commandId"),state=a.getString("state");request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+id+"/ack",new JSONObject().put("state",state).put("result",a.optJSONObject("result")==null?new JSONObject():a.optJSONObject("result")));LocalStore.get(c).markCommandAckSent(id,state);sent++;}if(sent>0)AppLogger.i(c,"ApiClient","Uploaded command acknowledgements count="+sent);}
     public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");cfg.recordCommandFetch(arr==null?0:arr.length());if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
     public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}

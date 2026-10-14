@@ -13,6 +13,8 @@ public final class PeerCloudConnector implements HubTransport,AutoCloseable {
     private static final OkHttpClient HTTP=new OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(10,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS).pingInterval(15,TimeUnit.SECONDS).build();
     public static PeerCloudConnector active(String id){return ACTIVE.get(id);}
+    /** A signaling socket can be READY before an authenticated ICE data channel exists. */
+    public static boolean dataChannelOnline(String id){PeerCloudConnector c=ACTIVE.get(id);PeerWebRtcTransport t=c==null?null:c.rtc;return t!=null&&t.online();}
     public static synchronized void ensure(Context c,String id)throws Exception{
         if(!ACTIVE.containsKey(id)){PeerCloudConnector connector=new PeerCloudConnector(c,id);ACTIVE.put(id,connector);connector.start();}
     }

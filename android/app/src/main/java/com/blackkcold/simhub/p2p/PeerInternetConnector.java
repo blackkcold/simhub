@@ -40,7 +40,7 @@ public final class PeerInternetConnector implements AutoCloseable {
     }
     public HubTransport transport(String id){return id.equals(peerId)?rtc:null;}
     public HubTransport mailbox(String id){if(!fallback||!id.equals(peerId))return null;return new HubTransport(){public String route(){return "MAILBOX";}public JSONObject request(JSONObject p,String requestId,JSONObject request)throws Exception{
-        CompletableFuture<JSONObject> f=new CompletableFuture<>();if(pendingMailbox.putIfAbsent(requestId,f)!=null)throw new IllegalStateException("mailbox_request_already_pending");try{send("mailbox",requestId,request);return f.get(25,TimeUnit.SECONDS);}finally{pendingMailbox.remove(requestId);}
+        if(closed)throw new IOException("mailbox_closed");CompletableFuture<JSONObject> f=new CompletableFuture<>();if(pendingMailbox.putIfAbsent(requestId,f)!=null)throw new IllegalStateException("mailbox_request_already_pending");try{send("mailbox",requestId,request);return f.get(25,TimeUnit.SECONDS);}finally{pendingMailbox.remove(requestId);}
     }};}
     private void send(String type,String id,JSONObject payload)throws Exception{
         JSONObject peer=store.peer(peerId);if("REVOKED".equals(peer.optString("pairState")))throw new SecurityException("peer_revoked");

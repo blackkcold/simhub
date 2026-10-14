@@ -24,13 +24,16 @@ public final class PeerService extends Service {
     public static void stop(Context c){c.stopService(new Intent(c,PeerService.class));}
     public static JSONArray endpoints()throws Exception{
         JSONArray a=new JSONArray();PeerService service=running;if(service==null||service.server==null)return a;
+        List<InetAddress> addresses=new ArrayList<>();
         for(NetworkInterface iface:Collections.list(NetworkInterface.getNetworkInterfaces())){
             if(!iface.isUp()||iface.isLoopback())continue;
             for(InetAddress address:Collections.list(iface.getInetAddresses())){
                 if(address.isLoopbackAddress()||address.isMulticastAddress()||address.isLinkLocalAddress())continue;
-                if(a.length()<12)a.put(new JSONObject().put("host",address.getHostAddress()).put("port",service.server.port()));
+                addresses.add(address);
             }
         }
+        addresses.sort(Comparator.comparingInt(address->address.isSiteLocalAddress()?0:1));
+        for(InetAddress address:addresses)if(a.length()<12)a.put(new JSONObject().put("host",address.getHostAddress()).put("port",service.server.port()));
         return a;
     }
     public void onCreate(){super.onCreate();

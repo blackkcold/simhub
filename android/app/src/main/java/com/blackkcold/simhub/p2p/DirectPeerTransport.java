@@ -9,8 +9,9 @@ import java.util.*;
 /** One authenticated ephemeral ECDH session per RPC; application AEAD over raw TCP. */
 public final class DirectPeerTransport implements HubTransport {
     private final PeerStore store;
+    private String actualRoute="LAN";
     public DirectPeerTransport(PeerStore store){this.store=store;}
-    public String route(){return "LAN";}
+    public String route(){return actualRoute;}
     public JSONObject request(JSONObject peer,String id,JSONObject req)throws Exception{
         JSONArray endpoints=peer.optJSONArray("endpoints");if(endpoints==null)throw new IOException("no_direct_endpoint");
         Exception last=new IOException("peer_offline_no_direct_endpoint");
@@ -36,7 +37,10 @@ public final class DirectPeerTransport implements HubTransport {
             try{session=PeerCrypto.derive(shared,root,"session|"+from+"|"+to+"|"+helloId);}finally{Arrays.fill(shared,(byte)0);}
             write(socket.getOutputStream(),PeerProtocol.seal(session,from,to,id,exp,req));
             JSONObject response=read(socket.getInputStream());if(!id.equals(response.optString("id")))throw new SecurityException("peer_response_id_mismatch");
-            return PeerProtocol.open(session,to,from,response,System.currentTimeMillis()/1000);
+            JSONObject result=PeerProtocol.open(session,to,from,response,System.currentTimeMillis()/1000);
+            InetAddress remote=socket.getInetAddress();String numeric=remote.getHostAddress();
+            actualRoute=remote.isSiteLocalAddress()||remote.isLinkLocalAddress()||remote.isLoopbackAddress()||numeric.toLowerCase(java.util.Locale.ROOT).matches("f[cd].*")?"LAN":"DIRECT";
+            return result;
         }finally{Arrays.fill(root,(byte)0);if(session!=null)Arrays.fill(session,(byte)0);}
     }
     public static JSONObject read(InputStream stream)throws Exception{DataInputStream in=new DataInputStream(stream);int n=in.readInt();if(n<2||n>PeerProtocol.MAX_FRAME)throw new SecurityException("peer_frame_size_rejected");byte[] b=new byte[n];in.readFully(b);return new JSONObject(new String(b,java.nio.charset.StandardCharsets.UTF_8));}

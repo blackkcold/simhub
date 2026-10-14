@@ -28,7 +28,8 @@ object PeerHubGateway {
     fun request(c:Context,peerId:String,id:String,request:JSONObject,preferRelay:Boolean=true):JSONObject {
         val store=PeerStore.get(c);val p=store.peer(peerId);val coordinator=ConnectionCoordinator(store)
         if(preferRelay){
-            if(!p.optBoolean("relayConfigured")&&!p.optBoolean("relayAssociationDisabled"))runCatching{PeerRelayTransport.associate(c,p)}
+            // A P2P request must never silently associate an existing Relay enrollment.
+            // The user explicitly binds the independently authorized Relay from device settings.
             PeerRelayTransport.configured(c,store.peer(peerId))?.let{coordinator.relay(it)}
         }
         if(p.optBoolean("publicDiscoveryEnabled")){PeerCloudConnector.ensure(c.applicationContext,peerId);PeerCloudConnector.active(peerId)?.let{coordinator.internet(it)}}

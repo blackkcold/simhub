@@ -853,6 +853,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 horizontalArrangement=Arrangement.spacedBy(16.dp)){
                 LazyColumn(Modifier.weight(0.95f).fillMaxHeight(),
                     verticalArrangement=Arrangement.spacedBy(10.dp)){
+                    item(key="p2p"){PeerEntryCard()}
                     item(key="status"){NodeStatusOverview(state,tools,controller)}
                     item(key="destinations"){SettingsDestinations(state,tools){ui.nodeSettingsPage=it}}
                     item(key="padding"){Spacer(Modifier.height(10.dp))}
@@ -881,6 +882,7 @@ fun HubSettingsV2(state:HubSnapshot?,pairing:PairingDisplay?,ui:HubViewModel,
                 contentPadding=PaddingValues(16.dp),
                 verticalArrangement=Arrangement.spacedBy(12.dp)){
                 if(page==SETTINGS_HOME){
+                    item(key="p2p"){PeerEntryCard()}
                     item(key="status"){NodeStatusOverview(state,tools,controller)}
                     item(key="destinations"){SettingsDestinations(state,tools){ui.nodeSettingsPage=it}}
                 }else{

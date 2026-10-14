@@ -36,7 +36,7 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                         try{c.getContentResolver().update(u,v,null,null);}
                         catch(SecurityException denied){AppLogger.w(c,"SmsStatus","Provider write denied after SMS role changed");}
                     }
-                    JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
+                    JSONObject payload=PendingSmsCrypto.decrypt(c,st.eventCipher);
                     String state=st.failed?"failed":"sent";
                     EventQueue.queue(c,eventId(pid,id,state),st.failed?"sms.failed":"sms.sent",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage",st.failed?"modem_failed":"modem_sent").put("resultCode",resultCode).put("partIndex",partIndex));
                     store.finishCommand(id,state);
@@ -49,7 +49,7 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                 LocalStore.PendingStatus st=store.recordDeliveredPart(id,partIndex,ok,resultCode);
                 if(!st.exists)return;
                 long pid=providerId(st.providerUri);
-                JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
+                JSONObject payload=PendingSmsCrypto.decrypt(c,st.eventCipher);
                 if(st.deliveryFailed){
                     EventQueue.queue(c,eventId(pid,id,"delivery-failed"),"sms.failed",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage","delivery_failed").put("resultCode",resultCode).put("partIndex",partIndex));
                     store.finishCommand(id,"failed");

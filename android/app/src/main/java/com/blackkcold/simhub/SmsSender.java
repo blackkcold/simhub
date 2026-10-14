@@ -35,7 +35,7 @@ public final class SmsSender {
         JSONObject eventPayload=new JSONObject().put("direction","out").put("recipient",to).put("body",body).put("occurredAt",ts).put("subscriptionId",subId).put("commandId",commandId);
         if(providerId>=0)eventPayload.put("providerId",providerId);
         if(channel!=null)eventPayload.put("channelId",channel.channelId).put("channelRevision",channel.revision);
-        JSONObject localCipher=new CryptoBox(c).encryptLocal(eventPayload);
+        JSONObject localCipher=PendingSmsCrypto.encrypt(c,eventPayload);
         SmsManager base=c.getSystemService(SmsManager.class);SmsManager sms=base.createForSubscriptionId(subId);ArrayList<String> parts=sms.divideMessage(body);if(parts.isEmpty())parts.add(body);
         LocalStore.get(c).createPendingSms(commandId,provider==null?"":provider.toString(),parts.size(),localCipher,subId);
         ArrayList<PendingIntent> sent=new ArrayList<>(),delivered=new ArrayList<>();for(int i=0;i<parts.size();i++){sent.add(pi(c,SmsStatusReceiver.ACTION_SENT,commandId,i,i));delivered.add(pi(c,SmsStatusReceiver.ACTION_DELIVERED,commandId,i,1000+i));}

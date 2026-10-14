@@ -1,0 +1,23 @@
+# Configure your actual certificates and host. Never reuse Relay/Vault keys.
+listening-port=3478
+tls-listening-port=5349
+min-port=49160
+max-port=49200
+fingerprint
+use-auth-secret
+static-auth-secret=REPLACE_WITH_P2P_TURN_SECRET
+realm=YOUR-TURN-HOST
+cert=/etc/coturn/fullchain.pem
+pkey=/etc/coturn/privkey.pem
+no-cli
+no-multicast-peers
+no-loopback-peers
+# Refuse relay destinations in private/loopback ranges; add your host metadata IPs.
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+user-quota=4
+total-quota=256
+max-bps=65536
+no-tcp-relay

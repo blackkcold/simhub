@@ -18,3 +18,5 @@ release/
 
 # Generated provisioning config (contains domain-specific policy)
 /Caddyfile
+
+p2p-sandbox-results.json

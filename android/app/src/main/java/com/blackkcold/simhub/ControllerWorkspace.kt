@@ -540,6 +540,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         return
     }
     Column(modifier.fillMaxSize()) {
+        if(tab==2 || tab==3)PeerEntryCard()
         if(selected==null){
             Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
                 Column(Modifier.padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){

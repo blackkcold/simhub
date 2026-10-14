@@ -13,8 +13,10 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         versionCode = 50
         versionName = "0.17.0"
+        buildConfigField("boolean", "P2P_PREVIEW", "false")
     }
     buildFeatures { buildConfig = true; compose = true; aidl = true }
     signingConfigs {
@@ -28,6 +30,14 @@ android {
         }
     }
     buildTypes {
+        create("p2pPreview") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".p2ptest"
+            versionNameSuffix = "-p2p-preview.1"
+            buildConfigField("boolean", "P2P_PREVIEW", "true")
+            resValue("string", "app_name", "SIM Hub P2P Test")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = true
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")

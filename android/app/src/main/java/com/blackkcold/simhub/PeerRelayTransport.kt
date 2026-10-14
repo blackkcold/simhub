@@ -64,6 +64,7 @@ class PeerRelayTransport(private val context:Context,private val origin:String,p
             if(state.optString("p2pIdentityId")!=p.getString("id")||state.optInt("peerRpcVersion")!=1)return false
             val store=PeerStore.get(c);val fresh=store.peer(p.getString("id"))
             fresh.put("relayOrigin",origin).put("relayDeviceId",device).put("relayConfigured",true)
+                .put("relayBindingState","ACTIVE").put("policy","P2P_RELAY_FALLBACK")
             store.update(fresh);return true
         }
     }

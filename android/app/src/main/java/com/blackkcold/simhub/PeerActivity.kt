@@ -67,7 +67,12 @@ class PeerActivity:ComponentActivity(){
     }
     override fun onStop(){super.onStop();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}
     private fun reload(){peers=(0 until store().list().length()).map{store().list().getJSONObject(it)};listening=PeerService.enabled();selected?.let{p->selected=peers.find{it.optString("id")==p.optString("id")}}}
-    private fun work(task:suspend ()->Unit){if(busy)return;busy=true;notice="";lifecycleScope.launch{try{task()}catch(e:Exception){notice=when(e){is SecurityException->"安全或权限校验未通过：${e.message?.take(80)}";else->"设备暂时不可达。请确认节点已开启直连、网络权限。未配置 Relay 时直连失败即失败。"}}finally{busy=false;reload()}}}
+    private fun work(task:suspend ()->Unit){if(busy)return;busy=true;notice="";lifecycleScope.launch{try{task()}catch(e:Exception){notice=when(e){is SecurityException->"安全或权限校验未通过：${e.message?.take(80)}";else->when {
+                    e.message?.contains("peer_ice_not_connected")==true->"无法建立数据直连。请保持两台设备联网、启动前台连接服务；受限 NAT 无法保证穿透。"
+                    e.message?.contains("public_peer_unavailable")==true->"公网发现尚未完成。请确认双机扫码已完成，等待信令连接后重试。"
+                    e.message?.contains("relay_peer_response_pending")==true->"Relay 已接收请求，但设备尚未确认处理。请查询原任务状态。"
+                    else->"设备暂时不可达。请检查两端网络与前台服务；无 Relay 授权时不会隐藏转发短信。"
+                }}}finally{busy=false;reload()}}}
     private fun requestAccess(){if(!SmsAccessPolicy.rolePermitsAccess(this)){getSystemService(RoleManager::class.java)?.let{role.launch(it.createRequestRoleIntent(RoleManager.ROLE_SMS))};return};val list=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,Manifest.permission.READ_PHONE_STATE);if(Build.VERSION.SDK_INT>=33)list.add(Manifest.permission.POST_NOTIFICATIONS);if(Build.VERSION.SDK_INT>=37)list.add("android.permission.ACCESS_LOCAL_NETWORK");if(SmsSendPolicy.canSend(this)||getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true)list.add(Manifest.permission.SEND_SMS);permissions.launch(list.toTypedArray())}
     private fun startNode(){PeerService.start(this);lifecycleScope.launch{delay(800);reload();notice=PeerService.error()}}
     private fun scan(){IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt("扫描另一台手机的 P2P 二维码").setBeepEnabled(false).setOrientationLocked(false).initiateScan()}
@@ -179,7 +184,7 @@ class PeerActivity:ComponentActivity(){
             }}){Text("检查 / 重试待确认命令")}
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
-                    Button(onClick={select(p)}){Text("管理短信")}
+                    Button(onClick={select(p)}){Text(if(p.optString("pairState")=="PENDING")"验证连接" else "管理短信")}
                     OutlinedButton(onClick={selected=p;tab=2}){Text("连接详情")}
                 }
                 if(p.optString("pairState")!="REVOKED")TextButton(onClick={work{withContext(Dispatchers.IO){store().revoke(p.getString("id"));PeerInboxCache.clear(applicationContext,p.getString("id"))};if(selected?.optString("id")==p.optString("id")){inbox.clear();selected=null};PeerCloudConnector.closePeer(p.getString("id"));notice="本机已立即撤销此授权；远端旧凭据无法继续访问"}}){Text("撤销授权")}
@@ -209,6 +214,9 @@ class PeerActivity:ComponentActivity(){
                 Text("P2P 授权：${pairLabel(p)} · 读取${if(p.optString("permissions").split(",").contains("send"))"、发送" else "（只读）"}",style=MaterialTheme.typography.bodySmall)
                 Text("发现服务：${p.optString("discoveryState","WAITING")} · 上次成功传输：${routeLabel(p.optString("activeTransport"))}",style=MaterialTheme.typography.bodySmall)
                 Text("设备身份：${p.optString("id").take(16)}…",style=MaterialTheme.typography.labelSmall)
+                if(p.optBoolean("publicDiscoveryEnabled")){
+                    OutlinedButton(onClick={work{withContext(Dispatchers.IO){PeerCloudConnector.ensure(applicationContext,p.getString("id"));PeerCloudConnector.reconnect(p.getString("id"))};notice="已重新尝试发现与 P2P 直连；仅信令就绪不等于可读取短信"}}){Text("重新尝试直连")}
+                }
                 if(p.optString("localRole")=="CONTROLLER"){
                     val relayOrigin=p.optString("relayOrigin",ControllerProfiles.selected(this@PeerActivity)?:"")
                     if(ControllerLinks.normalize(relayOrigin)!=null&&ControllerSecureClient(this@PeerActivity,relayOrigin).requireLocalUnlock()&&!ControllerAccessGate.permits(relayOrigin))OutlinedButton(onClick={unlockRelay(p)}){Text("验证本机身份以使用 Relay")}

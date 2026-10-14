@@ -38,11 +38,11 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
                 return new WebResourceResponse("text/plain","UTF-8",403,"Forbidden",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
             }});
         WebViewCompat.addWebMessageListener(view,"PeerBridge",Set.of(ORIGIN),(v,message,source,mainFrame,reply)->{
-            if(!mainFrame||!ORIGIN.equals(source.toString().replaceAll("/$","")))return;String data=message.getData();if(data==null||data.length()>800_000)return;
-            dispatch.execute(()->handle(data));
+            if(closed||!mainFrame||!ORIGIN.equals(source.toString().replaceAll("/$","")))return;String data=message.getData();if(data==null||data.length()>800_000)return;
+            try{dispatch.execute(()->handle(data));}catch(RejectedExecutionException ignored){/* Close may race a queued WebView callback. */}
         });view.loadUrl(ORIGIN+"/p2p.html");
     }
-    private void handle(String raw){try{
+    private void handle(String raw){if(closed)return;try{
         JSONObject msg=new JSONObject(raw);switch(msg.getString("type")){
             case "loaded" -> loaded.countDown();
             case "connected" -> {String selected=msg.getString("route");if("TURN".equals(selected)&&!consent){close();return;}route=selected;online=true;connected.complete(null);}
@@ -78,5 +78,5 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
             }
         }finally{Arrays.fill(key,(byte)0);}
     }
-    public void close(){closed=true;online=false;dispatch.shutdownNow();for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_transport_closed"));pending.clear();main.post(()->{if(view!=null){view.destroy();view=null;}});}
+    public void close(){closed=true;online=false;connected.completeExceptionally(new IOException("peer_transport_closed"));dispatch.shutdownNow();for(CompletableFuture<JSONObject> f:pending.values())f.completeExceptionally(new IOException("peer_transport_closed"));pending.clear();main.post(()->{if(view!=null){view.destroy();view=null;}});}
 }

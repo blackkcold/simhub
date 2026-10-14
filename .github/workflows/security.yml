@@ -41,6 +41,15 @@ jobs:
       - uses: github/codeql-action/analyze@v4
         with:
           output: codeql-results
+      # Historical main-branch scans used the category /codeql/language:*, while
+      # current CodeQL job IDs produce codeql-scripts/language:*. Publish the
+      # identical analysis in the legacy category until main can be migrated.
+      # Never weaken/remove a security query or bypass a Code Scanning check.
+      - name: Publish legacy-matched CodeQL category
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: codeql-results
+          category: "/codeql/language:${{ matrix.language }}"
       - name: Summarize CodeQL findings (rule, severity, source location only)
         if: always()
         run: |
@@ -95,6 +104,12 @@ jobs:
       - uses: github/codeql-action/analyze@v4
         with:
           output: codeql-results
+      # Mirror the old java-kotlin analysis category expected on main.
+      - name: Publish legacy-matched CodeQL category
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: codeql-results
+          category: "/codeql/language:java-kotlin"
       - name: Summarize CodeQL findings (rule, severity, source location only)
         if: always()
         run: |

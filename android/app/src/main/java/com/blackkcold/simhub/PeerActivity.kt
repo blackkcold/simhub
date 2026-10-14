@@ -63,7 +63,7 @@ class PeerActivity:ComponentActivity(){
             try{while(isActive){delay(12000);reload();if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)}}finally{discovery?.close();discovery=null}
         }}
     }
-    override fun onStop(){super.onStop();inbox.clear();remoteState=null}
+    override fun onStop(){super.onStop();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}
     private fun reload(){peers=(0 until store().list().length()).map{store().list().getJSONObject(it)};listening=PeerService.enabled();selected?.let{p->selected=peers.find{it.optString("id")==p.optString("id")}}}
     private fun work(task:suspend ()->Unit){if(busy)return;busy=true;notice="";lifecycleScope.launch{try{task()}catch(e:Exception){notice=when(e){is SecurityException->"安全或权限校验未通过：${e.message?.take(80)}";else->"设备暂时不可达。请确认节点已开启直连、网络权限。未配置 Relay 时直连失败即失败。"}}finally{busy=false;reload()}}}
     private fun requestAccess(){if(!SmsAccessPolicy.rolePermitsAccess(this)){getSystemService(RoleManager::class.java)?.let{role.launch(it.createRequestRoleIntent(RoleManager.ROLE_SMS))};return};val list=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,Manifest.permission.READ_PHONE_STATE);if(Build.VERSION.SDK_INT>=33)list.add(Manifest.permission.POST_NOTIFICATIONS);if(Build.VERSION.SDK_INT>=37)list.add("android.permission.ACCESS_LOCAL_NETWORK");if(SmsSendPolicy.canSend(this)||getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true)list.add(Manifest.permission.SEND_SMS);permissions.launch(list.toTypedArray())}
@@ -73,16 +73,10 @@ class PeerActivity:ComponentActivity(){
         work{val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL);"response"->{manager.accept(contents);""};else->throw SecurityException("peer_qr_kind_rejected")}};qr=resultQr;PeerService.start(this@PeerActivity);notice=if(resultQr.isBlank())"双向扫码已确认，管理手机现在可以连接" else "请让 SIM 节点扫描此响应二维码，公网连接会自动建立"}
     }
     private suspend fun rpc(p:JSONObject,id:String,request:JSONObject):JSONObject{
-        return withContext(Dispatchers.IO){
-            val coordinator=ConnectionCoordinator(store())
-            if(!p.optBoolean("relayConfigured")&&!p.optBoolean("relayAssociationDisabled"))runCatching{PeerRelayTransport.associate(applicationContext,p)}
-            PeerRelayTransport.configured(applicationContext,store().peer(p.getString("id")))?.let{coordinator.relay(it)}
-            if(p.optBoolean("publicDiscoveryEnabled")){PeerCloudConnector.ensure(applicationContext,p.getString("id"));PeerCloudConnector.active(p.getString("id"))?.let{coordinator.internet(it)}}
-            coordinator.request(p.getString("id"),id,request)
-        }
+        return withContext(Dispatchers.IO){PeerHubGateway.request(applicationContext,p.getString("id"),id,request)}
     }
     private suspend fun load(older:Boolean){val p=selected?:return;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
-        val page=rpc(p,UUID.randomUUID().toString(),req);if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
+        val page=rpc(p,UUID.randomUUID().toString(),req);if(!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return;if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
         if(!older){
             val stateResult=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"))
             remoteState=stateResult.optJSONObject("device")
@@ -172,6 +166,18 @@ class PeerActivity:ComponentActivity(){
             }
         }}
     }}
+    private fun unlockRelay(p:JSONObject){
+        val origin=p.optString("relayOrigin",ControllerProfiles.selected(this)?:"")
+        if(ControllerLinks.normalize(origin)==null)return
+        android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle("验证本机身份以使用 Relay")
+            .setDeviceCredentialAllowed(true).build().authenticate(android.os.CancellationSignal(),mainExecutor,
+                object:android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){
+                    override fun onAuthenticationSucceeded(result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){
+                        if(!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
+                        ControllerAccessGate.grant(origin);notice="Relay 本机身份验证已通过";reload()
+                    }
+                })
+    }
     @Composable private fun ConnectionScreen(){LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{HubCard(Modifier.fillMaxWidth()){
             Text("自动公网 P2P",style=MaterialTheme.typography.titleMedium)
@@ -181,6 +187,8 @@ class PeerActivity:ComponentActivity(){
             peers.filter{it.optString("pairState")!="REVOKED"}.forEach{p->
                 Text("${p.optString("name")} · ${p.optString("discoveryState","WAITING")}")
                 if(p.optString("localRole")=="CONTROLLER"){
+                    val relayOrigin=p.optString("relayOrigin",ControllerProfiles.selected(this@PeerActivity)?:"")
+                    if(ControllerLinks.normalize(relayOrigin)!=null&&ControllerSecureClient(this@PeerActivity,relayOrigin).requireLocalUnlock()&&!ControllerAccessGate.permits(relayOrigin))OutlinedButton(onClick={unlockRelay(p)}){Text("验证本机身份以使用 Relay")}
                     if(p.optBoolean("relayConfigured"))OutlinedButton(onClick={work{withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayConfigured",false).remove("relayOrigin");fresh.remove("relayDeviceId");fresh.put("relayAssociationDisabled",true);store().update(fresh)};notice="已取消此节点 Relay 关联，仅使用 P2P"}}){Text("取消此节点 Relay 关联")}
                     else OutlinedButton(onClick={work{val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"));withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayHint",result.optJSONObject("relayHint")?:JSONObject()).put("relayAssociationDisabled",false);store().update(fresh);if(!PeerRelayTransport.associate(applicationContext,fresh))throw IllegalStateException("此节点未完成 Relay 独立授权或服务器未更新")};notice="已验证同一节点身份；Relay 优先，P2P 备用"}}){Text("关联此节点已授权的 Relay")}
                 }

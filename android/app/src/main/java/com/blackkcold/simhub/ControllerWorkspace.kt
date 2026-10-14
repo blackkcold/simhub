@@ -197,6 +197,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     override fun onAuthenticationSucceeded(result:BiometricPrompt.AuthenticationResult){
                         localAuthError=""
                         if(enable){client?.setRequireLocalUnlock(true);requireLocalUnlock=true}
+                        selected?.let{ControllerAccessGate.grant(it)}
                         localUnlocked=true
                     }
                     override fun onAuthenticationError(errorCode:Int,errString:CharSequence){
@@ -209,6 +210,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     DisposableEffect(activity,selected,requireLocalUnlock){
         val observer=LifecycleEventObserver{_,event->
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
+                selected?.let{ControllerAccessGate.clear(it)}
                 localUnlocked=false;inbox.clear();lastEventSeq=0L
             }
         }
@@ -221,6 +223,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     }
     // Exactly one load at a time. A second user request is queued, never discarded.
     var pendingLoad by remember(selected){mutableStateOf("")}
+    var peerBackupActive by remember(selected){mutableStateOf(false)}
+    var peerBackupUntil by remember(selected){mutableLongStateOf(0L)}
+    val peerBackupCursors=remember(selected){mutableMapOf<String,JSONObject?>()}
+
     fun load(mode:String="delta"){
         val api=client?:return
         if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return
@@ -230,6 +236,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         busy=true
         scope.launch {
             try {
+                if(peerBackupActive&&System.currentTimeMillis()<peerBackupUntil)throw java.io.IOException("relay_retry_backoff")
                 val data=withContext(Dispatchers.IO){
                     val d=api.api("/api/v1/devices")
                     val auth=api.api("/api/v1/auth/check")
@@ -335,6 +342,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater)
                 }
                 if(requireLocalUnlock && !localUnlocked)return@launch
+                if(peerBackupActive){inbox.clear();peerBackupActive=false;peerBackupCursors.clear()}
                 // Main-thread ACK: only successfully accepted decrypted content
                 // allows an event cursor or historical-page index to move.
                 for(batch in data.batches){
@@ -361,6 +369,34 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 authorized=true;error=""
             }catch(e:Exception){
                 error=e.message?:"无法连接管理中心"
+                if(e !is SecurityException && selected!=null){
+                    val peers=PeerHubGateway.linked(context,selected!!)
+                    if(peers.isNotEmpty())try{
+                        val batch=withContext(Dispatchers.IO){
+                            val messages=JSONArray();var more=false;var accepted=0
+                            for(peer in peers){
+                                val peerId=peer.getString("id")
+                                if(mode=="older"&&peerBackupActive&&peerBackupCursors.containsKey(peerId)&&peerBackupCursors[peerId]==null)continue
+                                val request=JSONObject().put("action","sms.page").put("limit",100)
+                                if(mode=="older"&&peerBackupActive)peerBackupCursors[peerId]?.let{request.put("cursor",it)}
+                                val result=runCatching{PeerHubGateway.request(context,peerId,UUID.randomUUID().toString(),request,false)}.getOrNull()?:continue
+                                if(result.optString("state")!="succeeded")continue
+                                accepted++;val rows=result.optJSONArray("messages")?:JSONArray();for(i in 0 until rows.length())messages.put(rows.getJSONObject(i))
+                                peerBackupCursors[peerId]=if(result.optBoolean("hasMore"))result.optJSONObject("cursor") else null
+                                more=more||result.optBoolean("hasMore")
+                            }
+                            if(accepted==0)throw java.io.IOException("已授权 P2P 节点也不可达")
+                            JSONObject().put("type","snapshot").put("v",1).put("messages",messages).put("hasMore",more).toString()
+                        }
+                        if(requireLocalUnlock&&!localUnlocked)return@launch
+                        if(!peerBackupActive||mode!="older")inbox.clear()
+                        if(!inbox.accept(batch,append=peerBackupActive&&mode=="older",preferOlder=mode=="older"))throw java.io.IOException("P2P 短信批次未接收")
+                        if(!peerBackupActive){page=0;cursors=emptyList();lastEventSeq=0}
+                        if(mode=="older")page++
+                        peerBackupActive=true;peerBackupUntil=System.currentTimeMillis()+20000
+                        error="Relay 暂不可达，已切换到独立授权的 P2P；云端管理待 Relay 恢复"
+                    }catch(backup:Exception){error=backup.message?:error}
+                }
                 if(e is SecurityException){
                     authorized=false;inbox.clear();devices=emptyList()
                     lastCommandId="";lastCommandState="";lastEventSeq=0

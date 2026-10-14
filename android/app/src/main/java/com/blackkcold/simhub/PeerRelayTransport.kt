@@ -10,6 +10,7 @@ class PeerRelayTransport(private val context:Context,private val origin:String,p
     private val api=ControllerSecureClient(context,origin)
     override fun route()="LEGACY_RELAY"
     override fun request(peer:JSONObject,id:String,request:JSONObject):JSONObject {
+        if(api.requireLocalUnlock()&&!ControllerAccessGate.permits(origin))throw SecurityException("relay_local_unlock_required")
         val store=PeerStore.get(context)
         val carrier="pw-"+PeerCrypto.digest(PeerCrypto.utf8(store.myId()+"|"+peer.getString("id")+"|"+id))
         val path="/api/v1/devices/$deviceId/commands/$carrier/peer-response"
@@ -49,7 +50,8 @@ class PeerRelayTransport(private val context:Context,private val origin:String,p
             val origin=ControllerLinks.normalize(p.optString("relayOrigin"))?:return null
             val device=p.optString("relayDeviceId")
             if(!p.optBoolean("relayConfigured")||origin !in ControllerProfiles.list(c)||!device.matches(Regex("[A-Za-z0-9_-]{1,160}")))return null
-            if(!ControllerSecureClient(c,origin).hasGrant())return null
+            val client=ControllerSecureClient(c,origin)
+            if(!client.hasGrant()||(client.requireLocalUnlock()&&!ControllerAccessGate.permits(origin)))return null
             return PeerRelayTransport(c.applicationContext,origin,device)
         }
         fun associate(c:Context,p:JSONObject):Boolean {
@@ -57,7 +59,7 @@ class PeerRelayTransport(private val context:Context,private val origin:String,p
             val device=hint.optString("deviceId")
             if(!device.matches(Regex("[A-Za-z0-9_-]{1,160}")))return false
             val origin=ControllerLinks.normalize(hint.optString("origin"))?.takeIf{it in ControllerProfiles.list(c)}?:ControllerProfiles.selected(c)?:return false
-            val client=ControllerSecureClient(c,origin);if(!client.hasGrant())return false
+            val client=ControllerSecureClient(c,origin);if(!client.hasGrant()||(client.requireLocalUnlock()&&!ControllerAccessGate.permits(origin)))return false
             val state=client.api("/api/v1/devices/$device/state").optJSONObject("state")?:return false
             if(state.optString("p2pIdentityId")!=p.getString("id")||state.optInt("peerRpcVersion")!=1)return false
             val store=PeerStore.get(c);val fresh=store.peer(p.getString("id"))

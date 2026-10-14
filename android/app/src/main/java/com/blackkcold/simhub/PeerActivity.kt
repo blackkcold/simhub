@@ -50,6 +50,7 @@ class PeerActivity:ComponentActivity(){
     private var recipient by mutableStateOf("")
     private var body by mutableStateOf("")
     private var compose by mutableStateOf(false)
+    private var revokeTarget by mutableStateOf<JSONObject?>(null)
     private var sendRequest:JSONObject?=null
     private var sendId:String?=null
     private var channelIndex by mutableIntStateOf(0)
@@ -133,6 +134,13 @@ class PeerActivity:ComponentActivity(){
                 else->ConnectionScreen()
             }
         }
+        revokeTarget?.let{target->AlertDialog(
+            onDismissRequest={if(!busy)revokeTarget=null},
+            title={Text(if(target.optString("pairState")=="PENDING")"取消待确认配对？" else "撤销此设备授权？")},
+            text={Text("将立即清除本机此配对的密钥与缓存。远端已下载的内容无法追回；离线远端的清理不代表已经完成。")},
+            confirmButton={Button(onClick={if(!busy){revokeTarget=null;work{withContext(Dispatchers.IO){store().revoke(target.getString("id"));PeerInboxCache.clear(applicationContext,target.getString("id"))};if(selected?.optString("id")==target.optString("id")){inbox.clear();selected=null;tab=0};PeerCloudConnector.closePeer(target.getString("id"));notice="本机授权已撤销；对端离线时仍需单独清理其本地配对数据"}}}){Text("确认撤销")}},
+            dismissButton={TextButton(onClick={revokeTarget=null}){Text("保留授权")}}
+        )}
         if(compose)AlertDialog(onDismissRequest={if(!busy)compose=false},title={Text("通过已授权 SIM 发送短信")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
             OutlinedTextField(recipient,{if(sendId==null)recipient=it},label={Text("收件号码")},enabled=sendId==null)
             OutlinedTextField(body,{if(sendId==null)body=it},label={Text("短信内容")},enabled=sendId==null)
@@ -144,9 +152,9 @@ class PeerActivity:ComponentActivity(){
         item{HubCard(Modifier.fillMaxWidth()){
             Text("添加设备",style=MaterialTheme.typography.titleMedium)
             Text("选择本机角色后按步骤完成双向扫码。P2P 不需要服务器或 Vault；连接可用性取决于实际网络。",style=MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                Button(onClick={pairingRole=0;qr=""}){Text("作为 SIM 节点")}
-                OutlinedButton(onClick={pairingRole=1;qr=""}){Text("作为管理终端")}
+            Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Button(onClick={pairingRole=0;qr=""},modifier=Modifier.fillMaxWidth()){Text("作为 SIM 节点")}
+                OutlinedButton(onClick={pairingRole=1;qr=""},modifier=Modifier.fillMaxWidth()){Text("作为管理终端")}
             }
             if(pairingRole==0){
                 Text("步骤 1 / 3 · 开启本机服务，选择授权后生成二维码",style=MaterialTheme.typography.titleSmall)
@@ -187,7 +195,7 @@ class PeerActivity:ComponentActivity(){
                     Button(onClick={select(p)}){Text(if(p.optString("pairState")=="PENDING")"验证连接" else "管理短信")}
                     OutlinedButton(onClick={selected=p;tab=2}){Text("连接详情")}
                 }
-                if(p.optString("pairState")!="REVOKED")TextButton(onClick={work{withContext(Dispatchers.IO){store().revoke(p.getString("id"));PeerInboxCache.clear(applicationContext,p.getString("id"))};if(selected?.optString("id")==p.optString("id")){inbox.clear();selected=null};PeerCloudConnector.closePeer(p.getString("id"));notice="本机已立即撤销此授权；远端旧凭据无法继续访问"}}){Text("撤销授权")}
+                if(p.optString("pairState")!="REVOKED")TextButton(onClick={revokeTarget=p}){Text(if(p.optString("pairState")=="PENDING")"取消配对" else "撤销授权")}
             }
         }}
     }}

@@ -1,5 +1,13 @@
 # Automatic public P2P preview
 
+## UI / connection audit changes
+
+The Android preview now reuses SIM Hub's dual-role theme, with role-based pairing, device cards, a scoped SMS view, and per-device connection detail instead of three duplicated navigation tabs. Signaling READY is not an authenticated data channel. Private host ICE pairs can report LAN; otherwise a direct P2P channel does not automatically prove cross-internet connectivity.
+
+The Relay route is never silently attached during a P2P request. Explicit association verifies the node's published P2P identity and an independently authorized Relay, even when direct P2P is temporarily offline. SMS send and retry actions use one persisted logical ID and an indeterminate result never silently creates a new send. The Web Relay UI does not claim independent P2P permissions.
+
+Public two-runner DIRECT, local preview, and Android sandbox checks must pass before the isolated APK is attached to existing draft PR #84. The preview must not merge into main without separate explicit approval.
+
 Branch: `feature/p2p-isolated-preview`; draft PR #84. Never merge or enable auto-merge without a new user instruction. Main 0.17.1 is the imported baseline; the preview has a separate application ID and disables stable self-update.
 
 Double QR pairing creates a separate peer identity, content root and explicit read/history/state/send grants. New pairings automatically enable public discovery. No user hostname, port forwarding, Relay enrollment or Vault is required for public direct attempts.

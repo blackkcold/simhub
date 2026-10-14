@@ -20,7 +20,7 @@ const id='public-message-1234567890',payload={action:'sandbox.ping',body:'x'.rep
 const sendSignal=signal=>{if(signal.candidate){if(!/ typ srflx(?: |$)/.test(signal.candidate.candidate))return;srflx++;localAddresses.add(signal.candidate.candidate.split(" ")[4]);}
   if(signal.description)signal.description.sdp=signal.description.sdp.split('\r\n').filter(s=>!/^a=candidate:.* typ (host|relay)(?: |$)/.test(s)).join('\r\n');
   const type=signal.description?(signal.description.type==='offer'?'OFFER':'ANSWER'):'CANDIDATE';
-  const frame=seal(room(me),room(other),crypto.randomUUID(),{action:'signal',payload:signal});socket.send(JSON.stringify({type,dst:room(other),payload:{type:'data',connectionId:'dc_simhub_p2p_v1',simhub:frame}}));signalCount++;
+  const frame=seal(room(me),room(other),crypto.randomUUID(),{action:'signal',kind:type,payload:signal});socket.send(JSON.stringify({type:'OFFER',dst:room(other),payload:{type:'data',connectionId:'dc_simhub_p2p_v1',label:'simhub-p2p',serialization:'json',reliable:true,sdp:{type:'offer',sdp:'v=0\r\n'},metadata:{simhub:frame}}}));signalCount++;
 };
 try{
   await page.exposeFunction('nativeEvent',async raw=>{const e=JSON.parse(raw);if(e.type==='error')nativeErrors++;
@@ -37,7 +37,7 @@ try{
   socket.addEventListener('message',event=>{(async()=>{const m=JSON.parse(event.data);serverTypes[m.type]=(serverTypes[m.type]||0)+1;
     if(m.type==='OPEN'){started=true;await page.evaluate(initiator=>peerCommand({type:'init',servers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}],fallback:false,initiator}),role==='controller');return;}
     if(['ERROR','ID-TAKEN','INVALID-KEY'].includes(m.type))throw Error('Public signaling rejected '+m.type);
-    if(['OFFER','ANSWER','CANDIDATE'].includes(m.type)){signalsReceived++;assert.equal(m.src,room(other));assert.equal(m.dst,room(me));const p=open(m.payload.simhub,true);assert.equal(p.action,'signal');if(p.payload.candidate){assert(/ typ srflx(?: |$)/.test(p.payload.candidate.candidate));remoteAddresses.add(p.payload.candidate.candidate.split(' ')[4]);}await page.evaluate(payload=>peerCommand({type:'signal',payload}),p.payload);}
+    if(['OFFER','ANSWER','CANDIDATE'].includes(m.type)){signalsReceived++;assert.equal(m.src,room(other));assert.equal(m.dst,room(me));const p=open(m.payload.metadata.simhub,true);assert.equal(p.action,'signal');if(p.payload.candidate){assert(/ typ srflx(?: |$)/.test(p.payload.candidate.candidate));remoteAddresses.add(p.payload.candidate.candidate.split(' ')[4]);}await page.evaluate(payload=>peerCommand({type:'signal',payload}),p.payload);}
   })().catch(e=>{error=e});});socket.addEventListener('error',()=>{error=Error('Public WebSocket unavailable')});
   timer=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send('{"type":"HEARTBEAT"}');if(started&&!ready&&role==='controller')page.evaluate(()=>peerCommand({type:'restart'})).catch(e=>{error=e})},10000);
   const deadline=Date.now()+120000;let sent=false;

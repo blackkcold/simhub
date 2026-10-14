@@ -66,7 +66,7 @@ public final class PeerCloudConnector implements HubTransport,AutoCloseable {
         if(!Set.of("OFFER","ANSWER","CANDIDATE").contains(type)||rtc==null)return;
         byte[] key=store.key(peerId);JSONObject signal;
         try{signal=PeerCloudProtocol.incoming(key,peerId,store.myId(),message,System.currentTimeMillis()/1000);}finally{Arrays.fill(key,(byte)0);}
-        String id=message.getJSONObject("payload").getJSONObject("simhub").getString("id");if(!seen.add(id))return;
+        String id=message.getJSONObject("payload").getJSONObject("metadata").getJSONObject("simhub").getString("id");if(!seen.add(id))return;
         if(seen.size()>512)seen.remove(seen.iterator().next());rtc.signal(signal);
     }catch(Exception ignored){/* An untrusted signal never changes grants or executes an RPC. */}}
     private void send(JSONObject signal){try{if(!opened||socket==null||!allowed())return;byte[] key=store.key(peerId);

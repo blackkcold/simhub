@@ -28,18 +28,23 @@ public final class PeerCloudProtocol {
     }
     public static JSONObject outgoing(byte[] key,String from,String to,JSONObject signal,long now)throws Exception {
         String kind=type(signal),id=UUID.randomUUID().toString();
-        JSONObject frame=PeerProtocol.seal(key,room(key,from),room(key,to),id,now+60,new JSONObject().put("action","signal").put("payload",signal));
-        JSONObject message=new JSONObject().put("type",kind).put("dst",room(key,to)).put("payload",
-            new JSONObject().put("type","data").put("connectionId","dc_simhub_p2p_v1").put("simhub",frame));
+        JSONObject frame=PeerProtocol.seal(key,room(key,from),room(key,to),id,now+60,new JSONObject().put("action","signal").put("kind",kind).put("payload",signal));
+        // Cloud validates PeerJS's OFFER shape. Its metadata is an opaque carrier;
+        // the constant SDP contains no real fingerprint, candidate or endpoint.
+        JSONObject message=new JSONObject().put("type","OFFER").put("dst",room(key,to)).put("payload",
+            new JSONObject().put("type","data").put("connectionId","dc_simhub_p2p_v1").put("label","simhub-p2p")
+            .put("serialization","json").put("reliable",true).put("sdp",new JSONObject().put("type","offer").put("sdp","v=0\r\n"))
+            .put("metadata",new JSONObject().put("simhub",frame)));
         if(message.toString().length()>MAX_SIGNAL)throw new SecurityException("signal_too_large");
         return message;
     }
     public static JSONObject incoming(byte[] key,String from,String to,JSONObject message,long now)throws Exception {
         if(message.toString().length()>MAX_SIGNAL||!room(key,from).equals(message.optString("src"))||
             !room(key,to).equals(message.optString("dst")))throw new SecurityException("wrong_signal_route");
-        JSONObject payload=PeerProtocol.open(key,room(key,from),room(key,to),message.getJSONObject("payload").getJSONObject("simhub"),now);
+        if(!"OFFER".equals(message.getString("type")))throw new SecurityException("invalid_signal_carrier");
+        JSONObject payload=PeerProtocol.open(key,room(key,from),room(key,to),message.getJSONObject("payload").getJSONObject("metadata").getJSONObject("simhub"),now);
         if(!"signal".equals(payload.optString("action")))throw new SecurityException("only_peer_signaling_allowed");
-        JSONObject signal=payload.getJSONObject("payload");if(!type(signal).equals(message.getString("type")))throw new SecurityException("signal_type_mismatch");
+        JSONObject signal=payload.getJSONObject("payload");if(!type(signal).equals(payload.getString("kind")))throw new SecurityException("signal_type_mismatch");
         return signal;
     }
 }

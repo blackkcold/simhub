@@ -35,7 +35,7 @@ android {
         create("p2pPreview") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".p2ptest"
-            versionNameSuffix = "-p2p-preview.1"
+            versionNameSuffix = "-p2p-preview.2"
             buildConfigField("boolean", "P2P_PREVIEW", "true")
             resValue("string", "app_name", "SIM Hub P2P Test")
             matchingFallbacks += listOf("debug")
@@ -59,6 +59,7 @@ android {
 
 
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")

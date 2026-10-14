@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -57,7 +58,7 @@ class PeerActivity:ComponentActivity(){
     private val role=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){reload()}
     private fun store()=PeerStore.get(this)
     override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);UiLocale.apply(this);reload()
-        setContent{MaterialTheme{Surface(Modifier.fillMaxSize()){Screen()}}}
+        setContent{HubTheme(if(pairingRole==0||selected?.optString("localRole")=="NODE")"node" else "controller"){Surface(Modifier.fillMaxSize()){Screen()}}}
         lifecycleScope.launch{repeatOnLifecycle(Lifecycle.State.STARTED){
             discovery=PeerDiscovery(this@PeerActivity)
             try{discovery?.start()}catch(_:Exception){notice="局域网发现不可用；请检查本地网络权限"}
@@ -109,6 +110,7 @@ class PeerActivity:ComponentActivity(){
         work{val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),sendId!!,sendRequest!!)};notice="短信状态：${result.optString("state")}";if(result.optString("state") in listOf("submitted","sent","delivered","succeeded")){compose=false;load(false)}else if(result.optString("state") in listOf("indeterminate","claimed","unknown"))notice="发送结果待确认。已保留原命令，不会产生新的发送请求。请在设备卡片查看状态。"}
     }
     @Composable private fun Screen(){
+        BackHandler(enabled=tab!=0){tab=0}
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)){
             Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
                 TextButton(onClick={if(tab==0)finish() else tab=0}){Text(if(tab==0)"返回 SIM Hub" else "返回设备")}

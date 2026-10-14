@@ -115,7 +115,6 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                 Text("SIM Hub",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
                 Text("选择这台手机的用途",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                PeerEntryCard()
                 Spacer(Modifier.height(30.dp))
                 listOf(Triple("node","作为 SIM 节点","收发及同步本机 SIM 短信"),
                     Triple("controller","作为管理控制台","管理其他设备，不需要短信权限"),

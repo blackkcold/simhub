@@ -1,0 +1,24 @@
+{
+  "expires": 1791264060,
+  "bindingTranscriptExample": "simhub-peer-signal-v1|binding|19:center-signaling-v128:binding-vector-000000000000043:node-vector-000000000000000000000000000000015:node-key-vector43:ctrl-vector-000000000000000000000000000000015:ctrl-key-vector1:31:131:challenge-vector-0000000000000010:1791264000",
+  "sessionTranscriptExample": "simhub-peer-signal-v1|session|19:center-signaling-v14:node22:center.example.invalid27:session-vector-00000000000028:binding-vector-000000000000043:node-vector-000000000000000000000000000000015:node-key-vector43:ctrl-vector-000000000000000000000000000000015:ctrl-key-vector1:331:challenge-vector-0000000000000010:1791264060",
+  "aad": "simhub-peer-signal-v1|1:121:simhub-peer-signal-v127:session-vector-00000000000027:message-vector-0000000000004:node1:710:17912640601:316:oKGio6Slpqeoqaqr",
+  "session": "session-vector-000000000000",
+  "ciphertextBase64Url": "GTmZj8gqAhxVGg3qI_ZyDW9mNpwbdWoosttVRyW5IlkuB2A4fn5a3HAo2zNJp68vI9Xs3gLrt6PqgS5O0Po6W_0D-_p6wZTgyM3H3Tg--_FTaWHyOJWOVzaP2ezo9A",
+  "derivedKeyBase64Url": "GWcWNEsvRg7kkePfFyYaclCvnpYZSk6j5gDAtOufxZs",
+  "version": 1,
+  "rootKeyBase64Url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "revision": 3,
+  "payload": {
+    "kind": "OFFER",
+    "description": {
+      "type": "offer",
+      "sdp": "v=0 a=ice-ufrag:vector"
+    }
+  },
+  "domain": "simhub-peer-signal-v1",
+  "id": "message-vector-000000000000",
+  "nonceBase64Url": "oKGio6Slpqeoqaqr",
+  "seq": 7,
+  "direction": "node"
+}

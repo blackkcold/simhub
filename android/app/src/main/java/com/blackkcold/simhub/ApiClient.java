@@ -2,16 +2,13 @@ package com.blackkcold.simhub;
 
 import android.content.Context;
 import android.os.Build;
+import okhttp3.OkHttpClient;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ApiClient {
@@ -26,16 +23,38 @@ public final class ApiClient {
     private final Context c;private final AgentConfig cfg;
     public ApiClient(Context c){this.c=c.getApplicationContext();cfg=new AgentConfig(c);}
     public static JSONObject pairingRequest(String server,String method,String path,JSONObject body,String pairBearer)throws Exception{
+        return pairingRequest(null,server,method,path,body,pairBearer);
+    }
+    /**
+     * Node pairing carries the single-use pairing bearer, so it must use the same
+     * tested client as every other node request when a trusted center exists.
+     */
+    public static JSONObject pairingRequest(Context context,String server,String method,String path,JSONObject body,String pairBearer)throws Exception{
         requireHttps(server);
         if(!path.startsWith("/api/v1/pairings/"))throw new SecurityException("Pairing path required");
-        return raw(server+path,method,body,pairBearer==null?null:"Pair "+pairBearer,null);
+        return rawFor(nodeClient(context,server),server+path,method,body,pairBearer==null?null:"Pair "+pairBearer,null,12000);
     }
-    public static JSONObject enroll(String server,String token,String name)throws Exception{return enroll(server,token,name,null);}
-    public static JSONObject enroll(String server,String token,String name,String bootstrapProof)throws Exception{
+    public static JSONObject enroll(String server,String token,String name)throws Exception{return enroll(null,server,token,name,null);}
+    public static JSONObject enroll(String server,String token,String name,String bootstrapProof)throws Exception{return enroll(null,server,token,name,bootstrapProof);}
+    public static JSONObject enroll(Context context,String server,String token,String name,String bootstrapProof)throws Exception{
         requireHttps(server);
         JSONObject b=new JSONObject().put("token",token).put("name",name).put("model",Build.MANUFACTURER+" "+Build.MODEL).put("osVersion",Build.VERSION.RELEASE).put("appVersion",BuildConfig.VERSION_NAME).put("nodeType","android").put("capabilities",new JSONArray().put("sms.receive").put("sms.send").put("sms.history").put("signal.basic").put("dual-sim"));
         if(bootstrapProof!=null&&!bootstrapProof.isBlank())b.put("bootstrapProof",bootstrapProof);
-        return raw(server+"/api/v1/enroll","POST",b,null,null);
+        return rawFor(nodeClient(context,server),server+"/api/v1/enroll","POST",b,null,null,12000);
+    }
+    /**
+     * Pinned client when a trusted description covers this node origin. When a
+     * description exists but names a different origin the request is refused before
+     * the device token is written: an injected configuration is authoritative and
+     * must match the enrolled origin exactly.
+     */
+    private static OkHttpClient nodeClient(Context context,String origin){
+        if(context==null)return SecureHttp.base();
+        CenterTrustStore store=CenterTrustStore.get(context);
+        CenterTrust trust=store.effective();
+        if(trust!=null&&!trust.covers(CenterTrust.ROLE_NODE,origin))
+            throw new SecurityException(SecureHttp.AUTH_REQUIRED);
+        return SecureHttp.endpoint(store,CenterTrust.ROLE_NODE,origin).client();
     }
     /** Coalesced, event-first sync. An idle timer never rescans SMS or regenerates SIM inventory. */
     public void syncCycle(){
@@ -385,22 +404,67 @@ public final class ApiClient {
         request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+commandId+"/peer-response",new JSONObject().put("frame",frame));
     }
     public void flushCommandAcks()throws Exception{int sent=0;for(JSONObject a:LocalStore.get(c).pendingCommandAcks(100)){String id=a.getString("commandId"),state=a.getString("state");request("POST","/api/v1/devices/"+cfg.deviceId()+"/commands/"+id+"/ack",new JSONObject().put("state",state).put("result",a.optJSONObject("result")==null?new JSONObject():a.optJSONObject("result")));LocalStore.get(c).markCommandAckSent(id,state);sent++;}if(sent>0)AppLogger.i(c,"ApiClient","Uploaded command acknowledgements count="+sent);}
+    // -- center-assisted signaling (opaque frames only) ----------------------
+    /**
+     * Node surface of the signaling routes. The device token never leaves the node;
+     * the frames are opaque here, never parsed and never entering PeerRpc.
+     */
+    public JSONObject signalingChallenge()throws Exception{return request("POST","/api/v1/devices/"+cfg.deviceId()+"/peer-signaling/challenge",new JSONObject());}
+    public JSONObject signalingBinding(JSONObject body)throws Exception{return request("POST","/api/v1/devices/"+cfg.deviceId()+"/peer-signaling/binding",body);}
+    public JSONObject signalingBindings()throws Exception{return request("GET","/api/v1/devices/"+cfg.deviceId()+"/peer-signaling/bindings",null);}
+    public JSONObject signalingSessions()throws Exception{return request("GET","/api/v1/devices/"+cfg.deviceId()+"/peer-signaling/sessions",null);}
+    public JSONObject signalingJoin(String sessionId,JSONObject body)throws Exception{return request("POST",signalingPath(sessionId,"join"),body);}
+    public JSONObject signalingSend(String sessionId,JSONObject frame)throws Exception{return request("POST",signalingPath(sessionId,"signal"),new JSONObject().put("frame",frame));}
+    public void signalingAck(String sessionId,long seq)throws Exception{request("POST",signalingPath(sessionId,"ack"),new JSONObject().put("seq",seq));}
+    public JSONObject signalingPoll(String sessionId,long after)throws Exception{return request("GET",signalingPath(sessionId,"poll")+"?after="+Math.max(0,after),null);}
+    public void signalingClose(String sessionId)throws Exception{request("POST",signalingPath(sessionId,"close"),new JSONObject());}
+    private String signalingPath(String sessionId,String action)throws Exception{
+        if(sessionId==null||!sessionId.matches("[A-Za-z0-9_-]{16,80}"))throw new SecurityException("signal_identifier_invalid");
+        return "/api/v1/devices/"+cfg.deviceId()+"/peer-signaling/sessions/"+sessionId+"/"+action;
+    }
     public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");cfg.recordCommandFetch(arr==null?0:arr.length());if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
     public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}
     public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("appVersionCode",RemoteOta.installedVersionCode(c)).put("osVersion",Build.VERSION.RELEASE));}
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}
-    JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
-    private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
-    private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId)throws Exception{
+    JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){logRequestFailure(method,e);throw e;}}
+    private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){logRequestFailure(method,e);throw e;}}
+    /**
+     * Diagnostics record a fixed HTTP status and a stable transport code only.
+     * The path, the origin and the raw exception cause are never logged: a thrown
+     * {@code UnknownHostException} or TLS failure message can carry the host.
+     */
+    private void logRequestFailure(String method,Exception error){
+        String code=error instanceof ApiFailure f?"http_"+f.status:error instanceof SecurityException s?s.getMessage():"transport_failure";
+        AppLogger.e(c,"ApiClient",method+" request failed code="+code,null);
+    }
+    private JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId)throws Exception{
         return raw(url,method,body,auth,deviceId,12000);
     }
-    private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId,int readTimeout)throws Exception{
-        HttpURLConnection con=(HttpURLConnection)new URL(url).openConnection();con.setRequestMethod(method);con.setConnectTimeout(8000);con.setReadTimeout(readTimeout);con.setUseCaches(false);con.setRequestProperty("Accept","application/json");if(auth!=null)con.setRequestProperty("Authorization",auth);if(deviceId!=null)con.setRequestProperty("X-SimHub-Device-Id",deviceId);if(body!=null){con.setDoOutput(true);con.setRequestProperty("Content-Type","application/json");con.getOutputStream().write(body.toString().getBytes(StandardCharsets.UTF_8));}int code=con.getResponseCode();InputStream in=code>=400?con.getErrorStream():con.getInputStream();String text;String retryAfterHeader;try{text=BoundedHttpReader.readUtf8(in,BoundedHttpReader.MAX_JSON_BYTES);retryAfterHeader=con.getHeaderField("Retry-After");}finally{con.disconnect();}JSONObject out=text.isBlank()?new JSONObject():new JSONObject(text);if(code<200||code>=300){
+    private JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId,int readTimeout)throws Exception{
+        String origin=SecureHttp.splitTarget(url)[0];
+        return rawFor(nodeClient(c,origin),url,method,body,auth,deviceId,readTimeout);
+    }
+    private static JSONObject rawFor(OkHttpClient client,String url,String method,JSONObject body,String auth,String deviceId,int readTimeout)throws Exception{
+        String[] target=SecureHttp.splitTarget(url);
+        String href=SecureHttp.targetUrl(target[0],target[1]);
+        Map<String,String> headers=new LinkedHashMap<>();
+        headers.put("Accept","application/json");
+        if(auth!=null)headers.put("Authorization",auth);
+        if(deviceId!=null)headers.put("X-SimHub-Device-Id",deviceId);
+        String json=null;
+        if(body!=null){headers.put("Content-Type","application/json");json=body.toString();}
+        SecureHttp.Result result=SecureHttp.exchange(client,method,href,json,headers,8,readTimeout);
+        String text=result.body;
+        JSONObject out=text==null||text.isBlank()?new JSONObject():new JSONObject(text);
+        if(result.status<200||result.status>=300){
             int retry=60;
-            try{retry=Integer.parseInt(retryAfterHeader);}catch(Exception ignored){}
-            throw new ApiFailure(code,out.optString("error","http_error"),out.optString("message","HTTP "+code),Math.max(1,Math.min(600,retry)));
+            try{retry=Integer.parseInt(result.retryAfter);}catch(Exception ignored){}
+            throw new ApiFailure(result.status,out.optString("error","http_error"),out.optString("message","HTTP "+result.status),Math.max(1,Math.min(600,retry)));
         }
         return out;
     }
-    private static void requireHttps(String server)throws Exception{URI u=URI.create(server);if(!"https".equalsIgnoreCase(u.getScheme())||u.getHost()==null)throw new SecurityException("SIM Hub server must use HTTPS");}
+    private static void requireHttps(String server)throws Exception{
+        String canonical=CenterTrust.normalizeOrigin(server);
+        if(canonical==null||!canonical.equals(server))throw new SecurityException("SIM Hub server must use HTTPS");
+    }
 }

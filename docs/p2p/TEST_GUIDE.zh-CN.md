@@ -1,60 +1,61 @@
-# P2P 公网独立测试包
+# P2P 独立测试包与验证指南
 
-版本 `0.17.1-p2p-preview.2`；包名 `com.blackkcold.simhub.p2ptest`。与正式版共存，关闭正式版自动更新，不导入正式版数据、Relay 注册或 Vault。两台手机请安装同一个 APK。测试包使用调试签名；旧测试包若签名不匹配，需要先备份测试数据再卸载旧测试包，勿卸载正式版。
+对象：`feature/p2p-isolated-preview`（草稿 PR #84）。预览版使用独立 applicationId 并关闭稳定版自更新；未获明确批准不得合并 main。
 
-## 本轮 UI / 连接修复验收
+## 本轮验收要点
 
-- 测试入口不再使用与原 Android 管理中心并列的三标签管理页，而是采用「添加设备 → 选择本机角色 → 双向扫码 → 设备卡片 → 加密短信 / 连接详情」。
-- 节点选择「作为 SIM 节点」，开启监听并选择读取/发送权限后生成二维码；管理终端选择「作为管理终端」扫描，节点再扫描响应二维码。
-- 「公网发现就绪」仅表示已接入公共信令；「P2P 直连已建立」需要实际 WebRTC 数据通道就绪。ICE 发现的私网 host-host 路径应显示 LAN，不把所有 P2P 都称作公网直连。
-- Relay 关联必须在设备连接详情里主动执行。已取得双方 Relay 独立授权、节点身份匹配即可关联；此时 P2P 直连本身可以暂时不可用。
-- 对比纯 P2P、纯 Relay、双链路设备：只有授权路径可用；双链路 Relay 优先，失败后 P2P；无 Relay 时失败即失败。
-- 同一短信在断网/切换路由/超时后只保留原 logical command ID；未知结果不得自动重发，过期命令必须先查询最终状态，不能静默丢弃。
-- Web Relay 只显示自身已授权设备报告的备用能力，不应表示浏览器已拥有双机扫码的 P2P 控制权。
-- 验收后下载当前提交对应的 `simhub-p2p-tested-package`，使用打包内 `p2p-apk-sha256.txt` 校验 APK。CI 成功后会尝试将本次具体 artifact 链接附到 [Draft PR #84](https://github.com/blackkcold/simhub/pull/84)。不自动合并 main。
+本轮把公网 PeerJS 信令与 WebView 引擎整体退役，改为：
 
-## 两台手机跨公网连接
+1. **原生 data-only RTC 引擎**：`PeerNativeRtcTransport` + 固定版本 `io.github.webrtc-sdk:android`；无 WebView、无内置脚本、无远程代码；不新增音视频采集权限。
+2. **中心辅助信令**：复用已注册的管理中心交换端到端加密 SDP/ICE；信令有独立 domain 与子密钥，业务密文与信令密文互不可解；信令不进入 `PeerRpc.dispatch`。
+3. **共享 pinning 客户端**：节点与控制器两条凭据链路的 JSON 请求都走同一个受测 OkHttp 工厂；精确 origin + ≥2 枚 SPKI pin，无匹配 pin 即失败关闭。
+4. **受控配置注入**：可信中心描述由 Gradle 生成到构建目录，公开 CI 用测试证书派生的假配置走同一套生成/加载/校验代码。
 
-1. 两台 Android 10+ 手机安装此包，分别联网；建议一台 Wi-Fi、一台移动网络，避免只验证同一局域网。
-2. 节点打开「P2P 设备直连」，授予所需短信/电话权限，并启用本机直连前台服务。
-3. 节点生成二维码。发送授权默认关闭，需要发送时在生成前明确勾选。
-4. 管理手机扫描节点二维码并展示响应二维码；节点再扫描响应二维码，完成双向配对。
-5. 公网发现自动启动，无需输入域名、开放端口、配置公网 IP、注册 Relay 或解锁 Vault。管理手机选择该节点读取短信、继续加载历史。
-6. 查看实际链路：发现就绪仅表示信令已连接；「公网直连」才表示数据直达。离线时等待重连或主动刷新，勿把信令就绪当成数据已连通。
-7. 发送短信还需节点的默认短信角色/SEND_SMS 权限、有效 SIM、有效通道与配对发送授权。只读配对不允许发送。
+信令就绪 ≠ 数据通道在线；路由以真实 selected candidate pair 判定；未授权时不使用 TURN。
 
-默认使用 PeerJS Cloud 交换加密连接信息，Google/Cloudflare STUN 发现地址；短信走设备之间的加密数据通道。默认不配置 TURN，不使用信箱或 HTTPS 转发短信。若网络阻止直接连接、且没有另行配置 Relay，就显示失败/离线。仅能上互联网无法保证所有 NAT/防火墙均可纯 P2P 互通。
+## 本机可运行的验证命令
 
-已有旧配对如尚未启用公网发现，请在对应设备页明确启用；也可重新双向扫码使用新配对。
+```bash
+# 1) 服务端信令与既有连接服务（本地 venv）
+PYTHONPATH=server python3 -m unittest -v server.test_peer_connect
+PYTHONPATH=server python3 -m unittest -v server.test_peer_signaling server.test_peer_signaling_http
 
-## 可选 Relay 和互为备用
+# 2) 结构不变量 + 服务端 + JVM 沙盒（一条命令覆盖主要不变量）
+python3 scripts/test_p2p_sandbox.py          # 产出 p2p-sandbox-results.json
 
-| 配置 | 首选与失败行为 |
-| --- | --- |
-| 只有 P2P 配对 | 直连；不可达就失败，无隐藏兜底 |
-| 只有 Relay 授权 | 按原 Relay 流程运行 |
-| 两者均独立授权并关联同一节点 | 优先 Relay；Relay 不可达后尝试 P2P |
+# 3) 配置泄漏静态扫描（禁止提交生成的描述、pin 字面量、非保留域名）
+python3 scripts/test_center_config_leak.py
 
-P2P 页面提供可选 Relay 配置入口。节点按原流程单独注册 Relay，管理端按原流程单独授权并在需要时本机解锁。身份匹配后才能关联，P2P 二维码不含 Relay 令牌。可取消该关联；撤销其中一种授权不会自动取得另一种授权。
+# 4) Android 单元测试（JVM：信任模型 + 真实 TLS pinning 负向测试）
+gradle -p android -PcenterConfigFake=true :app:testDebugUnitTest
+gradle -p android :app:testDebugUnitTest --tests '*CenterTrustTest' --tests '*SecureHttpTrustTest'
 
-可选 Relay 载体需要部署本分支的兼容服务端（新增 `peer.rpc` 和短期加密响应接口）。直接公网 P2P 不需部署它。若使用旧 Relay 服务端，载体请求可能不受支持，客户端仍尝试已授权的直连。
+# 5) 受控打包负向测试（需要 Gradle；用合成 canary，不需要真实 Secrets）
+python3 scripts/test_center_config_packaging.py
+```
 
-验证两者都配置时先显示 Relay；暂停 Relay 后，在 P2P 页和 Android 原 Relay 管理页继续读取短信/发送已授予权限的短信；恢复 Relay 后回到 Relay。发送重试保持原任务 ID、内容、SIM 和有效期，不把不确定结果改成新任务重发。账户/Vault/OTA 等云端管理仍需 Relay。Web Relay 页面显示的 P2P 备用标签是节点报告能力，不等于浏览器已获得双机配对授权。
+`scripts/test_p2p_sandbox.py` 会断言：WebView 资产与类不存在、`android.webkit` 未出现在应用源码、`0.peerjs.com` 未出现、依赖版本精确固定、`SecureHttp`/`CenterTrust`/`PeerSignalingProtocol` 的关键不变量存在、`test_vectors/signaling-v1.json` 存在且 domain 正确。
 
-## 验收步骤与证据
+## 模拟器与 CI 验证
 
-- 跨两种互联网网络测试读取、超过 1,000 条的历史分页，以及 Wi-Fi/移动网络切换后的恢复。
-- 配对只读节点，确认不能通过任何链路发送；撤销后旧凭据和旧网络回调不能恢复连接。
-- 两条链路切换期间保留同一发送任务；状态不明先查状态，不重复发送。
-- Android 17 拒绝本地网络权限时 LAN 不可用，但仍允许公网发现和直连尝试。
-- 两台设备保留前台服务；熄屏、OEM 节电和真实运营商 NAT 需要真机验证。
+`.github/workflows/p2p-preview.yml`：
 
-CI 使用两个独立 GitHub 执行节点，移除 host/relay 候选，验证不同公网地址之间通过 STUN-only DIRECT 双向传输 128 KB 加密数据。通过后才运行 Android 沙盒 12 项测试：真实 Keystore/双扫码/TCP、撤销、发送拒绝、持久回执、1,205 条分页、事件 ACK、Relay 重置隔离、独立载体授权、Relay 优先、无配置无兜底、公网信令，以及跨载体重复发送回执。最后一项使用无效 SIM 通道，不调用真实短信发送。
+- `preview` 作业以 `-PcenterConfigFake=true` 构建预览包，运行沙盒脚本、泄漏扫描与受控打包负向测试，并启动真实 coturn 运行 TURN 沙盒。
+- `android-sandbox` 作业在 API 35 模拟器安装预览包与仪器包，运行 `PeerInstrumentedTest`，要求 `OK (12 tests)`，并在通过后导出 APK、SHA-256 与测试记录。
 
-交付 APK 与模拟器实际安装 APK 为同一个文件，附 SHA-256、Android 输出和两端公网验证 JSON。CI 不证明真实 SIM 送达、所有运营商网络/OEM 行为或商店审核通过。
+仪器测试覆盖：生产 Keystore/双扫码/TCP、撤销、独立 Relay 授权、路由策略、重复短信回执幂等、1,205 行历史分页，以及本轮新增的「原生引擎就绪 + 未授权中心时辅助路径失败关闭 + 默认仅 STUN」。
+
+`.github/workflows/ci.yml` 的 Android 作业同样以 `-PcenterConfigFake=true` 构建，使公开 CI 走与私有构建相同的生成/加载/校验路径。
+
+## 受控打包（需单独授权）
+
+`.github/workflows/p2p-private-packaging.yml` 只接受「完整 40 位 SHA + 该 PR 的已审核 head」的 `workflow_dispatch`，绑定受保护 Environment `p2p-private-packaging`，固定 checkout 该 SHA、禁用 Gradle 缓存，并把敏感工具输出收进 runner 本地受限文件（只打印固定错误码）。产物仅允许 APK 与 SHA-256。
+
+首次使用前需要单独批准：创建受保护 Environment、写入 6 个 Secret（node/controller 的 origin 与 current/backup 两枚 pin）、确认该 workflow 位于受保护 ref。
 
 ## 隐私与状态
 
-Keystore 保护长期身份及独立内容密钥。公共服务能看到 IP、时序、随机配对房间和密文大小，不能解密短信。对方设备会获得直连所需地址。页面进入后台时清除内存短信，少量离线缓存和待确认任务独立加密保存。配对根密钥不含密钥棘轮，泄露后不能声称历史信令/Relay 密文仍有前向保密。
-
-测试连接依赖第三方公共信令与 STUN 的可达性；本项目未自行运营它们，也未提供第三方 SLA。问题报告请注明 APK 版本、两端 Android/WebView 版本、网络类型、发现状态和实际链路，勿提交短信正文、号码或密钥。
+- 管理中心可见：注册关系、绑定公钥/配对关系、IP、时间、流量大小与投递元数据。中心**不**持有配对内容密钥。
+- 观察者可经 DNS/TLS 元数据/证书透明度日志发现域名；本方案不承诺域名不可发现，也不把域名当访问控制。
+- 真机、公网、证书轮换演练与桌面端行为需另行验收；`docs/p2p/ACCEPTANCE.zh-CN.md` 逐项列出当前状态（含 `未运行` 与 `gated` 项）。
+- 短信实时投递受运营商与 OEM 后台策略影响，测试通过不代表送达保证。

@@ -7,6 +7,7 @@ drift in either side fails these tests. Nothing here is a production endpoint.
 """
 import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -207,6 +208,38 @@ class SignalingStoreTest(unittest.TestCase):
         return session
 
     # -- transcripts -------------------------------------------------------
+
+    def test_cross_language_signaling_vectors(self):
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        vector = json.loads((Path(__file__).resolve().parents[1] / "test_vectors" / "signaling-v1.json")
+                            .read_text(encoding="utf-8"))
+        root = base64.urlsafe_b64decode(vector["rootKeyBase64Url"] + "=" * (-len(vector["rootKeyBase64Url"]) % 4))
+        prk = hmac.new(b"simhub-peer-signal-v1", root, hashlib.sha256).digest()
+        derived = hmac.new(prk, b"simhub-peer-signal-v1|aead" + b"\x01", hashlib.sha256).digest()
+        self.assertEqual(b64(derived), vector["derivedKeyBase64Url"])
+        aad = "simhub-peer-signal-v1|" + "".join(lp(value) for value in (
+            vector["version"], vector["domain"], vector["session"], vector["id"], vector["direction"],
+            vector["seq"], vector["expires"], vector["revision"], vector["nonceBase64Url"]))
+        self.assertEqual(aad, vector["aad"])
+        nonce = base64.urlsafe_b64decode(vector["nonceBase64Url"] + "=" * (-len(vector["nonceBase64Url"]) % 4))
+        plaintext = json.dumps(vector["payload"], separators=(",", ":")).encode("utf-8")
+        sealed = AESGCM(derived).encrypt(nonce, plaintext, aad.encode("utf-8"))
+        self.assertEqual(b64(sealed), vector["ciphertextBase64Url"])
+        self.assertEqual(sig.binding_transcript(
+            protocolVersion="center-signaling-v1", bindingId="binding-vector-0000000000000",
+            nodeId="node-vector-0000000000000000000000000000000", nodePublicKey="node-key-vector",
+            controllerPeerId="ctrl-vector-0000000000000000000000000000000",
+            controllerPublicKey="ctrl-key-vector", revision=3, allowed=True,
+            challengeId="challenge-vector-00000000000000", expires=1791264000),
+            vector["bindingTranscriptExample"])
+        self.assertEqual(sig.session_transcript(
+            protocolVersion="center-signaling-v1", role="node", centerId="center.example.invalid",
+            sessionId="session-vector-000000000000", bindingId="binding-vector-0000000000000",
+            nodeId="node-vector-0000000000000000000000000000000", nodePublicKey="node-key-vector",
+            controllerPeerId="ctrl-vector-0000000000000000000000000000000",
+            controllerPublicKey="ctrl-key-vector", revision=3,
+            challengeId="challenge-vector-00000000000000", expires=1791264060),
+            vector["sessionTranscriptExample"])
 
     def test_transcript_helpers_match_length_prefixed_spec(self):
         fields = dict(protocolVersion=VERSION, bindingId="b" * 36, nodeId=self.pair.node_id,

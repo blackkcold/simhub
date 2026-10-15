@@ -32,7 +32,15 @@ object PeerHubGateway {
             // The user explicitly binds the independently authorized Relay from device settings.
             PeerRelayTransport.configured(c,store.peer(peerId))?.let{coordinator.relay(it)}
         }
-        if(p.optBoolean("publicDiscoveryEnabled")){PeerCloudConnector.ensure(c.applicationContext,peerId);PeerCloudConnector.active(peerId)?.let{coordinator.internet(it)}}
+        // Center-assisted signaling is its own authorization. The retired public
+        // discovery flag never enables it, and a missing trusted description or an
+        // untrusted origin simply creates no route.
+        if(p.optBoolean("signalingConsent")){
+            try{
+                PeerCenterConnector.ensure(c.applicationContext,peerId)
+                PeerCenterConnector.active(peerId)?.let{coordinator.internet(it)}
+            }catch(_:Exception){}
+        }
         return coordinator.request(peerId,id,request)
     }
     fun linked(c:Context,origin:String):List<JSONObject>{

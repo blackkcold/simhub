@@ -21,7 +21,7 @@ public final class PeerRpc {
             if(!"NODE".equals(peer.optString("localRole"))||!"ACTIVE".equals(peer.optString("pairState")))throw new SecurityException("peer_not_authorized");
             String action=request.getString("action");Set<String> grants=new HashSet<>(Arrays.asList(peer.getString("permissions").split(",")));
             return switch(action){
-                case "device.state" -> {require(grants,"state");yield state();}
+                case "device.state" -> {require(grants,"state");yield state(peer);}
                 case "sms.page" -> {require(grants,"read");require(grants,"history");yield page(peer,request);}
                 case "events.page" -> {require(grants,"read");yield store.events(peerId,request.optLong("after",0));}
                 case "events.ack" -> {require(grants,"read");store.ackEvents(peerId,request.getJSONArray("sequences"));yield new JSONObject().put("state","acknowledged");}
@@ -33,10 +33,15 @@ public final class PeerRpc {
         }
     }
     private static void require(Set<String> grants,String permission){if(!grants.contains(permission))throw new SecurityException("peer_permission_denied");}
-    private JSONObject state()throws Exception{
+    /** The paired controller learns the binding id only over the authenticated pair channel. */
+    private JSONObject state(JSONObject peer)throws Exception{
         JSONObject full=StateCollector.collect(c),state=new JSONObject();
         for(String field:List.of("androidVersion","sdk","model","appVersion","batteryPct","charging","network","smsRoleHeld","smsMode","smsReadPermission","smsSendPermission","smsSendAllowed","smsDeveloperOverride","subscriptions","channels","smsReceiveOperational"))if(full.has(field))state.put(field,full.get(field));
-        return new JSONObject().put("state","succeeded").put("device",state).put("id",store.myId()).put("relayHint",PeerPairingManager.relayHint(c));
+        return new JSONObject().put("state","succeeded").put("device",state).put("id",store.myId()).put("relayHint",PeerPairingManager.relayHint(c))
+            .put("signaling",new JSONObject().put("capability",PeerCenterProtocol.MODE)
+                .put("consent",peer.optBoolean("signalingConsent",false))
+                .put("bindingId",peer.optString("signalingCenterBinding",""))
+                .put("revision",peer.optInt("signalingConsentRevision",0)));
     }
     private JSONObject page(JSONObject peer,JSONObject req)throws Exception{
         if(!SmsAccessPolicy.canRead(c))return new JSONObject().put("state","rejected").put("reason","read_sms_permission_missing");

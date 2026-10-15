@@ -89,6 +89,15 @@ class PeerActivity:ComponentActivity(){
             val stateResult=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"))
             remoteState=stateResult.optJSONObject("device")
             stateResult.optJSONObject("relayHint")?.let{hint->withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayHint",hint);store().update(fresh)}}
+            // The binding id and revision are learned only over the authenticated pair
+            // channel; they are never inferred from a hint or an unauthenticated origin.
+            stateResult.optJSONObject("signaling")?.let{signaling->withContext(Dispatchers.IO){
+                val bindingId=signaling.optString("bindingId");val revision=signaling.optInt("revision",0)
+                val capability=signaling.optString("capability")
+                if(capability==PeerCenterProtocol.MODE&&signaling.optBoolean("consent")&&bindingId.isNotEmpty()&&revision>=1){
+                    try{store().setSignaling(p.getString("id"),true,bindingId,revision);PeerCenterConnector.ensure(applicationContext,p.getString("id"))}catch(_:Exception){}
+                }
+            }}
             acceptEvents(p)
             withContext(Dispatchers.IO){PeerInboxCache.save(applicationContext,p.getString("id"),inbox)}
         }
@@ -138,7 +147,7 @@ class PeerActivity:ComponentActivity(){
             onDismissRequest={if(!busy)revokeTarget=null},
             title={Text(if(target.optString("pairState")=="PENDING")"取消待确认配对？" else "撤销此设备授权？")},
             text={Text("将立即清除本机此配对的密钥与缓存。远端已下载的内容无法追回；离线远端的清理不代表已经完成。")},
-            confirmButton={Button(onClick={if(!busy){revokeTarget=null;work{withContext(Dispatchers.IO){store().revoke(target.getString("id"));PeerInboxCache.clear(applicationContext,target.getString("id"))};if(selected?.optString("id")==target.optString("id")){inbox.clear();selected=null;tab=0};PeerCloudConnector.closePeer(target.getString("id"));notice="本机授权已撤销；对端离线时仍需单独清理其本地配对数据"}}}){Text("确认撤销")}},
+            confirmButton={Button(onClick={if(!busy){revokeTarget=null;work{withContext(Dispatchers.IO){store().revoke(target.getString("id"));PeerInboxCache.clear(applicationContext,target.getString("id"))};if(selected?.optString("id")==target.optString("id")){inbox.clear();selected=null;tab=0};PeerCenterConnector.closePeer(target.getString("id"));notice="本机授权已撤销；对端离线时仍需单独清理其本地配对数据"}}}){Text("确认撤销")}},
             dismissButton={TextButton(onClick={revokeTarget=null}){Text("保留授权")}}
         )}
         if(compose)AlertDialog(onDismissRequest={if(!busy)compose=false},title={Text("通过已授权 SIM 发送短信")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
@@ -177,7 +186,7 @@ class PeerActivity:ComponentActivity(){
         items(peers,key={it.optString("id")}){p->HubCard(Modifier.fillMaxWidth()){
             Text(p.optString("name"),style=MaterialTheme.typography.titleMedium)
             Text("${if(p.optString("localRole")=="NODE")"已授权管理终端" else "SIM 节点"} · ${pairLabel(p)}",style=MaterialTheme.typography.bodySmall)
-            Text(connectionLabel(p),color=if(PeerCloudConnector.dataChannelOnline(p.optString("id")))MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(connectionLabel(p),color=if(PeerCenterConnector.dataChannelOnline(p.optString("id")))MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             Text(if(p.optBoolean("relayConfigured"))"授权：P2P + Relay · Relay 优先" else "授权：仅 P2P · 未配置备用路径",style=MaterialTheme.typography.bodySmall)
             if(p.optString("pairState")=="PENDING")Text("等待节点扫描响应二维码；完成双向确认后才能读取短信。",style=MaterialTheme.typography.bodySmall)
             if(selected?.optString("id")==p.optString("id"))remoteState?.let{state->
@@ -210,17 +219,17 @@ class PeerActivity:ComponentActivity(){
     }
     @Composable private fun ConnectionScreen(){LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{HubCard(Modifier.fillMaxWidth()){
-            Text("自动公网 P2P",style=MaterialTheme.typography.titleMedium)
-            Text("双机扫码后自动交换加密连接信息，并通过 STUN 尝试公网直连。无需填写地址、部署服务器或开放端口。")
-            Text("默认使用 PeerJS Cloud 公共信令和 Google / Cloudflare STUN；服务可见 IP 与连接元数据，无法解密短信。未配置 Relay 时不使用 TURN、信箱或数据转发，直连失败即失败。")
+            Text("管理中心辅助直连",style=MaterialTheme.typography.titleMedium)
+            Text("双机扫码后复用已注册的管理中心与账户交换端到端加密的建连信令，再通过原生 WebRTC 与 STUN 尝试局域网/公网直连。无需填写地址、部署服务器或开放端口。")
+            Text("不新增公共信令服务；未配置 Relay 时不使用 TURN、信箱或数据转发，直连失败即失败。管理中心可见注册关系、IP 与流量元数据，但无法解密信令或短信。")
             Text("Relay 独立配置；同时配置时优先 Relay，失败后尝试已授权 P2P。")
             (selected?.let{listOf(it)}?:emptyList()).filter{it.optString("pairState")!="REVOKED"}.forEach{p->
                 Text("${p.optString("name")} · ${connectionLabel(p)}")
                 Text("P2P 授权：${pairLabel(p)} · 读取${if(p.optString("permissions").split(",").contains("send"))"、发送" else "（只读）"}",style=MaterialTheme.typography.bodySmall)
                 Text("发现服务：${p.optString("discoveryState","WAITING")} · 上次成功传输：${routeLabel(p.optString("activeTransport"))}",style=MaterialTheme.typography.bodySmall)
                 Text("设备身份：${p.optString("id").take(16)}…",style=MaterialTheme.typography.labelSmall)
-                if(p.optBoolean("publicDiscoveryEnabled")){
-                    OutlinedButton(onClick={work{withContext(Dispatchers.IO){PeerCloudConnector.ensure(applicationContext,p.getString("id"));PeerCloudConnector.reconnect(p.getString("id"))};notice="已重新尝试发现与 P2P 直连；仅信令就绪不等于可读取短信"}}){Text("重新尝试直连")}
+                if(p.optBoolean("signalingConsent")){
+                    OutlinedButton(onClick={work{withContext(Dispatchers.IO){PeerCenterConnector.ensure(applicationContext,p.getString("id"));PeerCenterConnector.reconnect(p.getString("id"))};notice="已重新尝试辅助建连；仅信令就绪不等于可读取短信"}}){Text("重新尝试直连")}
                 }
                 if(p.optString("localRole")=="CONTROLLER"){
                     val relayOrigin=p.optString("relayOrigin",ControllerProfiles.selected(this@PeerActivity)?:"")
@@ -228,7 +237,16 @@ class PeerActivity:ComponentActivity(){
                     if(p.optBoolean("relayConfigured"))OutlinedButton(onClick={work{withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayConfigured",false).remove("relayOrigin");fresh.remove("relayDeviceId");fresh.put("relayAssociationDisabled",true).put("relayBindingState","NONE").put("policy","P2P_ONLY");store().update(fresh)};notice="已取消此节点 Relay 关联，仅使用 P2P"}}){Text("取消此节点 Relay 关联")}
                     else OutlinedButton(onClick={work{withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayAssociationDisabled",false);store().update(fresh);if(!PeerRelayTransport.associate(applicationContext,fresh))throw IllegalStateException("尚未在两端独立授权 Relay，或 Relay 设备身份未匹配。可重新配对获取节点标识")};notice="已验证同一节点身份；Relay 优先，P2P 备用"}}){Text("关联此节点已授权的 Relay")}
                 }
-                if(!p.optBoolean("publicDiscoveryEnabled"))OutlinedButton(onClick={work{withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("publicDiscoveryEnabled",true);store().update(fresh)};PeerService.start(this@PeerActivity);notice="已允许此配对使用上述公共信令发现；两端均需启用"}}){Text("允许此旧配对使用公网发现")}
+                if(!p.optBoolean("signalingConsent")){
+                    val trust=CenterTrustStore.get(applicationContext).effective()
+                    val centerOrigin=p.optString("relayOrigin","")
+                    if(trust!=null&&trust.covers(CenterTrust.ROLE_CONTROLLER,centerOrigin))
+                        OutlinedButton(onClick={work{withContext(Dispatchers.IO){
+                            val next=store().peer(p.getString("id")).optInt("signalingConsentRevision",0)+1
+                            store().setSignaling(p.getString("id"),true,"",next)
+                        };PeerService.start(this@PeerActivity);notice="已授权此配对使用管理中心辅助建连；仅授权信令，不授权 TURN 或业务中继"}}){Text("授权管理中心辅助直连")}
+                    else OutlinedButton(onClick={notice="缺少可信中心配置：请先导入可信配置或可信二维码（CENTER_SETUP_REQUIRED）"}){Text("管理中心未配置")}
+                }
             }
             OutlinedButton(onClick={startActivity(Intent(this@PeerActivity,ControllerActivity::class.java))}){Text("配置 Relay（可选）")}
         }}
@@ -236,14 +254,16 @@ class PeerActivity:ComponentActivity(){
     }}
     private fun pairLabel(p:JSONObject)=when(p.optString("pairState")){"PENDING"->"待双向确认";"ACTIVE"->"已配对";"REVOKED"->"已撤销";else->"待配对"}
     private fun connectionLabel(p:JSONObject):String {
-        if(PeerCloudConnector.dataChannelOnline(p.optString("id")))return "设备 P2P 直连已建立"
+        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "设备 P2P 直连已建立"
         val last=p.optLong("lastSyncAt",0)
         val recentlyUsed=last>0&&System.currentTimeMillis()/1000-last<30
         if(recentlyUsed)return "最近通过${routeLabel(p.optString("activeTransport"))}通信"
         return when(p.optString("discoveryState")){
-            "READY"->"公网发现就绪 · 尚未确认数据连接"
+            "READY"->"信令就绪 · 尚未确认数据连接"
+            "WAITING"->"等待管理中心辅助建连"
+            "SETUP_REQUIRED"->"需要可信中心配置（CENTER_SETUP_REQUIRED）"
             "CONNECTING"->"正在寻找设备"
-            "UNAVAILABLE"->"公网发现服务不可用"
+            "UNAVAILABLE"->"辅助建连不可用"
             else->"未连接 · 等待设备上线"
         }
     }

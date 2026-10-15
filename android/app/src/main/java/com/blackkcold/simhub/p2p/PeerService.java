@@ -56,7 +56,7 @@ public final class PeerService extends Service {
             nsd.registerService(info,NsdManager.PROTOCOL_DNS_SD,registration);
             }
             connectivity=getSystemService(ConnectivityManager.class);
-            networkCallback=new ConnectivityManager.NetworkCallback(){public void onAvailable(Network n){PeerCloudConnector.networkChangedAll();}public void onLost(Network n){PeerCloudConnector.networkChangedAll();}};
+            networkCallback=new ConnectivityManager.NetworkCallback(){public void onAvailable(Network n){PeerCenterConnector.networkChangedAll();}public void onLost(Network n){PeerCenterConnector.networkChangedAll();}};
             connectivity.registerDefaultNetworkCallback(networkCallback);
             refresh();
             relayPump.scheduleWithFixedDelay(()->{try{
@@ -67,12 +67,16 @@ public final class PeerService extends Service {
         }catch(Exception e){failure=e instanceof SecurityException?"local_network_permission_required":"listener_start_failed";stopSelf();}
     }
     private void refresh(){com.blackkcold.simhub.AgentExecutors.io().execute(()->{
+        try{PeerStore.get(this).migrateSignalingConsent();}catch(Exception ignored){}
         JSONArray peers=PeerStore.get(this).list();for(int i=0;i<peers.length();i++)try{
-            JSONObject p=peers.getJSONObject(i);if(!"REVOKED".equals(p.optString("pairState"))&&p.optBoolean("publicDiscoveryEnabled"))PeerCloudConnector.ensure(this,p.getString("id"));
+            JSONObject p=peers.getJSONObject(i);
+            // Only an explicit signaling authorization starts the auxiliary path; the
+            // retired public-discovery flag never does.
+            if(!"REVOKED".equals(p.optString("pairState"))&&p.optBoolean("signalingConsent"))PeerCenterConnector.ensure(this,p.getString("id"));
         }catch(Exception ignored){}
         try{if(new com.blackkcold.simhub.AgentConfig(this).isEnrolled())new com.blackkcold.simhub.ApiClient(this).putState();}catch(Exception ignored){}
     });}
     public int onStartCommand(Intent i,int flags,int id){refresh();return START_NOT_STICKY;}
-    public void onDestroy(){running=null;relayPump.shutdownNow();PeerCloudConnector.closeAll();PeerInternetConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    public void onDestroy(){running=null;relayPump.shutdownNow();PeerCenterConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
     public IBinder onBind(Intent i){return null;}
 }

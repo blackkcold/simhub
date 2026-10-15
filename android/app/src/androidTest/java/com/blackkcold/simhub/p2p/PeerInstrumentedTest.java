@@ -36,7 +36,7 @@ public final class PeerInstrumentedTest {
         assertEquals(controllerId,manager.accept(replyQr));assertTrue(Arrays.equals(root,store.key(controllerId)));
         try{manager.accept(replyQr);fail("replayed QR must fail");}catch(SecurityException expected){}
     }
-    @After public void tearDown()throws Exception{PeerCloudConnector.closePeer(controllerId);server.close();store.revoke(controllerId);Arrays.fill(root,(byte)0);}
+    @After public void tearDown()throws Exception{PeerCenterConnector.closePeer(controllerId);server.close();store.revoke(controllerId);Arrays.fill(root,(byte)0);}
     private JSONObject rpc(JSONObject req)throws Exception{
         return rpc(UUID.randomUUID().toString(),req);
     }
@@ -129,23 +129,25 @@ public final class PeerInstrumentedTest {
         try{store.update(old);fail("Stale network callback restored authorization");}catch(SecurityException expected){}
         assertEquals("REVOKED",store.peer(controllerId).getString("pairState"));
     }
-    @Test public void testDefaultPublicSignalingStartsWithoutRelayOrAddress()throws Exception{
-        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();assertFalse(new com.blackkcold.simhub.AgentConfig(c).isEnrolled());
-        PeerCloudConnector.ensure(c,controllerId);long deadline=System.currentTimeMillis()+20000;
-        while(System.currentTimeMillis()<deadline&&!"READY".equals(store.peer(controllerId).optString("discoveryState")))Thread.sleep(100);
-        assertEquals("READY",store.peer(controllerId).getString("discoveryState"));assertEquals("P2P_ONLY",store.peer(controllerId).getString("policy"));assertFalse(PeerCloudProtocol.iceServers().toString().contains("turn:"));
-        PeerCloudConnector connector=PeerCloudConnector.active(controllerId);deadline=System.currentTimeMillis()+15000;
-        while(connector.transport()==null&&System.currentTimeMillis()<deadline)Thread.sleep(100);
-        HubTransport original=connector.transport();assertNotNull(original);
-        // A socket state of READY alone does not prove that the actual WebView engine
-        // loaded p2p.js under its strict CSP. Verify the production native bridge.
-        assertTrue("Expected WebRTC engine",original instanceof PeerWebRtcTransport);
-        deadline=System.currentTimeMillis()+10000;
-        while(!((PeerWebRtcTransport)original).isBundledScriptLoaded()&&System.currentTimeMillis()<deadline)Thread.sleep(100);
-        assertTrue("Trusted bundled JS not loaded",((PeerWebRtcTransport)original).isBundledScriptLoaded());
-        PeerCloudConnector.networkChangedAll();deadline=System.currentTimeMillis()+20000;
-        while(System.currentTimeMillis()<deadline&&(connector.transport()==null||connector.transport()==original||!"READY".equals(store.peer(controllerId).optString("discoveryState"))))Thread.sleep(100);
-        assertNotNull(connector.transport());assertNotSame("Old network ICE session must be rebuilt",original,connector.transport());assertEquals("READY",store.peer(controllerId).getString("discoveryState"));
+    @Test public void testNativeEngineRequiresTrustedCenterAndNeverOffersTurn()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        // The engine is native and data-only. No WebView, no bundled script, no remote code.
+        PeerNativeRtcTransport transport=new PeerNativeRtcTransport(c,store.peer(controllerId),false,signal->{});
+        try{assertTrue("native WebRTC engine must initialize",transport.engineReady());}finally{transport.close();}
+        String ice=PeerCenterProtocol.iceServers(c,controllerId).toString();
+        assertTrue(ice.contains("stun:"));assertFalse(ice.contains("turn:"));assertFalse(ice.contains("turns:"));
+        // The auxiliary path is not authorized without a trusted description: an
+        // enrolled address or a pairing hint is never trust.
+        assertNull(com.blackkcold.simhub.CenterTrustStore.get(c).effective());
+        assertEquals("P2P_ONLY",store.peer(controllerId).getString("policy"));
+        assertFalse(store.peer(controllerId).optBoolean("signalingConsent"));
+        try{PeerCenterConnector.ensure(c,controllerId);fail("untrusted center enabled the auxiliary path");}catch(SecurityException expected){}
+        // The upgrade that retires the old discovery flag is idempotent and never
+        // turns the new path on by itself.
+        assertTrue(store.migrateSignalingConsent()>=0);
+        assertEquals(0,store.migrateSignalingConsent());
+        assertFalse(store.peer(controllerId).optBoolean("signalingConsent"));
+        assertEquals("",store.peer(controllerId).optString("signalingCenterBinding"));
     }
     @Test public void testMoreThan1000ProviderRowsThroughEncryptedPagination()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();List<Uri> inserted=new ArrayList<>();

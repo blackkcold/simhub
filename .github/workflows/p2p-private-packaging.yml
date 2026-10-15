@@ -1,0 +1,134 @@
+name: P2P private packaging (approved)
+
+# Controlled injection of the real trusted-center description. This is the only
+# workflow that may read the packaging secrets, and it never runs for a pull
+# request or an unreviewed ref.
+#
+# Required repository setup before first use (separate approval, not done here):
+#   * protected Environment named `p2p-private-packaging` with required reviewers
+#     and a deployment branch/tag restriction;
+#   * Environment secrets P2P_NODE_ORIGIN, P2P_NODE_PIN_CURRENT, P2P_NODE_PIN_BACKUP,
+#     P2P_CONTROLLER_ORIGIN, P2P_CONTROLLER_PIN_CURRENT, P2P_CONTROLLER_PIN_BACKUP;
+#   * this workflow file present on a protected ref.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character commit SHA that was reviewed
+        required: true
+      pull_number:
+        description: Pull request number the SHA must belong to
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Validate the approved source reference
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PULL_NUMBER: ${{ inputs.pull_number }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$SOURCE_SHA" in
+            *[!0-9a-f]*|"") echo "SOURCE_SHA_INVALID"; exit 1 ;;
+          esac
+          [ "${#SOURCE_SHA}" -eq 40 ] || { echo "SOURCE_SHA_INVALID"; exit 1; }
+          case "$PULL_NUMBER" in *[!0-9]*|"") echo "PULL_NUMBER_INVALID"; exit 1 ;; esac
+          head=$(curl -fsSL -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls/$PULL_NUMBER" | python3 -c 'import json,sys;print(json.load(sys.stdin)["head"]["sha"])')
+          [ "$head" = "$SOURCE_SHA" ] || { echo "SOURCE_SHA_NOT_THE_REVIEWED_HEAD"; exit 1; }
+          {
+            echo "## P2P private packaging request"
+            echo ""
+            echo "PR: #$PULL_NUMBER"
+            echo "Source SHA: \`$SOURCE_SHA\`"
+            echo "Workflow SHA: \`$GITHUB_SHA\`"
+            echo ""
+            echo "Approval is bound to the commit above; a moved branch is not accepted."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  package:
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: p2p-private-packaging
+    permissions:
+      contents: read
+    steps:
+      # Pinned to the reviewed commit, with credentials not persisted.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        with: {packages: 'platform-tools'}
+      - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: '9.6.0'
+          cache-disabled: true
+      - name: Re-verify the checked out commit
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}" ] || { echo "SOURCE_SHA_CHANGED"; exit 1; }
+      # The sensitive tool output is captured to a restricted temporary file so raw
+      # diagnostics never stream into the public Actions log. Only fixed codes and
+      # non-sensitive counts are printed afterwards.
+      - name: Build the private package
+        env:
+          P2P_NODE_ORIGIN: ${{ secrets.P2P_NODE_ORIGIN }}
+          P2P_NODE_PIN_CURRENT: ${{ secrets.P2P_NODE_PIN_CURRENT }}
+          P2P_NODE_PIN_BACKUP: ${{ secrets.P2P_NODE_PIN_BACKUP }}
+          P2P_CONTROLLER_ORIGIN: ${{ secrets.P2P_CONTROLLER_ORIGIN }}
+          P2P_CONTROLLER_PIN_CURRENT: ${{ secrets.P2P_CONTROLLER_PIN_CURRENT }}
+          P2P_CONTROLLER_PIN_BACKUP: ${{ secrets.P2P_CONTROLLER_PIN_BACKUP }}
+        run: |
+          set -u
+          log=$(mktemp)
+          chmod 600 "$log"
+          gradle -p android -PcenterConfigPackaging=true --console=plain --no-build-cache \
+            :app:assembleRelease >"$log" 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            grep -oE 'CENTER_CONFIG_[A-Z_]+|BUILD FAILED' "$log" | sort -u || echo "PACKAGING_FAILED"
+            rm -f "$log"
+            exit 1
+          fi
+          echo "PACKAGING_OK"
+          rm -f "$log"
+      - name: Leak checks on the produced package
+        run: |
+          set -euo pipefail
+          python3 scripts/test_center_config_leak.py
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          [ -f "$apk" ] || { echo "APK_MISSING"; exit 1; }
+          if unzip -p "$apk" assets/center-config.json | grep -qE '"pins":\["[^"]{40,}"\]'; then
+            echo "CENTER_CONFIG_PRESENT"
+          else
+            echo "CENTER_CONFIG_MISSING"; exit 1
+          fi
+          # The package must not carry a node token, device token or private key.
+          if unzip -p "$apk" assets/center-config.json | grep -qiE 'token|private|secret|BEGIN'; then
+            echo "CENTER_CONFIG_CONTAINS_SECRET"; exit 1
+          fi
+          sha256sum "$apk" > center-apk-sha256.txt
+          echo "APK_SHA256_WRITTEN"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: simhub-private-package
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            center-apk-sha256.txt
+          if-no-files-found: error

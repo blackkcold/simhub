@@ -28,6 +28,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening server.test_controller_auth server.test_controller_http server.test_global_vault
       - run: PYTHONPATH=server python3 -m unittest -v server.test_peer_signaling server.test_peer_signaling_http
+      - run: python3 scripts/test_center_config_leak.py
       - run: PYTHONPATH=server python3 server/test_auth_stages.py
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
       - run: python3 scripts/test_updater.py
@@ -77,7 +78,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
           gradle-version: '9.6.0'
-      - run: gradle -p android :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace
+      - run: gradle -p android -PcenterConfigFake=true :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: simhub-agent-debug

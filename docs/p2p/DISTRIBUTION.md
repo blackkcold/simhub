@@ -13,10 +13,6 @@ as an approved exception. Store builds must disable external APK installation,
 GitHub self-update and compatibility/ADB experiments, and use store updates.
 Plan Play App Signing/upgrade certificates before a public store release.
 
-Foreground specialUse purpose and local network permissions need store review
-and platform-specific testing. A new transport cannot bypass Android protected
-SMS/OTP or background restrictions. The preview uses the existing third-party PeerJS Cloud and public STUN services
-for automatic discovery, with no default TURN or content relay. Their availability
-is outside SIM Hub control; high-traffic distribution should evaluate an operated
-signaling provider, capacity and abuse controls. Source tests do not establish
-real-SIM/OEM reliability or store acceptance.
+Foreground specialUse purpose and local network permissions need store review and platform-specific testing. A new transport cannot bypass Android protected SMS/OTP or background restrictions. The preview no longer uses any public signaling service: it reuses the already registered management center for encrypted SDP/ICE exchange and offers only public STUN (no default TURN, no content relay). Center availability is the operator's own infrastructure; the bundled STUN hosts are third-party and outside SIM Hub control. Source tests do not establish real-SIM/OEM reliability or store acceptance.
+
+A private packaging build carries the real center origin and its two SPKI pins, injected only through a protected GitHub Environment. That APK necessarily contains the host name, which is an accepted exception to the "no domain in public source or logs" rule; the host is still not an access-control mechanism. Public CI and preview builds carry only a fake description derived from the checked-in test certificate.

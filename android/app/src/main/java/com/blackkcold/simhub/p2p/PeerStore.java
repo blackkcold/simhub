@@ -114,5 +114,40 @@ public final class PeerStore extends SQLiteOpenHelper {
     }
     public synchronized void clearOutbound(String peer,String id){getWritableDatabase().delete("outbox","peer=? AND id=?",new String[]{peer,id});}
     public synchronized void markTransport(String id,String route)throws Exception{JSONObject p=peer(id);if(!"ACTIVE".equals(p.optString("pairState")))return;p.put("activeTransport",route).put("lastSyncAt",System.currentTimeMillis()/1000);update(p);}
+    /**
+     * Center-assisted signaling state for one pair. Authorization is explicit and
+     * never inferred from the retired public-discovery flag.
+     */
+    public synchronized JSONObject signaling(String id)throws Exception{
+        JSONObject p=peer(id);
+        return new JSONObject().put("mode",PeerSignalingProtocol.MODE)
+            .put("consent",p.optBoolean("signalingConsent",false))
+            .put("bindingId",p.optString("signalingCenterBinding",""))
+            .put("revision",p.optInt("signalingConsentRevision",0));
+    }
+    /** Consent is a distinct authorization; a change invalidates pending sessions. */
+    public synchronized void setSignaling(String id,boolean consent,String bindingId,int revision)throws Exception{
+        if(consent&&(revision<1||revision>2147483647))throw new SecurityException("signaling_revision_invalid");
+        JSONObject p=peer(id);
+        int previous=p.optInt("signalingConsentRevision",0);
+        if(p.has("signalingConsentRevision")&&revision<=previous)throw new SecurityException("signaling_revision_stale");
+        p.put("signalingConsent",consent).put("signalingConsentRevision",revision).put("signalingCenterBinding",bindingId==null?"":bindingId);
+        update(p);
+    }
+    /**
+     * Idempotent upgrade of pre-signaling profiles. The retired public-discovery flag
+     * is kept for audit but never enables the new path: signaling consent starts false.
+     */
+    public synchronized int migrateSignalingConsent()throws Exception{
+        int changed=0;JSONArray peers=list();
+        for(int i=0;i<peers.length();i++){
+            JSONObject p=peers.getJSONObject(i);
+            if(p.has("signalingConsent"))continue;
+            p.put("signalingConsent",false).put("signalingConsentRevision",0).put("signalingCenterBinding","");
+            if(p.has("publicDiscoveryEnabled"))p.put("publicDiscoveryRetired",p.optBoolean("publicDiscoveryEnabled"));
+            update(p);changed++;
+        }
+        return changed;
+    }
     public Context context(){return context;}
 }

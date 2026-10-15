@@ -4,19 +4,30 @@
 
 Long-term P-256 signing identities use Android Keystore alias `simhub-p2p-identity-v1`. IDs are base64url SHA-256 of DER public keys. Signed double QR and ephemeral ECDH bind the session, expiry, both identities/ephemeral keys and the exact permissions. HKDF-SHA256 derives a pair-specific content root, independently Keystore-wrapped from Enrollment, Node Key and Global Vault.
 
-TCP uses an authenticated fresh ECDH hello for each RPC. WebRTC uses DTLS plus application AES-256-GCM. Frames bind domain, sender, recipient, logical request ID and expiry. Bounded frame sizes, timeouts and worker/queue quotas apply. The bridge accepts only the bundled appassets main-frame origin.
+TCP uses an authenticated fresh ECDH hello for each RPC. WebRTC uses DTLS plus application AES-256-GCM. Frames bind domain, sender, recipient, logical request ID and expiry. Bounded frame sizes, timeouts and worker/queue quotas apply.
 
-## Default public discovery
+## Native engine
 
-The WSS endpoint is `wss://0.peerjs.com/peerjs`; public STUN endpoints are Google `stun:stun.l.google.com:19302` and Cloudflare `stun:stun.cloudflare.com:3478`. No user configuration is required. QR `networkMode: PUBLIC_DIRECT_V1` advertises consent to discovery; old pairings require explicitly enabling it.
+The data channel is produced by `PeerNativeRtcTransport` on top of `io.github.webrtc-sdk:android` (pinned exact version). There is no WebView, no bundled script and no remote code load: the previous WebView engine, its assets and its JavaScript bridge are deleted. Data-only semantics are preserved — no audio or video track is created and no capture permission is requested. A single serial execution domain owns the engine, with an epoch counter that discards callbacks from a superseded connection, so `init`/`signal`/`restart`/`close` cannot leave a hanging future or duplicate RPC. LAN/DIRECT/TURN classification comes from the selected candidate pair in the real RTC statistics; an unknown route is never assumed to be DIRECT, and a TURN candidate is refused unless the route is separately authorized.
 
-Room IDs use pair-root HKDF with salt `simhub-discovery-v1`, info `simhub-peer-v1|peerjs-room|<identity>`, then an opaque UUID with RFC UUID version/variant bits. Every pair has separate directional rooms.
+ICE configuration offers approved STUN only. The published defaults are Google `stun:stun.l.google.com:19302` and Cloudflare `stun:stun.cloudflare.com:3478`; a profile may carry an explicitly approved STUN list, and `turn:`/`turns:` entries are dropped rather than enabled. No TURN credential is embedded and no signaling response can add one.
 
-PeerJS Cloud requires a normal data OFFER envelope. The outer payload contains constant placeholder SDP (`v=0`), data-channel labels and `metadata.simhub` carrying the authenticated encrypted real signal. Encrypted signal actions contain only OFFER/ANSWER/CANDIDATE. They cannot carry SMS, RPC or arbitrary application content. Receivers verify the exact source/destination rooms, frame authentication and signal type; replay IDs are bounded and remembered. The placeholder SDP never participates in the actual RTC connection.
+## Center-auxiliary signaling
 
-Signaling READY and transport DIRECT are distinct states. ICE selected-pair confirmation precedes data processing. Delayed stats are retried briefly; old connection callbacks are ignored. Disconnects permit a fresh connection; network changes reconnect discovery. No default TURN, HTTPS content relay or mailbox is used.
+Signaling reuses the already registered center. Both roles keep their existing credentials (node Device token; controller admin session plus CSRF) and create a short-lived, pair-scoped session; the center never receives the pair content root and never carries business data.
 
-PeerJS/STUN operators can observe connection IP, timing, opaque room IDs, packet size and STUN mapping. PeerJS receives encrypted real SDP/ICE, not plaintext fingerprints or candidate IPs. The remote paired peer necessarily learns its counterpart's usable ICE candidates. Pair-root encryption of signaling/Relay-carried frames does not supply a ratchet or forward secrecy after root compromise.
+- **Purpose separation.** `PeerSignalingProtocol` derives its own AES key with HKDF-SHA256 under the fixed label `simhub-peer-signal-v1` and its own outer domain. The business wire format (`PeerProtocol`, domain `simhub-peer-v1`) is unchanged, so a business ciphertext can never open as signaling and vice versa. Test vectors in `test_vectors/signaling-v1.json` are checked byte for byte from Python and Java.
+- **Authenticated outer.** Version, domain, session, message id, direction, sequence, expiry, consent revision and nonce all enter the AEAD as authenticated data; only delivery metadata stays outside the ciphertext.
+- **Admitted content.** The plaintext admits `OFFER`, `ANSWER`, `ICE`, `END_OF_CANDIDATES` and `CLOSE` only. RPC actions (`sms.send`, `history`, `peer.rpc`, …) are rejected by a strict parser. A signaling frame never enters `PeerRpc.dispatch`.
+- **Node side.** The node registers one binding per allowed controller: it proves possession of its P2P key over a signed transcript and submits `allowedControllerPeerId`/`allowedControllerPublicKey`, `consentRevision` and a one-time challenge. The server enforces that a device always keeps the same node identity and that a node identity cannot move to another device.
+- **Controller side.** The controller requests a binding-scoped challenge, builds a session with its own signed transcript and receives a one-time session token scoped to that session. Frame send/ack/close require that token in addition to the admin session.
+- **Receiver-side checks.** Message id and sequence deduplication plus expiry validation happen on the receiver, not only on the server. A retransmission keeps the same id, sequence and nonce.
+- **Limits.** 300 s session, 120 s message, 64 KiB frame, 32 unacked frames and 2 MiB per direction, 2 MiB per direction and 64 MiB globally, 2 concurrent sessions per node, 60 frames/minute/pair, 10 sessions/minute/node, 8 bindings/device. These budgets are independent of the `peer_connect.py` mailbox quotas.
+- **Revocation.** Revoking a pairing, a registration, a controller grant or the signaling consent invalidates the binding's sessions and queued frames; the node re-checks the grant before delivering a polled frame, and the server expires everything anyway.
+
+A signaling session being READY is not the data channel being online. Only the selected candidate pair makes the route DIRECT, and only a live data channel makes `request()` succeed. Signaling consent is a distinct per-pair flag that defaults to `false`; the retired `publicDiscoveryEnabled` flag never enables the new path. Without a trusted description for the exact origin, the auxiliary path reports `CENTER_SETUP_REQUIRED` and the LAN capability is left untouched.
+
+The center visible to an observer learns the registration relationship, the bound public keys, IP addresses, timing, frame sizes and delivery metadata. It does not learn the pair content key, and this document does not claim the center is unaware of which pairs exist.
 
 ## Optional existing Relay
 
@@ -24,7 +35,11 @@ A signed QR/state hint contains only Relay origin/device ID, never credentials. 
 
 When configured and authorized, Relay is preferred. `peer.rpc` wraps a P2P AEAD request in the existing Node Key encrypted command. Carrier IDs use an independent `pw-` digest namespace; inner logical IDs are preserved on direct retries. Device-authenticated POST stores a bounded short-lived ciphertext response; admin-authenticated GET reads it. Responses are immutable, request-digest bound and scoped to device/command; reset/revocation rejects access. The server neither accepts content keys nor exposes responses in ordinary command history.
 
-Deploy the feature branch's compatible Relay server for this optional carrier. An older server may reject `peer.rpc`, allowing direct P2P to be attempted. Public P2P does not require deploying any server. The historical independent `peer_connect.py`/TURN/mailbox source remains available for compatibility tests and is not the default flow.
+Deploy the feature branch's compatible Relay server for this optional carrier. An older server may reject `peer.rpc`, allowing direct P2P to be attempted. The `read`/`history`/`state`/`send` grants and the bounded encrypted signaling store are the only state the feature adds to the server.
+
+## Trusted center description
+
+`CenterTrust` is the only source of pinning. It carries, per role, one exact canonical `https://host[:port]` origin and at least two distinct SPKI SHA-256 pins. It arrives either as a generated configuration asset (controlled packaging) or as a versioned trusted QR description delivered out of band; a pairing hint and an enrolled address are never promoted to trust. Parsing rejects a non-HTTPS or non-canonical origin, a path/query/fragment/userinfo origin, fewer than two pins, duplicate pins, and a shared origin whose two roles disagree on the pin set. A description may name one or both roles; an absent role stays unauthorized.
 
 ## Grants and receipts
 
@@ -34,4 +49,4 @@ Outbound requests are encrypted and keep their original expiry. Unconfirmed expi
 
 A Relay directory lists only enrolled devices. Reported P2P backup capability cannot reveal an unregistered P2P-only device, grant a browser permission or prove a live route.
 
-References: [PeerServer Cloud](https://peerjs.com/server/cloud), [ICE RFC 8445](https://www.rfc-editor.org/rfc/rfc8445).
+References: [ICE RFC 8445](https://www.rfc-editor.org/rfc/rfc8445), [Android Network Security Configuration](https://developer.android.com/privacy-and-security/security-config).

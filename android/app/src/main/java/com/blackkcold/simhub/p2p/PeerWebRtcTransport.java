@@ -50,7 +50,15 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
         settings.setSafeBrowsingEnabled(true);
         view.setWebViewClient(new WebViewClient(){public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
             public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
-                if((ORIGIN+"/p2p.html").equals(r.getUrl().toString()))try{return new WebResourceResponse("text/html","UTF-8",c.getAssets().open("p2p.html"));}catch(IOException ignored){}
+                // No remote scripts or dynamic URLs: the two immutable APK assets are the
+                // entire WebRTC engine. This also enforces script-src 'self' without unsafe-inline.
+                String url=r.getUrl().toString();
+                try {
+                    if((ORIGIN+"/p2p.html").equals(url))
+                        return new WebResourceResponse("text/html","UTF-8",c.getAssets().open("p2p.html"));
+                    if((ORIGIN+"/p2p.js").equals(url))
+                        return new WebResourceResponse("application/javascript","UTF-8",c.getAssets().open("p2p.js"));
+                } catch(IOException ignored){}
                 return new WebResourceResponse("text/plain","UTF-8",403,"Forbidden",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
             }});
         // ReplyProxy is accepted only from the trusted main-frame origin.

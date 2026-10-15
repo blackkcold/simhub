@@ -173,6 +173,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var commandHistoryError by remember(selected){mutableStateOf("")}
     var expandCommands by remember(selected){mutableStateOf(false)}
     var commandTick by remember(selected){mutableIntStateOf(0)}
+    var pendingLoad by remember(selected){mutableStateOf("")}
     // Controller-only screen capture protection, including Android Recents.
     DisposableEffect(context,visible){
         val window=(context as? Activity)?.window
@@ -200,7 +201,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val observer=LifecycleEventObserver{_,event->
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
                 selected?.let{ControllerAccessGate.clear(it)}
-                localUnlocked=false;inbox.clear();lastEventSeq=0L
+                localUnlocked=false;inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""
             }
         }
         activity?.lifecycle?.addObserver(observer)
@@ -211,7 +212,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         selected=value;onSelectTab(0)
     }
     // Exactly one load at a time. A second user request is queued, never discarded.
-    var pendingLoad by remember(selected){mutableStateOf("")}
     var peerBackupActive by remember(selected){mutableStateOf(false)}
     var peerBackupUntil by remember(selected){mutableLongStateOf(0L)}
     val peerBackupCursors=remember(selected){mutableMapOf<String,JSONObject?>()}
@@ -290,6 +290,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 val thread=ControllerConversation.key(item.optString("deviceId"),ch,rev,address)
                                 messages.put(JSONObject().put("id",item.optString("deviceId")+":"+item.optString("eventId"))
                                     .put("thread",thread).put("sender",plaintext.optString("contactName").ifBlank{address}.take(100))
+                                     .put("address",address.take(120))
                                     .put("body",if(failed)"" else plaintext.optString("body").take(4000))
                                     .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
                                     .put("device",node?.optString("name")?.take(100)?:"未知设备")
@@ -583,7 +584,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 Column(Modifier.padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
                     HubIcon(R.drawable.ic_hub_shield,Modifier.size(44.dp))
                     Spacer(Modifier.height(18.dp))
-                    Text("连接管理中心",style=MaterialTheme.typography.titleLarge)
+                    Text(hubLabel("连接管理中心","Connect management center"),style=MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(12.dp))
                     Button(onClick=onScan){Text(hubLabel("扫描配置二维码","Scan configuration QR"))}
                     TextButton(onClick={add=true}){Text(hubLabel("输入管理地址","Enter management URL"))}
@@ -594,11 +595,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 Column(Modifier.padding(22.dp).widthIn(max=460.dp),
                     verticalArrangement=Arrangement.spacedBy(14.dp)){
                     HubIcon(R.drawable.ic_hub_shield,Modifier.size(40.dp))
-                    Text("安全授权管理终端",style=MaterialTheme.typography.titleLarge)
-                    Text("在本机浏览器中登录管理后台（可使用已注册的 Passkey/指纹），解锁共享 Vault 后批准此手机。无需第二台设备。",
+                    Text(hubLabel("安全授权管理终端","Authorize controller securely"),style=MaterialTheme.typography.titleLarge)
+                    Text(hubLabel("在本机浏览器中登录管理后台（可使用已注册的 Passkey/指纹），解锁共享 Vault 后批准此手机。无需第二台设备。",
+                        "Sign in in this phone’s browser, unlock the shared Vault, and approve this device. No second phone is required."),
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     if(pairing!=null){
-                        Text("配对码  ${pairing!!.code}",
+                        Text(hubLabel("配对码  ","Pairing code  ")+pairing!!.code,
                             style=MaterialTheme.typography.headlineMedium)
                         OutlinedButton(onClick={
                             val clipboard=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -609,10 +611,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 }
                             }
                             clipboard.setPrimaryClip(clip)
-                        },modifier=Modifier.fillMaxWidth()) { Text("复制配对码，粘贴到本机浏览器") }
+                        },modifier=Modifier.fillMaxWidth()) { Text(hubLabel("复制配对码，粘贴到本机浏览器","Copy pairing code for this phone’s browser")) }
                         Text("终端指纹：${client?.identityFingerprint()}",
                             style=MaterialTheme.typography.labelSmall)
-                        Text("请在本机浏览器打开后台：连接管理手机 → 待授权终端，核对本页配对码并批准。返回 App 后会自动完成加密授权。",
+                        Text(hubLabel("请在本机浏览器打开后台：连接管理手机 → 待授权终端，核对本页配对码并批准。返回 App 后会自动完成加密授权。",
+                            "Open the management website in this phone’s browser, approve the pending controller after checking its pairing code, then return to the app."),
                             color=MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(onClick={
                             context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
@@ -737,7 +740,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             Column(horizontalAlignment=Alignment.CenterHorizontally){
                                 CircularProgressIndicator()
                                 Spacer(Modifier.height(12.dp))
-                                Text("正在验证终端并加载加密短信")
+                                Text(hubLabel("正在验证终端并加载加密短信","Authenticating and loading encrypted SMS"))
                             }
                         }
                     }else NativeControllerInbox(inbox,
@@ -747,8 +750,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         onOpenLogin={refreshDelta()},
                         onWrite={showWrite=true},
                          onReply={address->composeRecipient=address;showWrite=true},
-                         canCompose=devices.any{ControllerNodePolicy.canSend(it)})
-                    if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+                         canCompose=devices.any{ControllerNodePolicy.canSend(it)},
+                         isLoading=busy)
                 }
             }else if(tab==2){
                 LazyVerticalGrid(columns=GridCells.Adaptive(300.dp),modifier=Modifier.weight(1f),

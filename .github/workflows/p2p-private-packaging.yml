@@ -94,8 +94,24 @@ jobs:
           P2P_CONTROLLER_ORIGIN: ${{ secrets.P2P_CONTROLLER_ORIGIN }}
           P2P_CONTROLLER_PIN_CURRENT: ${{ secrets.P2P_CONTROLLER_PIN_CURRENT }}
           P2P_CONTROLLER_PIN_BACKUP: ${{ secrets.P2P_CONTROLLER_PIN_BACKUP }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -u
+          # Never export an unsigned release as a user-installable/private APK.
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [ -n "${!name}" ] || { echo "RELEASE_SIGNING_REQUIRED"; exit 1; }
+          done
+          signing_dir=$(mktemp -d)
+          chmod 700 "$signing_dir"
+          trap 'rm -rf "$signing_dir"' EXIT
+          export ANDROID_KEYSTORE_FILE="$signing_dir/release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_FILE" ||
+            { echo "RELEASE_KEYSTORE_INVALID"; exit 1; }
+          chmod 600 "$ANDROID_KEYSTORE_FILE"
+          unset ANDROID_KEYSTORE_BASE64
           log=$(mktemp)
           chmod 600 "$log"
           gradle -p android -PcenterConfigPackaging=true --console=plain --no-build-cache \
@@ -114,15 +130,37 @@ jobs:
           python3 scripts/test_center_config_leak.py
           apk=android/app/build/outputs/apk/release/app-release.apk
           [ -f "$apk" ] || { echo "APK_MISSING"; exit 1; }
-          if unzip -p "$apk" assets/center-config.json | grep -qE '"pins":\["[^"]{40,}"\]'; then
-            echo "CENTER_CONFIG_PRESENT"
-          else
-            echo "CENTER_CONFIG_MISSING"; exit 1
-          fi
-          # The package must not carry a node token, device token or private key.
-          if unzip -p "$apk" assets/center-config.json | grep -qiE 'token|private|secret|BEGIN'; then
-            echo "CENTER_CONFIG_CONTAINS_SECRET"; exit 1
-          fi
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk" >/dev/null ||
+            { echo "APK_SIGNATURE_INVALID"; exit 1; }
+          python3 - "$apk" <<'PY'
+          import base64, json, re, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as package:
+              try:
+                  data = package.read("assets/center-config.json")
+              except KeyError:
+                  raise SystemExit("CENTER_CONFIG_MISSING")
+          config = json.loads(data)
+          if config.get("schemaVersion") != 1 or not config.get("configId"):
+              raise SystemExit("CENTER_CONFIG_INVALID")
+          for role in ("node", "controller"):
+              item = config.get(role, {})
+              origin = item.get("origin", "")
+              pins = item.get("pins", [])
+              if not re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?", origin):
+                  raise SystemExit("CENTER_CONFIG_ORIGIN_INVALID")
+              if not isinstance(pins, list) or len(pins) != 2 or len(set(pins)) != 2:
+                  raise SystemExit("CENTER_CONFIG_PIN_INVALID")
+              for pin in pins:
+                  try:
+                      raw = base64.b64decode(pin.removeprefix("sha256/"), validate=True)
+                  except Exception:
+                      raise SystemExit("CENTER_CONFIG_PIN_INVALID")
+                  if not pin.startswith("sha256/") or len(raw) != 32:
+                      raise SystemExit("CENTER_CONFIG_PIN_INVALID")
+          if any(key in config for key in ("token", "password", "secret", "privateKey")):
+              raise SystemExit("CENTER_CONFIG_CONTAINS_SECRET")
+          print("CENTER_CONFIG_PRESENT")
+          PY
           sha256sum "$apk" > center-apk-sha256.txt
           echo "APK_SHA256_WRITTEN"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

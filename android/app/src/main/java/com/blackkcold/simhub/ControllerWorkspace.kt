@@ -710,8 +710,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         onOpenLogin={refreshDelta()},
                         onWrite={showWrite=true},
                          onReply={address->composeRecipient=address;showWrite=true},
-                         canCompose=devices.any{ControllerNodePolicy.canSend(it)})
-                    if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+                         canCompose=devices.any{ControllerNodePolicy.canSend(it)},
+                         isLoading=busy)
                 }
             }else if(tab==2){
                 LazyVerticalGrid(columns=GridCells.Adaptive(300.dp),modifier=Modifier.weight(1f),

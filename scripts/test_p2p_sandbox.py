@@ -12,7 +12,24 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def verify_bundled_webview():
+    """Keep WebRTC JS functional without regressing CSP and WebView isolation."""
+    assets = ROOT / "android/app/src/main/assets"
+    html = (assets / "p2p.html").read_text(encoding="utf-8")
+    script = (assets / "p2p.js").read_text(encoding="utf-8")
+    transport = (ROOT / "android/app/src/main/java/com/blackkcold/simhub/p2p/PeerWebRtcTransport.java").read_text(encoding="utf-8")
+    assert "script-src 'self'" in html and "script-src 'unsafe-inline'" not in html
+    assert "connect-src 'none'" in html and 'src="/p2p.js"' in html
+    assert "window.peerCommand=command" in script and "native('loaded')" in script
+    for marker in ['ORIGIN+"/p2p.html"', 'ORIGIN+"/p2p.js"',
+                   "settings.setAllowFileAccess(false)", "settings.setBlockNetworkLoads(true)",
+                   "settings.setJavaScriptCanOpenWindowsAutomatically(false)",
+                   'Set.of(ORIGIN)', '!mainFrame']:
+        assert marker in transport, f"WebView safety invariant missing: {marker}"
+
+
 def main():
+    verify_bundled_webview()
     suites = ["server.test_peer_connect"]
     result = subprocess.run([sys.executable, "-m", "unittest", "-v", *suites], cwd=ROOT, env={**os.environ, "PYTHONPATH": str(ROOT / "server")})
     if result.returncode:

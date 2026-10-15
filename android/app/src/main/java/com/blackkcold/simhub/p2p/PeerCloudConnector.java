@@ -53,6 +53,14 @@ public final class PeerCloudConnector implements HubTransport,AutoCloseable {
         status("CONNECTING","");byte[] key=store.key(peerId);String room;
         try{room=PeerCloudProtocol.room(key,store.myId());}finally{Arrays.fill(key,(byte)0);}
         Request request=new Request.Builder().url(PeerCloudProtocol.SOCKET+"?key=peerjs&id="+room+"&token="+token+"&version=1.5.5").build();
+        // A public, third-party signaling service cannot be safely SPKI-pinned without
+        // a provider-managed key-rotation / backup-pin contract. Fail closed on origin
+        // changes; OkHttp verifies the platform TLS trust chain and hostname.
+        // PeerCloudProtocol additionally authenticates+encrypts all signaling payloads.
+        HttpUrl endpoint=request.url();
+        if(!endpoint.isHttps()||!"0.peerjs.com".equals(endpoint.host())||endpoint.port()!=443
+                ||!"/peerjs".equals(endpoint.encodedPath()))
+            throw new SecurityException("public_signaling_origin_rejected");
         socket=HTTP.newWebSocket(request,new WebSocketListener(){
             public void onMessage(WebSocket ws,String text){if(text.length()>PeerCloudProtocol.MAX_SIGNAL){ws.cancel();return;}submit(()->receive(ws,text));}
             public void onFailure(WebSocket ws,Throwable t,Response r){submit(()->lost(ws));}

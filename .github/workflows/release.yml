@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/release/v0.17.1.trigger'
+      - '.github/release/v*.trigger'
 
 permissions:
   contents: read
@@ -36,8 +36,19 @@ jobs:
             }
           else
             test "$GITHUB_REF_NAME" = "main"
-            VERSION="$(head -n1 .github/release/v0.17.1.trigger | tr -d '[:space:]')"
+            VERSION="$(sed -n 's/.*versionName = \"\(.*\)\"/\1/p' android/app/build.gradle.kts | head -1)"
             TAG="v$VERSION"
+            TRIGGER=".github/release/${TAG}.trigger"
+            test -f "$TRIGGER" || { echo "::error::Missing release trigger: $TRIGGER"; exit 1; }
+            test "$(head -n1 "$TRIGGER" | tr -d '[:space:]')" = "$VERSION" || {
+              echo "::error::Release trigger version mismatch: $TRIGGER"
+              exit 1
+            }
+            # Prevent a stale trigger from republishing an unrelated change.
+            git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA" | grep -Fx -- "$TRIGGER" >/dev/null || {
+              echo "::error::The current version trigger was not changed by this push"
+              exit 1
+            }
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
             echo "::error::Invalid release version: $VERSION"

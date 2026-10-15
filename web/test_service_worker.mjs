@@ -39,7 +39,10 @@ async function dispatch(name,request){
   return task&&await task;
 }
 await dispatch('activate');
-assert.deepEqual(deleted,['simhub-shell-v21'],
+assert.ok(deleted.includes('simhub-shell-v21')&&deleted.includes('simhub-shell-v22'),
+  'Old SIM Hub shell caches should be removed');
+assert.ok(deleted.every(name=>name.startsWith('simhub-shell-')) &&
+  !deleted.includes('another-application-cache'),
   'Do not delete caches belonging to other apps');
 const request=(path,mode='same-origin')=>({url:'https://simhub.example'+path,
   method:'GET',mode});

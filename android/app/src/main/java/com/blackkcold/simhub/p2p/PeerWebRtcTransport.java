@@ -91,6 +91,8 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     }
     public String route(){return route;}
     public boolean online(){return online;}
+    /** True only after the bundled external script has executed the authenticated loaded bridge event. */
+    public boolean isBundledScriptLoaded(){return loaded.getCount()==0&&!closed;}
     public void restart()throws Exception{command(new JSONObject().put("type","restart"));}
     public JSONObject request(JSONObject peer,String id,JSONObject req)throws Exception{
         try{connected.get(8,TimeUnit.SECONDS);}catch(TimeoutException e){throw new IOException("peer_ice_not_connected",e);}

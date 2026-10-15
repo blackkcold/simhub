@@ -108,7 +108,7 @@ class ControllerInboxState {
 @Composable
 fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                           onOlder:()->Unit,onNewer:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit,
-                           onReply:(String)->Unit,canCompose:Boolean) {
+                           onReply:(String)->Unit,canCompose:Boolean,isLoading:Boolean=false) {
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var filtersExpanded by remember { mutableStateOf(false) }
@@ -147,8 +147,9 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     HubIcon(R.drawable.ic_hub_shield,Modifier.size(40.dp),
                         MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(12.dp))
-                    Text("请先登录并解锁 Vault",style=MaterialTheme.typography.titleLarge)
-                    Text("管理端短信会在当前手机本地解密后呈现。未授权时不会读取或缓存短信。",
+                    Text(hubLabel("请先登录并解锁 Vault","Sign in and unlock Vault"),style=MaterialTheme.typography.titleLarge)
+                    Text(hubLabel("管理端短信会在当前手机本地解密后呈现。未授权时不会读取或缓存短信。",
+                        "Management SMS is decrypted on this phone. No messages are shown or cached before authorization."),
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
                     Button(onClick=onOpenLogin,modifier=Modifier.fillMaxWidth()){Text(hubLabel("登录 / 解锁管理空间","Sign in / unlock"))}
@@ -172,7 +173,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 HubIcon(R.drawable.ic_hub_settings,Modifier.size(20.dp),
                     description=hubLabel("搜索与筛选","Search and filters"))
             }
-            IconButton(onClick=onRefresh){
+            IconButton(onClick=onRefresh,enabled=!isLoading){
                 HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp),
                     description=hubLabel("刷新短信","Refresh messages"))
             }
@@ -194,7 +195,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
         }
         if(activeThread==null && filtersExpanded) {
             OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
-                label={Text("搜索已加载短信、号码与来源")},singleLine=true)
+                label={Text(hubLabel("搜索已加载短信、号码与来源","Search loaded SMS, numbers and sources"))},singleLine=true)
             Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text(hubLabel("全部短信","All messages"))})
@@ -217,13 +218,14 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 style=MaterialTheme.typography.labelSmall,
                 color=MaterialTheme.colorScheme.primary)
         }
+        if(isLoading)LinearProgressIndicator(Modifier.fillMaxWidth())
         val key=activeThread
         if(key!=null){
             // Keep the same source and OTP/search constraints in the detail view.
             // Do not silently reveal messages from a different SIM or controller.
             val conversation=filtered.filter{it.thread==key}.sortedBy{it.timestamp}
             Row(Modifier.padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically){
-                TextButton(onClick={activeThread=null}){Text("‹ 返回")}
+                TextButton(onClick={activeThread=null}){Text(hubLabel("‹ 返回","‹ Back"))}
                 Text(conversation.lastOrNull()?.sender.orEmpty(),modifier=Modifier.weight(1f),
                     fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                 if(canCompose && conversation.isNotEmpty())
@@ -233,7 +235,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     }
             }
             if(conversation.isEmpty())LaunchedEffect(key){activeThread=null}
-            LazyColumn(Modifier.fillMaxSize(),state=conversationScroll,contentPadding=PaddingValues(16.dp),
+            LazyColumn(Modifier.weight(1f),state=conversationScroll,contentPadding=PaddingValues(16.dp),
                 verticalArrangement=Arrangement.spacedBy(10.dp)){
                 items(conversation,key={it.id}){sms->
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=if(sms.inbound)
@@ -242,7 +244,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                             .background(if(sms.inbound)MaterialTheme.colorScheme.surface
                                 else MaterialTheme.colorScheme.primaryContainer,
                                 RoundedCornerShape(18.dp)).padding(14.dp)){
-                            Text(if(sms.failed)"[无法解密]" else sms.body,
+                            Text(if(sms.failed)hubLabel("[无法解密]","[Decryption failed]") else sms.body,
                                 style=MaterialTheme.typography.bodyMedium)
                             if(sms.inbound && sms.otp.isNotBlank()){
                                 TextButton(onClick={
@@ -254,7 +256,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                                         }
                                     }
                                     clip.setPrimaryClip(clipData)
-                                }){Text("复制验证码 · "+sms.otp)}
+                                }){Text(hubLabel("复制验证码 · ","Copy verification code · ")+sms.otp)}
                             }
                             Text("${sms.device} · ${sms.sim} · "+
                                 DateFormat.format("MM-dd HH:mm",sms.timestamp*1000).toString(),
@@ -264,18 +266,18 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     }
                 }
                 if(state.hasNewer)item{
-                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){
+                    TextButton(onClick=onNewer,enabled=!isLoading,modifier=Modifier.fillMaxWidth()){
                         Text(hubLabel("查看较新短信","View newer messages"))
                     }
                 }
                 if(state.hasMore)item{
-                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
+                    TextButton(onClick=onOlder,enabled=!isLoading,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
                 }
             }
         }else{
             if(threads.isEmpty()){
                 Box(Modifier.weight(1f),contentAlignment=Alignment.Center){
-                    Text("暂无已解密短信",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(hubLabel("暂无已解密短信","No decrypted messages"),color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }else LazyColumn(Modifier.weight(1f),state=threadScroll,contentPadding=PaddingValues(horizontal=12.dp,vertical=4.dp),
                 verticalArrangement=Arrangement.spacedBy(4.dp)){
@@ -296,10 +298,11 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                                     Text(DateFormat.format("MM-dd HH:mm",latest.timestamp*1000).toString(),
                                         style=MaterialTheme.typography.labelSmall)
                                 }
-                                Text(if(latest.failed)"[无法解密]" else latest.body,maxLines=1,
+                                Text(if(latest.failed)hubLabel("[无法解密]","[Decryption failed]") else latest.body,maxLines=1,
                                     overflow=TextOverflow.Ellipsis,
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("${latest.device} · ${latest.sim} · ${count} 条",
+                                Text(hubLabel("${latest.device} · ${latest.sim} · ${count} 条",
+                                     "${latest.device} · ${latest.sim} · ${count} messages"),
                                     style=MaterialTheme.typography.labelSmall,
                                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -307,10 +310,10 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                     }
                 }
                 if(state.hasNewer)item{
-                    TextButton(onClick=onNewer,modifier=Modifier.fillMaxWidth()){Text(hubLabel("查看较新短信","View newer messages"))}
+                    TextButton(onClick=onNewer,enabled=!isLoading,modifier=Modifier.fillMaxWidth()){Text(hubLabel("查看较新短信","View newer messages"))}
                 }
                 if(state.hasMore)item{
-                    TextButton(onClick=onOlder,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
+                    TextButton(onClick=onOlder,enabled=!isLoading,modifier=Modifier.fillMaxWidth()){Text(hubLabel("加载更早短信","Load earlier messages"))}
                 }
             }
         }

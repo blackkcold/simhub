@@ -70,7 +70,6 @@ jobs:
     needs: [public-p2p, preview]
     permissions:
       contents: read
-      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

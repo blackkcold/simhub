@@ -41,7 +41,15 @@ def run_generator(environment, extra=None):
     if extra:
         command += extra
     command += ["generateCenterConfig"]
-    return subprocess.run(command, cwd=ROOT, env={**os.environ, **environment},
+    # A negative test must actually remove omitted inputs even when the host
+    # runner has packaging variables in its inherited environment.
+    isolated_env = dict(os.environ)
+    for key in ("P2P_NODE_ORIGIN", "P2P_CONTROLLER_ORIGIN",
+                "P2P_NODE_PIN_CURRENT", "P2P_NODE_PIN_BACKUP",
+                "P2P_CONTROLLER_PIN_CURRENT", "P2P_CONTROLLER_PIN_BACKUP"):
+        isolated_env.pop(key, None)
+    isolated_env.update(environment)
+    return subprocess.run(command, cwd=ROOT, env=isolated_env,
                           capture_output=True, text=True)
 
 

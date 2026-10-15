@@ -1,2 +1,2 @@
-cryptography>=46,<48
+cryptography>=50.0.2,<51
 pyserial>=3.5,<4

@@ -202,14 +202,11 @@ class PeerActivity:ComponentActivity(){
     private fun unlockRelay(p:JSONObject){
         val origin=p.optString("relayOrigin",ControllerProfiles.selected(this)?:"")
         if(ControllerLinks.normalize(origin)==null)return
-        android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle("验证本机身份以使用 Relay")
-            .setDeviceCredentialAllowed(true).build().authenticate(android.os.CancellationSignal(),mainExecutor,
-                object:android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){
-                    override fun onAuthenticationSucceeded(result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){
-                        if(!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
-                        ControllerAccessGate.grant(origin);notice="Relay 本机身份验证已通过";reload()
-                    }
-                })
+        LocalAuthProof.authenticate(this,"验证本机身份以使用 Relay",{
+            if(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)){
+                ControllerAccessGate.grant(origin);notice="Relay 本机身份验证已通过";reload()
+            }
+        },{error->notice=error})
     }
     @Composable private fun ConnectionScreen(){LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{HubCard(Modifier.fillMaxWidth()){

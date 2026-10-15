@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Use the actual connection-service TURN credential generator with real coturn."""
+import os
 import pathlib
 import subprocess
 import sys

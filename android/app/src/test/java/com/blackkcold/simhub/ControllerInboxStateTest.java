@@ -21,6 +21,13 @@ public class ControllerInboxStateTest {
         assertEquals(0,state.getMessages().size());
         assertFalse(state.getHasMore());
     }
+    @Test public void contactLabelsCannotOverrideReplyAddress() {
+        ControllerInboxState state=new ControllerInboxState();
+        assertTrue(state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"m1\","
+            +"\"sender\":\"Alice Chen\",\"address\":\"+8613800138000\",\"timestamp\":123}]}"));
+        assertEquals("Alice Chen",state.getMessages().get(0).getSender());
+        assertEquals("+8613800138000",state.getMessages().get(0).getAddress());
+    }
     @Test public void olderPagesMergeWithoutRemovingRecentMessages() {
         ControllerInboxState state=new ControllerInboxState();
         state.accept("{\"type\":\"snapshot\",\"v\":1,\"messages\":[{\"id\":\"new\",\"timestamp\":200,\"body\":\"recent\"}],\"hasMore\":true}");

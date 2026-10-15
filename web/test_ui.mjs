@@ -27,7 +27,7 @@ try {
   }
   assert.ok(ready,"Server did not start for UI test");
   browser=await chromium.launch({headless:true,args:["--no-sandbox"]});
-  for(const width of [375,768,1440]){
+  for(const width of [360,375,768,1024,1440]){
     for(const theme of ["light","dark"]){
       const context=await browser.newContext({viewport:{width,height:900},colorScheme:theme});
       const page=await context.newPage(),errors=[],consoleErrors=[],httpErrors=[];
@@ -36,7 +36,7 @@ try {
       page.on("requestfailed",r=>httpErrors.push(r.failure()?.errorText+" "+r.url()));
       page.on("pageerror",e=>errors.push(e.message));
       await page.goto("http://127.0.0.1:"+port+"/",{waitUntil:"networkidle"});
-      if(width===375){
+      if(width<=375){
         const gateOverflow=await page.locator("main").evaluate(el=>getComputedStyle(el).overflowY);
         assert.notEqual(gateOverflow,"hidden","Locked mobile login must remain vertically scrollable");
       }

@@ -6,7 +6,7 @@
 - Android 原生设备详情支持重命名、移动数据备用策略、Relay 短信清理、撤销授权及强制删除；危险操作依赖 Relay 管理员二次验证和确认。
 - Android HttpURLConnection 使用 POST /api/v1/devices/{id}/manage（仅 rename/revoke，均身份验证，revoke 额外要求 step-up）；Web PATCH 接口未变。
 - 原生设置展示共享池成员/密钥轮换状态、近期服务器审计元数据；初次节点加密注册、Passkey 和共享池密钥授权/轮换仍在系统 HTTPS 浏览器中执行。
-- Relay SIMHUB_EVENT_RETENTION_DAYS 默认 30 日、0 关闭按日清理；分页不能恢复已删除数据。真机及 Android 10–17 OEM/折叠屏需额外验收。
+- Relay `SIMHUB_EVENT_RETENTION_DAYS` 当前默认 `0`（保留已接收的加密历史，不按天自动删除）；设置正整数才启用按天清理。清理后的事件无法仅通过管理端分页恢复，需要原设备具备可恢复的短信历史，并经显式历史恢复操作。真机及 Android 10–17 OEM/折叠屏仍需额外验收。
 
 # Android 原生工作区与同机授权（v0.15.8）
 

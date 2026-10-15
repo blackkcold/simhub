@@ -180,32 +180,19 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         onDispose{if(visible)window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)}
     }
 
-    // Optional OS-level app gate. This is not a cryptographically authentication-bound
-    // Keystore key; such a migration requires a separate rewrap and recovery protocol.
+    // Access is gated by a fresh Keystore-backed CryptoObject proof; existing Vault\n    // encryption keys are unchanged, preventing migration-related data loss.
     fun authenticateLocal(enable:Boolean=false){
         val activity=context as? Activity
         if(activity==null){localAuthError="当前设备无法打开系统身份验证";return}
         try{
-            val builder=BiometricPrompt.Builder(activity)
-                .setTitle("SIM Hub 管理中心")
-                .setSubtitle("使用指纹、人脸或系统锁屏验证")
-            if(Build.VERSION.SDK_INT>=30)
-                builder.setAllowedAuthenticators(
-                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-            else builder.setDeviceCredentialAllowed(true)
-            builder.build().authenticate(CancellationSignal(),activity.mainExecutor,
-                object:BiometricPrompt.AuthenticationCallback(){
-                    override fun onAuthenticationSucceeded(result:BiometricPrompt.AuthenticationResult){
-                        localAuthError=""
-                        if(enable){client?.setRequireLocalUnlock(true);requireLocalUnlock=true}
-                        selected?.let{ControllerAccessGate.grant(it)}
-                        localUnlocked=true
-                    }
-                    override fun onAuthenticationError(errorCode:Int,errString:CharSequence){
-                        localAuthError=errString.toString()
-                    }
-                })
+            LocalAuthProof.authenticate(activity,"SIM Hub 管理中心",{
+                if(!activity.isFinishing && !activity.isDestroyed) {
+                    localAuthError=""
+                    if(enable){client?.setRequireLocalUnlock(true);requireLocalUnlock=true}
+                    selected?.let{ControllerAccessGate.grant(it)}
+                    localUnlocked=true
+                }
+            },{error->localAuthError=error})
         }catch(e:Exception){localAuthError=e.message?:"系统身份验证不可用"}
     }
     val activity=context as? androidx.activity.ComponentActivity

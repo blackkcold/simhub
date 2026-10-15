@@ -32,12 +32,28 @@ public final class PeerWebRtcTransport implements HubTransport,AutoCloseable {
     @SuppressLint("SetJavaScriptEnabled") private void create(Context c){
         if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             throw new UnsupportedOperationException("update_android_system_webview");
-        view=new WebView(c);WebSettings settings=view.getSettings();settings.setJavaScriptEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setDomStorageEnabled(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setBlockNetworkLoads(true);
+        view=new WebView(c);
+        WebSettings settings=view.getSettings();
+        // JavaScript is essential for the bundled WebRTC RTCPeerConnection engine.
+        // The only permitted document is the APK-bundled p2p.html; never load user URLs.
+        // CodeQL javascript-enabled requires contextual security review, not disabling RTC.
+        settings.setJavaScriptEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        settings.setAllowContentAccess(false);
+        settings.setDomStorageEnabled(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setBlockNetworkLoads(true);
+        settings.setSafeBrowsingEnabled(true);
         view.setWebViewClient(new WebViewClient(){public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
             public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
                 if((ORIGIN+"/p2p.html").equals(r.getUrl().toString()))try{return new WebResourceResponse("text/html","UTF-8",c.getAssets().open("p2p.html"));}catch(IOException ignored){}
                 return new WebResourceResponse("text/plain","UTF-8",403,"Forbidden",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
             }});
+        // ReplyProxy is accepted only from the trusted main-frame origin.
         WebViewCompat.addWebMessageListener(view,"PeerBridge",Set.of(ORIGIN),(v,message,source,mainFrame,reply)->{
             if(closed||!mainFrame||!ORIGIN.equals(source.toString().replaceAll("/$","")))return;String data=message.getData();if(data==null||data.length()>800_000)return;
             // The proxy is bound to the authenticated, bundled main-frame JavaScript object.

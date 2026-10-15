@@ -42,6 +42,7 @@ jobs:
       - run: node --check web/app.js && node --check web/device-dashboard.js && node --check web/i18n.js && node --check web/sw.js
       - run: node web/test_node_dashboard.mjs
       - run: node web/test_sms_logic.mjs
+      - run: node web/test_service_worker.mjs
       - run: node web/test_crypto_vector.mjs
       - run: node web/test_bootstrap_vector.mjs
       - name: Browser UI regression

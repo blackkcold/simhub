@@ -61,7 +61,8 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
     /** True once the native engine is initialized; there is no script or remote code to load. */
     public boolean engineReady() {
         synchronized (FACTORY_LOCK) {
-            return initialized && !closed;
+            // A global factory alone does not prove this instance owns a live RTC connection.
+            return initialized && factory != null && pc != null && !closed;
         }
     }
 

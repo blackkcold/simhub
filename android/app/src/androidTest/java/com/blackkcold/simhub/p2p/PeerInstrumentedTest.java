@@ -133,7 +133,10 @@ public final class PeerInstrumentedTest {
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
         // The engine is native and data-only. No WebView, no bundled script, no remote code.
         PeerNativeRtcTransport transport=new PeerNativeRtcTransport(c,store.peer(controllerId),false,signal->{});
-        try{assertTrue("native WebRTC engine must initialize",transport.engineReady());}finally{transport.close();}
+        try{
+            transport.init(new JSONArray(), false);
+            assertTrue("native WebRTC engine must initialize a real PeerConnection",transport.engineReady());
+        }finally{transport.close();}
         String ice=PeerCenterProtocol.iceServers(c,controllerId).toString();
         assertTrue(ice.contains("stun:"));assertFalse(ice.contains("turn:"));assertFalse(ice.contains("turns:"));
         // The auxiliary path is not authorized without a trusted description: an

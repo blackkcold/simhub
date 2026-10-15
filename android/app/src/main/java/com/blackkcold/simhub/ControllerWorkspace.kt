@@ -171,6 +171,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var commandHistoryError by remember(selected){mutableStateOf("")}
     var expandCommands by remember(selected){mutableStateOf(false)}
     var commandTick by remember(selected){mutableIntStateOf(0)}
+    var pendingLoad by remember(selected){mutableStateOf("")}
     // Controller-only screen capture protection, including Android Recents.
     DisposableEffect(context,visible){
         val window=(context as? Activity)?.window
@@ -221,7 +222,6 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         selected=value;onSelectTab(0)
     }
     // Exactly one load at a time. A second user request is queued, never discarded.
-    var pendingLoad by remember(selected){mutableStateOf("")}
     fun load(mode:String="delta"){
         val api=client?:return
         if(!api.hasGrant() || (requireLocalUnlock && !localUnlocked))return

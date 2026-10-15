@@ -37,7 +37,8 @@ import kotlinx.coroutines.flow.collect
  */
 data class ControllerSms(
     val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,
-    val inbound:Boolean,val device:String,val sim:String,val sourceId:String,val otp:String,val failed:Boolean
+    val inbound:Boolean,val device:String,val sim:String,val sourceId:String,val otp:String,val failed:Boolean,
+    val address:String
 )
 class ControllerInboxState {
     val messages=mutableStateListOf<ControllerSms>()
@@ -75,7 +76,8 @@ class ControllerInboxState {
                             eventId,threadId,str("sender",100),
                             str("body",4000),row.optLong("timestamp",0),
                             row.optBoolean("inbound",true),str("device",100),
-                            str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false)
+                            str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false),
+                             str("address",120)
                         ))
                     }
                     // Stable IDs keep loaded conversation history across refreshes and
@@ -228,8 +230,8 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 TextButton(onClick={activeThread=null}){Text(hubLabel("‹ 返回","‹ Back"))}
                 Text(conversation.lastOrNull()?.sender.orEmpty(),modifier=Modifier.weight(1f),
                     fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                if(canCompose && conversation.isNotEmpty())
-                    IconButton(onClick={onReply(conversation.last().sender)}){
+                if(canCompose && conversation.lastOrNull()?.address?.isNotBlank()==true)
+                    IconButton(onClick={onReply(conversation.last().address)}){
                         HubIcon(R.drawable.ic_hub_send,Modifier.size(20.dp),
                             description=hubLabel("回复此会话","Reply in conversation"))
                     }

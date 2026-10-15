@@ -136,7 +136,14 @@ public final class PeerInstrumentedTest {
         assertEquals("READY",store.peer(controllerId).getString("discoveryState"));assertEquals("P2P_ONLY",store.peer(controllerId).getString("policy"));assertFalse(PeerCloudProtocol.iceServers().toString().contains("turn:"));
         PeerCloudConnector connector=PeerCloudConnector.active(controllerId);deadline=System.currentTimeMillis()+15000;
         while(connector.transport()==null&&System.currentTimeMillis()<deadline)Thread.sleep(100);
-        HubTransport original=connector.transport();assertNotNull(original);PeerCloudConnector.networkChangedAll();deadline=System.currentTimeMillis()+20000;
+        HubTransport original=connector.transport();assertNotNull(original);
+        // A socket state of READY alone does not prove that the actual WebView engine
+        // loaded p2p.js under its strict CSP. Verify the production native bridge.
+        assertTrue("Expected WebRTC engine",original instanceof PeerWebRtcTransport);
+        deadline=System.currentTimeMillis()+10000;
+        while(!((PeerWebRtcTransport)original).isBundledScriptLoaded()&&System.currentTimeMillis()<deadline)Thread.sleep(100);
+        assertTrue("Trusted bundled JS not loaded",((PeerWebRtcTransport)original).isBundledScriptLoaded());
+        PeerCloudConnector.networkChangedAll();deadline=System.currentTimeMillis()+20000;
         while(System.currentTimeMillis()<deadline&&(connector.transport()==null||connector.transport()==original||!"READY".equals(store.peer(controllerId).optString("discoveryState"))))Thread.sleep(100);
         assertNotNull(connector.transport());assertNotSame("Old network ICE session must be rebuilt",original,connector.transport());assertEquals("READY",store.peer(controllerId).getString("discoveryState"));
     }

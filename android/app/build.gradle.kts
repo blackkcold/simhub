@@ -1,4 +1,4 @@
-plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" }
+plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose") version "9.4.1" }
 
 val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
 val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")

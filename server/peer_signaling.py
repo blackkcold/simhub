@@ -53,7 +53,7 @@ FRAME_RATE = 60
 RATE_WINDOW = 60
 
 IDENTITY = re.compile(r"[A-Za-z0-9_-]{16,80}\Z")
-ENCODED = re.compile(r"[A-Za-z0-9_-]+\Z")
+BASE64URL_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 DIRECTIONS = {"node", "controller"}
 
 _BINDING_FIELDS = {"protocolVersion", "bindingId", "nodeId", "nodePublicKey", "allowedControllerPeerId",
@@ -194,7 +194,7 @@ def _encode(data: bytes) -> str:
 
 
 def _decode(value, maximum: int) -> bytes:
-    if not isinstance(value, str) or not value or len(value) > maximum or not ENCODED.fullmatch(value):
+    if not isinstance(value, str) or not value or len(value) > maximum or any(ch not in BASE64URL_ALPHABET for ch in value):
         raise ValueError("invalid_encoding")
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 

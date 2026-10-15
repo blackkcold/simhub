@@ -138,7 +138,14 @@ public final class PeerInstrumentedTest {
         assertTrue(ice.contains("stun:"));assertFalse(ice.contains("turn:"));assertFalse(ice.contains("turns:"));
         // The auxiliary path is not authorized without a trusted description: an
         // enrolled address or a pairing hint is never trust.
-        assertNull(com.blackkcold.simhub.CenterTrustStore.get(c).effective());
+        // Public CI packages synthetic pins for reserved .invalid hosts. This
+        // description must exist, but it never authorizes arbitrary configured
+        // centers or silently enrolls a separate Relay.
+        com.blackkcold.simhub.CenterTrust synthetic =
+                com.blackkcold.simhub.CenterTrustStore.get(c).effective();
+        assertNotNull("preview build must load synthetic test trust", synthetic);
+        assertFalse(synthetic.covers(com.blackkcold.simhub.CenterTrust.ROLE_CONTROLLER,
+                "https://untrusted.invalid"));
         assertEquals("P2P_ONLY",store.peer(controllerId).getString("policy"));
         assertFalse(store.peer(controllerId).optBoolean("signalingConsent"));
         try{PeerCenterConnector.ensure(c,controllerId);fail("untrusted center enabled the auxiliary path");}catch(SecurityException expected){}

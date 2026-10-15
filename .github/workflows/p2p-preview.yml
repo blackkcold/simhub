@@ -26,6 +26,7 @@ jobs:
       - run: gradle -p android -Pp2pAndroidSandbox=true -PcenterConfigFake=true :app:testP2pPreviewUnitTest :app:assembleP2pPreview :app:assembleStorePreview --stacktrace
       - run: python3 -m pip install -r server/requirements.txt
       - run: python3 scripts/test_p2p_sandbox.py
+      - run: python3 scripts/test_p2p_preview_export.py
       - run: python3 scripts/test_center_config_leak.py
       - name: Controlled packaging negative tests (synthetic canary, no production value)
         run: python3 scripts/test_center_config_packaging.py

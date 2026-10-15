@@ -79,16 +79,18 @@ jobs:
             adb shell pm grant com.blackkcold.simhub.p2ptest android.permission.READ_PHONE_STATE
             adb shell am instrument -w -e class com.blackkcold.simhub.p2p.PeerInstrumentedTest com.blackkcold.simhub.p2ptest.test/androidx.test.runner.AndroidJUnitRunner | tee android-sandbox-results.txt
             grep -q 'OK (12 tests)' android-sandbox-results.txt
-            cp android/app/build/outputs/apk/p2pPreview/app-p2pPreview.apk SIMHub-P2P-0.17.1-public-preview.apk
+            VERSION=$(sed -n 's/.*versionName = "\\([^"]*\\)"/\\1/p' android/app/build.gradle.kts | head -1)
+            test -n "$VERSION"
+            cp android/app/build/outputs/apk/p2pPreview/app-p2pPreview.apk "SIMHub-P2P-${VERSION}-public-preview.apk"
             cp docs/p2p/TEST_GUIDE.zh-CN.md P2P-TEST-GUIDE.md
-            sha256sum SIMHub-P2P-0.17.1-public-preview.apk > p2p-apk-sha256.txt
+            sha256sum "SIMHub-P2P-${VERSION}-public-preview.apk" > p2p-apk-sha256.txt
       - id: tested_apk
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: success()
         with:
           name: simhub-p2p-tested-package
           path: |
-            SIMHub-P2P-0.17.1-public-preview.apk
+            SIMHub-P2P-*-public-preview.apk
             P2P-TEST-GUIDE.md
             android-sandbox-results.txt
             p2p-apk-sha256.txt

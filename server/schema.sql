@@ -228,3 +228,64 @@ CREATE TABLE IF NOT EXISTS peer_rpc_responses(
   PRIMARY KEY(device_id,command_id)
 );
 CREATE INDEX IF NOT EXISTS idx_peer_rpc_responses_expiry ON peer_rpc_responses(expires_at);
+
+-- Center-auxiliary peer signaling: opaque, pair-encrypted OFFER/ANSWER/ICE
+-- envelopes with independent quotas. Never enters commands or PeerRpc dispatch.
+CREATE TABLE IF NOT EXISTS peer_signal_challenges(
+  id TEXT PRIMARY KEY,
+  role TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_peer_signal_challenges_expiry ON peer_signal_challenges(expires_at);
+CREATE TABLE IF NOT EXISTS peer_signal_bindings(
+  binding_id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  node_public_key TEXT NOT NULL,
+  controller_peer_id TEXT NOT NULL,
+  controller_public_key TEXT NOT NULL,
+  consent_revision INTEGER NOT NULL,
+  allowed INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  UNIQUE(device_id, controller_peer_id)
+);
+CREATE INDEX IF NOT EXISTS idx_peer_signal_bindings_device ON peer_signal_bindings(device_id);
+CREATE INDEX IF NOT EXISTS idx_peer_signal_bindings_expiry ON peer_signal_bindings(expires_at);
+CREATE TABLE IF NOT EXISTS peer_signal_sessions(
+  session_id TEXT PRIMARY KEY,
+  binding_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  controller_peer_id TEXT NOT NULL,
+  center_id TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL,
+  controller_token_hash TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  controller_joined_at INTEGER NOT NULL DEFAULT 0,
+  node_joined_at INTEGER NOT NULL DEFAULT 0,
+  closed_at INTEGER NOT NULL DEFAULT 0,
+  last_seq_node INTEGER NOT NULL DEFAULT 0,
+  last_seq_controller INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_peer_signal_sessions_device ON peer_signal_sessions(device_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_peer_signal_sessions_expiry ON peer_signal_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS peer_signal_frames(
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  frame_json TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  acked INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(session_id, direction, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_peer_signal_frames_session ON peer_signal_frames(session_id, direction, acked, seq);
+CREATE INDEX IF NOT EXISTS idx_peer_signal_frames_expiry ON peer_signal_frames(expires_at);

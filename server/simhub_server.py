@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import peer_relay
+import peer_signaling
 import base64
 import hashlib
 import hmac
@@ -289,6 +290,31 @@ def open_db():
         con.close()
 
 
+@contextmanager
+def signal_db():
+    """Signaling store connection for the peer-signaling routes.
+
+    A rejected request still commits: single-use challenge consumption and
+    expired-frame pruning must survive, so a forged or replayed attempt can
+    never reuse a challenge. Unexpected failures roll back like open_db().
+    """
+    con = sqlite3.connect(DB_PATH, timeout=10)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys=ON")
+    con.execute("PRAGMA busy_timeout=5000")
+    try:
+        yield con
+        con.commit()
+    except peer_signaling.SignalingRejected:
+        con.commit()
+        raise
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def _table_sql(con: sqlite3.Connection, name: str) -> str:
     row = con.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
     return row["sql"] if row and row["sql"] else ""
@@ -418,6 +444,7 @@ def purge_device_record(con: sqlite3.Connection, device_id: str, ts: int) -> boo
                 (device_id, token_hash, ts, ts + 90 * 86400),
             )
     shared_pool.member_departure(con,device_id)
+    peer_signaling.forget_device(con,device_id)
     for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history"):
         con.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
     con.execute("DELETE FROM devices WHERE id=?", (device_id,))
@@ -438,6 +465,7 @@ def init_db() -> None:
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         shared_pool.init(con)
         controller_auth.init(con)
+        peer_signaling.init(con)
         global_vault.init(con)
         _add_column(con,"admin_sessions","controller_id","TEXT NOT NULL DEFAULT ''")
         con.execute("PRAGMA user_version=13")
@@ -460,6 +488,7 @@ def run_maintenance() -> dict[str,int]:
         con.execute("DELETE FROM pairing_requests WHERE expires_at<?",(ts-86400,))
         result["pendingTokens"]=con.execute("UPDATE devices SET pending_token_hash='',pending_token_expires_at=0 WHERE pending_token_expires_at>0 AND pending_token_expires_at<?",(ts,)).rowcount
         result["resetTombstones"]=con.execute("DELETE FROM device_reset_tombstones WHERE expires_at<?",(ts,)).rowcount
+        result["peerSignals"]=peer_signaling.maintenance(con,ts)
     return result
 
 
@@ -884,7 +913,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def read_json(self) -> dict[str,Any] | None:
         path=self.route()[0]
-        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state|events/batch|pool/messages|peer-response)$",path) else 65536
+        max_body = MAX_JSON_BODY if re.search(r"/(?:events|commands|state|events/batch|pool/messages|peer-response|peer-signaling/sessions/[^/]+/signal)$",path) else 65536
         try:
             length=int(self.headers.get("Content-Length","0"))
         except ValueError:
@@ -962,6 +991,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/peer-response",path):return method == "POST"
         if re.fullmatch(r"/api/v1/devices/[^/]+/commands/[^/]+/ack", path):
             return method == "POST"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/peer-signaling/(?:challenge|binding)", path):
+            return method == "POST"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/peer-signaling/(?:bindings|sessions)", path):
+            return method == "GET"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/peer-signaling/sessions/[^/]+/(?:join|signal|ack|close)", path):
+            return method == "POST"
+        if re.fullmatch(r"/api/v1/devices/[^/]+/peer-signaling/sessions/[^/]+/poll", path):
+            return method == "GET"
         return False
 
     def preflight(self, method: str, path: str) -> bool:
@@ -1011,6 +1048,110 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if row and row["elevated_until"] >= now(): return True
         self.send_error_json(403, "stepup_required", "Recent second-factor verification required")
         return False
+
+    def _signal_after(self, q: dict[str, list[str]]) -> int:
+        try:
+            after = int(q.get("after", ["0"])[0])
+        except (TypeError, ValueError) as error:
+            raise peer_signaling.SignalingRejected("invalid_request", 400) from error
+        if after < 0:
+            raise peer_signaling.SignalingRejected("invalid_request", 400)
+        return after
+
+    def peer_signaling_device(self, device_id: str, p: list[str], q: dict[str, list[str]]) -> None:
+        """Node surface: Device token only. Opaque frames never touch commands or PeerRpc."""
+        if not self.require_device(device_id): return
+        tail = p[5:]
+        try:
+            if self.command == "GET":
+                if tail == ["bindings"]:
+                    with signal_db() as con: result = peer_signaling.list_bindings(con, device_id, now())
+                    self.send_json(200, result); return
+                if tail == ["sessions"]:
+                    with signal_db() as con: result = peer_signaling.list_sessions(con, device_id, now())
+                    self.send_json(200, result); return
+                if len(tail) == 3 and tail[0] == "sessions" and tail[2] == "poll":
+                    after = self._signal_after(q)
+                    with signal_db() as con:
+                        result = peer_signaling.poll(con, tail[1], "node", after, now(), device_id=device_id)
+                    self.send_json(200, result); return
+                raise peer_signaling.SignalingRejected("not_found", 404)
+            body = self.read_json()
+            if body is None: return
+            if tail == ["challenge"]:
+                with signal_db() as con: result = peer_signaling.challenge(con, "node", device_id, now())
+                self.send_json(200, result); return
+            if tail == ["binding"]:
+                with signal_db() as con: result = peer_signaling.bind(con, device_id, body, now())
+                audit("peer-signaling.binding", device_id, "ok" if result["created"] else "updated", self.ip)
+                self.send_json(201 if result["created"] else 200, result); return
+            if len(tail) == 3 and tail[0] == "sessions":
+                action = tail[2]
+                if action == "join":
+                    with signal_db() as con:
+                        result = peer_signaling.join_session(con, device_id, tail[1], body, now())
+                    audit("peer-signaling.join", device_id, "ok", self.ip)
+                elif action == "signal":
+                    with signal_db() as con:
+                        result = peer_signaling.send_frame(con, tail[1], "node", body.get("frame"), now(),
+                                                           device_id=device_id)
+                elif action == "ack":
+                    with signal_db() as con:
+                        result = peer_signaling.ack(con, tail[1], "node", body.get("seq"), now(),
+                                                    device_id=device_id)
+                elif action == "close":
+                    with signal_db() as con:
+                        result = peer_signaling.close_session(con, tail[1], now(), device_id=device_id)
+                else:
+                    raise peer_signaling.SignalingRejected("not_found", 404)
+                self.send_json(201 if action == "signal" else 200, result); return
+            raise peer_signaling.SignalingRejected("not_found", 404)
+        except peer_signaling.SignalingRejected as error:
+            audit("peer-signaling.device", device_id, "denied", self.ip)
+            self.send_json(error.status, {"error": error.code})
+
+    def peer_signaling_controller(self, p: list[str], q: dict[str, list[str]]) -> None:
+        """Controller surface: admin session + CSRF; the one-time session token
+        scopes frame operations to the session this controller created."""
+        if not self.require_admin(): return
+        tail = p[3:]
+        token = self.headers.get("X-SimHub-Signal-Token", "")
+        try:
+            if self.command == "GET":
+                if len(tail) == 4 and tail[1] == "sessions" and tail[3] == "poll":
+                    after = self._signal_after(q)
+                    with signal_db() as con:
+                        result = peer_signaling.poll(con, tail[2], "controller", after, now(), token)
+                    self.send_json(200, result); return
+                raise peer_signaling.SignalingRejected("not_found", 404)
+            body = self.read_json()
+            if body is None: return
+            if tail == ["peer-signaling", "challenge"]:
+                with signal_db() as con:
+                    result = peer_signaling.controller_challenge(con, str(body.get("bindingId", "")), now())
+                self.send_json(200, result); return
+            if tail == ["peer-signaling", "sessions"]:
+                with signal_db() as con: result = peer_signaling.create_session(con, body, now())
+                audit("peer-signaling.session", result["sessionId"], "ok", self.ip)
+                self.send_json(201, result); return
+            if len(tail) == 4 and tail[1] == "sessions":
+                action = tail[3]
+                if action == "signal":
+                    with signal_db() as con:
+                        result = peer_signaling.send_frame(con, tail[2], "controller", body.get("frame"),
+                                                           now(), token)
+                elif action == "ack":
+                    with signal_db() as con:
+                        result = peer_signaling.ack(con, tail[2], "controller", body.get("seq"), now(), token)
+                elif action == "close":
+                    with signal_db() as con: result = peer_signaling.close_session(con, tail[2], now(), token)
+                else:
+                    raise peer_signaling.SignalingRejected("not_found", 404)
+                self.send_json(201 if action == "signal" else 200, result); return
+            raise peer_signaling.SignalingRejected("not_found", 404)
+        except peer_signaling.SignalingRejected as error:
+            audit("peer-signaling.controller", tail[1] if len(tail) > 1 else "", "denied", self.ip)
+            self.send_json(error.status, {"error": error.code})
 
     def do_OPTIONS(self) -> None:
         self.send_response(204); self.security_headers(); self.end_headers()
@@ -1160,6 +1301,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if path=="/api/v1/stream":
             if not self.require_admin(): return
             self.stream_events(); return
+        if len(p)>=5 and p[:3]==["api","v1","controllers"] and p[3]=="peer-signaling":
+            self.peer_signaling_controller(p,q); return
         if path=="/api/v1/ota":
             if self.device_auth_from_headers():
                 self.get_ota(); return
@@ -1171,6 +1314,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["commands","pending"]:
             if not self.require_device(p[3]): return
             self.get_pending_commands(p[3],q); return
+        if len(p)>=6 and p[:3]==["api","v1","devices"] and p[4]=="peer-signaling":
+            self.peer_signaling_device(p[3],p,q); return
         if path.startswith("/api/"):
             self.send_error_json(404,"not_found","API endpoint not found"); return
         self.serve_static(path)
@@ -1230,6 +1375,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 audit("auth.controller",path.rsplit("/",1)[-1],"denied",self.ip)
                 self.send_error_json(400 if privileged else 401,"controller_rejected",str(exc))
             return
+        if len(p)>=5 and p[:3]==["api","v1","controllers"] and p[3]=="peer-signaling":
+            self.peer_signaling_controller(p,q); return
         if path.startswith("/api/v1/auth/passkeys/"):
             body=self.read_json()
             if body is None: return
@@ -1394,6 +1541,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             self.heartbeat(p[3],body); return
+        if len(p)>=6 and p[:3]==["api","v1","devices"] and p[4]=="peer-signaling":
+            self.peer_signaling_device(p[3],p,q); return
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["token","prepare"]:
             if not self.require_device(p[3]):return
             self.prepare_device_token(p[3]); return
@@ -1866,6 +2015,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
             if cur.rowcount and body.get("revoke") is True:
                 shared_pool.member_departure(con,device_id)
+                peer_signaling.forget_device(con,device_id)
         if not cur.rowcount:
             self.send_error_json(404,"device_not_found","Device not found"); return
         audit("device.patch",device_id,"ok",self.ip); signal_stream()

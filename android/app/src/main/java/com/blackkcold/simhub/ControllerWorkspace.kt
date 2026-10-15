@@ -209,7 +209,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     DisposableEffect(activity,selected,requireLocalUnlock){
         val observer=LifecycleEventObserver{_,event->
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
-                localUnlocked=false;inbox.clear();lastEventSeq=0L
+                localUnlocked=false;inbox.clear()
+                lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""
             }
         }
         activity?.lifecycle?.addObserver(observer)

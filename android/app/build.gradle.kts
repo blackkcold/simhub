@@ -164,7 +164,12 @@ val generateCenterConfig = tasks.register("generateCenterConfig") {
     outputs.dir(outDir)
     inputs.property("fake", fake)
     inputs.property("packaging", packaging)
-    inputs.property("injected", listOf(nodeOrigin, controllerOrigin, nodePinCurrent).joinToString("|") { it ?: "-" })
+    // Never put trusted origins or SPKI pins into Gradle input fingerprints, task
+    // histories or shared build-cache metadata. A configuration may change in any
+    // of the six environment values between invocations; validating on every run
+    // makes missing, duplicate and rotated pins fail closed, including after a
+    // successful build of another configuration.
+    outputs.upToDateWhen { false }
     doLast {
         val directory = outDir.get().asFile
         val file = File(directory, "center-config.json")

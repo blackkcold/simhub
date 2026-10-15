@@ -697,10 +697,14 @@ async function loadOlder(){
   historyFetchInFlight=(async()=>{
     const r=await api('/api/v1/events?order=occurred&scope=sms&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    // Commit the pagination checkpoint only after the full page has been
+    // accepted. A failed or invalidated ingest must remain retryable.
+    const accepted=await ingestEvents(r.events||[],false);
+    if(!accepted&&((r.events||[]).length>0) &&
+        (epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey))return;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
     historyHasMore=!!r.hasMore;
-    await ingestEvents(r.events||[],false);
-    if(epoch!==securityEpoch||!vaultKey)return;
     visibleCount=Math.min(Math.max(visibleCount+30,buildThreads(filteredEvents()).length),1000);
     renderInbox();
   })();

@@ -107,6 +107,17 @@ class PeerConnectTest(unittest.TestCase):
         turn = with_turn["iceServers"][1]
         self.assertEqual(len(base64.b64decode(turn["credential"], validate=True)), 20)
         self.assertLessEqual(int(turn["username"].split(":")[0])-self.now, 300)
+    def test_turn_usernames_do_not_identify_or_link_registrations(self):
+        aid, _ = self.identity(self.a)
+        bid, _ = self.identity(self.b)
+        first, _ = self.register(self.a, bid, True)
+        second, _ = self.register(self.a, bid, True)
+        usernames = [response["iceServers"][1]["username"] for response in (first, second)]
+        for username in usernames:
+            self.assertEqual(int(username.split(":", 1)[0]), self.now + 300)
+            self.assertNotIn(aid[:16], username)
+            self.assertNotIn(bid[:16], username)
+        self.assertNotEqual(*usernames)
     def test_capacity_and_rate_limit(self):
         for _ in range(10):
             self.service.challenge("rate-test")

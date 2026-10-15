@@ -129,7 +129,9 @@ class PeerConnect:
             db.execute("INSERT OR REPLACE INTO registrations(identity,peer,public_key,policy,consent,token_hash,expires) VALUES(?,?,?,?,?,?,?)", (identity, peer, data["identity"], data["policy"], int(consent), hashlib.sha256(token.encode()).hexdigest(), now + 3600))
         ice = [{"urls": list(self.stun_urls)}] if self.stun_urls else []
         if consent and self.turn_secret and self.turn_urls:
-            username = f'{now + 300}:{identity[:16]}'
+            # coturn REST requires HMAC-SHA1; its opaque username must not expose
+            # an identity fingerprint or link separate registrations.
+            username = f'{now + 300}:{secrets.token_hex(16)}'
             password = base64.b64encode(hmac.new(self.turn_secret.encode(), username.encode(), hashlib.sha1).digest()).decode()
             ice.append({"urls": list(self.turn_urls), "username": username, "credential": password})
         return {"token": token, "expires": now + 3600, "iceServers": ice, "relayBindingState": "ACTIVE"}

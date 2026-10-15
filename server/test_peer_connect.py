@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import hmac
 import json
 import tempfile
 import unittest
@@ -13,7 +14,8 @@ class PeerConnectTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.now = 100000
-        self.service = PeerConnect(str(Path(self.temp.name) / "connect.db"), lambda: self.now, "turn-secret", ("stun:example.test:3478",), ("turn:example.test:3478",))
+        self.turn_secret = "simhub-test-turn-secret-with-32-characters"
+        self.service = PeerConnect(str(Path(self.temp.name) / "connect.db"), lambda: self.now, self.turn_secret, ("stun:example.test:3478",), ("turn:example.test:3478",))
         self.a = ec.generate_private_key(ec.SECP256R1())
         self.b = ec.generate_private_key(ec.SECP256R1())
     def tearDown(self):
@@ -101,6 +103,14 @@ class PeerConnectTest(unittest.TestCase):
         with_turn, _ = self.register(self.a, bid, True)
         self.assertEqual(len(with_turn["iceServers"]), 2)
         self.assertIn("credential", with_turn["iceServers"][1])
+        # Coturn's REST credential contract requires HMAC-SHA1 for this
+        # short-lived, secret-keyed password. SHA-256 would break authentication.
+        turn = with_turn["iceServers"][1]
+        expected = base64.b64encode(
+            hmac.new(self.turn_secret.encode(), turn["username"].encode(), hashlib.sha1).digest()
+        ).decode()
+        self.assertEqual(turn["credential"], expected)
+        self.assertLessEqual(int(turn["username"].split(":")[0])-self.now, 300)
     def test_capacity_and_rate_limit(self):
         for _ in range(10):
             self.service.challenge("rate-test")

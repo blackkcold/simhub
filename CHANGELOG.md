@@ -1,3 +1,15 @@
+## v0.17.2 — Main reliability, native reply safety and UX hardening
+
+- Separate native management SMS contact display labels from the actual recipient address; reply actions use the verified address and never compose SMS to a display name.
+- Bound native conversation scrolling within the available workspace, expose loading feedback without duplicated indicators, and localize high-traffic controller and pairing screens.
+- Invalidate native SMS-history cursors and pending refresh state when the locally protected Controller workspace locks.
+- Advance Web encrypted SMS-history pagination only after the current Vault and data-generation ingest succeeds.
+- Isolate SIM Hub Service Worker shell cache deletions; offline JavaScript/CSS misses return network errors rather than HTML with an incorrect MIME type.
+- Expand Playwright viewport coverage and add Service Worker / SMS reply regression tests. Add Python and container dependency update coverage.
+- Replace the hardcoded release trigger path with version-aware validation that requires the matching trigger to change in the publishing push.
+- Correct documentation of Relay SMS event retention: the current default of zero preserves encrypted history until explicitly purged or retention is configured.
+- This release does not merge P2P PR #84, change the E2EE protocol or grant hardware-auth-bound Keystore guarantees. Closed-browser Web Push, physical-SIM/OEM acceptance and app-store policy review remain separate external gates.
+
 ## v0.17.1 — Notification diagnostics and consistent settings layout
 
 - Correct native Android SIM-node settings destination spacing in both compact and foldable/tablet layouts without changing pairing, SMS modes or encrypted data.

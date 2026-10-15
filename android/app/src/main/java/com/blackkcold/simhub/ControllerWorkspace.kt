@@ -295,6 +295,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                 val thread=ControllerConversation.key(item.optString("deviceId"),ch,rev,address)
                                 messages.put(JSONObject().put("id",item.optString("deviceId")+":"+item.optString("eventId"))
                                     .put("thread",thread).put("sender",plaintext.optString("contactName").ifBlank{address}.take(100))
+                                     .put("address",address.take(120))
                                     .put("body",if(failed)"" else plaintext.optString("body").take(4000))
                                     .put("timestamp",item.optLong("occurredAt")).put("inbound",inbound)
                                     .put("device",node?.optString("name")?.take(100)?:"未知设备")

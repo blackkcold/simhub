@@ -45,7 +45,9 @@ jobs:
               exit 1
             }
             # Prevent a stale trigger from republishing an unrelated change.
-            git diff --name-only "$GITHUB_EVENT_BEFORE" "$GITHUB_SHA" | grep -Fx -- "$TRIGGER" >/dev/null || {
+            BEFORE="$(python3 -c 'import json,os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"])).get("before",""))')"
+            [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing push base SHA"; exit 1; }
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -Fx -- "$TRIGGER" >/dev/null || {
               echo "::error::The current version trigger was not changed by this push"
               exit 1
             }

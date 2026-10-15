@@ -34,6 +34,7 @@ jobs:
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
       - run: python3 scripts/test_release_notes.py
+      - run: python3 scripts/test_release_pipeline.py
       - run: python3 scripts/test_controller_same_phone.py
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
@@ -45,6 +46,7 @@ jobs:
       - run: node --check web/app.js && node --check web/device-dashboard.js && node --check web/i18n.js && node --check web/sw.js
       - run: node web/test_node_dashboard.mjs
       - run: node web/test_sms_logic.mjs
+      - run: node web/test_service_worker.mjs
       - run: node web/test_crypto_vector.mjs
       - run: node web/test_bootstrap_vector.mjs
       - name: Browser UI regression

@@ -22,8 +22,8 @@ android {
         minSdk = 29
         targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 51
-        versionName = "0.17.1"
+        versionCode = 52
+        versionName = "0.17.2"
         buildConfigField("boolean", "P2P_PREVIEW", "false")
         buildConfigField("boolean", "STORE_CHANNEL", "false")
     }

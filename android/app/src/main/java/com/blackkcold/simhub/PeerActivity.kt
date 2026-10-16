@@ -294,7 +294,16 @@ class PeerActivity:ComponentActivity(){
                         if(p.optString("signalingCenterBinding").isBlank())Text("节点已授权，正在等待可信中心返回绑定编号。检查节点的注册状态及网络。",style=MaterialTheme.typography.bodySmall)
                         else OutlinedButton(onClick={work{qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).signalingBindingQr(p.getString("id"))};tab=0;notice="请用管理手机的「连接详情 → 扫描节点授权码」读取二维码；仅交换已验证的中心绑定编号。"}}){Text("生成节点信令授权二维码")}
                     }
+                    if(p.optString("localRole")=="CONTROLLER")OutlinedButton(onClick={scan()}){Text("重新扫描节点绑定码")}
                     OutlinedButton(onClick={work{withContext(Dispatchers.IO){PeerCenterConnector.ensure(applicationContext,p.getString("id"));PeerCenterConnector.reconnect(p.getString("id"))};notice="已重新尝试辅助建连；仅信令就绪不等于可读取短信"}}){Text("重新尝试直连")}
+                    TextButton(onClick={work{
+                        withContext(Dispatchers.IO){
+                            val old=store().peer(p.getString("id"))
+                            store().setSignaling(p.getString("id"),false,"",old.optInt("signalingConsentRevision",0)+1)
+                            PeerCenterConnector.closePeer(p.getString("id"))
+                        }
+                        notice="本机已撤销该设备的辅助信令授权并关闭已建立的数据通道；Relay 关联不受影响。"
+                    }}){Text("关闭此配对的中心辅助信令")}
                 }
                 if(p.optString("localRole")=="CONTROLLER"){
                     val relayOrigin=p.optString("relayOrigin",ControllerProfiles.selected(this@PeerActivity)?:"")

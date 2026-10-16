@@ -4,10 +4,6 @@
 
 # SIM Hub
 
-## Stable / Dev 双发布线
-
-Stable 稳定版保留现有正式 APK、Relay 和签名更新通道；Dev 测试版使用独立 Android 包名与 Docker 部署环境，允许实验性 P2P 功能，稳定版不包含该功能。详见[双发布线部署与更新手册](docs/RELEASE_CHANNELS.md)。
-
 **将 Android 手机与受支持的蜂窝 Modem 变成私有、自托管的短信和 SIM 管理中心。**
 
 多 SIM 收发短信 · 验证码提取 · 加密中继 · Web / PWA 管理
@@ -157,3 +153,13 @@ Relay 无法读取短信和 Vault 明文；Passkey 用于认证，不代替 Vaul
 ## 文档
 
 [一键部署](docs/QUICKSTART.zh-CN.md) · [完整安装](docs/INSTALLATION.md) · [Android 设置](docs/ANDROID_SETUP.md) · [安全设计](docs/SECURITY_ARCHITECTURE.md) · [共享短信](docs/SHARED_SMS.md) · [架构与协议](docs/ARCHITECTURE.md) · [开源协议](LICENSE)
+
+## 独立 P2P 测试分支
+
+`feature/p2p-isolated-preview` 提供双向扫码、独立 Peer 授权、局域网加密直连、
+原生短信分页及可选 WebRTC/TURN/加密信箱。测试 APK 包名为
+`com.blackkcold.simhub.p2ptest`，可与正式版并存，现有 Relay/Vault 授权不迁移。
+公网连接服务需要实际部署与明确绑定，项目未提供正在运营的公共端点。
+详见 [测试指南](docs/p2p/TEST_GUIDE.zh-CN.md) 和 [协议边界](docs/p2p/PROTOCOL.md)。
+
+Stable / Dev 双发布线：P2P 仅供 Dev 测试；部署和签名更新完全隔离。参见[手册](docs/RELEASE_CHANNELS.md)。

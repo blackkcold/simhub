@@ -101,9 +101,7 @@ The installer checks DNS / Docker / ports, creates the Admin Token, TOTP and own
 
 Open the management URL, log in, initialize the single encrypted Global Vault once (or unlock it with the existing Vault password), then install the signed Android APK, enroll by QR/code and grant SMS receive/read/send permissions. Keeping the built-in Messages app as default is supported; switching to SIM Hub as the default SMS handler is optional.
 
-## Stable and Dev release channels
-
-Stable keeps the existing production APK, Relay and auto-update path. Dev is an isolated GitHub Pre-release with a separately installable Android package and independent Docker deployment; experimental P2P is never shipped in Stable by default. See [release channels and deployment isolation](docs/RELEASE_CHANNELS.md).
+**Stable / Dev:** [Release channel guide](docs/RELEASE_CHANNELS.md).
 
 ## Updates and compatibility tools
 

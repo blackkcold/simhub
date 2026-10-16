@@ -40,7 +40,13 @@ jobs:
                   with urllib.request.urlopen(request,timeout=30) as response:
                       return json.load(response) if method=="GET" else None
               except urllib.error.HTTPError as exc:
-                  if method=="DELETE" and exc.code==404: return None
+                  if method=="DELETE" and exc.code in (404,422):
+                      # A merged PR's branch may already have been removed by GitHub.
+                      # Only accept a missing ref, never swallow another 422 error.
+                      try:
+                          req(path.replace("/git/refs/","/git/ref/"),method="GET")
+                      except urllib.error.HTTPError as check:
+                          if check.code==404: return None
                   raise
           old=req("/pulls/84")
           stable=req("/pulls/104")

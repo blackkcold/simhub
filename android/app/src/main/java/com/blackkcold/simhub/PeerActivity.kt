@@ -44,6 +44,8 @@ class PeerActivity:ComponentActivity(){
     private var allowSend by mutableStateOf(false)
     private var selected by mutableStateOf<JSONObject?>(null)
     private var remoteState by mutableStateOf<JSONObject?>(null)
+    private var peerEpoch=0L
+    private var selectionRefresh:Job?=null
     private var cursor:JSONObject?=null
     private var historyMode=false
     private val inbox=ControllerInboxState()
@@ -66,7 +68,7 @@ class PeerActivity:ComponentActivity(){
             try{while(isActive){delay(12000);reload();if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)}}finally{discovery?.close();discovery=null}
         }}
     }
-    override fun onStop(){super.onStop();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}
+    override fun onStop(){super.onStop();peerEpoch++;selectionRefresh?.cancel();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}
     private fun reload(){peers=(0 until store().list().length()).map{store().list().getJSONObject(it)};listening=PeerService.enabled();selected?.let{p->selected=peers.find{it.optString("id")==p.optString("id")}}}
     private fun work(task:suspend ()->Unit){if(busy)return;busy=true;notice="";lifecycleScope.launch{try{task()}catch(e:Exception){notice=when(e){is SecurityException->"安全或权限校验未通过：${e.message?.take(80)}";else->when {
                     e.message?.contains("peer_ice_not_connected")==true->"无法建立数据直连。请保持两台设备联网、启动前台连接服务；受限 NAT 无法保证穿透。"
@@ -78,15 +80,16 @@ class PeerActivity:ComponentActivity(){
     private fun startNode(){PeerService.start(this);lifecycleScope.launch{delay(800);reload();notice=PeerService.error()}}
     private fun scan(){IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt("扫描另一台手机的 P2P 二维码").setBeepEnabled(false).setOrientationLocked(false).initiateScan()}
     @Deprecated("ZXing compatibility") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);val result:IntentResult?=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);val contents=result?.contents?:return
-        work{val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL);"response"->{manager.accept(contents);""};else->throw SecurityException("peer_qr_kind_rejected")}};qr=resultQr;PeerService.start(this@PeerActivity);notice=if(resultQr.isBlank())"双向扫码已确认，管理手机现在可以连接" else "请让 SIM 节点扫描此响应二维码，公网连接会自动建立"}
+        work{val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL);"response"->{manager.accept(contents);""};"signal-binding"->{manager.acceptSignalingBindingQr(contents);"SIGNALING_BOUND"};else->throw SecurityException("peer_qr_kind_rejected")}};qr=if(resultQr=="SIGNALING_BOUND")"" else resultQr;PeerService.start(this@PeerActivity);notice=when(resultQr){""->"双向扫码已完成。本地网络可尝试直接连接；跨网络使用需要另外完成可信中心信令授权。";"SIGNALING_BOUND"->"已验证节点签名及信令绑定，开始尝试建立 WebRTC 数据直连。";else->"请让 SIM 节点扫描此响应二维码。跨网络连接还需要可信中心信令授权。"}}
     }
     private suspend fun rpc(p:JSONObject,id:String,request:JSONObject):JSONObject{
         return withContext(Dispatchers.IO){PeerHubGateway.request(applicationContext,p.getString("id"),id,request)}
     }
-    private suspend fun load(older:Boolean){val p=selected?:return;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
-        val page=rpc(p,UUID.randomUUID().toString(),req);if(!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return;if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
+    private suspend fun load(older:Boolean){val p=selected?:return;val generation=peerEpoch;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
+        val page=rpc(p,UUID.randomUUID().toString(),req);if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return;if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
         if(!older){
             val stateResult=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"))
+            if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
             remoteState=stateResult.optJSONObject("device")
             stateResult.optJSONObject("relayHint")?.let{hint->withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayHint",hint);store().update(fresh)}}
             // The binding id and revision are learned only over the authenticated pair
@@ -103,13 +106,15 @@ class PeerActivity:ComponentActivity(){
         }
     }
     private suspend fun acceptEvents(p:JSONObject){
+        val generation=peerEpoch
         val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","events.page"))
+        if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
         val events=result.optJSONArray("events")?:return;val rows=JSONArray();val ack=JSONArray()
         for(i in 0 until events.length()){
             val event=events.getJSONObject(i);val payload=event.getJSONObject("payload");val eventId=event.getString("id");val address=payload.optString("sender",payload.optString("recipient"));val sub=payload.optInt("subscriptionId",-1)
             val provider=payload.optLong("providerId",-1).takeIf{it>=0}?.toString()?:Regex("^sms-provider-([0-9]+).*$").find(eventId)?.groupValues?.get(1)
             rows.put(JSONObject().put("id",if(provider!=null)"peer-${p.getString("id")}-$provider" else "peer-event-${p.getString("id")}-${eventId}")
-                .put("thread",PeerCrypto.digest(PeerCrypto.utf8("${p.getString("id")}|$sub|$address"))).put("sender",address).put("body",payload.optString("body")).put("timestamp",event.optLong("occurred"))
+                .put("thread",PeerCrypto.digest(PeerCrypto.utf8("${p.getString("id")}|$sub|$address"))).put("sender",address).put("address",address).put("body",payload.optString("body")).put("timestamp",event.optLong("occurred"))
                 .put("inbound",payload.optString("direction")=="in").put("device",p.optString("name")).put("sim",payload.optString("simTag","SIM $sub")).put("sourceId","${p.getString("id")}-$sub").put("otp",payload.optJSONObject("otp")?.optString("value")?:"").put("failed",event.optString("kind")=="sms.failed"))
             ack.put(event.getLong("seq"))
         }
@@ -118,11 +123,33 @@ class PeerActivity:ComponentActivity(){
             rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","events.ack").put("sequences",ack))
         }
     }
-    private fun select(p:JSONObject){selected=p;tab=1;qr="";cursor=null;historyMode=false;inbox.clear();PeerInboxCache.restore(applicationContext,p.getString("id"),inbox);work{load(false)}}
+    private fun select(p:JSONObject){
+        peerEpoch++;selectionRefresh?.cancel();selected=p;tab=1;qr="";cursor=null;historyMode=false;remoteState=null;inbox.clear()
+        PeerInboxCache.restore(applicationContext,p.getString("id"),inbox)
+        // Switching peers must not be lost while an older request is still in flight.
+        val generation=peerEpoch
+        selectionRefresh=lifecycleScope.launch{
+            while(isActive&&busy)delay(75)
+            if(isActive&&generation==peerEpoch&&selected?.optString("id")==p.optString("id"))work{load(false)}
+        }
+    }
     private fun beginWrite(to:String=""){recipient=to;body="";sendId=null;sendRequest=null;channelIndex=0;compose=true}
     private fun send(){val p=selected?:return;val channels=remoteState?.optJSONArray("channels")?:return;val ch=channels.optJSONObject(channelIndex)?:return
         if(sendId==null){sendId=UUID.randomUUID().toString();sendRequest=JSONObject().put("action","sms.send").put("to",recipient).put("body",body).put("channelId",ch.getString("id")).put("channelRevision",ch.getLong("revision")).put("commandExpires",System.currentTimeMillis()/1000+120)}
-        work{val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),sendId!!,sendRequest!!)};notice="短信状态：${result.optString("state")}";if(result.optString("state") in listOf("submitted","sent","delivered","succeeded")){compose=false;load(false)}else if(result.optString("state") in listOf("indeterminate","claimed","unknown"))notice="发送结果待确认。已保留原命令，不会产生新的发送请求。请在设备卡片查看状态。"}
+        val id=sendId!!;val request=sendRequest!!
+        work{val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),id,request)}
+            if(selected?.optString("id")!=p.optString("id"))return@work
+            val state=result.optString("state")
+            notice=when(state){
+                "submitted"->"已提交系统短信服务，尚未收到运营商发送成功回执。请检查命令状态。"
+                "sent","succeeded"->"短信已发送；送达回执可能尚未返回。"
+                "delivered"->"短信已收到送达回执。"
+                "indeterminate","claimed","unknown"->"发送结果待确认；原命令已保存，不会创建新发送请求。"
+                "failed","expired"->"短信发送失败或命令已过期：${result.optString("reason",state)}"
+                else->"当前命令状态：$state"
+            }
+            if(state in listOf("submitted","sent","delivered","succeeded")){compose=false;load(false)}
+        }
     }
     @Composable private fun Screen(){
         BackHandler(enabled=tab!=0){tab=0}
@@ -160,7 +187,7 @@ class PeerActivity:ComponentActivity(){
     @Composable private fun DeviceScreen(){LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{HubCard(Modifier.fillMaxWidth()){
             Text("添加设备",style=MaterialTheme.typography.titleMedium)
-            Text("选择本机角色后按步骤完成双向扫码。P2P 不需要服务器或 Vault；连接可用性取决于实际网络。",style=MaterialTheme.typography.bodySmall)
+            Text("双向扫码可以离线建立设备身份授权；同一局域网可直接连接。跨网络需已配置的可信中心交换建连信令，不能保证所有 NAT 均可穿透。Relay 始终独立授权。",style=MaterialTheme.typography.bodySmall)
             Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
                 Button(onClick={pairingRole=0;qr=""},modifier=Modifier.fillMaxWidth()){Text("作为 SIM 节点")}
                 OutlinedButton(onClick={pairingRole=1;qr=""},modifier=Modifier.fillMaxWidth()){Text("作为管理终端")}
@@ -176,7 +203,7 @@ class PeerActivity:ComponentActivity(){
             }else if(pairingRole==1){
                 Text("步骤 2 / 3 · 扫描节点二维码，再让节点扫描本机响应二维码",style=MaterialTheme.typography.titleSmall)
                 Button(onClick={scan()}){Text("扫描节点二维码")}
-                Text("两台设备完成身份确认后会自动尝试公网数据直连。",style=MaterialTheme.typography.bodySmall)
+                Text("双向扫码确认身份。跨网络连接需要两端可信中心配置及单独授权；如果本地网络无法互通，可在连接详情中扫码导入节点签名的中心绑定。",style=MaterialTheme.typography.bodySmall)
             }
         }}
         if(qr.isNotBlank())item{HubCard(Modifier.fillMaxWidth()){
@@ -202,8 +229,9 @@ class PeerActivity:ComponentActivity(){
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
                     Button(onClick={select(p)}){Text(if(p.optString("pairState")=="PENDING")"验证连接" else "管理短信")}
-                    OutlinedButton(onClick={selected=p;tab=2}){Text("连接详情")}
+                    OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接详情")}
                 }
+                if(p.optString("localRole")=="NODE"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接 / 授权")}
                 if(p.optString("pairState")!="REVOKED")TextButton(onClick={revokeTarget=p}){Text(if(p.optString("pairState")=="PENDING")"取消配对" else "撤销授权")}
             }
         }}

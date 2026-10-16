@@ -164,7 +164,8 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
     }
 
     public String route() {
-        return "DIRECT";
+        PeerNativeRtcTransport transport = rtc;
+        return transport == null ? "OFFLINE" : transport.route();
     }
 
     public JSONObject request(JSONObject peer, String id, JSONObject request) throws Exception {

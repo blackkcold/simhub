@@ -42,7 +42,7 @@ jobs:
           PY
           )
           test "$ANDROID_VERSION" = "$SERVER_VERSION"
-          [[ "$ANDROID_VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]
+          [[ "$ANDROID_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$GITHUB_RUN_NUMBER" =~ ^[1-9][0-9]*$ ]]
           test "$GITHUB_RUN_NUMBER" -le 99999
           VERSION="$ANDROID_VERSION-dev.$GITHUB_RUN_NUMBER"
@@ -288,7 +288,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf "SIM Hub Dev %s\\n\\nExperimental development prerelease. Test on isolated devices and data volumes; do not deploy over Stable.\\n" "$VERSION" > release/RELEASE_NOTES.md
+          printf "SIM Hub Dev %s\n\nExperimental development prerelease. Test on isolated devices and data volumes; do not deploy over Stable.\n" "$VERSION" > release/RELEASE_NOTES.md
           ASSETS=(
             "release/simhub-agent-v${VERSION}-release.apk"
             "release/simhub-agent-v${VERSION}-release.apk.sha256"

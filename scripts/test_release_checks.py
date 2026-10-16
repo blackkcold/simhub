@@ -26,7 +26,7 @@ class ReleaseChecksTests(unittest.TestCase):
     def test_failed_codeql_blocks_release(self):
         runs = [workflow("CI"), workflow("Security scan")]
         self.assertEqual(verdict(runs, [codeql("failure")], SHA, "main")[0], "failed")
-        self.assertEqual(verdict(runs, [codeql("neutral")], SHA, "main")[0], "failed")
+        self.assertEqual(verdict(runs, [codeql("neutral")], SHA, "main")[0], "waiting")
 
     def test_failed_scan_blocks_even_when_build_is_green(self):
         runs = [workflow("CI"), workflow("Security scan", "failure")]

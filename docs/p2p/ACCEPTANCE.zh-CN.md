@@ -1,7 +1,7 @@
 # 验收矩阵逐项状态（诚实版）
 
 对象：本分支上的 P2P 安全整改（原生 RTC + 中心辅助信令 + 共享 pinning 客户端 + 受控配置注入）。
-原始审计基线：`5a84ab79bd0d7c887fe920096839bb4865447f65`（下方的“本会话”及原始执行证据均属于当时的历史记录，**不代表当前 PR head 的验收结果**）。实时 CI 状态应以 [PR #84 的检查页](https://github.com/blackkcold/simhub/pull/84/checks) 为准；新增提交后必须重新以最新 head 校验。设计文档：`output/v0.1_p2p-security-design.md` 第 14 节。
+原始审计基线：`5a84ab79bd0d7c887fe920096839bb4865447f65`（下方的“本会话”及原始执行证据均属于当时的历史记录，**不代表当前 PR head 的验收结果**）。实时 CI 状态应以 [`develop` 的工作流](https://github.com/blackkcold/simhub/actions?query=branch%3Adevelop) 为准；新增提交后必须重新以最新 head 校验。设计文档：`output/v0.1_p2p-security-design.md` 第 14 节。
 
 状态口径：
 

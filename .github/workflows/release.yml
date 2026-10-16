@@ -90,6 +90,7 @@ jobs:
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
+      - run: python3 scripts/check_stable_boundary.py
       - run: python3 scripts/test_release_pipeline.py
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
@@ -208,6 +209,130 @@ jobs:
         run: |
           set -euo pipefail
           APK=android/app/build/outputs/apk/release/app-release.apk
+          if unzip -Z1 "$APK" | grep -Eiq '(^|/)(libwebrtc|libjingle).*\\.so
+          APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee signing-report.txt
+          ACTUAL=$(grep -m1 'certificate SHA-256 digest:' signing-report.txt | awk '{print $NF}' | tr '[:upper:]' '[:lower:]')
+          EXPECTED='633f600f7ec0ac5cdcdcffb536ade4beec8312cc083487a225c8c308771fd8d3'
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error::Unexpected signing certificate digest: $ACTUAL"
+            exit 1
+          fi
+          cp "$APK" "simhub-agent-v${VERSION}-release.apk"
+          sha256sum "simhub-agent-v${VERSION}-release.apk" > "simhub-agent-v${VERSION}-release.apk.sha256"
+          rm -f "$ANDROID_KEYSTORE_FILE"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-apk
+          path: |
+            simhub-agent-v*-release.apk
+            simhub-agent-v*-release.apk.sha256
+            signing-report.txt
+          if-no-files-found: error
+
+  publish:
+    needs: [validate, sign, build-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signed-apk
+          path: release
+
+      - name: Create immutable release tag after successful signing
+        shell: bash
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+          EXISTING=$(git rev-parse -q --verify "$TAG^{commit}" 2>/dev/null || true)
+          if [[ -n "$EXISTING" && "$EXISTING" != "$GITHUB_SHA" ]]; then
+            echo "::error::Release tag already exists at a different commit; refusing replacement"
+            exit 1
+          fi
+          if [[ -z "$EXISTING" ]]; then
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
+      - name: Assemble release assets
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          IMAGE_DIGEST: ${{ needs.build-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          mkdir -p release/docs
+          git archive --format=zip --output="release/simhub-v${VERSION}-source.zip" HEAD
+          cp README.md README.zh-CN.md CHANGELOG.md SECURITY.md THREAT_MODEL.md THIRD_PARTY_NOTICES.md LICENSE release/docs/
+          cp docs/*.md release/docs/
+          cp modem_agent/README.md release/docs/MODEM_AGENT.md
+          (cd release/docs && zip -q -r "../simhub-v${VERSION}-docs.zip" .)
+          sha256sum "release/simhub-agent-v${VERSION}-release.apk" \
+            "release/simhub-v${VERSION}-source.zip" \
+            "release/simhub-v${VERSION}-docs.zip" > release/SHA256SUMS.txt
+          VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9]*\)/\1/p' android/app/build.gradle.kts | head -1)"
+          export VERSION VERSION_CODE
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          version=os.environ["VERSION"]
+          root=pathlib.Path("release")
+          def digest(filename):
+              return hashlib.sha256((root/filename).read_bytes()).hexdigest()
+          apk=f"simhub-agent-v{version}-release.apk"
+          source=f"simhub-v{version}-source.zip"
+          import re
+          schema=re.search(r"PRAGMA user_version=([0-9]+)",pathlib.Path("server/simhub_server.py").read_text())
+          if not schema:raise SystemExit("Missing relay database schema declaration")
+          db_schema=int(schema.group(1))
+          data={
+              "schemaVersion":1,"release":version,"channel":"stable",
+              "notes":__import__("subprocess").check_output(["python3","scripts/release_notes.py","--version",version,"--summary"],text=True).strip(),
+              "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
+              "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
+                         "asset":apk,"sha256":digest(apk),
+                         "packageName":"com.blackkcold.simhub"},
+              "minimumCompatibleServer":"0.9.0",
+              "minimumCompatibleAndroid":"0.9.0"
+          }
+          (root/"update-manifest.json").write_text(json.dumps(data,indent=2)+chr(10),encoding="utf-8")
+          PY
+
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release_notes.py --version "$VERSION" --output release/RELEASE_NOTES.md
+          ASSETS=(
+            "release/simhub-agent-v${VERSION}-release.apk"
+            "release/simhub-agent-v${VERSION}-release.apk.sha256"
+            "release/simhub-v${VERSION}-source.zip"
+            "release/simhub-v${VERSION}-docs.zip"
+            "release/signing-report.txt"
+            "release/SHA256SUMS.txt"
+            "release/update-manifest.json"
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG is already published; leaving immutable assets unchanged"
+            exit 0
+          fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "SIM Hub v${VERSION}" --notes-file release/RELEASE_NOTES.md "${ASSETS[@]}"
+; then
+            echo "::error::Stable APK unexpectedly contains native WebRTC code"
+            exit 1
+          fi
           APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee signing-report.txt
           ACTUAL=$(grep -m1 'certificate SHA-256 digest:' signing-report.txt | awk '{print $NF}' | tr '[:upper:]' '[:lower:]')

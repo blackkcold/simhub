@@ -51,6 +51,19 @@ def release_channel():
     return channel
 
 
+def host_port():
+    try:
+        lines = ENV_FILE.read_text("utf-8").splitlines()
+    except OSError:
+        lines = []
+    ports = [line.partition("=")[2].strip().strip("\'\\\"")
+             for line in lines if line.startswith("SIMHUB_HOST_PORT=")]
+    value = ports[-1] if ports else "8787"
+    if not value.isdecimal() or not 1 <= int(value) <= 65535:
+        raise ValueError("Invalid private SIM Hub host port")
+    return int(value)
+
+
 def channel_version(value):
     return (DEV_VERSION if release_channel() == "dev" else VERSION).fullmatch(str(value))
 AGENT_VERSION = "0.11.1"
@@ -170,7 +183,7 @@ def current_version():
     except OSError:
         pass
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8787/readyz", timeout=2) as response:
+        with urllib.request.urlopen("http://127.0.0.1:" + str(host_port()) + "/readyz", timeout=2) as response:
             version = json.load(response).get("version")
         if channel_version(str(version)):
             return str(version).removeprefix("v")
@@ -271,7 +284,7 @@ def health(version):
     consecutive = 0
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8787/readyz", timeout=3) as r:
+            with urllib.request.urlopen("http://127.0.0.1:" + str(host_port()) + "/readyz", timeout=3) as r:
                 payload = json.load(r)
             consecutive = (consecutive + 1) if (
                 payload.get("ok") and payload.get("version") == version) else 0

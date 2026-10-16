@@ -248,15 +248,21 @@ class PeerActivity:ComponentActivity(){
     @Composable private fun ConnectionScreen(){LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{HubCard(Modifier.fillMaxWidth()){
             Text("管理中心辅助直连",style=MaterialTheme.typography.titleMedium)
-            Text("双机扫码后复用已注册的管理中心与账户交换端到端加密的建连信令，再通过原生 WebRTC 与 STUN 尝试局域网/公网直连。无需填写地址、部署服务器或开放端口。")
-            Text("不新增公共信令服务；未配置 Relay 时不使用 TURN、信箱或数据转发，直连失败即失败。管理中心可见注册关系、IP 与流量元数据，但无法解密信令或短信。")
+            Text("同一局域网优先本地直连。跨网络可选择已注册的可信中心仅传递端到端加密的建连信令，需要双方已有对应中心账户或设备配置，以及单独授权。")
+            Text("本功能不提供公共信令服务器。未配置 Relay 时不启用 TURN、信箱或业务中继，受限 NAT 下可能无法连接。中心可以看到关联及网络元数据，但不能解密信令或短信。")
             Text("Relay 独立配置；同时配置时优先 Relay，失败后尝试已授权 P2P。")
             (selected?.let{listOf(it)}?:emptyList()).filter{it.optString("pairState")!="REVOKED"}.forEach{p->
                 Text("${p.optString("name")} · ${connectionLabel(p)}")
                 Text("P2P 授权：${pairLabel(p)} · 读取${if(p.optString("permissions").split(",").contains("send"))"、发送" else "（只读）"}",style=MaterialTheme.typography.bodySmall)
-                Text("发现服务：${p.optString("discoveryState","WAITING")} · 上次成功传输：${routeLabel(p.optString("activeTransport"))}",style=MaterialTheme.typography.bodySmall)
+                Text("连接阶段：${discoveryLabel(p.optString("discoveryState","WAITING"))} · 上次成功路径：${routeLabel(p.optString("activeTransport"))}",style=MaterialTheme.typography.bodySmall)
+                Text(diagnosticLabel(p),color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
+                if(p.optLong("lastSyncAt",0)>0)Text("最后通信：${java.text.SimpleDateFormat("MM-dd HH:mm",java.util.Locale.getDefault()).format(java.util.Date(p.optLong("lastSyncAt")*1000))}",style=MaterialTheme.typography.labelSmall)
                 Text("设备身份：${p.optString("id").take(16)}…",style=MaterialTheme.typography.labelSmall)
                 if(p.optBoolean("signalingConsent")){
+                    if(p.optString("localRole")=="NODE"){
+                        if(p.optString("signalingCenterBinding").isBlank())Text("节点已授权，正在等待可信中心返回绑定编号。检查节点的注册状态及网络。",style=MaterialTheme.typography.bodySmall)
+                        else OutlinedButton(onClick={work{qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).signalingBindingQr(p.getString("id"))};tab=0;notice="请用管理手机的「连接详情 → 扫描节点授权码」读取二维码；仅交换已验证的中心绑定编号。"}}){Text("生成节点信令授权二维码")}
+                    }
                     OutlinedButton(onClick={work{withContext(Dispatchers.IO){PeerCenterConnector.ensure(applicationContext,p.getString("id"));PeerCenterConnector.reconnect(p.getString("id"))};notice="已重新尝试辅助建连；仅信令就绪不等于可读取短信"}}){Text("重新尝试直连")}
                 }
                 if(p.optString("localRole")=="CONTROLLER"){
@@ -266,20 +272,53 @@ class PeerActivity:ComponentActivity(){
                     else OutlinedButton(onClick={work{withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayAssociationDisabled",false);store().update(fresh);if(!PeerRelayTransport.associate(applicationContext,fresh))throw IllegalStateException("尚未在两端独立授权 Relay，或 Relay 设备身份未匹配。可重新配对获取节点标识")};notice="已验证同一节点身份；Relay 优先，P2P 备用"}}){Text("关联此节点已授权的 Relay")}
                 }
                 if(!p.optBoolean("signalingConsent")){
+                    val isNode=p.optString("localRole")=="NODE"
                     val trust=CenterTrustStore.get(applicationContext).effective()
-                    val centerOrigin=p.optString("relayOrigin","")
-                    if(trust!=null&&trust.covers(CenterTrust.ROLE_CONTROLLER,centerOrigin))
-                        OutlinedButton(onClick={work{withContext(Dispatchers.IO){
-                            val next=store().peer(p.getString("id")).optInt("signalingConsentRevision",0)+1
-                            store().setSignaling(p.getString("id"),true,"",next)
-                        };PeerService.start(this@PeerActivity);notice="已授权此配对使用管理中心辅助建连；仅授权信令，不授权 TURN 或业务中继"}}){Text("授权管理中心辅助直连")}
-                    else OutlinedButton(onClick={notice="缺少可信中心配置：请先导入可信配置或可信二维码（CENTER_SETUP_REQUIRED）"}){Text("管理中心未配置")}
+                    val origin=if(isNode)AgentConfig(applicationContext).server() else p.optJSONObject("relayHint")?.optString("origin","")?:""
+                    val trusted=trust!=null&&trust.covers(if(isNode)CenterTrust.ROLE_NODE else CenterTrust.ROLE_CONTROLLER,origin)
+                    if(isNode&&trusted){
+                        OutlinedButton(onClick={work{
+                            withContext(Dispatchers.IO){
+                                val previous=store().peer(p.getString("id")).optInt("signalingConsentRevision",0)
+                                store().setSignaling(p.getString("id"),true,"",previous+1)
+                                PeerCenterConnector.ensure(applicationContext,p.getString("id"))
+                            }
+                            PeerService.start(this@PeerActivity)
+                            notice="节点已授权交换加密信令，正在向可信中心申请绑定。绑定就绪后请生成二维码交给管理手机扫码。"
+                        }}){Text("授权节点使用已配置可信中心")}
+                    }else if(!isNode&&trusted){
+                        OutlinedButton(onClick={scan()}){Text("扫描节点信令授权二维码")}
+                        Text("先让节点在连接详情中授权可信中心并生成二维码。此扫码只授予加密信令，不授权 Relay 或 TURN。",style=MaterialTheme.typography.bodySmall)
+                    }else{
+                        Text("此端尚未配置与配对节点对应的可信中心或有效身份；当前仅可尝试局域网 P2P。",style=MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
             OutlinedButton(onClick={startActivity(Intent(this@PeerActivity,ControllerActivity::class.java))}){Text("配置 Relay（可选）")}
         }}
         item{Text("测试版 ${BuildConfig.VERSION_NAME}\n包名 ${packageName}\n公网直连受 NAT、防火墙、Android 权限及后台状态影响。",style=MaterialTheme.typography.bodySmall)}
     }}
+    private fun discoveryLabel(code:String)=when(code){
+        "READY"->"信令通道就绪，待 ICE 握手"
+        "WAITING"->"等待双方信令配置或对端上线"
+        "SETUP_REQUIRED"->"缺少可信中心或绑定编号"
+        "CONNECTING"->"正在建立连接"
+        "UNAVAILABLE"->"信令暂不可用"
+        "STOPPED"->"信令授权关闭"
+        else->"尚未连接"
+    }
+    private fun diagnosticLabel(p:JSONObject):String {
+        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "数据通道已连接；可读取状态和短信。"
+        if(p.optString("pairState")=="PENDING")return "未完成节点对响应码的确认，请先完成双向扫码。"
+        if(!p.optBoolean("signalingConsent"))return "局域网以外的连接尚未授权；进入连接详情查看可信中心设置。"
+        if(p.optString("signalingCenterBinding").isBlank())return "尚未取得已验证的中心绑定；节点需生成授权码，管理端需扫码确认。"
+        return when(p.optString("discoveryState")){
+            "SETUP_REQUIRED"->"请验证双方可信中心身份与绑定编号，不能仅填写服务器地址。"
+            "UNAVAILABLE"->"检查双端网络、证书信任与后台服务；不自动走未授权 Relay。"
+            "READY"->"中心已交换信令，但 ICE 可能仍在协商或 NAT 阻断。"
+            else->"检查节点前台服务、对端网络与中心授权是否有效。"
+        }
+    }
     private fun pairLabel(p:JSONObject)=when(p.optString("pairState")){"PENDING"->"待双向确认";"ACTIVE"->"已配对";"REVOKED"->"已撤销";else->"待配对"}
     private fun connectionLabel(p:JSONObject):String {
         if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "设备 P2P 直连已建立"

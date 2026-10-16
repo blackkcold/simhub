@@ -1,7 +1,9 @@
 name: P2P isolated preview
 on:
   push:
-    branches: [feature/p2p-isolated-preview]
+    branches: [develop]
+  pull_request:
+    branches: [develop]
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,0 +1,59 @@
+name: Retire integrated temporary branches
+on:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/maintenance/retire-branches.trigger'
+permissions:
+  contents: write
+  pull-requests: read
+jobs:
+  guarded-cleanup:
+    name: delete retired P2P and Stable rollout refs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify migration and closed/merged PR states, then delete only authorized refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "develop"
+          test "$GH_REPO" = "blackkcold/simhub"
+          grep -F '## Stable / Dev 发布线归属' docs/p2p/TEST_GUIDE.zh-CN.md >/dev/null
+          grep -F 'branches: [develop]' .github/workflows/p2p-preview.yml >/dev/null
+          python3 - <<'PY'
+          import json,os,urllib.request,urllib.error
+          repo=os.environ["GH_REPO"]
+          token=os.environ["GH_TOKEN"]
+          base="https://api.github.com/repos/"+repo
+          def req(path,method="GET"):
+              request=urllib.request.Request(
+                  base+path,method=method,
+                  headers={"Authorization":"Bearer "+token,
+                           "Accept":"application/vnd.github+json",
+                           "X-GitHub-Api-Version":"2022-11-28"})
+              try:
+                  with urllib.request.urlopen(request,timeout=30) as response:
+                      return json.load(response) if method=="GET" else None
+              except urllib.error.HTTPError as exc:
+                  if method=="DELETE" and exc.code==404: return None
+                  raise
+          old=req("/pulls/84")
+          stable=req("/pulls/104")
+          if not(old["state"]=="closed" and old["merged"] is False):
+              raise SystemExit("PR84 must be closed unmerged before cleanup")
+          if not(stable["state"]=="closed" and stable["merged"] is True):
+              raise SystemExit("Stable PR104 must be merged before cleanup")
+          for branch in ("feature/p2p-isolated-preview","chore/stable-deploy-bundle-0174"):
+              req("/git/refs/heads/"+branch,method="DELETE")
+              print("Retired branch:",branch)
+          branches=req("/branches?per_page=100")
+          remaining={entry["name"] for entry in branches}
+          if remaining!={"main","develop"}:
+              raise SystemExit("Unexpected remaining branches: "+repr(sorted(remaining)))
+          print("CLEANUP_OK main and develop only")
+          PY

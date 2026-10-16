@@ -16,9 +16,10 @@ on:
       source_sha:
         description: Full 40-character commit SHA that was reviewed
         required: true
-      pull_number:
-        description: Pull request number the SHA must belong to
+      dev_sequence:
+        description: Dev build sequence (1-99999); private test artifact, not a public release
         required: true
+        default: '1'
 
 permissions:
   contents: read
@@ -34,7 +35,7 @@ jobs:
       - name: Validate the approved source reference
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
-          PULL_NUMBER: ${{ inputs.pull_number }}
+          DEV_SEQUENCE: ${{ inputs.dev_sequence }}
           TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -42,16 +43,18 @@ jobs:
             *[!0-9a-f]*|"") echo "SOURCE_SHA_INVALID"; exit 1 ;;
           esac
           [ "${#SOURCE_SHA}" -eq 40 ] || { echo "SOURCE_SHA_INVALID"; exit 1; }
-          case "$PULL_NUMBER" in *[!0-9]*|"") echo "PULL_NUMBER_INVALID"; exit 1 ;; esac
+          [ "$GITHUB_REF_NAME" = "develop" ] || { echo "DEVELOP_ONLY"; exit 1; }
+          case "$DEV_SEQUENCE" in *[!0-9]*|"") echo "DEV_SEQUENCE_INVALID"; exit 1 ;; esac
+          [ "$DEV_SEQUENCE" -ge 1 ] && [ "$DEV_SEQUENCE" -le 99999 ] || { echo "DEV_SEQUENCE_OUT_OF_RANGE"; exit 1; }
           head=$(curl -fsSL -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls/$PULL_NUMBER" | python3 -c 'import json,sys;print(json.load(sys.stdin)["head"]["sha"])')
-          [ "$head" = "$SOURCE_SHA" ] || { echo "SOURCE_SHA_NOT_THE_REVIEWED_HEAD"; exit 1; }
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/commits/develop" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sha"])')
+          [ "$head" = "$SOURCE_SHA" ] || { echo "SOURCE_SHA_NOT_DEVELOP_HEAD"; exit 1; }
           {
             echo "## P2P private packaging request"
             echo ""
-            echo "PR: #$PULL_NUMBER"
-            echo "Source SHA: \`$SOURCE_SHA\`"
+            echo "Branch: develop"
+            echo "Approved Dev SHA: \`$SOURCE_SHA\`"
             echo "Workflow SHA: \`$GITHUB_SHA\`"
             echo ""
             echo "Approval is bound to the commit above; a moved branch is not accepted."
@@ -115,7 +118,7 @@ jobs:
           log=$(mktemp)
           chmod 600 "$log"
           gradle -p android -PcenterConfigPackaging=true --console=plain --no-build-cache \
-            :app:assembleRelease >"$log" 2>&1
+            :app:assembleDevRelease -PsimhubDevSequence=${{ inputs.dev_sequence }} >"$log" 2>&1
           status=$?
           if [ $status -ne 0 ]; then
             grep -oE 'CENTER_CONFIG_[A-Z_]+|BUILD FAILED' "$log" | sort -u || echo "PACKAGING_FAILED"
@@ -128,7 +131,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/test_center_config_leak.py
-          apk=android/app/build/outputs/apk/release/app-release.apk
+          apk=android/app/build/outputs/apk/devRelease/app-devRelease.apk
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" | grep -q "package: name=\x27com.blackkcold.simhub.dev\x27" || { echo "NOT_A_DEV_APK"; exit 1; }
           [ -f "$apk" ] || { echo "APK_MISSING"; exit 1; }
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk" >/dev/null ||
             { echo "APK_SIGNATURE_INVALID"; exit 1; }
@@ -167,6 +171,6 @@ jobs:
         with:
           name: simhub-private-package
           path: |
-            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/apk/devRelease/app-devRelease.apk
             center-apk-sha256.txt
           if-no-files-found: error

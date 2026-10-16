@@ -10,9 +10,9 @@ The connection screen shows whether the device is signed in to a center, whether
 
 Preview, packaging and Android sandbox checks must pass before the isolated APK is attached to existing draft PR #84. The preview must not merge into main without separate explicit approval.
 
-Branch: `feature/p2p-isolated-preview`; draft PR #84. Never merge or enable auto-merge without a new user instruction. Main 0.17.1 is the imported baseline; the preview has a separate application ID and disables stable self-update.
+Branch: `feature/p2p-isolated-preview`; draft PR #84. Never merge or enable auto-merge without a new user instruction. Main 0.17.2 is the imported baseline; the preview has a separate application ID and disables stable self-update.
 
-## Pairing, transports and signaling
+The optional trusted-center bootstrap now lets a confirmed SIM node opt in and register a pair-specific binding; its short-lived, node-signed QR can be imported by the paired controller after identity, revision and exact trusted-origin checks. This is deliberately an additional scan when LAN cannot first deliver the authenticated `device.state` binding, not a claim that offline double-scan alone guarantees arbitrary internet reachability. All business content keys, TURN, and legacy Relay remain independently authorized. The node role can open connection diagnostics; send status distinguishes submission from carrier send/delivery, and pending SMS commands can be reconciled individually.\n\n## Pairing, transports and signaling
 
 Double QR pairing creates a separate peer identity, content root and explicit read/history/state/send grants. It does **not** enable the auxiliary path: `signalingConsent` defaults to `false` and can only be granted by an explicit per-pair user action once a trusted center description exists. The retired `publicDiscoveryEnabled` flag is kept for audit as `publicDiscoveryRetired` and never starts a network path.
 

@@ -9,7 +9,7 @@ code, and is not intended to replace a production SIM node.
 | Property | Stable | Dev |
 |---|---|---|
 | Git branch | `main` | `develop` |
-| Git tag | `v0.17.2` | `v0.17.2-dev.7` (illustrative) |
+| Git tag | `vX.Y.Z` | `vX.Y.Z-dev.N` |
 | GitHub Release | published, not prerelease | published with `prerelease=true` |
 | Android package | `com.blackkcold.simhub` | `com.blackkcold.simhub.dev` |
 | Android build | `assembleRelease` | `assembleDevRelease -PsimhubDevSequence=N` |
@@ -31,7 +31,7 @@ code, and is not intended to replace a production SIM node.
    monotonically increasing run number determines the `-dev.N` suffix and
    distinct Android `versionCode`.
 3. Dev publishing builds a signed Android APK, multiarchitecture GHCR image,
-   Sigstore/Cosign OCI signature, immutable source/docs archives, checksums and
+   Sigstore/Cosign OCI signature, verified deployment ZIP, immutable source/docs archives, checksums and
    `update-manifest.json`, then publishes a GitHub **Pre-release**.
 4. Experimental feature PRs such as P2P target `develop`, not `main`.
    Promoting a feature to Stable requires explicit review, physical-device
@@ -54,6 +54,20 @@ release signing certificate but **different Android package IDs** and update
 metadata. Neither can be installed as an update to the other package. Separate
 per-channel signing keys can be introduced only with an explicitly coordinated
 long-term Dev certificate; generating a new key per build would break Dev OTA.
+
+## Downloadable server packages
+
+Every Stable Release and Dev Pre-release contains a version-matched
+`simhub-server-vX.Y.Z[-dev.N]-deploy.zip`, in addition to the signed Android APK,
+GHCR linux/amd64 and linux/arm64 images, source/docs bundles and integrity
+checks. The server ZIP includes `deployment.json`, a digest-pinned image,
+the exact channel-specific Cosign identity, Compose and rootless updater scripts,
+and `scripts/deploy-verified.sh`. It has **no operator secrets, SMS, or Vault data**.
+Copy `.env.example` to `.env`, configure independent HTTPS origins and secrets,
+then run `bash scripts/deploy-verified.sh` (without sudo). The script refuses
+wrong channel/port/project, rootful Docker and untrusted OCI images.
+The update manifest retains its existing source asset and adds
+`server.deploymentAsset` and `server.deploymentSha256` without changing its schema.
 
 ## Safe dual deployment on one rootless Docker host
 

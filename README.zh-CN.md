@@ -18,7 +18,7 @@ Stable 稳定版保留现有正式 APK、Relay 和签名更新通道；Dev 测�
 [![Release](https://img.shields.io/github/v/release/blackkcold/simhub)](https://github.com/blackkcold/simhub/releases/latest)
 [![License](https://img.shields.io/github/license/blackkcold/simhub)](LICENSE)
 
-**[下载 Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[部署教程](docs/QUICKSTART.zh-CN.md)** · [安装说明](docs/INSTALLATION.md)
+**[Stable 稳定版：APK + 服务器](https://github.com/blackkcold/simhub/releases/latest)** · **[Dev 测试版：APK + 服务器](https://github.com/blackkcold/simhub/releases)** · [双发布线部署指南](docs/RELEASE_CHANNELS.md) · [安装说明](docs/INSTALLATION.md)
 
 </div>
 

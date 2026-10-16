@@ -16,7 +16,7 @@ Multi-SIM messaging · OTP extraction · Encrypted relay · Web / PWA controller
 
 Android uses **one native Material 3 shell** for SIM Node and Management Center, with distinct role themes, adaptive navigation and on-device end-to-end decryption.
 
-**[Download Android APK](https://github.com/blackkcold/simhub/releases/latest)** · **[Quick deployment](docs/QUICKSTART.zh-CN.md)** · [Installation guide](docs/INSTALLATION.md)
+[Stable APK/Server](https://github.com/blackkcold/simhub/releases/latest) · [Dev APK/Server](https://github.com/blackkcold/simhub/releases)
 
 </div>
 

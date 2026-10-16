@@ -15,8 +15,9 @@ android {
         targetSdk = 37
         versionCode = 52
         versionName = "0.17.2"
+        buildConfigField("String", "RELEASE_CHANNEL", "\"stable\"")
     }
-    buildFeatures { buildConfig = true; compose = true; aidl = true }
+    buildFeatures { buildConfig = true; compose = true; aidl = true; resValues = true }
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -33,8 +34,27 @@ android {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        create("devRelease") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev." + (providers.gradleProperty("simhubDevSequence").orNull ?: "1")
+            buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
+            resValue("string", "app_name", "SIM Hub Dev")
+            matchingFallbacks += listOf("release")
+        }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+}
+
+
+// Dev is a distinct Android application. Use monotonically increasing GitHub
+// release sequence per workflow to prevent downgrades on the same Dev channel.
+androidComponents {
+    onVariants(selector().withBuildType("devRelease")) { variant ->
+        val sequence = providers.gradleProperty("simhubDevSequence").orNull?.toIntOrNull() ?: 1
+        require(sequence in 1..99999) { "Invalid Dev release sequence" }
+        variant.outputs.forEach { output -> output.versionCode.set(52 * 100000 + sequence) }
+    }
 }
 
 

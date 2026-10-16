@@ -28,7 +28,21 @@ MAPPED_UID="$(printf '%s\n' "$MAP" | awk '$1<=65534 && 65534<$1+$3 {print $2+655
 mkdir -p .simhub-updater "$HOME/.config/systemd/user"
 chmod 700 .simhub-updater
 setfacl -m "u:$MAPPED_UID:--x" .simhub-updater
-UNIT="$HOME/.config/systemd/user/simhub-updater.service"
+# A second Dev checkout must not overwrite the Stable user's systemd unit.
+CHANNEL="$(python3 - <<'PY'
+from pathlib import Path
+values=[line.partition("=")[2].strip().strip("'\"")
+        for line in Path(".env").read_text("utf-8").splitlines()
+        if line.startswith("SIMHUB_CHANNEL=")]
+value=values[-1] if values else "stable"
+if value not in ("stable","dev"):
+    raise SystemExit("Invalid SIMHUB_CHANNEL")
+print(value)
+PY
+)"
+UNIT_NAME="simhub-updater-dev.service"
+[[ "$CHANNEL" == "stable" ]] && UNIT_NAME="simhub-updater.service"
+UNIT="$HOME/.config/systemd/user/$UNIT_NAME"
 cat > "$UNIT" <<EOF
 [Unit]
 Description=SIM Hub rootless verified OCI updater
@@ -59,17 +73,17 @@ WantedBy=default.target
 EOF
 chmod 600 "$UNIT"
 systemctl --user daemon-reload
-systemctl --user enable --now simhub-updater.service
-systemctl --user restart simhub-updater.service
+systemctl --user enable --now "$UNIT_NAME"
+systemctl --user restart "$UNIT_NAME"
 # A successful systemctl restart is NOT proof that a Type=simple service remains
 # healthy or can access docker.sock. Verify the actual process and IPC.
 UPDATER_READY=0
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  PID="$(systemctl --user show --property=MainPID --value simhub-updater.service)"
+  PID="$(systemctl --user show --property=MainPID --value "$UNIT_NAME")"
   if [[ "$PID" =~ ^[1-9][0-9]*$ ]] && [[ -r "/proc/$PID/ns/user" ]]; then
     if [[ "$(readlink "/proc/$PID/ns/user")" != "$(readlink /proc/self/ns/user)" ]]; then
       echo "Updater has an unexpected user namespace; remove conflicting systemd drop-ins." >&2
-      systemctl --user status --no-pager simhub-updater.service || true
+      systemctl --user status --no-pager "$UNIT_NAME" || true
       exit 1
     fi
     if python3 - "$ROOT/.simhub-updater/control.sock" <<'PY'
@@ -93,11 +107,11 @@ PY
 done
 if [[ "$UPDATER_READY" != "1" ]]; then
   echo "Updater did not become healthy or its local control socket is inaccessible." >&2
-  systemctl --user status --no-pager simhub-updater.service || true
-  echo "Inspect: journalctl --user -u simhub-updater.service -n 100 --no-pager" >&2
+  systemctl --user status --no-pager "$UNIT_NAME" || true
+  echo "Inspect: journalctl --user -u $UNIT_NAME -n 100 --no-pager" >&2
   exit 1
 fi
 echo "Rootless updater installed and IPC connectivity verified for $(id -un)."
-echo "Run: systemctl --user status simhub-updater"
+echo "Run: systemctl --user status $UNIT_NAME"
 echo "Important: disable OLD privileged updater: sudo systemctl disable --now simhub-updater.service"
 echo "Enable user linger for boot-time start if required."

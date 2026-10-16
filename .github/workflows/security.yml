@@ -2,20 +2,91 @@ name: Security scan
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   push:
-    branches: [main]
+    branches: [main, develop]
   schedule:
     - cron: '0 4 * * 1'
   workflow_dispatch:
+
+# Keep branch-head and PR-merge analyses independent; both are required for Code Scanning.
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  codeql-scripts:
+  # Preserve the original Code Scanning configuration identity present on main:
+  # .github/workflows/security.yml:codeql/language:{java-kotlin,javascript-typescript,python}
+  # Splitting into codeql-scripts/codeql-android renamed the categories and caused
+  # GitHub's native pull-request CodeQL check to report three missing configurations.
+  codeql:
     name: codeql (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, java-kotlin]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        if: matrix.language == 'java-kotlin'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        if: matrix.language == 'java-kotlin'
+        with:
+          packages: 'platform-tools'
+      - name: Install Android API 37
+        if: matrix.language == 'java-kotlin'
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        if: matrix.language == 'java-kotlin'
+        with:
+          gradle-version: '9.6.0'
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+          build-mode: ${{ matrix.language == 'java-kotlin' && 'manual' || 'none' }}
+      - name: Compile Java and Kotlin under CodeQL instrumentation
+        if: matrix.language == 'java-kotlin'
+        run: gradle -p android :app:compileDebugKotlin :app:compileDebugJavaWithJavac --no-build-cache --rerun-tasks --stacktrace
+      - uses: github/codeql-action/analyze@v4
+        with:
+          output: codeql-results
+      - name: Summarize CodeQL findings (rule and location only)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          for path in glob.glob("codeql-results/**/*.sarif", recursive=True):
+              with open(path, encoding="utf-8") as handle:
+                  data = json.load(handle)
+              for run in data.get("runs", []):
+                  for result in run.get("results", [])[:150]:
+                      locs = result.get("locations", [])
+                      physical = locs[0].get("physicalLocation", {}) if locs else {}
+                      where = physical.get("artifactLocation", {}).get("uri", "?")
+                      line = physical.get("region", {}).get("startLine", "?")
+                      print(f"CODEQL_FINDING rule={result.get('ruleId', '?')} file={where}:{line}")
+          PY
+
+  # Preserve additional categories retained in GitHub's main-branch scan history.
+  # Each job performs genuine security-extended analysis, not an empty status shim.
+  # Remove compatibility scans only after repository administrators clean up
+  # obsolete scanning configurations in GitHub's Code Scanning tool-status page.
+  codeql-scripts:
+    name: codeql compatibility (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -33,8 +104,9 @@ jobs:
       - uses: github/codeql-action/analyze@v4
 
   codeql-android:
-    name: codeql (java-kotlin)
+    name: codeql compatibility (java-kotlin)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -57,8 +129,6 @@ jobs:
           languages: java-kotlin
           queries: security-extended
           build-mode: manual
-      # Kotlin is omitted by CodeQL's build-mode:none. CI builds with the same
-      # toolchain. This must be a real compilation observed by the extractor.
       - name: Compile Java and Kotlin under CodeQL instrumentation
         run: gradle -p android :app:compileDebugKotlin :app:compileDebugJavaWithJavac --no-build-cache --rerun-tasks --stacktrace
       - uses: github/codeql-action/analyze@v4

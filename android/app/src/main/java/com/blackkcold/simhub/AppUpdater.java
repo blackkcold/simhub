@@ -127,7 +127,7 @@ public final class AppUpdater {
                 String url=metadata.getString("url");
                 String version=metadata.getString("versionName");
                 String expectedPrefix="https://github.com/blackkcold/simhub/releases/download/v"+version+"/";
-                if(!version.matches("[0-9]+\\.[0-9]+\\.[0-9]+") ||
+                if(!ReleaseUpdateSource.matchesChannel(version) ||
                    !url.startsWith(expectedPrefix) || !url.endsWith(".apk") ||
                    !sha.matches("[a-f0-9]{64}"))throw new SecurityException("Untrusted update metadata");
                 if(remote)RemoteOta.stage(app,"downloading");

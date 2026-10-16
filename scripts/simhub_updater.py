@@ -21,10 +21,13 @@ from pathlib import Path
 
 REPO = "blackkcold/simhub"
 API = "https://api.github.com/repos/" + REPO + "/releases/latest"
+DEV_API = "https://api.github.com/repos/" + REPO + "/releases?per_page=100"
 REGISTRY = "ghcr.io/blackkcold/simhub-relay"
 CERT_IDENTITY = "https://github.com/blackkcold/simhub/.github/workflows/release.yml@refs/heads/main"
+DEV_CERT_IDENTITY = "https://github.com/blackkcold/simhub/.github/workflows/release-dev.yml@refs/heads/develop"
 CERT_ISSUER = "https://token.actions.githubusercontent.com"
 VERSION = re.compile(r"^v?([0-9]+)\.([0-9]+)\.([0-9]+)$")
+DEV_VERSION = re.compile(r"^v?([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.([1-9][0-9]*)$")
 DIGEST_IMAGE = re.compile(r"^ghcr\.io/blackkcold/simhub-relay@sha256:[0-9a-f]{64}$")
 LOCAL_IMAGE = re.compile(r"^simhub-relay:(?:local|rollback-[0-9]+|v[0-9]+\.[0-9]+\.[0-9]+)$")
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +35,37 @@ STATE_DIR = ROOT / ".simhub-updater"
 SOCKET = STATE_DIR / "control.sock"
 STATUS = STATE_DIR / "status.json"
 ENV_FILE = ROOT / ".env"
+
+
+def release_channel():
+    """Pinned to the deployment instance, never supplied by a web request."""
+    try:
+        values = [line.partition("=")[2].strip().strip("\'\\\"")
+                  for line in ENV_FILE.read_text("utf-8").splitlines()
+                  if line.startswith("SIMHUB_CHANNEL=")]
+    except OSError:
+        values = []
+    channel = values[-1] if values else "stable"
+    if channel not in ("stable", "dev"):
+        raise ValueError("Invalid fixed deployment release channel")
+    return channel
+
+
+def host_port():
+    try:
+        lines = ENV_FILE.read_text("utf-8").splitlines()
+    except OSError:
+        lines = []
+    ports = [line.partition("=")[2].strip().strip("\'\\\"")
+             for line in lines if line.startswith("SIMHUB_HOST_PORT=")]
+    value = ports[-1] if ports else "8787"
+    if not value.isdecimal() or not 1 <= int(value) <= 65535:
+        raise ValueError("Invalid private SIM Hub host port")
+    return int(value)
+
+
+def channel_version(value):
+    return (DEV_VERSION if release_channel() == "dev" else VERSION).fullmatch(str(value))
 AGENT_VERSION = "0.11.1"
 RUN_LOCK = threading.Lock()
 STATE_LOCK = threading.Lock()
@@ -40,7 +74,10 @@ state = {}
 
 def parse_version(value):
     match = VERSION.fullmatch(str(value))
-    return tuple(map(int, match.groups())) if match else (0, 0, 0)
+    if match:
+        return tuple(map(int, match.groups()))
+    dev = DEV_VERSION.fullmatch(str(value))
+    return tuple(map(int, dev.groups())) if dev else (0, 0, 0)
 
 
 def run(*argv, timeout=240):
@@ -82,14 +119,31 @@ def fetch_json(url, limit=131072):
 
 
 def latest():
-    doc = fetch_json(API)
+    channel = release_channel()
+    if channel == "stable":
+        doc = fetch_json(API)
+        candidates = [doc]
+    else:
+        documents = fetch_json(DEV_API, 1048576)
+        if not isinstance(documents, list):
+            raise ValueError("Invalid Dev release listing")
+        candidates = [entry for entry in documents
+                      if isinstance(entry, dict) and
+                      DEV_VERSION.fullmatch(str(entry.get("tag_name", ""))) and
+                      entry.get("prerelease") is True and
+                      entry.get("draft") is False and entry.get("published_at")]
+        candidates.sort(key=lambda entry: parse_version(entry["tag_name"]), reverse=True)
+        if not candidates:
+            raise ValueError("No published Dev prerelease")
+    doc = candidates[0]
     tag = doc.get("tag_name", "")
-    if (not VERSION.fullmatch(tag) or doc.get("draft") or doc.get("prerelease")
-            or not doc.get("published_at")):
-        raise ValueError("No published stable release")
+    if (not channel_version(tag) or doc.get("draft") or
+            bool(doc.get("prerelease")) != (channel == "dev") or
+            not doc.get("published_at")):
+        raise ValueError("No published release in pinned channel")
     prefix = "https://github.com/" + REPO + "/releases/download/" + tag + "/"
     assets = {a["name"]: a["browser_download_url"] for a in doc.get("assets", [])
-              if isinstance(a.get("name"), str) and
+              if isinstance(a, dict) and isinstance(a.get("name"), str) and
               isinstance(a.get("browser_download_url"), str) and
               a["browser_download_url"].startswith(prefix)}
     return {"version": tag.removeprefix("v"), "tag": tag,
@@ -102,7 +156,7 @@ def release_image(info):
         raise ValueError("Release has no update manifest")
     meta = fetch_json(url, 8192)
     server = meta.get("server")
-    if (meta.get("schemaVersion") != 1 or meta.get("channel") != "stable"
+    if (meta.get("schemaVersion") != 1 or meta.get("channel") != release_channel()
             or meta.get("release") != info["version"] or not isinstance(server, dict)
             or not isinstance(server.get("dbSchema"), int)
             or not DIGEST_IMAGE.fullmatch(str(server.get("image", "")))):
@@ -115,7 +169,7 @@ def current_version():
         for line in ENV_FILE.read_text("utf-8").splitlines():
             if line.startswith("SIMHUB_INSTALLED_VERSION="):
                 v = line.partition("=")[2].strip()
-                if VERSION.fullmatch(v):
+                if channel_version(v):
                     return v.removeprefix("v")
     except OSError:
         pass
@@ -124,14 +178,14 @@ def current_version():
         for line in ENV_FILE.read_text("utf-8").splitlines():
             if line.startswith("SIMHUB_IMAGE_TAG="):
                 v = line.partition("=")[2].strip().strip("'\"")
-                if VERSION.fullmatch(v):
+                if channel_version(v):
                     return v.removeprefix("v")
     except OSError:
         pass
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8787/readyz", timeout=2) as response:
+        with urllib.request.urlopen("http://127.0.0.1:" + str(host_port()) + "/readyz", timeout=2) as response:
             version = json.load(response).get("version")
-        if VERSION.fullmatch(str(version)):
+        if channel_version(str(version)):
             return str(version).removeprefix("v")
     except (OSError, ValueError):
         pass
@@ -155,7 +209,7 @@ def save(phase, **updates):
 def update_env(image, version):
     if not (DIGEST_IMAGE.fullmatch(image) or LOCAL_IMAGE.fullmatch(image)):
         raise ValueError("Invalid deployment image")
-    if not VERSION.fullmatch(version):
+    if not channel_version(version):
         raise ValueError("Invalid deployed version")
     text = ENV_FILE.read_text("utf-8").splitlines(keepends=True)
     text = [line for line in text if not line.startswith((
@@ -207,7 +261,8 @@ def verify_image(image):
         raise ValueError("Untrusted image reference")
     # Strict keyless Sigstore identity pinning; SHA-256 from the unsigned release
     # manifest alone is NOT sufficient. No permissive fallback is supported.
-    run("cosign", "verify", "--certificate-identity=" + CERT_IDENTITY,
+    identity = DEV_CERT_IDENTITY if release_channel() == "dev" else CERT_IDENTITY
+    run("cosign", "verify", "--certificate-identity=" + identity,
         "--certificate-oidc-issuer=" + CERT_ISSUER, image, timeout=120)
 
 
@@ -229,7 +284,7 @@ def health(version):
     consecutive = 0
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8787/readyz", timeout=3) as r:
+            with urllib.request.urlopen("http://127.0.0.1:" + str(host_port()) + "/readyz", timeout=3) as r:
                 payload = json.load(r)
             consecutive = (consecutive + 1) if (
                 payload.get("ok") and payload.get("version") == version) else 0
@@ -249,7 +304,7 @@ def job(version):
         require_rootless()
         save("checking", requested=version, error=None)
         info = latest()
-        if version != info["version"] or parse_version(version) <= parse_version(current_version()):
+        if not channel_version(version) or version != info["version"] or parse_version(version) <= parse_version(current_version()):
             raise ValueError("Only a newer latest stable release may be deployed")
         image, schema = release_image(info)
         if schema != database_schema():
@@ -313,7 +368,7 @@ class Handler(socketserver.StreamRequestHandler):
                           "available": parse_version(info["version"]) > parse_version(current_version())}
             elif action == "apply":
                 version = request.get("version")
-                if not isinstance(version, str) or not VERSION.fullmatch(version):
+                if not isinstance(version, str) or not channel_version(version):
                     raise ValueError("Invalid version")
                 if not RUN_LOCK.acquire(blocking=False):
                     raise ValueError("Update already running")

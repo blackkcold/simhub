@@ -4,6 +4,10 @@
 
 # SIM Hub
 
+## Stable / Dev 双发布线
+
+Stable 稳定版保留现有正式 APK、Relay 和签名更新通道；Dev 测试版使用独立 Android 包名与 Docker 部署环境，允许实验性 P2P 功能，稳定版不包含该功能。详见[双发布线部署与更新手册](docs/RELEASE_CHANNELS.md)。
+
 **将 Android 手机与受支持的蜂窝 Modem 变成私有、自托管的短信和 SIM 管理中心。**
 
 多 SIM 收发短信 · 验证码提取 · 加密中继 · Web / PWA 管理

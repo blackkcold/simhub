@@ -46,6 +46,65 @@ public final class PeerPairingManager {
         byte[] root=PeerCrypto.derive(shared,PeerCrypto.utf8(PeerCrypto.digest(PeerCrypto.utf8(transcript))),"content-root");
         try{store.save(profile(id,controller,response.optString("name","Controller"),"NODE",offer,"ACTIVE"),root);secrets.remove("p2p.pair.offer");secrets.remove("p2p.pair.ephemeral");return id;}finally{Arrays.fill(der,(byte)0);Arrays.fill(shared,(byte)0);Arrays.fill(root,(byte)0);}
     }
+
+    /**
+     * Optional third scan for existing trusted-center signaling. This deliberately
+     * does not share content keys, Relay credentials, or authorize TURN.
+     * A node can issue the proof only after it accepted the controller's response
+     * QR and successfully registered a pair-specific center binding.
+     */
+    public String signalingBindingQr(String controllerId)throws Exception{
+        JSONObject peer=store.peer(controllerId);
+        if(!"NODE".equals(peer.optString("localRole"))||!"ACTIVE".equals(peer.optString("pairState")))
+            throw new SecurityException("node_pair_not_confirmed");
+        JSONObject signaling=store.signaling(controllerId);
+        String binding=signaling.optString("bindingId","");
+        int revision=signaling.optInt("revision",0);
+        if(!signaling.optBoolean("consent")||revision<1||!binding.matches("[a-f0-9-]{36}"))
+            throw new SecurityException("center_binding_not_ready");
+        JSONObject body=new JSONObject().put("v",1).put("kind","signal-binding")
+            .put("publicKey",store.publicKey()).put("nodeId",store.myId())
+            .put("controllerId",controllerId).put("bindingId",binding)
+            .put("revision",revision).put("expires",System.currentTimeMillis()/1000+300);
+        String packed=PeerCrypto.b64(PeerCrypto.utf8(body.toString()));
+        return encode(packed,PeerCrypto.sign(store.identity().getPrivate(),packed));
+    }
+
+    /** Controller accepts only an identity-matched, live, signed binding for itself. */
+    public String acceptSignalingBindingQr(String qr)throws Exception{
+        JSONObject proof=new JSONObject(new String(PeerCrypto.unb64(decode(qr)),java.nio.charset.StandardCharsets.UTF_8));
+        long now=System.currentTimeMillis()/1000;
+        if(proof.optInt("v")!=1||!"signal-binding".equals(proof.optString("kind"))
+            ||proof.optLong("expires")<now||proof.optLong("expires")>now+310
+            ||!store.myId().equals(proof.optString("controllerId")))
+            throw new SecurityException("signaling_proof_invalid");
+        String id=proof.getString("nodeId");
+        JSONObject peer=store.peer(id);
+        if(!"CONTROLLER".equals(peer.optString("localRole"))
+            ||!"PENDING".equals(peer.optString("pairState"))&&!"ACTIVE".equals(peer.optString("pairState"))
+            ||!peer.getString("publicKey").equals(proof.optString("publicKey"))
+            ||!PeerCrypto.digest(PeerCrypto.publicKey(proof.getString("publicKey")).getEncoded()).equals(id))
+            throw new SecurityException("signaling_peer_identity_mismatch");
+        String binding=proof.getString("bindingId");
+        int revision=proof.getInt("revision");
+        if(!binding.matches("[a-f0-9-]{36}")||revision<1)
+            throw new SecurityException("signaling_binding_invalid");
+        JSONObject hint=peer.optJSONObject("relayHint");
+        String origin=hint==null?"":hint.optString("origin","");
+        com.blackkcold.simhub.CenterTrust trust=com.blackkcold.simhub.CenterTrustStore.get(store.context()).effective();
+        if(trust==null||!trust.covers(com.blackkcold.simhub.CenterTrust.ROLE_CONTROLLER,origin))
+            throw new SecurityException("CENTER_SETUP_REQUIRED");
+        JSONObject old=store.signaling(id);
+        if(old.optBoolean("consent")&&binding.equals(old.optString("bindingId"))
+            &&revision==old.optInt("revision"))return id;
+        if(revision<=old.optInt("revision"))throw new SecurityException("signaling_revision_stale");
+        store.setSignaling(id,true,binding,revision);
+        if("PENDING".equals(peer.optString("pairState"))){
+            peer=store.peer(id);peer.put("pairState","ACTIVE");store.update(peer);
+        }
+        return id;
+    }
+
     private void requireNew(String id)throws Exception{JSONArray peers=store.list();for(int i=0;i<peers.length();i++)if(id.equals(peers.getJSONObject(i).getString("id"))&&!"REVOKED".equals(peers.getJSONObject(i).optString("pairState")))throw new SecurityException("peer_already_known_revoke_before_repair");}
     public static JSONObject relayHint(Context c)throws Exception{
         com.blackkcold.simhub.AgentConfig cfg=new com.blackkcold.simhub.AgentConfig(c);

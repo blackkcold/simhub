@@ -159,12 +159,37 @@ public final class PeerInstrumentedTest {
         assertFalse(store.peer(controllerId).optBoolean("signalingConsent"));
         assertEquals("",store.peer(controllerId).optString("signalingCenterBinding"));
     }
+    @Test public void testSignedCenterBindingQrRequiresConsentAndRegisteredBinding()throws Exception{
+        PeerPairingManager manager=new PeerPairingManager(InstrumentationRegistry.getInstrumentation().getTargetContext());
+        try{manager.signalingBindingQr(controllerId);fail("binding QR without consent");}
+        catch(SecurityException expected){}
+        store.setSignaling(controllerId,true,"",1);
+        try{manager.signalingBindingQr(controllerId);fail("binding QR before registration");}
+        catch(SecurityException expected){}
+        String binding=UUID.randomUUID().toString();
+        store.setSignaling(controllerId,true,binding,2);
+        String qr=manager.signalingBindingQr(controllerId);
+        assertEquals("signal-binding",PeerPairingManager.kind(qr));
+        JSONObject envelope=new JSONObject(new String(PeerCrypto.unb64(qr.substring(12)),java.nio.charset.StandardCharsets.UTF_8));
+        String signed=envelope.getString("body");
+        JSONObject proof=new JSONObject(new String(PeerCrypto.unb64(signed),java.nio.charset.StandardCharsets.UTF_8));
+        PeerCrypto.verify(store.publicKey(),signed,envelope.getString("signature"));
+        assertEquals(store.myId(),proof.getString("nodeId"));
+        assertEquals(controllerId,proof.getString("controllerId"));
+        assertEquals(binding,proof.getString("bindingId"));
+        proof.put("bindingId",UUID.randomUUID().toString());
+        envelope.put("body",PeerCrypto.b64(PeerCrypto.utf8(proof.toString())));
+        try{
+            PeerPairingManager.kind("simhub-peer:"+PeerCrypto.b64(PeerCrypto.utf8(envelope.toString())));
+            fail("tampered binding QR signature accepted");
+        }catch(SecurityException expected){}
+    }
     @Test public void testMoreThan1000ProviderRowsThroughEncryptedPagination()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();List<Uri> inserted=new ArrayList<>();
         try{
             long date=System.currentTimeMillis();for(int i=0;i<1205;i++){ContentValues row=new ContentValues();row.put("address","+15550001111");row.put("body","Sandbox history "+i);row.put("date",date);row.put("type",1);row.put("read",1);Uri uri=c.getContentResolver().insert(Telephony.Sms.Inbox.CONTENT_URI,row);assertNotNull(uri);inserted.add(uri);}
             Set<String> seen=new HashSet<>();JSONObject cursor=null;int pages=0;
-            do{JSONObject request=new JSONObject().put("action","sms.page").put("limit",100);if(cursor!=null)request.put("cursor",cursor);JSONObject result=rpc(request);assertEquals("succeeded",result.getString("state"));JSONArray messages=result.getJSONArray("messages");for(int i=0;i<messages.length();i++)assertTrue("duplicate history row",seen.add(messages.getJSONObject(i).getString("id")));pages++;cursor=result.optBoolean("hasMore")?result.getJSONObject("cursor"):null;}while(cursor!=null&&pages<20);
+            do{JSONObject request=new JSONObject().put("action","sms.page").put("limit",100);if(cursor!=null)request.put("cursor",cursor);JSONObject result=rpc(request);assertEquals("succeeded",result.getString("state"));JSONArray messages=result.getJSONArray("messages");for(int i=0;i<messages.length();i++){JSONObject message=messages.getJSONObject(i);assertTrue("duplicate history row",seen.add(message.getString("id")));assertEquals("reply address must survive P2P history", "+15550001111",message.getString("address"));}pages++;cursor=result.optBoolean("hasMore")?result.getJSONObject("cursor"):null;}while(cursor!=null&&pages<20);
             assertEquals(1205,seen.size());assertEquals(13,pages);
         }finally{for(Uri uri:inserted)c.getContentResolver().delete(uri,null,null);}
     }

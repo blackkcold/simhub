@@ -44,6 +44,7 @@ public final class AppUpdater {
         return c.getSharedPreferences(PREF,Context.MODE_PRIVATE);
     }
     public static boolean shouldCheck(Context c){
+        if((BuildConfig.P2P_PREVIEW||BuildConfig.STORE_CHANNEL))return false;
         SharedPreferences p=prefs(c);
         return p.getBoolean("autoCheck",true) &&
             System.currentTimeMillis()-p.getLong("lastCheck",0)>=CHECK_INTERVAL;
@@ -54,6 +55,7 @@ public final class AppUpdater {
     public static int ignored(Context c){return prefs(c).getInt("ignored",-1);}
 
     public static void check(Context c,boolean manual,Callback callback){
+        if((BuildConfig.P2P_PREVIEW||BuildConfig.STORE_CHANNEL)){MAIN.post(()->callback.onResult(null,"P2P 测试包不使用正式版更新通道"));return;}
         Context app=c.getApplicationContext();
         IO.execute(()->{
             try{
@@ -118,6 +120,7 @@ public final class AppUpdater {
         IO.execute(()->downloadInternal(c,metadata,message->AppLogger.i(c,"RemoteOTA",message),true));
     }
     private static void downloadInternal(Context context,JSONObject metadata,Progress callback,boolean remote){
+        if((BuildConfig.P2P_PREVIEW||BuildConfig.STORE_CHANNEL)){MAIN.post(()->callback.onProgress("P2P preview updater disabled"));return;}
         Context app=context.getApplicationContext();
             File file=null;
             try{

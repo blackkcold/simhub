@@ -43,6 +43,9 @@ def verdict(runs: list[dict], checks: list[dict], sha: str, branch: str) -> tupl
         latest = max(aggregate, key=lambda check: check.get("id", 0))
         if latest.get("status") != "completed":
             pending.append("native CodeQL aggregate")
+        elif latest.get("conclusion") in (None, "neutral", "skipped"):
+            # GitHub may emit a temporary neutral aggregate while SARIF is still processing.
+            pending.append("native CodeQL aggregate (not yet green)")
         elif latest.get("conclusion") != "success":
             return "failed", f"native CodeQL aggregate: {latest.get('conclusion')}"
     return ("waiting", ", ".join(pending)) if pending else ("ready", "CI, Security scan and native CodeQL all passed on identical SHA")

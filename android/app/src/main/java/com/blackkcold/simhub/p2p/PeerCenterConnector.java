@@ -388,17 +388,19 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
 
     private void createTransport() throws Exception {
         final boolean initiator = CONTROLLER.equals(role);
-        rtc = new PeerNativeRtcTransport(context, store.peer(peerId), false,
+        PeerNativeRtcTransport created = new PeerNativeRtcTransport(context, store.peer(peerId), false,
                 signal -> submit(() -> queueSignal(signal)));
-        lastOffer = System.currentTimeMillis();
-        submit(() -> {
-            try {
-                PeerNativeRtcTransport current = rtc;
-                if (current != null) current.init(PeerCenterProtocol.iceServers(context, peerId), initiator);
-            } catch (Exception error) {
-                status("UNAVAILABLE", "peer_native_init_failed");
-            }
-        });
+        try {
+            // Initialize on the signaling worker before polling or dispatching SDP/ICE.
+            // Async initialization used to queue remote ICE before reset(), losing it.
+            created.init(PeerCenterProtocol.iceServers(context, peerId), initiator);
+            rtc = created;
+            lastOffer = System.currentTimeMillis();
+        } catch (Exception error) {
+            created.close();
+            status("UNAVAILABLE", "peer_native_init_failed");
+            throw error;
+        }
     }
 
     private void queueSignal(JSONObject signal) {
@@ -465,21 +467,24 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
             } finally {
                 Arrays.fill(key, (byte) 0);
             }
+            // Retain unacknowledged frames while the native engine is unavailable.
+            // Acknowledging before enqueueing can permanently lose the remote offer.
+            if (!deliver(payload)) return;
             incomingSeq = seq;
             carrier.ack(sessionId, seq);
-            deliver(payload);
         }
     }
 
-    private void deliver(JSONObject payload) {
+    private boolean deliver(JSONObject payload) {
         JSONObject signal = PeerSignalingProtocol.transportSignal(payload);
-        if (signal == null) return;
+        if (signal == null) return true; // invalid but authenticated frame: consume safely
         PeerNativeRtcTransport current = rtc;
-        if (current == null) return;
+        if (current == null || !current.engineReady()) return false;
         try {
             current.signal(signal);
+            return true;
         } catch (Exception ignored) {
-            // The transport owns its own failure reporting.
+            return false;
         }
     }
 

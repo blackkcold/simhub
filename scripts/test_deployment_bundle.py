@@ -5,7 +5,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from scripts.package_deployment import build
+from package_deployment import build
 
 DIGEST = "ghcr.io/blackkcold/simhub-relay@sha256:" + "a" * 64
 

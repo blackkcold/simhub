@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from peer_connect import PeerConnect, Rejected, DOMAIN, b64
@@ -107,6 +108,20 @@ class PeerConnectTest(unittest.TestCase):
         turn = with_turn["iceServers"][1]
         self.assertEqual(len(base64.b64decode(turn["credential"], validate=True)), 20)
         self.assertLessEqual(int(turn["username"].split(":")[0])-self.now, 300)
+    def test_turn_rest_hmac_sha1_known_answer(self):
+        # Regression vector for coturn's REST HMAC-SHA1 (not a standalone
+        # identity hash). Changing the wire digest breaks TURN authentication.
+        # The expected credential was calculated independently of this code.
+        bid, _ = self.identity(self.b)
+        with patch("peer_connect.secrets.token_hex", return_value="0123456789abcdef0123456789abcdef"):
+            response, _ = self.register(self.a, bid, True)
+        turn = response["iceServers"][1]
+        self.assertEqual(turn["username"], "100300:0123456789abcdef0123456789abcdef")
+        self.assertEqual(turn["credential"], "Rb2CyYyKXON8L8nCK8qtqr2HLEQ=")
+        self.assertEqual(base64.b64decode(turn["credential"], validate=True), bytes.fromhex(
+            "45bd82c98c8a5ce37c2fc9c22bcaadaabd872c44"
+        ))
+
     def test_turn_usernames_do_not_identify_or_link_registrations(self):
         aid, _ = self.identity(self.a)
         bid, _ = self.identity(self.b)

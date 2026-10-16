@@ -37,7 +37,13 @@ code, and is not intended to replace a production SIM node.
    Promoting a feature to Stable requires explicit review, physical-device
    acceptance, new release tests and a deliberate PR; never merge the entire
    experimental `develop` branch into `main` automatically.
-5. A release fails rather than accepting a missing signing secret, wrong APK
+5. Before either release workflow creates an immutable tag, its publish job
+   **independently waits** for push-triggered `CI`, `Security scan` and GitHub's
+   native aggregate `CodeQL` check to all report `success` on the exact
+   same commit SHA and branch. Any failed or missing check blocks publication;
+   a PR check, older commit, skipped/neutral result or historical green run
+   never authorizes release.
+6. A release fails rather than accepting a missing signing secret, wrong APK
    certificate, mutable OCI tag, wrong Cosign workflow, mismatched manifest,
    downgrade or wrong channel.
 

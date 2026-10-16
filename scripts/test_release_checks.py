@@ -6,9 +6,9 @@ from scripts.verify_release_checks import REQUIRED_CODEQL, verdict
 SHA = "a" * 40
 
 
-def workflow(name, conclusion="success", *, sha=SHA, event="push", number=1):
+def workflow(name, conclusion="success", *, sha=SHA, event="push", number=1, branch="main"):
     return {"name": name, "status": "completed", "conclusion": conclusion,
-            "head_sha": sha, "head_branch": "main", "event": event, "id": number}
+            "head_sha": sha, "head_branch": branch, "event": event, "id": number}
 
 
 def scans(*, sha=SHA, overrides=None):
@@ -56,6 +56,14 @@ class ReleaseChecksTests(unittest.TestCase):
         good = scans()
         good[0]["id"] = 200
         self.assertEqual(verdict(self.runs, bad + good, SHA, "main")[0], "ready")
+
+    def test_develop_requires_p2p_preview_at_exact_head(self):
+        runs = [workflow("CI", branch="develop"), workflow("Security scan", branch="develop")]
+        self.assertEqual(verdict(runs, scans(), SHA, "develop")[0], "waiting")
+        runs.append(workflow("P2P isolated preview", branch="develop"))
+        self.assertEqual(verdict(runs, scans(), SHA, "develop")[0], "ready")
+        runs[-1] = workflow("P2P isolated preview", "failure", branch="develop")
+        self.assertEqual(verdict(runs, scans(), SHA, "develop")[0], "failed")
 
     def test_reject_unrecognized_branch(self):
         self.assertEqual(verdict([], [], SHA, "feature")[0], "failed")

@@ -68,7 +68,7 @@ object HubRepository {
         val cfg=AgentConfig(context)
         val role=context.getSystemService(RoleManager::class.java)
         val smsRole=role?.isRoleHeld(RoleManager.ROLE_SMS)==true
-        val read=context.checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED
+        val read=SmsAccessPolicy.canRead(context)
         val receive=context.checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED
         val send=context.checkSelfPermission(Manifest.permission.SEND_SMS)==PackageManager.PERMISSION_GRANTED
         val state=StateCollector.collect(context)
@@ -136,7 +136,7 @@ object HubRepository {
         )
     }
     fun readMessages(context: Context,limit:Int): List<HubSms> {
-        if(context.checkSelfPermission(Manifest.permission.READ_SMS)!=PackageManager.PERMISSION_GRANTED)return emptyList()
+        if(!SmsAccessPolicy.canRead(context))return emptyList()
         val entries=ArrayList<HubSms>(limit)
         val fields=arrayOf("_id","address","body","date","type","sub_id")
         try {

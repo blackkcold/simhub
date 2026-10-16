@@ -63,7 +63,7 @@ fun HubIcon(id:Int,modifier:Modifier=Modifier,tint:Color=LocalContentColor.curre
     Icon(painterResource(id),contentDescription=description,modifier=modifier,tint=tint)
 }
 @Composable
-private fun HubTheme(surface:String,content:@Composable ()->Unit){
+internal fun HubTheme(surface:String,content:@Composable ()->Unit){
     val controller=surface=="controller"
     val accent=if(controller)Violet else Teal
     val darkAccent=if(controller)Plum else Mint

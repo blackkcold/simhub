@@ -1,4 +1,5 @@
 """Exercise the controller pairing protocol through HTTP and the existing auth gate."""
+import hashlib
 import base64
 import json
 import sqlite3
@@ -51,8 +52,9 @@ class ControllerHttpTest(unittest.TestCase):
         cls.proc.wait(timeout=5)
         cls.work.cleanup()
 
-    def call(self,method,path,obj=None,cookie=None,admin=False,csrf=None,poll_token=None):
+    def call(self,method,path,obj=None,cookie=None,admin=False,csrf=None,poll_token=None,device_token=None):
         headers={"Content-Type":"application/json"}
+        if device_token:headers["Authorization"]="Device "+device_token
         if admin:headers["Authorization"]="Bearer "+ADMIN_TOKEN
         if cookie:headers["Cookie"]=cookie
         if csrf:headers["X-SimHub-CSRF"]=csrf
@@ -64,6 +66,28 @@ class ControllerHttpTest(unittest.TestCase):
                 return response.status,json.loads(response.read()),dict(response.headers)
         except urllib.error.HTTPError as exc:
             return exc.code,json.loads(exc.read()),dict(exc.headers)
+
+    def test_optional_peer_response_requires_both_carrier_auth_and_opaque_schema(self):
+        db=str(Path(self.work.name)/"relay.db");token="R"*48;device="peer-response-node";command="pw-"+"x"*43;ts=int(time.time())
+        with sqlite3.connect(db) as con:
+            con.execute("INSERT OR IGNORE INTO devices(id,token_hash,name,created_at) VALUES(?,?,?,?)",(device,hashlib.sha256(token.encode()).hexdigest(),"Peer node",ts))
+            con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json) VALUES(?,?,?,?,?,?,?)",(command,device,"peer.rpc",ts,ts+120,command,"{}"))
+        path=f"/api/v1/devices/{device}/commands/{command}/peer-response"
+        frame={"v":1,"domain":"simhub-peer-v1","from":"sandbox-node-identity000","to":"sandbox-controller-identity000","id":"sandbox-request-1234567890","expires":ts+60,"iv":b64(os.urandom(12)),"ct":b64(os.urandom(32))}
+        self.assertEqual(self.call("POST",path,{"frame":frame})[0],401)
+        self.assertEqual(self.call("POST",path,{"frame":frame},admin=True)[0],401)
+        self.assertEqual(self.call("POST",path,{"frame":{**frame,"body":"must never enter metadata"}},device_token=token)[0],400)
+        self.assertEqual(self.call("POST",path,{"frame":frame},device_token=token)[0],200)
+        self.assertEqual(self.call("GET",path)[0],401)
+        self.assertEqual(self.call("GET",path,device_token=token)[0],401)
+        status,body,_=self.call("GET",path,admin=True);self.assertEqual(status,200);self.assertEqual(body["frame"],frame)
+        replacement={**frame,"ct":b64(os.urandom(32))}
+        self.assertEqual(self.call("POST",path,{"frame":replacement},device_token=token)[0],200)
+        self.assertEqual(self.call("GET",path,admin=True)[1]["frame"],frame)
+        status,body,_=self.call("GET","/api/v1/commands/recent",admin=True);self.assertEqual(status,200);self.assertNotIn(frame["ct"],json.dumps(body))
+        with sqlite3.connect(db) as con:con.execute("UPDATE devices SET revoked_at=? WHERE id=?",(ts,device))
+        self.assertEqual(self.call("GET",path,admin=True)[0],404)
+        self.assertEqual(self.call("POST",path,{"frame":frame},device_token=token)[0],401)
 
     def test_native_device_management_post_requires_admin_and_validates_actions(self):
         db=str(Path(self.work.name)/"relay.db")

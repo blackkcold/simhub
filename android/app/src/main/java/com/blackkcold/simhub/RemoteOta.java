@@ -72,7 +72,7 @@ public final class RemoteOta {
         return !p.getString(COMMAND,"").isBlank() &&
             !("succeeded".equals(state)||"failed".equals(state));
     }
-    public static boolean allowed(Context c){return supported(c)&&prefs(c).getBoolean("consent",false);}
+    public static boolean allowed(Context c){return !BuildConfig.P2P_PREVIEW&&!BuildConfig.STORE_CHANNEL&&supported(c)&&prefs(c).getBoolean("consent",false);}
     public static void setAllowed(Context c,boolean enabled){
         if(enabled&&!supported(c))throw new SecurityException("Remote OTA requires Android 16+ or developer override");
         prefs(c).edit().putBoolean("consent",enabled).commit();dirty(c);

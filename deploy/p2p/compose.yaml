@@ -1,0 +1,17 @@
+services:
+  peer-connect:
+    build:
+      context: ../..
+      dockerfile: deploy/p2p/Dockerfile
+    restart: unless-stopped
+    ports: ["127.0.0.1:8787:8787"]
+    env_file: .env
+    volumes: ["peer-data:/data"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    mem_limit: 256m
+    pids_limit: 80
+volumes:
+  peer-data:

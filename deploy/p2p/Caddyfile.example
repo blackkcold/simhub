@@ -1,0 +1,10 @@
+# An explicitly configured host; no default public infrastructure is provided.
+YOUR-CONNECT-HOST {
+    handle /api/v2/p2p/* {
+        reverse_proxy 127.0.0.1:8787
+    }
+    # The legacy Relay can remain on this host without sharing security domains.
+    handle {
+        reverse_proxy 127.0.0.1:8786
+    }
+}

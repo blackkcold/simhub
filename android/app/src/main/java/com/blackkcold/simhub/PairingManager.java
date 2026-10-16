@@ -56,13 +56,13 @@ public final class PairingManager {
         JSONObject body=new JSONObject().put("publicKey",publicKey).put("name","Android SIM Node")
           .put("model",Build.MANUFACTURER+" "+Build.MODEL).put("osVersion",Build.VERSION.RELEASE)
           .put("appVersion",BuildConfig.VERSION_NAME);
-        JSONObject result=ApiClient.pairingRequest(target,"POST","/api/v1/pairings/start",body,null);
+        JSONObject result=ApiClient.pairingRequest(c,target,"POST","/api/v1/pairings/start",body,null);
         String fp=hex(sha256(utf8(publicKey))).substring(0,12).toUpperCase(java.util.Locale.US);
         return new Session(target,result.getString("requestId"),result.getString("pollToken"),result.getString("code"),fp,kp);
     }
     public static boolean poll(Context c,Session session)throws Exception{
         if(new AgentConfig(c).isEnrolled())return true;
-        JSONObject state=ApiClient.pairingRequest(session.server,"GET","/api/v1/pairings/"+session.id+"/status",null,session.pollToken);
+        JSONObject state=ApiClient.pairingRequest(c,session.server,"GET","/api/v1/pairings/"+session.id+"/status",null,session.pollToken);
         if(!"approved".equals(state.optString("status")))return false;
         JSONObject envelope=state.getJSONObject("envelope");
         String keyId=state.getString("keyId"),deviceId=state.getString("deviceId");
@@ -112,7 +112,7 @@ public final class PairingManager {
         if(id.isBlank())return;
         String bearer=cfg.pendingPairToken(),proof=cfg.pendingPairProof();
         if(bearer==null||proof==null)throw new SecurityException("Incomplete local pairing journal");
-        ApiClient.pairingRequest(cfg.server(),"POST","/api/v1/pairings/"+id+"/complete",new JSONObject().put("proof",proof),bearer);
+        ApiClient.pairingRequest(c,cfg.server(),"POST","/api/v1/pairings/"+id+"/complete",new JSONObject().put("proof",proof),bearer);
         cfg.clearPairCompletion();
     }
     private PairingManager(){}

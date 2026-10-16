@@ -5,8 +5,6 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
 import java.security.KeyPair
@@ -42,6 +40,8 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     private var csrf=""
     var lastError:String=""
         private set
+
+    class ApiError(val status:Int,val code:String,message:String):IllegalStateException(message)
 
     data class PairStatus(val requestId:String,val code:String)
     data class DecodedMessage(val id:String,val thread:String,val sender:String,val body:String,
@@ -148,43 +148,49 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         cipher.updateAAD(origin.toByteArray(StandardCharsets.UTF_8))
         return cipher.doFinal(dec(saved.getString("ct"))).also{check(it.size==32)}
     }
-    /** Blocking network; only call from Dispatchers.IO. Never follow external redirects. */
-    fun request(path:String,method:String="GET",body:JSONObject?=null,authenticated:Boolean=false,pollToken:String?=null):JSONObject {
+    /**
+     * Blocking network; only call from Dispatchers.IO.
+     *
+     * <p>The request always goes through the shared, tested HTTP client. When a
+     * trusted center description covers this origin the client is pinned; when a
+     * description exists but names a different origin the request is refused before
+     * the session cookie is written anywhere. Redirects are never followed, so a
+     * 3xx response can never move the bearer to another host.
+     */
+    fun request(path:String,method:String="GET",body:JSONObject?=null,authenticated:Boolean=false,pollToken:String?=null,signalToken:String?=null):JSONObject {
         require(path.startsWith("/api/v1/") && !path.contains("://"))
-        val connection=(URL(origin+path).openConnection() as HttpURLConnection)
-        connection.connectTimeout=10000;connection.readTimeout=15000
-        connection.instanceFollowRedirects=false
-        connection.requestMethod=method
-        connection.setRequestProperty("Accept","application/json")
-        if(!pollToken.isNullOrEmpty())connection.setRequestProperty("X-SimHub-Pair-Token",pollToken)
+        val store=CenterTrustStore.get(app)
+        val trust=store.effective()
+        if(trust!=null && !trust.covers(CenterTrust.ROLE_CONTROLLER,origin))
+            throw SecurityException(SecureHttp.AUTH_REQUIRED)
+        val client=SecureHttp.endpoint(store,CenterTrust.ROLE_CONTROLLER,origin).client()
+        val headers=LinkedHashMap<String,String>()
+        headers["Accept"]="application/json"
+        if(!pollToken.isNullOrEmpty())headers["X-SimHub-Pair-Token"]=pollToken
+        if(!signalToken.isNullOrEmpty())headers["X-SimHub-Signal-Token"]=signalToken
         // Background polling is not user activity; idle sessions must still expire.
-        if(authenticated && cookie.isNotEmpty())connection.setRequestProperty("Cookie",cookie)
-        if(authenticated && method!="GET" && csrf.isNotEmpty())connection.setRequestProperty("X-SimHub-CSRF",csrf)
-        if(body!=null){
-            connection.doOutput=true
-            connection.setRequestProperty("Content-Type","application/json")
-            connection.outputStream.use{it.write(body.toString().toByteArray(StandardCharsets.UTF_8))}
+        if(authenticated && cookie.isNotEmpty())headers["Cookie"]=cookie
+        if(authenticated && method!="GET" && csrf.isNotEmpty())headers["X-SimHub-CSRF"]=csrf
+        if(body!=null)headers["Content-Type"]="application/json"
+        val href=SecureHttp.targetUrl(origin,path)
+        val response=SecureHttp.exchange(client,method,href,body?.toString(),headers,10,15)
+        val status=response.status
+        if(status in 300..399)throw SecurityException("Refused redirect from controller origin")
+        val text=response.body.ifBlank{"{}"}
+        val json=JSONObject(text)
+        if(status !in 200..299) {
+            if(status==401 && authenticated){cookie="";csrf=""}
+            if(status==401 && path.startsWith("/api/v1/controllers/login/"))
+                throw SecurityException("管理终端授权已失效，请在网页重新批准")
+            throw ApiError(status,json.optString("error"),json.optString("message","HTTP $status").take(180))
         }
-        try {
-            val status=connection.responseCode
-            if(status in 300..399)throw SecurityException("Refused redirect from controller origin")
-            val response=(if(status in 200..299)connection.inputStream else connection.errorStream)
-                ?.use{BoundedHttpReader.readUtf8(it,BoundedHttpReader.MAX_JSON_BYTES)} ?: "{}"
-            val json=JSONObject(response)
-            if(status !in 200..299) {
-                if(status==401 && authenticated){cookie="";csrf=""}
-                if(status==401 && path.startsWith("/api/v1/controllers/login/"))
-                    throw SecurityException("管理终端授权已失效，请在网页重新批准")
-                throw IllegalStateException(json.optString("message","HTTP $status").take(180))
-            }
-            if(path=="/api/v1/controllers/login/verify"){
-                val setCookie=connection.getHeaderField("Set-Cookie")?:""
-                cookie=setCookie.substringBefore(";")
-                if(!cookie.startsWith("simhub_session="))throw SecurityException("No secure admin session")
-                csrf=json.getString("csrfToken")
-            }
-            return json
-        }finally{connection.disconnect()}
+        if(path=="/api/v1/controllers/login/verify"){
+            val setCookie=response.setCookie?:""
+            cookie=setCookie.substringBefore(";")
+            if(!cookie.startsWith("simhub_session="))throw SecurityException("No secure admin session")
+            csrf=json.getString("csrfToken")
+        }
+        return json
     }
     fun beginPairing(label:String):PairStatus {
         if(hasGrant())throw IllegalStateException("Already paired")
@@ -282,6 +288,14 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
                 request(path,method,body,true)
             }else throw failure
         }
+    }
+    /**
+     * Signaling operation scoped by the one-time session token. The admin session is
+     * still required; the token additionally proves this controller owns the session.
+     */
+    fun signaling(path:String,body:JSONObject?,token:String):JSONObject {
+        if(cookie.isEmpty())login()
+        return request(path,if(body==null)"GET" else "POST",body,true,null,token)
     }
     fun localReset(){
         cookie="";csrf="";clearPending()

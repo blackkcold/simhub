@@ -11,8 +11,9 @@ public final class EventQueue {
     private static void wake(Context c){long now=SystemClock.elapsedRealtime();long prev=LAST_WAKE.get();if(now-prev>1000&&LAST_WAKE.compareAndSet(prev,now))RelayForegroundService.kick(c);}
     public static boolean queue(Context c,String id,String kind,long occurredAt,int subId,boolean hasOtp,JSONObject payload,JSONObject metadata){
         try{
+            boolean peerAccepted=com.blackkcold.simhub.p2p.PeerEvents.stage(c,id,kind,occurredAt,payload);
             AgentConfig cfg=new AgentConfig(c);
-            if(!cfg.isEnrolled()){cfg.recordEventQueueError("not_enrolled");return false;}
+            if(!cfg.isEnrolled()){if(!peerAccepted)cfg.recordEventQueueError("not_enrolled");return peerAccepted;}
             if(LocalStore.get(c).hasSeenEvent(id))return true;
             if("sms.history".equals(kind) && LocalStore.get(c).hasSeenEvent(id))return true;
             String sub=String.valueOf(subId);

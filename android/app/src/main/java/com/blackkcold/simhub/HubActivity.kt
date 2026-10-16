@@ -329,6 +329,7 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun requestAccess(){
+        if(!SmsAccessPolicy.rolePermitsAccess(this)){requestSmsRole();return;}
         val requested=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
         val smsRole=getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true
@@ -791,6 +792,7 @@ class HubActivity: ComponentActivity(), HubController {
         tools.compatibilityAudit=CompatibilityAudit.export(this)
     }
     override fun openCompatibility(){
+        if(BuildConfig.STORE_CHANNEL)return
         tools.compatibilityOpen=true
         tools.compatibilityAudit=CompatibilityAudit.export(this)
         refreshCompatibility()

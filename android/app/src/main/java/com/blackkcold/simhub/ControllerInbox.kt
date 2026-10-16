@@ -32,8 +32,9 @@ import org.json.JSONObject
 import kotlinx.coroutines.flow.collect
 
 /**
- * Native presentation of controller-decrypted SMS; never persists SMS or Vault secrets.
- * Payloads arrive exclusively from a verified HTTPS main frame via WebMessageListener.
+ * Native presentation of locally decrypted controller SMS.
+ * Legacy payloads arrive from a verified HTTPS main frame; authenticated P2P
+ * payloads arrive from PeerProtocol. This state contains no identity or Vault key.
  */
 data class ControllerSms(
     val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,

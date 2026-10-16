@@ -36,6 +36,7 @@ jobs:
         run: python3 scripts/check_stable_boundary.py
       - run: python3 scripts/test_stable_boundary.py
       - run: python3 scripts/test_release_pipeline.py
+      - run: python3 scripts/test_deployment_bundle.py
       - run: python3 -m unittest -v scripts.test_release_checks
       - run: python3 scripts/test_controller_same_phone.py
       - run: python3 scripts/test_icons.py
@@ -62,7 +63,7 @@ jobs:
           name: simhub-ui-screenshots
           path: ui-snapshots/*.png
       - run: python3 -m py_compile server/simhub_server.py server/passkeys.py scripts/setup.py scripts/simhub_updater.py server/update_bridge.py scripts/gen_admin_token.py modem_agent/simhub_modem_agent.py
-      - run: bash -n modem_agent/install.sh scripts/install-updater.sh
+      - run: bash -n modem_agent/install.sh scripts/install-updater.sh scripts/deploy-verified.sh
 
   android:
     runs-on: ubuntu-latest

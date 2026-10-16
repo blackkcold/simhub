@@ -23,7 +23,7 @@ class ExportPreviewTests(unittest.TestCase):
         guide.parent.mkdir(parents=True)
         guide.write_text("test guide", encoding="utf-8")
         self.evidence = self.root / "android-sandbox-results.txt"
-        self.evidence.write_text("............\nTime: 33.327\n\nOK (12 tests)\n",
+        self.evidence.write_text("............\nTime: 33.327\n\nOK (13 tests)\n",
                                  encoding="utf-8")
 
     def test_verified_apk_and_digest(self):
@@ -36,8 +36,8 @@ class ExportPreviewTests(unittest.TestCase):
         self.assertEqual((self.root / "P2P-TEST-GUIDE.md").read_text(), "test guide")
 
     def test_bad_or_absent_test_evidence_never_exports(self):
-        for text in ("FAILURES!!!\nTests run: 12, Failures: 1\n",
-                     "OK (11 tests)\n", "OK (12 tests)\nFAILURES!!!\n"):
+        for text in ("FAILURES!!!\nTests run: 13, Failures: 1\n",
+                     "OK (12 tests)\n", "OK (13 tests)\nFAILURES!!!\n"):
             with self.subTest(text=text):
                 self.evidence.write_text(text)
                 with self.assertRaisesRegex(RuntimeError, "INSTRUMENTATION_NOT_PASSED"):

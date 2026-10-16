@@ -1,3 +1,13 @@
+## v0.17.3 — Stable/Dev release separation and verified updater rollout
+
+- Introduce independent Stable and Dev release channels with explicit version identity in the Web management UI, signed manifests and Android.
+- Preserve the existing Stable package and GitHub `releases/latest` upgrade path; the separately installable Dev app is `com.blackkcold.simhub.dev`.
+- Add channel-pinned rootless Docker upgrades with a distinct Dev systemd unit, separate Compose project/port and channel-specific Cosign workflow verification.
+- Establish signed Dev GitHub Pre-release and GHCR packaging alongside the unchanged Stable release pipeline.
+- Fail closed when experimental P2P/WebRTC modules appear in Stable release inputs or APK native artifacts.
+- This Stable version **does not include P2P or WebRTC**; experimental P2P development belongs exclusively to the Dev channel.
+- No database schema upgrade or E2EE protocol change is required for this release.
+
 ## v0.17.2 — Main reliability, native reply safety and UX hardening
 
 - Separate native management SMS contact display labels from the actual recipient address; reply actions use the verified address and never compose SMS to a display name.

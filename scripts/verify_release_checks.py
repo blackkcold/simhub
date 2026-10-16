@@ -28,12 +28,13 @@ def verdict(runs: list[dict], checks: list[dict], sha: str, branch: str) -> tupl
     current = {}
     for run in runs:
         if (run.get("head_sha") == sha and run.get("head_branch") == branch
-                and run.get("event") == "push" and run.get("name") in REQUIRED_WORKFLOWS):
+                and run.get("event") == "push" and run.get("name") in REQUIRED_WORKFLOWS + ("P2P isolated preview",)):
             name = run["name"]
             if name not in current or run.get("id", 0) > current[name].get("id", 0):
                 current[name] = run
     pending = []
-    for name in REQUIRED_WORKFLOWS:
+    required = REQUIRED_WORKFLOWS + (("P2P isolated preview",) if branch == "develop" else ())
+    for name in required:
         run = current.get(name)
         if run is None or run.get("status") != "completed":
             pending.append(f"workflow {name}")
@@ -54,7 +55,7 @@ def verdict(runs: list[dict], checks: list[dict], sha: str, branch: str) -> tupl
             pending.append("CodeQL matrix " + name)
         elif check.get("conclusion") != "success":
             return "failed", f"CodeQL matrix {name}: {check.get('conclusion')}"
-    return ("waiting", ", ".join(pending)) if pending else ("ready", "CI, Security scan and all six CodeQL jobs passed on identical SHA")
+    return ("waiting", ", ".join(pending)) if pending else ("ready", "All required branch-specific CI, security and CodeQL checks passed on identical SHA")
 
 
 def fetch(endpoint: str, token: str) -> dict:

@@ -24,6 +24,8 @@ public final class PeerService extends Service {
     private static volatile PeerService running;
     private static volatile String failure="";
     public static boolean enabled(){return running!=null;}
+    /** Actual bound TCP listener; a foreground notification alone is not LAN reachability. */
+    public static boolean localListening(){PeerService service=running;return service!=null&&service.server!=null;}
     public static String error(){return failure;}
     public static void start(Context c){c.startForegroundService(new Intent(c,PeerService.class));}
     public static void stop(Context c){c.stopService(new Intent(c,PeerService.class));}
@@ -48,6 +50,7 @@ public final class PeerService extends Service {
         try{
             running=this;failure="";
             boolean localAllowed=Build.VERSION.SDK_INT<37||checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")==PackageManager.PERMISSION_GRANTED;
+            if(!localAllowed)failure="local_network_permission_required";
             if(localAllowed){
             server=new PeerNodeServer(PeerStore.get(this));
             new Thread(server::run,"simhub-peer-listener").start();

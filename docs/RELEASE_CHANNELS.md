@@ -38,11 +38,13 @@ code, and is not intended to replace a production SIM node.
    acceptance, new release tests and a deliberate PR; never merge the entire
    experimental `develop` branch into `main` automatically.
 5. Before either release workflow creates an immutable tag, its publish job
-   **independently waits** for push-triggered `CI`, `Security scan` and GitHub's
-   native aggregate `CodeQL` check to all report `success` on the exact
-   same commit SHA and branch. Any failed or missing check blocks publication;
-   a PR check, older commit, skipped/neutral result or historical green run
-   never authorizes release.
+   **independently waits** for push-triggered `CI` and `Security scan`, plus
+   all six CodeQL analysis/compatibility jobs, to report `success` on the
+   exact release SHA. Missing or failed jobs block publication. GitHub's
+   separate native `CodeQL` PR aggregate compares against a PR base branch;
+   it is not a release-commit scan and may show `neutral` when a Stable-to-Dev
+   sync PR compares intentionally different P2P scan configurations. That
+   cross-branch summary never replaces or weakens the six real scans.
 6. A release fails rather than accepting a missing signing secret, wrong APK
    certificate, mutable OCI tag, wrong Cosign workflow, mismatched manifest,
    downgrade or wrong channel.

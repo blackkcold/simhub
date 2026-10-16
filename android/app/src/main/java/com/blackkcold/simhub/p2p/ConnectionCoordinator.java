@@ -21,7 +21,9 @@ public final class ConnectionCoordinator {
             try{return accept(peer,relay,requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;}
         }
         try{return accept(peer,new DirectPeerTransport(store),requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;failed=e;}
-        if(internet!=null&&policy.permits(internet.route(),peer.optBoolean("fallbackConsent"),"ACTIVE".equals(peer.optString("relayBindingState")))){
+        // The selected ICE candidate pair is not known until the data channel connects.
+        // Authorization is verified by PeerNativeRtcTransport before any request is sent.
+        if(internet!=null){
             try{return accept(peer,internet,requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;failed=e;}
         }
         if(mailbox!=null&&policy.permits("MAILBOX",peer.optBoolean("fallbackConsent"),"ACTIVE".equals(peer.optString("relayBindingState"))))return accept(peer,mailbox,requestId,request);

@@ -392,7 +392,9 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
     private void receiveSignal(JSONObject payload) throws Exception {
         JSONObject description = payload.optJSONObject("description");
         JSONObject candidate = payload.optJSONObject("candidate");
-        if (pc == null || pc.signalingState() == PeerConnection.SignalingState.CLOSED || channelClosed()) {
+        // The answering peer has no DataChannel until the remote offer is applied.
+        // Resetting on a missing channel discards previously queued ICE candidates.
+        if (pc == null || pc.signalingState() == PeerConnection.SignalingState.CLOSED) {
             reset(servers, false);
         }
         final int own = epoch;

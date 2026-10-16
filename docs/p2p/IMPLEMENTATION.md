@@ -8,9 +8,9 @@ The Relay route is never silently attached during a P2P request. Explicit associ
 
 The connection screen shows whether the device is signed in to a center, whether the pair's node identity matches, and whether signaling is authorized. It never renders a real host into an exportable diagnostic; a missing trusted description shows `CENTER_SETUP_REQUIRED`.
 
-Preview, packaging and Android sandbox checks must pass before the isolated APK is attached to existing draft PR #84. The preview must not merge into main without separate explicit approval.
+Preview, packaging and Android sandbox checks must pass before the isolated APK is attached to the develop test line. The preview must not merge into main without separate explicit approval.
 
-Branch: `feature/p2p-isolated-preview`; draft PR #84. Never merge or enable auto-merge without a new user instruction. Main 0.17.2 is the imported baseline; the preview has a separate application ID and disables stable self-update.
+Branch: `develop`; experimental code stays outside Stable `main`. Never merge or enable auto-merge without a new user instruction. Stable and Dev have independent releases; the preview has a separate application ID and disables stable self-update.
 
 The optional trusted-center bootstrap now lets a confirmed SIM node opt in and register a pair-specific binding; its short-lived, node-signed QR can be imported by the paired controller after identity, revision and exact trusted-origin checks. This is deliberately an additional scan when LAN cannot first deliver the authenticated `device.state` binding, not a claim that offline double-scan alone guarantees arbitrary internet reachability. All business content keys, TURN, and legacy Relay remain independently authorized. The node role can open connection diagnostics; send status distinguishes submission from carrier send/delivery, and pending SMS commands can be reconciled individually.\n\n## Pairing, transports and signaling
 

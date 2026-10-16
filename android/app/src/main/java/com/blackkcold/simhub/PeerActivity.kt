@@ -11,6 +11,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -53,6 +55,8 @@ class PeerActivity:ComponentActivity(){
     private var body by mutableStateOf("")
     private var compose by mutableStateOf(false)
     private var revokeTarget by mutableStateOf<JSONObject?>(null)
+    private var pendingTarget by mutableStateOf<JSONObject?>(null)
+    private var pendingCommands by mutableStateOf<List<JSONObject>>(emptyList())
     private var sendRequest:JSONObject?=null
     private var sendId:String?=null
     private var channelIndex by mutableIntStateOf(0)
@@ -177,6 +181,29 @@ class PeerActivity:ComponentActivity(){
             confirmButton={Button(onClick={if(!busy){revokeTarget=null;work{withContext(Dispatchers.IO){store().revoke(target.getString("id"));PeerInboxCache.clear(applicationContext,target.getString("id"))};if(selected?.optString("id")==target.optString("id")){inbox.clear();selected=null;tab=0};PeerCenterConnector.closePeer(target.getString("id"));notice="本机授权已撤销；对端离线时仍需单独清理其本地配对数据"}}}){Text("确认撤销")}},
             dismissButton={TextButton(onClick={revokeTarget=null}){Text("保留授权")}}
         )}
+        pendingTarget?.let{p->AlertDialog(
+            onDismissRequest={if(!busy){pendingTarget=null;pendingCommands=emptyList()}},
+            title={Text("待确认短信命令 · ${p.optString("name")}")},
+            text={Column(Modifier.heightIn(max=380.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                if(pendingCommands.isEmpty())Text("当前没有待确认的命令")
+                pendingCommands.forEach{cmd->
+                    val expired=cmd.optString("state")=="expired"
+                    Text("命令尾号 ${cmd.optString("id").takeLast(8)} · ${if(expired)"已过期（仅查询状态）" else "等待确认 / 可重试原命令"}",style=MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick={work{
+                        val commandId=cmd.getString("id")
+                        val result=if(expired)rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",commandId))
+                            else withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),commandId,cmd.getJSONObject("request"))}
+                        val state=result.optString("state")
+                        notice="原命令 ${commandId.takeLast(8)}：$state"
+                        if(state in listOf("submitted","sent","delivered","succeeded","failed","expired"))
+                            withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),commandId)}
+                        val rows=withContext(Dispatchers.IO){store().outbound(p.getString("id"))}
+                        pendingCommands=(0 until rows.length()).map{rows.getJSONObject(it)}
+                    }},enabled=!busy){Text(if(expired)"仅查询结果" else "重试同一命令")}
+                }
+            }},
+            confirmButton={TextButton(onClick={pendingTarget=null;pendingCommands=emptyList()},enabled=!busy){Text("完成")}}
+        )}
         if(compose)AlertDialog(onDismissRequest={if(!busy)compose=false},title={Text("通过已授权 SIM 发送短信")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
             OutlinedTextField(recipient,{if(sendId==null)recipient=it},label={Text("收件号码")},enabled=sendId==null)
             OutlinedTextField(body,{if(sendId==null)body=it},label={Text("短信内容")},enabled=sendId==null)
@@ -222,10 +249,11 @@ class PeerActivity:ComponentActivity(){
             }
             // Full identity fingerprints and ICE diagnostics are available only in device details.
             if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
-                val pending=withContext(Dispatchers.IO){store().outbound(p.getString("id"))};if(pending.length()==0){notice="没有待确认的发送命令"}else{
-                    val cmd=pending.getJSONObject(0);if(cmd.optString("state")=="expired"){val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",cmd.getString("id")));val state=result.optString("state");notice="过期命令状态：$state；不会重新发送";if(state in listOf("submitted","sent","delivered","succeeded","failed","expired"))withContext(Dispatchers.IO){store().clearOutbound(p.getString("id"),cmd.getString("id"))}}else{val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),cmd.getString("id"),cmd.getJSONObject("request"))};notice="原命令状态：${result.optString("state")}"}
-                }
-            }}){Text("检查 / 重试待确认命令")}
+                val rows=withContext(Dispatchers.IO){store().outbound(p.getString("id"))}
+                pendingCommands=(0 until rows.length()).map{rows.getJSONObject(it)}
+                pendingTarget=p
+                if(pendingCommands.isEmpty())notice="没有待确认的短信命令"
+            }}){Text("查看待确认命令")}
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
                     Button(onClick={select(p)}){Text(if(p.optString("pairState")=="PENDING")"验证连接" else "管理短信")}

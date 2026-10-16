@@ -192,7 +192,7 @@ class PeerActivity:ComponentActivity(){
             onDismissRequest={if(!busy)revokeTarget=null},
             title={Text(if(target.optString("pairState")=="PENDING")"取消待确认配对？" else "撤销此设备授权？")},
             text={Text("将立即清除本机此配对的密钥与缓存。远端已下载的内容无法追回；离线远端的清理不代表已经完成。")},
-            confirmButton={Button(onClick={if(!busy){revokeTarget=null;work{withContext(Dispatchers.IO){store().revoke(target.getString("id"));PeerInboxCache.clear(applicationContext,target.getString("id"))};if(selected?.optString("id")==target.optString("id")){inbox.clear();selected=null;tab=0};PeerCenterConnector.closePeer(target.getString("id"));notice="本机授权已撤销；对端离线时仍需单独清理其本地配对数据"}}}){Text("确认撤销")}},
+            confirmButton={Button(onClick={if(!busy){revokeTarget=null;work{withContext(Dispatchers.IO){store().revoke(target.getString("id"));PeerInboxCache.clear(applicationContext,target.getString("id"));SecretStore(applicationContext).remove("p2p.lastCommand.${target.getString("id")}")};if(selected?.optString("id")==target.optString("id")){inbox.clear();selected=null;tab=0};PeerCenterConnector.closePeer(target.getString("id"));notice="本机授权已撤销；对端离线时仍需单独清理其本地配对数据"}}}){Text("确认撤销")}},
             dismissButton={TextButton(onClick={revokeTarget=null}){Text("保留授权")}}
         )}
         pendingTarget?.let{p->AlertDialog(

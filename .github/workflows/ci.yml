@@ -1,13 +1,18 @@
 name: CI
 
+# Feature-branch PRs run CI via pull_request only; the separate P2P preview
+# workflow still runs on feature-branch pushes. This avoids duplicate CI checks.
 on:
   push:
-    branches: [main, feature/p2p-isolated-preview]
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
+# Keep rerun/dispatch, main push and PR checks in distinct concurrency groups.
+# Only newer runs of the SAME event and ref may supersede an obsolete run.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

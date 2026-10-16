@@ -33,7 +33,7 @@ jobs:
           test "$GITHUB_REF_NAME" = "develop"
           git fetch origin develop:refs/remotes/origin/develop --no-tags
           git merge-base --is-ancestor "$GITHUB_SHA" origin/develop
-          ANDROID_VERSION=$(sed -n 's/.*versionName = "\\(.*\\)"/\\1/p' android/app/build.gradle.kts | head -1)
+          ANDROID_VERSION=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' android/app/build.gradle.kts | head -1)
           SERVER_VERSION=$(python3 - <<'PY'
           import re
           text=open("server/simhub_server.py",encoding="utf-8").read()

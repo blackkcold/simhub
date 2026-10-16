@@ -17,7 +17,7 @@ android {
         versionName = "0.17.2"
         buildConfigField("String", "RELEASE_CHANNEL", "\"stable\"")
     }
-    buildFeatures { buildConfig = true; compose = true; aidl = true }
+    buildFeatures { buildConfig = true; compose = true; aidl = true; resValues = true }
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {

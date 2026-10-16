@@ -57,6 +57,7 @@ class PeerActivity:ComponentActivity(){
     private var revokeTarget by mutableStateOf<JSONObject?>(null)
     private var pendingTarget by mutableStateOf<JSONObject?>(null)
     private var pendingCommands by mutableStateOf<List<JSONObject>>(emptyList())
+    private var recentSendIds by mutableStateOf<Map<String,String>>(emptyMap())
     private var sendRequest:JSONObject?=null
     private var sendId:String?=null
     private var channelIndex by mutableIntStateOf(0)
@@ -73,7 +74,17 @@ class PeerActivity:ComponentActivity(){
         }}
     }
     override fun onStop(){super.onStop();peerEpoch++;selectionRefresh?.cancel();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}
-    private fun reload(){peers=(0 until store().list().length()).map{store().list().getJSONObject(it)};listening=PeerService.localListening();selected?.let{p->selected=peers.find{it.optString("id")==p.optString("id")}}}
+    private fun reload(){
+        val stored=store().list()
+        peers=(0 until stored.length()).map{stored.getJSONObject(it)}
+        listening=PeerService.localListening()
+        val secrets=SecretStore(applicationContext)
+        recentSendIds=peers.mapNotNull{p->
+            val id=p.optString("id")
+            try{secrets.getString("p2p.lastCommand.$id")?.let{id to it}}catch(_:Exception){null}
+        }.toMap()
+        selected?.let{p->selected=peers.find{it.optString("id")==p.optString("id")}}
+    }
     private fun work(task:suspend ()->Unit){if(busy)return;busy=true;notice="";lifecycleScope.launch{try{task()}catch(e:Exception){notice=when(e){is SecurityException->"安全或权限校验未通过：${e.message?.take(80)}";else->when {
                     e.message?.contains("peer_ice_not_connected")==true->"无法建立数据直连。请保持两台设备联网、启动前台连接服务；受限 NAT 无法保证穿透。"
                     e.message?.contains("public_peer_unavailable")==true->"公网发现尚未完成。请确认双机扫码已完成，等待信令连接后重试。"
@@ -143,7 +154,8 @@ class PeerActivity:ComponentActivity(){
     private fun send(){val p=selected?:return;val channels=remoteState?.optJSONArray("channels")?:return;val ch=channels.optJSONObject(channelIndex)?:return
         if(sendId==null){sendId=UUID.randomUUID().toString();sendRequest=JSONObject().put("action","sms.send").put("to",recipient).put("body",body).put("channelId",ch.getString("id")).put("channelRevision",ch.getLong("revision")).put("commandExpires",System.currentTimeMillis()/1000+120)}
         val id=sendId!!;val request=sendRequest!!
-        work{val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),id,request)}
+        work{withContext(Dispatchers.IO){SecretStore(applicationContext).putString("p2p.lastCommand.${p.getString("id")}",id)}
+            val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),id,request)}
             if(selected?.optString("id")!=p.optString("id"))return@work
             val state=result.optString("state")
             notice=when(state){
@@ -257,6 +269,22 @@ class PeerActivity:ComponentActivity(){
                 pendingTarget=p
                 if(pendingCommands.isEmpty())notice="没有待确认的短信命令"
             }}){Text("查看待确认命令")}
+            if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
+                recentSendIds[p.optString("id")]?.let{commandId->
+                    OutlinedButton(onClick={work{
+                        val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",commandId))
+                        val state=result.optString("state","unknown")
+                        notice="最近短信 ${commandId.takeLast(8)}：${when(state){
+                            "submitted"->"已提交系统短信服务，仍待运营商回执"
+                            "sent"->"已发送，仍可能等待送达回执"
+                            "delivered"->"已收到送达回执"
+                            "failed"->"发送失败"
+                            "indeterminate","claimed","unknown"->"结果未确认，请勿重复发送"
+                            else->state
+                        }}"
+                    }}){Text("查询最近短信实际发送状态")}
+                }
+            }
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
                     Button(onClick={select(p)}){Text(if(p.optString("pairState")=="PENDING")"验证连接" else "管理短信")}

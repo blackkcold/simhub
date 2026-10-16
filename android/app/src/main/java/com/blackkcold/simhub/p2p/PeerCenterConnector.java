@@ -80,7 +80,17 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
 
     public static synchronized void ensure(Context context, String peerId) throws Exception {
         if (ACTIVE.containsKey(peerId)) return;
-        PeerCenterConnector connector = new PeerCenterConnector(context, peerId);
+        PeerCenterConnector connector;
+        try {
+            connector = new PeerCenterConnector(context, peerId);
+        } catch (SecurityException denied) {
+            // A foreground notification must never hide missing trusted-center setup.
+            PeerStore store = PeerStore.get(context);
+            JSONObject peer = store.peer(peerId);
+            peer.put("discoveryState", "SETUP_REQUIRED").put("connectionError", fixedCode(denied));
+            store.update(peer);
+            throw denied;
+        }
         ACTIVE.put(peerId, connector);
         connector.start();
     }
@@ -186,8 +196,39 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
             }
             JSONObject signaling = store.signaling(peerId);
             if (!signaling.optBoolean("consent")) {
+                // Withdrawal revokes the current native data channel, not only
+                // future signaling traffic.
+                PeerNativeRtcTransport previous = rtc;
+                rtc = null;
+                if (previous != null) previous.close();
+                String obsoleteSession = sessionId;
+                sessionId = "";
+                centerId = "";
+                synchronized (outgoing) { outgoing.clear(); }
+                if (!obsoleteSession.isEmpty()) try { carrier.close(obsoleteSession); }
+                catch (Exception ignored) { /* session TTL also enforces expiry */ }
                 status("STOPPED", "signaling_consent_required");
                 return;
+            }
+            // The controller can learn a newer signed binding by QR while this
+            // connector is running. Never keep using the old authorized session.
+            if (CONTROLLER.equals(role)) {
+                String currentBinding = signaling.optString("bindingId", "");
+                int currentRevision = signaling.optInt("revision", 0);
+                if (!currentBinding.equals(bindingId) || currentRevision != revision) {
+                    PeerNativeRtcTransport previous = rtc;
+                    rtc = null;
+                    if (previous != null) previous.close();
+                    sessionId = "";
+                    centerId = "";
+                    synchronized (outgoing) { outgoing.clear(); }
+                    incomingSeq = 0;
+                    outgoingSeq = 0;
+                    lastAttempt = 0;
+                    lastOffer = 0;
+                    bindingId = currentBinding;
+                    revision = currentRevision;
+                }
             }
             if (System.currentTimeMillis() < lastAttempt) return;
             if (bindingId.isEmpty()) {

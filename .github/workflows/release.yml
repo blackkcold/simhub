@@ -286,9 +286,14 @@ jobs:
           cp docs/*.md release/docs/
           cp modem_agent/README.md release/docs/MODEM_AGENT.md
           (cd release/docs && zip -q -r "../simhub-v${VERSION}-docs.zip" .)
+          python3 scripts/package_deployment.py \
+            --channel stable --version "$VERSION" \
+            --image "ghcr.io/blackkcold/simhub-relay@$IMAGE_DIGEST" \
+            --output "release/simhub-server-v${VERSION}-deploy.zip"
           sha256sum "release/simhub-agent-v${VERSION}-release.apk" \
             "release/simhub-v${VERSION}-source.zip" \
-            "release/simhub-v${VERSION}-docs.zip" > release/SHA256SUMS.txt
+            "release/simhub-v${VERSION}-docs.zip" \
+            "release/simhub-server-v${VERSION}-deploy.zip" > release/SHA256SUMS.txt
           VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9]*\)/\1/p' android/app/build.gradle.kts | head -1)"
           export VERSION VERSION_CODE
           python3 - <<'PY'
@@ -306,7 +311,7 @@ jobs:
           data={
               "schemaVersion":1,"release":version,"channel":"stable",
               "notes":__import__("subprocess").check_output(["python3","scripts/release_notes.py","--version",version,"--summary"],text=True).strip(),
-              "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema},
+              "server":{"version":version,"image":"ghcr.io/blackkcold/simhub-relay@"+os.environ["IMAGE_DIGEST"],"asset":source,"sha256":digest(source),"dbSchema":db_schema,"deploymentAsset":f"simhub-server-v{version}-deploy.zip","deploymentSha256":digest(f"simhub-server-v{version}-deploy.zip")},
               "android":{"versionName":version,"versionCode":int(os.environ["VERSION_CODE"]),
                          "asset":apk,"sha256":digest(apk),
                          "packageName":"com.blackkcold.simhub"},
@@ -331,6 +336,7 @@ jobs:
             "release/simhub-agent-v${VERSION}-release.apk.sha256"
             "release/simhub-v${VERSION}-source.zip"
             "release/simhub-v${VERSION}-docs.zip"
+            "release/simhub-server-v${VERSION}-deploy.zip"
             "release/signing-report.txt"
             "release/SHA256SUMS.txt"
             "release/update-manifest.json"

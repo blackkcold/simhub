@@ -35,6 +35,41 @@ public class ReleaseUpdateSourceTest {
         assertEquals(HASH,m.getString("sha256"));
         assertTrue(m.getBoolean("available"));
     }
+    @Test public void devAcceptsOnlyOwnPackageAndPublishedPrerelease()throws Exception{
+        String version="0.17.2-dev.7";
+        String filename="simhub-agent-v"+version+"-release.apk";
+        String base="https://github.com/blackkcold/simhub/releases/download/v"+version+"/";
+        JSONObject r=new JSONObject().put("tag_name","v"+version).put("draft",false)
+            .put("prerelease",true).put("published_at","2026-10-16T10:00:00Z")
+            .put("assets",new JSONArray()
+                .put(new JSONObject().put("name",filename)
+                    .put("browser_download_url",base+filename)));
+        JSONObject m=new JSONObject().put("schemaVersion",1).put("channel","dev")
+            .put("release",version).put("android",new JSONObject()
+                .put("versionName",version).put("versionCode",5200007)
+                .put("packageName","com.blackkcold.simhub.dev")
+                .put("asset",filename).put("sha256",HASH));
+        assertEquals(base+filename,ReleaseUpdateSource.validateChannel(r,m,"dev").getString("url"));
+        try{ReleaseUpdateSource.validateChannel(r,m,"stable");fail("Stable accepted Dev");}
+        catch(SecurityException expected){}
+        r.put("prerelease",false);
+        try{ReleaseUpdateSource.validateChannel(r,m,"dev");fail("Dev accepted stable metadata");}
+        catch(SecurityException expected){}
+        r.put("prerelease",true);
+        m.put("channel","stable");
+        try{ReleaseUpdateSource.validateChannel(r,m,"dev");fail("Dev accepted Stable manifest");}
+        catch(SecurityException expected){}
+    }
+
+    @Test public void devSelectionSkipsStableAndDraftAndSortsNumerically()throws Exception{
+        JSONArray all=new JSONArray();
+        for(String name:new String[]{"v0.17.2-dev.9","v0.17.2","v0.17.2-dev.11","v0.17.2-dev.20"}){
+            all.put(new JSONObject().put("tag_name",name).put("draft",name.endsWith(".20"))
+                .put("prerelease",name.contains("-dev.")).put("published_at","now"));
+        }
+        assertEquals("v0.17.2-dev.11",ReleaseUpdateSource.selectDev(all).getString("tag_name"));
+    }
+
     @Test public void rejectsPrerelease()throws Exception{
         JSONObject r=release().put("prerelease",true);
         try{ReleaseUpdateSource.validate(r,manifest());fail("prerelease accepted");}

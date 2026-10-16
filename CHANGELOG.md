@@ -1,3 +1,10 @@
+## v0.17.4 — Downloadable verified Stable server packages
+
+- Add a version-matched Rootless Docker deployment ZIP to GitHub Stable Releases alongside the signed Android APK and OCI image.
+- Pin server installation to an immutable GHCR digest and channel-specific Sigstore/Cosign GitHub Actions identity; refuse cross-channel deployments.
+- Preserve Stable E2EE, SMS and update behavior, with no experimental P2P/WebRTC dependency or database schema migration.
+- Extend update manifests additively with deployment package identity and SHA-256; include deterministic archive regression tests.
+
 ## v0.17.3 — Stable/Dev release separation and verified updater rollout
 
 - Introduce independent Stable and Dev release channels with explicit version identity in the Web management UI, signed manifests and Android.

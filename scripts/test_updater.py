@@ -26,11 +26,11 @@ class UpdaterTests(unittest.TestCase):
             path = Path(tmp) / ".env"
             with patch.object(updater, "ENV_FILE", path):
                 self.assertEqual(updater.release_channel(), "stable")
-                path.write_text("SIMHUB_CHANNEL=dev\\n", encoding="utf-8")
+                path.write_text("SIMHUB_CHANNEL=dev\n", encoding="utf-8")
                 self.assertEqual(updater.release_channel(), "dev")
                 self.assertTrue(updater.channel_version("0.17.2-dev.7"))
                 self.assertFalse(updater.channel_version("0.17.2"))
-                path.write_text("SIMHUB_CHANNEL=evil\\n", encoding="utf-8")
+                path.write_text("SIMHUB_CHANNEL=evil\n", encoding="utf-8")
                 with self.assertRaises(ValueError):
                     updater.release_channel()
 
@@ -43,7 +43,7 @@ class UpdaterTests(unittest.TestCase):
                              + tag + "/update-manifest.json"}]}
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / ".env"
-            path.write_text("SIMHUB_CHANNEL=dev\\n", encoding="utf-8")
+            path.write_text("SIMHUB_CHANNEL=dev\n", encoding="utf-8")
             with patch.object(updater, "ENV_FILE", path):
                 with patch.object(updater, "fetch_json", return_value=[entry]):
                     info = updater.latest()

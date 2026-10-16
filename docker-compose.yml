@@ -8,6 +8,8 @@ services:
     env_file: .env
     environment:
       SIMHUB_TRUST_DOCKER_GATEWAY: "true"
+      SIMHUB_CHANNEL: ${SIMHUB_CHANNEL:-stable}
+      SIMHUB_RELEASE_VERSION: ${SIMHUB_INSTALLED_VERSION:-}
     read_only: true
     security_opt:
       - no-new-privileges:true

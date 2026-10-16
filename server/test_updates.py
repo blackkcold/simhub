@@ -23,6 +23,55 @@ class UpdateBridgeTests(unittest.TestCase):
         self.assertLess(bridge.version_tuple("0.9.0"),bridge.version_tuple("0.9.1"))
         self.assertEqual(bridge.version_tuple("bad"),(0,0,0))
 
+
+    def test_dev_feed_filters_stable_and_draft_without_reusing_stable_cache(self):
+        def entry(version, pre=True, draft=False):
+            tag="v"+version
+            return {"tag_name":tag, "draft":draft, "prerelease":pre,
+                    "published_at":"2026-10-16T03:00:00Z",
+                    "assets":[{"name":"update-manifest.json",
+                               "browser_download_url":"https://github.com/blackkcold/simhub/releases/download/"
+                               +tag+"/update-manifest.json"}]}
+        feeds=[entry("0.17.2",False),entry("0.17.2-dev.8"),
+               entry("0.17.2-dev.10"),entry("0.17.2-dev.20",draft=True)]
+        old=bridge._cache
+        try:
+            bridge._cache=(0,None)
+            with patch.object(bridge,"CHANNEL","dev"),patch.object(
+                    bridge,"CHANNEL_VERSION",bridge.DEV_VERSION),patch.object(
+                    bridge.urllib.request,"urlopen",return_value=io.BytesIO(json.dumps(feeds).encode())):
+                found=bridge.release(force=True)
+                self.assertEqual(found["version"],"0.17.2-dev.10")
+                self.assertEqual(found["channel"],"dev")
+                self.assertEqual(bridge.version_tuple("0.17.2-dev.10"),(0,17,2,10))
+                self.assertEqual(bridge.version_tuple("0.17.2"),(0,0,0))
+                self.assertTrue(bridge.DEV_VERSION.fullmatch("0.17.2-dev.10"))
+                self.assertFalse(bridge.DEV_VERSION.fullmatch("0.17.2"))
+        finally:
+            bridge._cache=old
+
+    def test_dev_manifest_rejects_stable_channel_and_apk_package(self):
+        version="0.17.2-dev.10"
+        asset="simhub-agent-v"+version+"-release.apk"
+        uri="https://github.com/blackkcold/simhub/releases/download/v"+version+"/"
+        info={"version":version,"tag":"v"+version,
+              "assets":{"update-manifest.json":uri+"update-manifest.json",asset:uri+asset}}
+        meta={"schemaVersion":1,"channel":"dev","release":version,
+              "android":{"versionName":version,"versionCode":5200010,
+                         "packageName":"com.blackkcold.simhub.dev",
+                         "asset":asset,"sha256":"b"*64}}
+        with patch.object(bridge,"CHANNEL","dev"),patch.object(
+                bridge,"CHANNEL_VERSION",bridge.DEV_VERSION),patch.object(
+                bridge,"release",return_value=info),patch.object(
+                bridge.urllib.request,"urlopen",return_value=io.BytesIO(json.dumps(meta).encode())):
+            self.assertEqual(bridge.android_ota()["versionName"],version)
+        meta["channel"]="stable"
+        with patch.object(bridge,"CHANNEL","dev"),patch.object(
+                bridge,"release",return_value=info),patch.object(
+                bridge.urllib.request,"urlopen",return_value=io.BytesIO(json.dumps(meta).encode())):
+            with self.assertRaises(ValueError):
+                bridge.manifest()
+
     def test_release_manual_refresh_bypasses_background_cache(self):
         """A fresh manual request must not remain on a 15-minute-old release."""
         def payload(version):

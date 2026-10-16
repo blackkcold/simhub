@@ -117,9 +117,11 @@ class PeerActivity:ComponentActivity(){
                 }
             }}
             acceptEvents(p)
-            // Never persist another peer\u0027s newly selected inbox under this id.
-            if(generation==peerEpoch&&selected?.optString("id")==p.optString("id")&&lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
-                PeerInboxCache.save(applicationContext,p.getString("id"),inbox)
+            // Persist only an immutable snapshot from this peer; encrypt off the UI thread.
+            if(generation==peerEpoch&&selected?.optString("id")==p.optString("id")&&lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)){
+                val snapshot=PeerInboxCache.snapshot(inbox)
+                withContext(Dispatchers.IO){PeerInboxCache.persist(applicationContext,p.getString("id"),snapshot)}
+            }
         }
     }
     private suspend fun acceptEvents(p:JSONObject){
@@ -136,7 +138,8 @@ class PeerActivity:ComponentActivity(){
             ack.put(event.getLong("seq"))
         }
         if(rows.length()>0&&inbox.accept(JSONObject().put("type","snapshot").put("v",1).put("messages",rows).put("incremental",true).toString(),true)){
-            withContext(Dispatchers.IO){PeerInboxCache.save(applicationContext,p.getString("id"),inbox)}
+            val snapshot=PeerInboxCache.snapshot(inbox)
+            withContext(Dispatchers.IO){PeerInboxCache.persist(applicationContext,p.getString("id"),snapshot)}
             rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","events.ack").put("sequences",ack))
         }
     }

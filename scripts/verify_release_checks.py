@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed until current-head CI, security workflow and native CodeQL are green.
+"""Fail closed until current-head CI, Security scan and actual CodeQL jobs are green.
 
 This gate is intentionally separate from build/sign jobs. A release workflow can
 finish its own tests before the independent security analysis finishes.
@@ -14,7 +14,11 @@ import urllib.parse
 import urllib.request
 
 REQUIRED_WORKFLOWS = ("CI", "Security scan")
-REQUIRED_CHECK = "CodeQL"
+REQUIRED_CODEQL = (
+    "codeql (python)", "codeql (javascript-typescript)", "codeql (java-kotlin)",
+    "codeql compatibility (python)", "codeql compatibility (javascript-typescript)",
+    "codeql compatibility (java-kotlin)",
+)
 FAILURES = {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
 
 
@@ -35,20 +39,22 @@ def verdict(runs: list[dict], checks: list[dict], sha: str, branch: str) -> tupl
             pending.append(f"workflow {name}")
         elif run.get("conclusion") != "success":
             return "failed", f"workflow {name}: {run.get('conclusion')}"
-    aggregate = [check for check in checks if check.get("name") == REQUIRED_CHECK
-                 and check.get("head_sha") == sha]
-    if not aggregate:
-        pending.append("native CodeQL aggregate")
-    else:
-        latest = max(aggregate, key=lambda check: check.get("id", 0))
-        if latest.get("status") != "completed":
-            pending.append("native CodeQL aggregate")
-        elif latest.get("conclusion") in (None, "neutral", "skipped"):
-            # GitHub may emit a temporary neutral aggregate while SARIF is still processing.
-            pending.append("native CodeQL aggregate (not yet green)")
-        elif latest.get("conclusion") != "success":
-            return "failed", f"native CodeQL aggregate: {latest.get('conclusion')}"
-    return ("waiting", ", ".join(pending)) if pending else ("ready", "CI, Security scan and native CodeQL all passed on identical SHA")
+    # Native CodeQL aggregate is a PR-only comparison, not a push scan.
+    # A main-to-develop sync may warn about P2P-only scan configurations.
+    # Require all six actual CodeQL job results on the release commit.
+    latest_checks = {}
+    for check in checks:
+        name = check.get("name")
+        if name in REQUIRED_CODEQL and check.get("head_sha") == sha:
+            if name not in latest_checks or check.get("id", 0) > latest_checks[name].get("id", 0):
+                latest_checks[name] = check
+    for name in REQUIRED_CODEQL:
+        check = latest_checks.get(name)
+        if check is None or check.get("status") != "completed":
+            pending.append("CodeQL matrix " + name)
+        elif check.get("conclusion") != "success":
+            return "failed", f"CodeQL matrix {name}: {check.get('conclusion')}"
+    return ("waiting", ", ".join(pending)) if pending else ("ready", "CI, Security scan and all six CodeQL jobs passed on identical SHA")
 
 
 def fetch(endpoint: str, token: str) -> dict:

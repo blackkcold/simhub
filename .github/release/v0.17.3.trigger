@@ -1,2 +1,3 @@
 0.17.3
-# Publish signed Stable channel from main only after CI, CodeQL and compatibility checks are green.
+# Re-publish from the main release commit after requiring all six actual CodeQL jobs.
+# Preserve signed artifact immutability, Stable package identity and no-P2P boundary.

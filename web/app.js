@@ -886,7 +886,7 @@ async function refreshUpdateInfo(force=false){
 async function applyServerUpdate(){
   const status=await api('/api/v1/update');
   if(!status.agent||status.mode!=='rootless-verified'||!status.available||status.ignoredLatest)throw new Error('No installable update');
-  if(!confirm('将备份数据库、下载并构建 GitHub 正式版本 v'+status.latest+'，短暂重启服务。是否继续？'))return;
+  if(!confirm((status.channel==='dev'?'将安装 GitHub Dev 测试版本 v':'将安装 GitHub Stable 正式版本 v')+status.latest+'，将备份数据库并短暂重启服务。是否继续？'))return;
   await ensureStepUp();
   await api('/api/v1/update/apply',{method:'POST',body:{version:status.latest}});
   toast('升级任务已提交');await refreshUpdateInfo();
@@ -908,7 +908,8 @@ async function refreshVersionInfo(){
   const launched=info.startedAt?new Date(info.startedAt*1000).toLocaleString():null;
   const buildDate=deployed?new Date(deployed).toLocaleString():null;
   const zh=getLocale()==='zh-CN';
-  el.textContent='SIM Hub v'+(info.version||'?')+' · '+(buildDate?(zh?'部署：':'Deployed: ')+buildDate:(zh?'服务启动：':'Started: ')+(launched||'—'));
+  const releaseChannel=info.channel==='dev'?'DEV / 测试版':'STABLE / 稳定版';
+  el.textContent='SIM Hub '+releaseChannel+' · v'+(info.version||'?')+' · '+(buildDate?(zh?'部署：':'Deployed: ')+buildDate:(zh?'服务启动：':'Started: ')+(launched||'—'));
   if($('deploymentInfoSettings'))$('deploymentInfoSettings').textContent=el.textContent;
   nodeBaseUrl=info.nodeBaseUrl||(!info.separateSurfaces?location.origin:'');
   $('nodeEndpointValue').value=nodeBaseUrl;

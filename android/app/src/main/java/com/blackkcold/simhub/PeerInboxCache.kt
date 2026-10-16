@@ -9,7 +9,7 @@ object PeerInboxCache {
     fun save(context:Context,peer:String,inbox:ControllerInboxState){
         val rows=JSONArray()
         for(m in inbox.messages.take(100)){
-            val row=JSONObject().put("id",m.id).put("thread",m.thread).put("sender",m.sender).put("body",m.body).put("timestamp",m.timestamp).put("inbound",m.inbound).put("device",m.device).put("sim",m.sim).put("sourceId",m.sourceId).put("otp",m.otp).put("failed",m.failed)
+            val row=JSONObject().put("id",m.id).put("thread",m.thread).put("sender",m.sender).put("address",m.address).put("body",m.body).put("timestamp",m.timestamp).put("inbound",m.inbound).put("device",m.device).put("sim",m.sim).put("sourceId",m.sourceId).put("otp",m.otp).put("failed",m.failed)
             if(rows.toString().toByteArray().size+row.toString().toByteArray().size>300000)break
             rows.put(row)
         }

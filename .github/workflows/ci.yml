@@ -31,6 +31,9 @@ jobs:
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
       - run: python3 scripts/test_release_notes.py
+      - name: Enforce Stable / experimental P2P boundary
+        if: github.base_ref == 'main' || github.ref == 'refs/heads/main'
+        run: python3 scripts/check_stable_boundary.py
       - run: python3 scripts/test_release_pipeline.py
       - run: python3 scripts/test_controller_same_phone.py
       - run: python3 scripts/test_icons.py

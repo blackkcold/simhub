@@ -35,6 +35,11 @@ import update_bridge
 from typing import Any
 
 APP_VERSION = "0.17.2"
+# The image version is immutable in source; a signed Dev manifest may provide its exact pre-release identity.
+APP_VERSION = os.getenv("SIMHUB_RELEASE_VERSION", "").strip() or APP_VERSION
+RELEASE_CHANNEL = os.getenv("SIMHUB_CHANNEL", "stable").strip()
+if RELEASE_CHANNEL not in ("stable", "dev"):
+    raise RuntimeError("Invalid SIMHUB_CHANNEL; expected stable or dev")
 SERVER_STARTED_AT = int(time.time())
 DEPLOYED_AT = os.getenv("SIMHUB_DEPLOYED_AT", "").strip()
 BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
@@ -1080,13 +1085,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_json(200,{"username":ADMIN_USERNAME,"passkeys":keys}); return
         if path=="/api/v1/version":
             if not self.require_admin(): return
-            self.send_json(200,{"version":APP_VERSION,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None,"nodeBaseUrl":PUBLIC_BASE_URL or (MANAGEMENT_ORIGIN if not SEPARATE_SURFACES else None),"separateSurfaces":bool(SEPARATE_SURFACES)}); return
+            self.send_json(200,{"version":APP_VERSION,"channel":RELEASE_CHANNEL,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None,"nodeBaseUrl":PUBLIC_BASE_URL or (MANAGEMENT_ORIGIN if not SEPARATE_SURFACES else None),"separateSurfaces":bool(SEPARATE_SURFACES)}); return
         if path=="/api/v1/update":
             if not self.require_admin(): return
             # Explicit administrator checks bypass the normal background cache.
             # Only known refresh flags are accepted; never take a user URL.
             refresh=q.get("refresh", ["0"])[0]=="1"
-            result={"installed": APP_VERSION, "ignored":update_bridge.ignored(),
+            result={"installed": APP_VERSION, "channel":RELEASE_CHANNEL, "ignored":update_bridge.ignored(),
                     "agent":False, "available":False, "canInstall":False}
             try:
                 status=update_bridge.host("status")

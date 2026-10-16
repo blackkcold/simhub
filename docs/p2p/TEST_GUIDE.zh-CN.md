@@ -1,6 +1,6 @@
 # P2P 独立测试包与验证指南
 
-对象：`feature/p2p-isolated-preview`（草稿 PR #84）。预览版使用独立 applicationId 并关闭稳定版自更新；未获明确批准不得合并 main。
+对象：`develop` Dev 实验发布线。独立测试包使用专属 applicationId 并禁用正式版自更新；Stable `main` 不得包含实验性 P2P。
 
 ## 本轮验收要点
 
@@ -51,7 +51,7 @@ python3 scripts/test_center_config_packaging.py
 
 ## 受控打包（需单独授权）
 
-`.github/workflows/p2p-private-packaging.yml` 只接受「完整 40 位 SHA + 该 PR 的已审核 head」的 `workflow_dispatch`，绑定受保护 Environment `p2p-private-packaging`，固定 checkout 该 SHA、禁用 Gradle 缓存，并把敏感工具输出收进 runner 本地受限文件（只打印固定错误码）。产物仅允许 APK 与 SHA-256。
+`.github/workflows/p2p-private-packaging.yml` 只接受「完整 40 位 SHA + 受审核的 `develop` 当前提交」的 `workflow_dispatch`，绑定受保护 Environment `p2p-private-packaging`，固定 checkout 该 SHA、禁用 Gradle 缓存，并把敏感工具输出收进 runner 本地受限文件（只打印固定错误码）。产物仅允许 APK 与 SHA-256。
 
 首次使用前需要单独批准：创建受保护 Environment、写入 6 个 Secret（node/controller 的 origin 与 current/backup 两枚 pin）、确认该 workflow 位于受保护 ref。
 

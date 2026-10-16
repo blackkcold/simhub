@@ -21,7 +21,7 @@ services:
       - simhub-data:/data
       - ./.simhub-updater:/run/simhub-updater:ro
     ports:
-      - "127.0.0.1:8787:8787"
+      - "127.0.0.1:${SIMHUB_HOST_PORT:-8787}:8787"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/readyz', timeout=2).read()"]
       interval: 30s

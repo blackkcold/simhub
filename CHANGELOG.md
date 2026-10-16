@@ -1,3 +1,10 @@
+## v0.17.4 — Verified Stable/Dev distribution
+
+- Add server deployment ZIPs alongside signed Android packages and OCI images for both release tracks.
+- Verify immutable image digests and channel-specific Cosign identities before deployment.
+- Move P2P CI and reviewed private packaging to `develop`; Stable stays P2P-free.
+- Extend release gates and deployment regression coverage.
+
 ## v0.17.3 — Stable/Dev release separation and verified updater rollout
 
 - Introduce independent Stable and Dev release channels with explicit version identity in the Web management UI, signed manifests and Android.

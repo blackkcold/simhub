@@ -44,6 +44,7 @@ jobs:
         run: python3 scripts/check_stable_boundary.py
       - run: python3 scripts/test_stable_boundary.py
       - run: python3 scripts/test_release_pipeline.py
+      - run: python3 -m unittest -v scripts.test_release_checks
       - run: python3 scripts/test_controller_same_phone.py
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py

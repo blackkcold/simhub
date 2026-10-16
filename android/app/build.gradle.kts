@@ -22,8 +22,8 @@ android {
         minSdk = 29
         targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 52
-        versionName = "0.17.2"
+        versionCode = 53
+        versionName = "0.17.3"
         buildConfigField("boolean", "P2P_PREVIEW", "false")
         buildConfigField("boolean", "STORE_CHANNEL", "false")
         buildConfigField("String", "RELEASE_CHANNEL", "\"stable\"")
@@ -82,7 +82,7 @@ androidComponents {
     onVariants(selector().withBuildType("devRelease")) { variant ->
         val sequence = providers.gradleProperty("simhubDevSequence").orNull?.toIntOrNull() ?: 1
         require(sequence in 1..99999) { "Invalid Dev release sequence" }
-        variant.outputs.forEach { output -> output.versionCode.set(52 * 100000 + sequence) }
+        variant.outputs.forEach { output -> output.versionCode.set(53 * 100000 + sequence) }
     }
 }
 

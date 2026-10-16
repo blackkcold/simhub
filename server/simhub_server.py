@@ -36,7 +36,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.17.2"
+APP_VERSION = "0.17.3"
 APP_VERSION = os.getenv("SIMHUB_RELEASE_VERSION", "").strip() or APP_VERSION
 RELEASE_CHANNEL = os.getenv("SIMHUB_CHANNEL", "stable").strip()
 if RELEASE_CHANNEL not in ("stable", "dev"):

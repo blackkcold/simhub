@@ -61,3 +61,7 @@ python3 scripts/test_center_config_packaging.py
 - 观察者可经 DNS/TLS 元数据/证书透明度日志发现域名；本方案不承诺域名不可发现，也不把域名当访问控制。
 - 真机、公网、证书轮换演练与桌面端行为需另行验收；`docs/p2p/ACCEPTANCE.zh-CN.md` 逐项列出当前状态（含 `未运行` 与 `gated` 项）。
 - 短信实时投递受运营商与 OEM 后台策略影响，测试通过不代表送达保证。
+
+## Stable / Dev 发布线归属
+
+P2P 仍为未完成真机验收的实验能力，只允许进入 `develop` 对应的 Dev Pre-release，不得作为 Stable 正式功能合并到 `main`。Stable APK、Relay 镜像和自动更新通道保持独立；发布及隔离见 [RELEASE_CHANNELS.md](../RELEASE_CHANNELS.md)。

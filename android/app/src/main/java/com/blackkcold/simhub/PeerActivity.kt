@@ -106,7 +106,9 @@ class PeerActivity:ComponentActivity(){
                 }
             }}
             acceptEvents(p)
-            withContext(Dispatchers.IO){PeerInboxCache.save(applicationContext,p.getString("id"),inbox)}
+            // Never persist another peer\u0027s newly selected inbox under this id.
+            if(generation==peerEpoch&&selected?.optString("id")==p.optString("id")&&lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+                PeerInboxCache.save(applicationContext,p.getString("id"),inbox)
         }
     }
     private suspend fun acceptEvents(p:JSONObject){
@@ -128,7 +130,7 @@ class PeerActivity:ComponentActivity(){
         }
     }
     private fun select(p:JSONObject){
-        peerEpoch++;selectionRefresh?.cancel();selected=p;tab=1;qr="";cursor=null;historyMode=false;remoteState=null;inbox.clear()
+        peerEpoch++;selectionRefresh?.cancel();pendingTarget=null;pendingCommands=emptyList();selected=p;tab=1;qr="";cursor=null;historyMode=false;remoteState=null;inbox.clear()
         PeerInboxCache.restore(applicationContext,p.getString("id"),inbox)
         // Switching peers must not be lost while an older request is still in flight.
         val generation=peerEpoch

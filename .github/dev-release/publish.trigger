@@ -1,2 +1,2 @@
-v0.17.3 corrected Dev prerelease after complete same-SHA CodeQL matrix verification
-Supersedes blocked preflight run; maintains separate package, image, signature and isolated deployment channel.
+v0.17.4 Dev dual distribution: signed Android APK plus verified rootless Docker server deployment bundle.
+Require exact-head CI, Security, six CodeQL analyses, and P2P preview tests before publishing.

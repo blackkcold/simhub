@@ -129,10 +129,15 @@ class PeerConnect:
             db.execute("INSERT OR REPLACE INTO registrations(identity,peer,public_key,policy,consent,token_hash,expires) VALUES(?,?,?,?,?,?,?)", (identity, peer, data["identity"], data["policy"], int(consent), hashlib.sha256(token.encode()).hexdigest(), now + 3600))
         ice = [{"urls": list(self.stun_urls)}] if self.stun_urls else []
         if consent and self.turn_secret and self.turn_urls:
-            # coturn REST requires HMAC-SHA1; its opaque username must not expose
-            # an identity fingerprint or link separate registrations.
+            # coturn's TURN REST API specifies HMAC-SHA1 for short-lived credentials.
+            # This keyed MAC authenticates an unlinkable random username; it does not
+            # hash an identity, password, or other sensitive user data. Use the
+            # one-shot HMAC API (not a bare SHA-1 digest); SHA-256 is incompatible
+            # with coturn's shared-secret verification in this configuration.
             username = f'{now + 300}:{secrets.token_hex(16)}'
-            password = base64.b64encode(hmac.new(self.turn_secret.encode(), username.encode(), hashlib.sha1).digest()).decode()
+            password = base64.b64encode(
+                hmac.digest(self.turn_secret.encode("utf-8"), username.encode("utf-8"), "sha1")
+            ).decode("ascii")
             ice.append({"urls": list(self.turn_urls), "username": username, "credential": password})
         return {"token": token, "expires": now + 3600, "iceServers": ice, "relayBindingState": "ACTIVE"}
 

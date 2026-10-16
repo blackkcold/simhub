@@ -81,7 +81,7 @@ def check_docker() -> None:
             raise RuntimeError(f"Command failed: {' '.join(args)}: {result.stderr.strip()}")
 
 
-def caddy_config(admin: str, node: str) -> str:
+def caddy_config(admin: str, node: str, host_port: int = 8787) -> str:
     security = ('    header {\n'
                 '        Strict-Transport-Security "max-age=31536000"\n'
                 '        X-Content-Type-Options nosniff\n'
@@ -142,6 +142,8 @@ def main() -> int:
     parser.add_argument("--skip-dns-check", action="store_true", help="For provisioning before DNS propagates")
     parser.add_argument("--no-start", action="store_true", help="Generate configuration but do not start Docker")
     parser.add_argument("--upgrade", action="store_true", help="Reuse an existing deployment unchanged")
+    parser.add_argument("--channel", choices=("stable", "dev"), help="Pin deployment update channel (default: stable)")
+    parser.add_argument("--host-port", type=int, help="Loopback host port, 8787 Stable / 8788 Dev by default")
     args = parser.parse_args()
 
     print("\nSIM Hub deployment — Linux + Docker\n")
@@ -152,6 +154,12 @@ def main() -> int:
     existing = parse_env(ENV.read_text(encoding="utf-8")) if ENV.exists() else {}
     if ENV.exists() and not args.upgrade:
         raise RuntimeError(".env already exists. Use --upgrade to preserve configuration and restart, not overwrite it.")
+    channel = existing.get("SIMHUB_CHANNEL", "stable") if existing else (args.channel or "stable")
+    if channel not in ("stable", "dev") or (args.channel and args.channel != channel):
+        raise RuntimeError("A deployment cannot silently switch Stable/Dev channels")
+    host_port = int(existing.get("SIMHUB_HOST_PORT", "8787")) if existing else (args.host_port or (8788 if channel == "dev" else 8787))
+    if not 1 <= host_port <= 65535 or (existing and args.host_port and args.host_port != host_port):
+        raise RuntimeError("Invalid or unexpectedly changed deployment host port")
 
     admin = validate_domain(args.admin_domain or existing.get("SIMHUB_MANAGEMENT_ORIGIN", "").removeprefix("https://") or ask("Management domain"))
     node = validate_domain(args.node_domain or existing.get("SIMHUB_PUBLIC_BASE_URL", "").removeprefix("https://") or ask("Device domain"))
@@ -187,12 +195,15 @@ def main() -> int:
                 "SIMHUB_ADMIN_USERNAME": user,
                 "SIMHUB_PUBLIC_BASE_URL": "https://" + node,
                 "SIMHUB_MANAGEMENT_ORIGIN": "https://" + admin,
-                "SIMHUB_SEPARATE_SURFACES": "true"}
+                "SIMHUB_SEPARATE_SURFACES": "true",
+                "SIMHUB_CHANNEL": channel,
+                "SIMHUB_HOST_PORT": str(host_port),
+                "COMPOSE_PROJECT_NAME": "simhub-" + channel}
         secure_create(ENV, set_vars(tpl, vals))
         print("[ok] Created .env with owner-only permissions (0600).")
         print("[security] TOTP and emergency admin token are in .env. Back up securely, do not publish.")
         if args.mode == "managed":
-            secure_create(CADDY, caddy_config(admin, node))
+            secure_create(CADDY, caddy_config(admin, node, host_port))
             print("[ok] Caddyfile created (managed TLS + reverse proxy).")
     else:
         print("[ok] Existing .env preserved.")

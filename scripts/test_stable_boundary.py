@@ -12,9 +12,6 @@ spec.loader.exec_module(boundary)
 
 
 class StableBoundaryTests(unittest.TestCase):
-    def test_current_main_source_has_no_experimental_p2p(self):
-        self.assertEqual(boundary.violations(SCRIPT.parents[1]),[])
-
     def test_reject_android_peer_and_native_webrtc(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)

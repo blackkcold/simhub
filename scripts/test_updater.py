@@ -21,6 +21,47 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(updater.parse_version("v0.11.0"), (0, 11, 0))
         self.assertEqual(updater.parse_version("v0.11.0-rc1"), (0, 0, 0))
 
+    def test_channel_is_fixed_by_deployment_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".env"
+            with patch.object(updater, "ENV_FILE", path):
+                self.assertEqual(updater.release_channel(), "stable")
+                path.write_text("SIMHUB_CHANNEL=dev\\n", encoding="utf-8")
+                self.assertEqual(updater.release_channel(), "dev")
+                self.assertTrue(updater.channel_version("0.17.2-dev.7"))
+                self.assertFalse(updater.channel_version("0.17.2"))
+                path.write_text("SIMHUB_CHANNEL=evil\\n", encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    updater.release_channel()
+
+    def test_dev_release_requires_verified_prerelease_and_matching_manifest(self):
+        tag = "v0.17.2-dev.7"
+        entry = {"tag_name": tag, "draft": False, "prerelease": True,
+                 "published_at": "2026-10-16T00:00:00Z",
+                 "assets": [{"name": "update-manifest.json",
+                             "browser_download_url": "https://github.com/blackkcold/simhub/releases/download/"
+                             + tag + "/update-manifest.json"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".env"
+            path.write_text("SIMHUB_CHANNEL=dev\\n", encoding="utf-8")
+            with patch.object(updater, "ENV_FILE", path):
+                with patch.object(updater, "fetch_json", return_value=[entry]):
+                    info = updater.latest()
+                self.assertEqual(info["version"], "0.17.2-dev.7")
+                manifest = {"schemaVersion": 1, "channel": "dev",
+                            "release": "0.17.2-dev.7",
+                            "server": {"dbSchema": 11, "image": IMAGE}}
+                with patch.object(updater, "fetch_json", return_value=manifest):
+                    self.assertEqual(updater.release_image(info), (IMAGE, 11))
+                manifest["channel"] = "stable"
+                with patch.object(updater, "fetch_json", return_value=manifest):
+                    with self.assertRaises(ValueError):
+                        updater.release_image(info)
+                entry["prerelease"] = False
+                with patch.object(updater, "fetch_json", return_value=[entry]):
+                    with self.assertRaises(ValueError):
+                        updater.latest()
+
     def test_require_non_root_and_rootless_daemon(self):
         with patch.object(updater.os, "geteuid", return_value=0):
             with self.assertRaises(PermissionError):

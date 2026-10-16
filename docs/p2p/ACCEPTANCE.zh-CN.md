@@ -1,7 +1,7 @@
 # 验收矩阵逐项状态（诚实版）
 
 对象：本分支上的 P2P 安全整改（原生 RTC + 中心辅助信令 + 共享 pinning 客户端 + 受控配置注入）。
-基线：`5a84ab79bd0d7c887fe920096839bb4865447f65`。设计文档：`output/v0.1_p2p-security-design.md` 第 14 节。
+原始审计基线：`5a84ab79bd0d7c887fe920096839bb4865447f65`（下方的“本会话”及原始执行证据均属于当时的历史记录，**不代表当前 PR head 的验收结果**）。实时 CI 状态应以 [PR #84 的检查页](https://github.com/blackkcold/simhub/pull/84/checks) 为准；新增提交后必须重新以最新 head 校验。设计文档：`output/v0.1_p2p-security-design.md` 第 14 节。
 
 状态口径：
 
@@ -29,8 +29,8 @@
 | D3 源码包/日志/报告/缓存/非 APK 工件无 canary | 已实现·待 CI | `scripts/test_center_config_leak.py` 静态扫描：禁止提交生成的描述、pin 字面量、非保留域名；`--canary-absent` 供作业校验任意目录树。本地静态扫描可运行。 |
 | D4 专用 APK 恰含预期配置且不含 token/私钥；普通 APK 不含专用配置 | gated | 需要专用打包作业与真实 Secrets（用户单独授权）。 |
 | D5 Gradle/OkHttp/异常链/截图/崩溃诊断不打印 host/pin | 已实现·待 CI | 运行期固定错误码 `CENTER_TLS_PIN_MISMATCH`/`CENTER_AUTH_REQUIRED`/`CENTER_SETUP_REQUIRED`；`ApiClient` 日志改为固定状态码，不再打印 path 与原始异常；`CenterTrust.toString()` 不输出 origin/pin；敏感打包作业把原始 stdout/stderr 收进本地受限文件。故障注入测试未运行。 |
-| E1 标准 CI、OTA、预览、仪器与 GHAS 聚合全部通过 | 未运行 | 未推送，因此没有同 SHA 的远端 checks 与分析实例。 |
-| E2 双真机跨运营商 NAT、休眠/唤醒、网切、中心离线、重新登录 | 未运行 | 需要真机；与模拟器结果须分别标注。 |
+| E1 标准 CI、OTA、预览、仪器与 GHAS 聚合全部通过 | 当前 head 待持续核验 | 原始基线证据已过期。曾在 `953b547b` 核实 19 个 check run 全部 success、仪器测试 12 项通过；此后修改加入新的签名中心绑定授权码、竞争态防护及第 13 项仪器测试，必须由最新 head 的所有检查重新确认证据。不得以历史工件代替最新测试包。 |
+| E2 双真机跨运营商 NAT、休眠/唤醒、网切、中心离线、重新登录 | 未运行 | 需要双真机及真实网络；受限 NAT 可能始终无法直连（没有强制 TURN 兜底），不得把 CI 全绿等同于公网任意条件可用。 |
 | E3 短信/Vault/独立配对/发送权限/撤销/重复命令幂等不回归 | 部分通过 | 本会话运行的服务端套件全部 OK：`peer_signaling(+http)` 27、`peer_connect` 10、`v040/v050/pairing` 12、`sms_companion_state/passkeys_e2e/hardening/controller_auth/controller_http/global_vault` 24、`updates/remote_ota` 13、`test_auth_stages` 2、`test_simhub` 28、`test_surfaces` 1（详见下方命令表）。这些是本仓库文档化的主要套件，不等同于「全部服务端测试」。Android 侧回归（仪器 12 项）未在本机运行（无模拟器/真机）。 |
 
 ## 本会话已运行的命令与原始结果

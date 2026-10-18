@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import peer_relay
 import peer_signaling
+import peer_turn
 import base64
 import hashlib
 import hmac
@@ -1094,6 +1095,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if action == "join":
                     with signal_db() as con:
                         result = peer_signaling.join_session(con, device_id, tail[1], body, now())
+                    # The node is authenticated and its signed pair binding was verified.
+                    # Optional TURN credentials are independent of the encrypted signaling frames.
+                    result["iceServers"] = peer_turn.configured_ice(now())
                     audit("peer-signaling.join", device_id, "ok", self.ip)
                 elif action == "signal":
                     with signal_db() as con:
@@ -1136,6 +1140,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_json(200, result); return
             if tail == ["peer-signaling", "sessions"]:
                 with signal_db() as con: result = peer_signaling.create_session(con, body, now())
+                result["iceServers"] = peer_turn.configured_ice(now())
                 audit("peer-signaling.session", result["sessionId"], "ok", self.ip)
                 self.send_json(201, result); return
             if len(tail) == 4 and tail[1] == "sessions":

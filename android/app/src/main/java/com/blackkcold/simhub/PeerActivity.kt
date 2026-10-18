@@ -346,7 +346,11 @@ class PeerActivity:ComponentActivity(){
                     val isNode=p.optString("localRole")=="NODE"
                     val trust=CenterTrustStore.get(applicationContext).effective()
                     val origin=if(isNode)AgentConfig(applicationContext).server() else p.optJSONObject("relayHint")?.optString("origin","")?:""
-                    val trusted=trust!=null&&trust.covers(if(isNode)CenterTrust.ROLE_NODE else CenterTrust.ROLE_CONTROLLER,origin)
+                    // The signed node hint names the node surface, not the
+                    // controller login surface. Check both pinned roles before
+                    // offering the public signaling flow.
+                    val trusted=if(isNode) trust!=null&&trust.covers(CenterTrust.ROLE_NODE,origin)
+                        else try{trust?.controllerOriginForNode(origin)!=null}catch(_:SecurityException){false}
                     if(isNode&&trusted){
                         OutlinedButton(onClick={work{
                             withContext(Dispatchers.IO){

@@ -321,6 +321,28 @@ class PeerActivity:ComponentActivity(){
                 if(p.optLong("lastSyncAt",0)>0)Text("最后通信：${java.text.SimpleDateFormat("MM-dd HH:mm",java.util.Locale.getDefault()).format(java.util.Date(p.optLong("lastSyncAt")*1000))}",style=MaterialTheme.typography.labelSmall)
                 Text("设备身份：${p.optString("id").take(16)}…",style=MaterialTheme.typography.labelSmall)
                 if(p.optBoolean("signalingConsent")){
+                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                        Switch(checked=p.optBoolean("turnConsent"),onCheckedChange={allow->
+                            work{
+                                withContext(Dispatchers.IO){
+                                    val fresh=store().peer(p.getString("id"))
+                                    fresh.put("turnConsent",allow)
+                                    if(allow)fresh.put("policy","P2P_RELAY_FALLBACK")
+                                    else if(!fresh.optBoolean("relayConfigured")&&!fresh.optBoolean("fallbackConsent"))
+                                        fresh.put("policy","P2P_ONLY")
+                                    store().update(fresh)
+                                    PeerCenterConnector.closePeer(p.getString("id"))
+                                    PeerCenterConnector.ensure(applicationContext,p.getString("id"))
+                                }
+                                notice=if(allow)"已允许此配对使用可信中心签发的临时 TURN 中继；对端也必须明确授权。"
+                                    else "此配对 TURN 已禁用；只使用已授权的直接或独立 Relay 路径。"
+                            }
+                        })
+                        Text("允许 TURN 辅助连接（仅此配对）",style=MaterialTheme.typography.bodySmall)
+                    }
+                    Text("TURN 可能经第三方服务器转发加密数据；双方须分别授权，并且可信中心必须配置 coturn。",
+                        style=MaterialTheme.typography.bodySmall)
                     if(p.optString("localRole")=="NODE"){
                         if(p.optString("signalingCenterBinding").isBlank())Text("节点已授权，正在等待可信中心返回绑定编号。检查节点的注册状态及网络。",style=MaterialTheme.typography.bodySmall)
                         else OutlinedButton(onClick={work{qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).signalingBindingQr(p.getString("id"))};tab=0;notice="请用管理手机的「连接详情 → 扫描节点授权码」读取二维码；仅交换已验证的中心绑定编号。"}}){Text("生成节点信令授权二维码")}

@@ -72,6 +72,12 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
     }
 
     /** True only for a real, authenticated data channel; a signaling session is not enough. */
+    public static String dataChannelRoute(String id) {
+        PeerCenterConnector connector = ACTIVE.get(id);
+        if (connector == null || !dataChannelOnline(id)) return "OFFLINE";
+        return connector.route();
+    }
+
     public static boolean dataChannelOnline(String id) {
         PeerCenterConnector connector = ACTIVE.get(id);
         PeerNativeRtcTransport transport = connector == null ? null : connector.rtc;

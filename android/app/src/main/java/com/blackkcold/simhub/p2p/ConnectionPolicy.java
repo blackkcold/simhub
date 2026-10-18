@@ -7,7 +7,7 @@ public enum ConnectionPolicy {
         return switch(transport){
             case "LAN","DIRECT" -> this!=RELAY_ONLY;
             case "TURN","MAILBOX" -> this==P2P_RELAY_FALLBACK && consent && relayBound;
-            case "LEGACY_RELAY" -> this==RELAY_ONLY && relayBound;
+            case "LEGACY_RELAY" -> relayBound && (this==RELAY_ONLY || this==P2P_RELAY_FALLBACK);
             default -> false;
         };
     }

@@ -53,6 +53,29 @@ public class CenterTrustTest {
     }
 
     @Test
+    public void resolvesControllerOnlyThroughMatchingPinnedNodeOrigin() throws Exception {
+        CenterTrust trust = CenterTrust.parse(validConfig());
+        assertEquals("https://admin.relay.invalid",
+                trust.controllerOriginForNode("https://node.relay.invalid"));
+        assertEquals("center_pair_origin_mismatch", assertThrows(CenterTrust.Invalid.class,
+                () -> trust.controllerOriginForNode("https://admin.relay.invalid")).code);
+        assertEquals("center_pair_origin_mismatch", assertThrows(CenterTrust.Invalid.class,
+                () -> trust.controllerOriginForNode("https://attacker.invalid")).code);
+
+        JSONObject nodeOnly = validConfig();
+        nodeOnly.remove("controller");
+        CenterTrust partial = CenterTrust.fromJson(nodeOnly);
+        assertEquals("center_pair_origin_mismatch", assertThrows(CenterTrust.Invalid.class,
+                () -> partial.controllerOriginForNode("https://node.relay.invalid")).code);
+
+        JSONObject shared = validConfig();
+        shared.put("controller", new JSONObject().put("origin", "https://node.relay.invalid")
+                .put("pins", pinsOf(PIN_A, PIN_B)));
+        assertEquals("https://node.relay.invalid", CenterTrust.parse(shared)
+                .controllerOriginForNode("https://node.relay.invalid"));
+    }
+
+    @Test
     public void rejectsUnknownSchemaAndMissingRole() throws Exception {
         JSONObject schema = validConfig();
         schema.put("schemaVersion", 2);

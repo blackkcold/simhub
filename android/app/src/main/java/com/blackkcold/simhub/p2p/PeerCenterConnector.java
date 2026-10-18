@@ -142,6 +142,7 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
     private volatile long lastAttempt;
     private volatile long lastOffer;
     private volatile int failures;
+    private volatile JSONArray issuedTurn = new JSONArray();
 
     private PeerCenterConnector(Context context, String peerId) throws Exception {
         this.context = context.getApplicationContext();
@@ -261,6 +262,15 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
     private void backoff() {
         failures = Math.min(failures + 1, 8);
         lastAttempt = System.currentTimeMillis() + Math.min(60000, 2000L * (1L << Math.min(5, failures)));
+        // A failed/expired session MUST NOT reuse its old ICE engine or
+        // signal queue with a different session ID or ephemeral TURN key.
+        PeerNativeRtcTransport previous = rtc;
+        rtc = null;
+        if (previous != null) previous.close();
+        synchronized (outgoing) { outgoing.clear(); }
+        issuedTurn = new JSONArray();
+        incomingSeq = 0;
+        outgoingSeq = 0;
         sessionId = "";
         centerId = "";
     }
@@ -325,7 +335,7 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
             if (!bindingId.equals(candidate.optString("bindingId"))) continue;
             if (!peerId.equals(candidate.optString("controllerPeerId"))) continue;
             String id = candidate.getString("sessionId");
-            if ("awaiting_node".equals(candidate.optString("state"))) {
+            if ("awaiting_node".equals(candidate.optString("state")) || "active".equals(candidate.optString("state"))) {
                 JSONObject challenge = carrier.challenge("");
                 String challengeId = challenge.getString("challengeId");
                 long expires = candidate.getLong("expires");
@@ -339,7 +349,9 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
                         .put("revision", candidate.optInt("revision")).put("challengeId", challengeId)
                         .put("expires", expires)
                         .put("signature", PeerSignalingProtocol.signTranscript(store.identity().getPrivate(), transcript));
-                carrier.join(id, body);
+                JSONObject joined = carrier.join(id, body);
+                issuedTurn = joined.optJSONArray("iceServers");
+                if (issuedTurn == null) issuedTurn = new JSONArray();
             }
             sessionId = id;
             centerId = candidate.optString("centerId");
@@ -382,6 +394,8 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
         centerId = center;
         revision = sessionRevision;
         ((ControllerCarrier) carrier).sessionToken = result.optString("sessionToken");
+        issuedTurn = result.optJSONArray("iceServers");
+        if (issuedTurn == null) issuedTurn = new JSONArray();
         incomingSeq = 0;
         outgoingSeq = 0;
         failures = 0;
@@ -394,12 +408,16 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
 
     private void createTransport() throws Exception {
         final boolean initiator = CONTROLLER.equals(role);
-        PeerNativeRtcTransport created = new PeerNativeRtcTransport(context, store.peer(peerId), false,
+        JSONObject profile = store.peer(peerId);
+        boolean turnAllowed = ConnectionPolicy.valueOf(profile.getString("policy")).permits(
+                "TURN", profile.optBoolean("fallbackConsent"),
+                "ACTIVE".equals(profile.optString("relayBindingState")), profile.optBoolean("turnConsent"));
+        PeerNativeRtcTransport created = new PeerNativeRtcTransport(context, profile, turnAllowed,
                 signal -> submit(() -> queueSignal(signal)));
         try {
             // Initialize on the signaling worker before polling or dispatching SDP/ICE.
             // Async initialization used to queue remote ICE before reset(), losing it.
-            created.init(PeerCenterProtocol.iceServers(context, peerId), initiator);
+            created.init(PeerCenterProtocol.iceServers(context, peerId, issuedTurn), initiator);
             rtc = created;
             lastOffer = System.currentTimeMillis();
         } catch (Exception error) {
@@ -531,6 +549,7 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
             }
             sessionId = "";
             centerId = "";
+            issuedTurn = new JSONArray();
             lastAttempt = 0;
             failures = 0;
             lastOffer = 0;

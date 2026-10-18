@@ -21,7 +21,10 @@ public class ConnectionPolicyTest {
         assertFalse(ConnectionPolicy.P2P_ONLY.permits("TURN", true, true));
         assertFalse(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("TURN", false, true));
         assertFalse(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("TURN", true, false));
-        assertTrue(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("TURN", true, true));
+        assertFalse(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("TURN", true, true));
+        assertTrue(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("TURN", false, false, true));
+        assertFalse(ConnectionPolicy.P2P_ONLY.permits("TURN", true, true, true));
+        assertFalse(ConnectionPolicy.RELAY_ONLY.permits("TURN", true, true, true));
         assertFalse(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("UNKNOWN", true, true));
     }
 }

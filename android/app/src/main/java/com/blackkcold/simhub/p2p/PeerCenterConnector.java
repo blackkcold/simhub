@@ -271,8 +271,20 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
         issuedTurn = new JSONArray();
         incomingSeq = 0;
         outgoingSeq = 0;
+        String obsoleteSession = sessionId;
         sessionId = "";
         centerId = "";
+        closeObsoleteSession(obsoleteSession);
+    }
+
+    private void closeObsoleteSession(String oldId) {
+        if (oldId == null || oldId.isEmpty()) return;
+        try {
+            CLOSER.execute(() -> {
+                try { carrier.close(oldId); }
+                catch (Exception ignored) { /* The center's session TTL is authoritative. */ }
+            });
+        } catch (RejectedExecutionException ignored) { /* Bounded shutdown. */ }
     }
 
     private boolean authorized() throws Exception {
@@ -547,9 +559,11 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
             synchronized (outgoing) {
                 outgoing.clear();
             }
+            String obsolete = sessionId;
             sessionId = "";
             centerId = "";
             issuedTurn = new JSONArray();
+            closeObsoleteSession(obsolete);
             lastAttempt = 0;
             failures = 0;
             lastOffer = 0;

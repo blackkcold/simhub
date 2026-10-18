@@ -102,6 +102,18 @@ public final class CenterTrust {
     }
 
     /**
+     * The signed peer QR advertises the NODE origin, never an administrator login
+     * origin. Resolve the controller origin only through an independently trusted,
+     * pinned two-role center description. A mismatched node hint fails closed.
+     */
+    public String controllerOriginForNode(String signedNodeOrigin) {
+        if (!covers(ROLE_NODE, signedNodeOrigin) || !hasRole(ROLE_CONTROLLER)
+                || pins(ROLE_CONTROLLER).isEmpty())
+            throw new Invalid("center_pair_origin_mismatch");
+        return origin(ROLE_CONTROLLER);
+    }
+
+    /**
      * Parse an injected configuration asset. Both roles are mandatory here: a
      * deployment that terminates node and controller traffic on one origin must
      * still declare the two role entries explicitly.

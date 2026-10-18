@@ -157,13 +157,19 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
         // The auxiliary path requires a trusted description for this role's exact
         // origin. A pairing hint or an enrolled address is not trust.
         JSONObject hint = profile.optJSONObject("relayHint");
-        String centerOrigin = NODE.equals(role)
-                ? new com.blackkcold.simhub.AgentConfig(context).server()
-                : (hint == null ? "" : hint.optString("origin", ""));
         CenterTrust trust = CenterTrustStore.get(context).effective();
-        String trustRole = NODE.equals(role) ? CenterTrust.ROLE_NODE : CenterTrust.ROLE_CONTROLLER;
-        if (trust == null || !trust.covers(trustRole, centerOrigin))
-            throw new SecurityException("CENTER_SETUP_REQUIRED");
+        if (trust == null) throw new SecurityException("CENTER_SETUP_REQUIRED");
+        String centerOrigin;
+        if (NODE.equals(role)) {
+            centerOrigin = new com.blackkcold.simhub.AgentConfig(context).server();
+            if (!trust.covers(CenterTrust.ROLE_NODE, centerOrigin))
+                throw new SecurityException("CENTER_SETUP_REQUIRED");
+        } else {
+            // The signed pairing QR contains the node endpoint. Controller
+            // authentication MUST use the independently pinned admin endpoint.
+            String nodeOrigin = hint == null ? "" : hint.optString("origin", "");
+            centerOrigin = trust.controllerOriginForNode(nodeOrigin);
+        }
         this.carrier = NODE.equals(role)
                 ? new NodeCarrier(new ApiClient(context))
                 : new ControllerCarrier(new ControllerSecureClient(context, centerOrigin));

@@ -17,7 +17,7 @@ public final class ConnectionCoordinator {
         ConnectionPolicy policy=ConnectionPolicy.valueOf(peer.getString("policy"));
         if(policy==ConnectionPolicy.RELAY_ONLY)throw new SecurityException("use_legacy_relay_workspace");
         Exception failed;
-        if(relay!=null&&peer.optBoolean("relayConfigured")){
+        if(relay!=null&&policy.permits("LEGACY_RELAY",peer.optBoolean("fallbackConsent"),peer.optBoolean("relayConfigured"))){
             try{return accept(peer,relay,requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;}
         }
         try{return accept(peer,new DirectPeerTransport(store),requestId,request);}catch(Exception e){if(e instanceof SecurityException)throw e;failed=e;}

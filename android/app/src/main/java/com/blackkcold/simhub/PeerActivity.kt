@@ -406,7 +406,7 @@ class PeerActivity:ComponentActivity(){
         else->"尚未连接"
     }
     private fun diagnosticLabel(p:JSONObject):String {
-        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "数据通道已连接；可读取状态和短信。"
+        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "数据通道已连接（${routeLabel(PeerCenterConnector.dataChannelRoute(p.optString("id")))}）；可读取状态和短信。"
         if(p.optString("pairState")=="PENDING")return "未完成节点对响应码的确认，请先完成双向扫码。"
         if(!p.optBoolean("signalingConsent"))return "局域网以外的连接尚未授权；进入连接详情查看可信中心设置。"
         if(p.optString("signalingCenterBinding").isBlank())return "尚未取得已验证的中心绑定；节点需生成授权码，管理端需扫码确认。"
@@ -419,7 +419,11 @@ class PeerActivity:ComponentActivity(){
     }
     private fun pairLabel(p:JSONObject)=when(p.optString("pairState")){"PENDING"->"待双向确认";"ACTIVE"->"已配对";"REVOKED"->"已撤销";else->"待配对"}
     private fun connectionLabel(p:JSONObject):String {
-        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "设备 P2P 直连已建立"
+        if(PeerCenterConnector.dataChannelOnline(p.optString("id"))) {
+            val route=PeerCenterConnector.dataChannelRoute(p.optString("id"))
+            return if(route=="TURN")"数据通道已连接 · 加密 TURN 中继"
+                else "数据通道已连接 · ${routeLabel(route)}"
+        }
         val last=p.optLong("lastSyncAt",0)
         val recentlyUsed=last>0&&System.currentTimeMillis()/1000-last<30
         if(recentlyUsed)return "最近通过${routeLabel(p.optString("activeTransport"))}通信"

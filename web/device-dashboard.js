@@ -57,12 +57,12 @@ export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusT
   const t=(cn,en)=>zh?cn:en;
   const number=(n)=>n==null?'—':e(n);
   const freshness=m.freshness==='fresh'?t('最近采样','Recently sampled'):m.freshness==='stale'?t('状态已过期','Stale snapshot'):t('采样时间未知','Sample time unknown');
-  const telemetryTime=m.sampledAt&&m.freshness!=='unknown'?time(m.sampledAt):'—';
   const networkCard=(label,glyph,detail)=>'<div class="node-network-card">'+glyph+'<div><strong>'+e(label)+'</strong><small>'+e(detail)+'</small></div></div>';
   const wifiDetail=s.wifiConnected===false?t('未连接','Disconnected'):s.wifiConnected!==true?t('状态未知','Unknown'):
     s.wifiSignalLevel===undefined||s.wifiSignalLevel===null?t('已连接 · 强度未知','Connected · strength unknown'):
     t('信号等级','Signal level')+' '+e(s.wifiSignalLevel)+'/4';
   const time=(x)=>x?e(fmtTime(x)):t('暂无记录','No record');
+  const telemetryTime=m.sampledAt&&m.freshness!=='unknown'?time(m.sampledAt):'—';
   const header=(symbol,title,subtitle='')=>'<div class="node-panel-heading"><span class="node-icon-box">'+icon(symbol)+'</span><div><h3>'+e(title)+'</h3>'+(subtitle?'<p>'+e(subtitle)+'</p>':'')+'</div></div>';
   const row=(label,value,mark='')=>'<div class="node-fact"><span>'+e(label)+'</span><strong'+(mark?' class="'+mark+'"':'')+'>'+e(value)+'</strong></div>';
   const chip=(name,value,kind='')=>'<div class="node-health-metric '+kind+'"><div class="node-metric-head">'+icon(name)+'</div><strong>'+e(value)+'</strong><small>'+({battery:t('设备电量','Battery'),message:t('短信总量','Messages'),sync:t('待上传事件','Pending events')}[name]||'')+'</small></div>';

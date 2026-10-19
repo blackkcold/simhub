@@ -438,6 +438,11 @@ public final class ApiClient {
         return sample;
     }
     public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("appVersionCode",RemoteOta.installedVersionCode(c)).put("osVersion",Build.VERSION.RELEASE).put("telemetry",DeviceTelemetry.capture(c)));}
+    public void activateLocation(String epoch)throws Exception {
+        if(epoch==null||!epoch.matches("[0-9a-fA-F-]{36}"))throw new SecurityException("invalid_location_epoch");
+        request("POST","/api/v1/devices/"+cfg.deviceId()+"/location/activate",
+            new JSONObject().put("epoch",epoch));
+    }
     public void purgeLocation()throws Exception{
         request("POST","/api/v1/devices/"+cfg.deviceId()+"/location/purge",new JSONObject());
     }

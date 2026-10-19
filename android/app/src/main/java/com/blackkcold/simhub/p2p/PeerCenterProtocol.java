@@ -74,7 +74,7 @@ public final class PeerCenterProtocol {
             for (int j = 0; j < supplied.length() && j < 4; j++) {
                 String url = supplied.optString(j, "");
                 if (url.length() <= 280 && url.matches(
-                        "turns?:[A-Za-z0-9][A-Za-z0-9.-]{0,251}(?::[0-9]{1,5})?(?:\\\\?transport=(?:udp|tcp))?"))
+                        "turns?:[A-Za-z0-9][A-Za-z0-9.-]{0,251}(?::[0-9]{1,5})?(?:\\?transport=(?:udp|tcp))?"))
                     allowed.put(url);
             }
             if (allowed.length() > 0)

@@ -149,7 +149,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
     var loadedLocationDevice by remember(selected){mutableStateOf("")}
     var locationSample by remember(selected){mutableStateOf<ControllerLocationSample?>(null)}
-    var locationState by remember(selected){mutableStateOf(hubLabel("尚未读取","Not loaded"))}
+    val nativeLabel:(String,String)->String={zh,en->
+        if(context.resources.configuration.locales.get(0)?.language=="zh")zh else en
+    }
+    var locationState by remember(selected){mutableStateOf(nativeLabel("尚未读取","Not loaded"))}
     var locationLoading by remember(selected){mutableStateOf(false)}
     var pendingManageAction by remember{mutableStateOf<Pair<JSONObject,String>?>(null)}
     var manageValue by remember{mutableStateOf("")}
@@ -206,12 +209,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         val observer=LifecycleEventObserver{_,event->
             if(event==Lifecycle.Event.ON_STOP){
                 locationSample=null;loadedLocationDevice=""
-                locationState=hubLabel("尚未读取","Not loaded")
+                locationState=nativeLabel("尚未读取","Not loaded")
             }
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
                 selected?.let{ControllerAccessGate.clear(it)}
                 localUnlocked=false;inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""
-                loadedLocationDevice="";locationSample=null;locationState=hubLabel("已锁定","Locked")
+                loadedLocationDevice="";locationSample=null;locationState=nativeLabel("已锁定","Locked")
             }
         }
         activity?.lifecycle?.addObserver(observer)
@@ -417,7 +420,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         if(!authorized || (requireLocalUnlock && !localUnlocked) || locationLoading)return
         val id=device.optString("id")
         if(id.isEmpty())return
-        locationLoading=true;locationState=hubLabel("正在安全读取…","Loading encrypted location…")
+        locationLoading=true;locationState=nativeLabel("正在安全读取…","Loading encrypted location…")
         scope.launch {
             try{
                 val sample=withContext(Dispatchers.IO){
@@ -432,13 +435,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 }
                 if(selectedDevice?.optString("id")==id && authorized && (!requireLocalUnlock || localUnlocked)){
                     locationSample=sample;loadedLocationDevice=id
-                    locationState=if(sample==null)hubLabel("没有已保存的加密位置","No encrypted position saved")
-                        else hubLabel("最近一次位置快照","Last recorded location")
+                    locationState=if(sample==null)nativeLabel("没有已保存的加密位置","No encrypted position saved")
+                        else nativeLabel("最近一次位置快照","Last recorded location")
                 }
             }catch(error:Exception){
                 if(selectedDevice?.optString("id")==id && authorized){
                     locationSample=null;loadedLocationDevice=id
-                    locationState=hubLabel("位置读取或解密失败","Location read/decryption failed")
+                    locationState=nativeLabel("位置读取或解密失败","Location read/decryption failed")
                 }
             }finally{locationLoading=false}
         }
@@ -840,7 +843,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         ControllerDeviceCard(device){
                             selectedDevice=device;actionError=""
                             loadedLocationDevice="";locationSample=null
-                            locationState=hubLabel("尚未读取","Not loaded")
+                            locationState=nativeLabel("尚未读取","Not loaded")
                         }
                     }
                 }
@@ -1188,7 +1191,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     if(action=="location-purge"){
                                         locationSample=null
                                         loadedLocationDevice=device.optString("id")
-                                        locationState=hubLabel("服务器位置密文已删除","Relay location deleted")
+                                        locationState=nativeLabel("服务器位置密文已删除","Relay location deleted")
                                     }else if(destructive){
                                         // A removed or revoked source must disappear from
                                         // the decrypted inbox immediately, not on next restart.

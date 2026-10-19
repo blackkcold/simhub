@@ -58,7 +58,7 @@ public final class CommandProcessor {
                     if(!NodeLocationManager.remoteAllowed(c)){ack(id,"rejected",new JSONObject().put("reason","remote_location_not_authorized"));return;}
                     if(!NodeLocationManager.permissionGranted(c)){ack(id,"failed",new JSONObject().put("reason","permission_required"));return;}
                     if(!HubActivity.visibleForLocation){ack(id,"failed",new JSONObject().put("reason","background_restricted"));return;}
-                    JSONObject published=NodeLocationManager.captureAndQueue(c);
+                    JSONObject published=NodeLocationManager.captureAndQueue(c,true);
                     result.put("sampledAt",published.optLong("sampledAt",0))
                         .put("encrypted",true)
                         .put("uploaded",published.optBoolean("published",false))

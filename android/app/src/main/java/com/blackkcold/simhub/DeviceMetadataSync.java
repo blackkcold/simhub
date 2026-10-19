@@ -7,7 +7,13 @@ import android.content.SharedPreferences;
  * Persisted revisions keep edits made during network calls from being erased. */
 public final class DeviceMetadataSync {
     private static final String PREF="simhub_device_metadata_v1";
-    private static final long LIGHT_MIN_MS=120_000L;
+    private static long lightMinimumMs(Context c){
+        return switch(EnergyPolicy.effectiveMode(c)){
+            case "eco" -> 15L*60_000;
+            case "realtime" -> 60_000L;
+            default -> 5L*60_000;
+        };
+    }
     private DeviceMetadataSync(){}
     private static SharedPreferences prefs(Context c){
         return c.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE);
@@ -15,7 +21,7 @@ public final class DeviceMetadataSync {
     public static synchronized void requestLight(Context c){
         SharedPreferences p=prefs(c);
         p.edit().putLong("revision",p.getLong("revision",0)+1).commit();
-        long delay=Math.max(1000L,LIGHT_MIN_MS-(System.currentTimeMillis()-p.getLong("sentAt",0)));
+        long delay=Math.max(1000L,lightMinimumMs(c)-(System.currentTimeMillis()-p.getLong("sentAt",0)));
         SyncJobService.scheduleAfter(c,delay);
     }
     public static synchronized void requestFull(Context c){
@@ -27,7 +33,7 @@ public final class DeviceMetadataSync {
     public static boolean needsLight(Context c){
         SharedPreferences p=prefs(c);
         return p.getLong("revision",0)>p.getLong("ackRevision",0)
-            && System.currentTimeMillis()-p.getLong("sentAt",0)>=LIGHT_MIN_MS;
+            && System.currentTimeMillis()-p.getLong("sentAt",0)>=lightMinimumMs(c);
     }
     public static long revision(Context c){return prefs(c).getLong("revision",0);}
     public static synchronized void reported(Context c,long revision,boolean full){

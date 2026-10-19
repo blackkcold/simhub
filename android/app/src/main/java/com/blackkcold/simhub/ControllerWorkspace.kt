@@ -203,6 +203,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     val activity=context as? androidx.activity.ComponentActivity
     DisposableEffect(activity,selected,requireLocalUnlock){
         val observer=LifecycleEventObserver{_,event->
+            if(event==Lifecycle.Event.ON_STOP){
+                locationSample=null;loadedLocationDevice=""
+                locationState=hubLabel("尚未读取","Not loaded")
+            }
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
                 selected?.let{ControllerAccessGate.clear(it)}
                 localUnlocked=false;inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""

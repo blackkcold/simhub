@@ -158,7 +158,7 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
             item { ControllerHealthCommunication(device) }
             if(isAndroid)item {
                 ControllerLocationCard(device,locationSample,locationStatus,locationLoading,
-                    onLocationLoad,onLocationOpen,{onAction("location-once")})
+                    onLocationLoad,onLocationOpen,{onAction("location-once")},{onManage("location-purge")})
             }
             item{
                 HubCard(Modifier.fillMaxWidth()){

@@ -41,5 +41,11 @@ class DeviceTelemetrySecurityTest(unittest.TestCase):
         unsafe=server.sanitize_state({"sampledAt":stamp,"manualRequestId":"<svg onload=alert(1)>"})
         self.assertNotIn("manualRequestId",unsafe)
 
+    def test_location_is_not_part_of_relay_health_state(self):
+        state=server.sanitize_state({"sampledAt":int(time.time()),"latitude":22.54,
+            "longitude":113.93,"accuracyMeters":50,"location":{"latitude":22.54}})
+        for name in ("latitude","longitude","accuracyMeters","location"):
+            self.assertNotIn(name,state)
+
 if __name__=="__main__":
     unittest.main()

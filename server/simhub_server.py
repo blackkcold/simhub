@@ -710,6 +710,24 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
     return out
 
 
+def sanitize_telemetry(body: Any) -> dict[str,Any]:
+    """Bounded numeric and boolean device health; never receives Wi-Fi identifiers."""
+    if not isinstance(body,dict):return {}
+    out:dict[str,Any]={}
+    sample=body.get("sampledAt")
+    if type(sample) is not int or not 0<sample<=now()+300:return {}
+    out["sampledAt"]=sample
+    pct=body.get("batteryPct")
+    if type(pct) is int and 0<=pct<=100:out["batteryPct"]=pct
+    for key in ("charging","wifiConnected","cellularConnected","internetValidated"):
+        if type(body.get(key)) is bool:out[key]=body[key]
+    level=body.get("wifiSignalLevel")
+    if type(level) is int and 0<=level<=4:out["wifiSignalLevel"]=level
+    rssi=body.get("wifiRssiDbm")
+    if type(rssi) is int and -126<=rssi<=0:out["wifiRssiDbm"]=rssi
+    return out
+
+
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
@@ -725,6 +743,9 @@ def sanitize_state(body: Any) -> dict[str,Any]:
     request_id=out.get("manualRequestId")
     if not isinstance(request_id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",request_id):
         out.pop("manualRequestId",None)
+    for key in ("sampledAt","batteryPct","charging","wifiConnected","cellularConnected","internetValidated","wifiSignalLevel","wifiRssiDbm"):
+        out.pop(key,None)
+    out.update(sanitize_telemetry(body))
     # Energy diagnostics only allow numeric counters and the selected profile;
     # never accept arbitrary nested JSON as a relay-visible state field.
     stats=body.get("energyStats")
@@ -2142,8 +2163,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 state["appVersion"]=version;changed=True
             if code is not None and state.get("appVersionCode")!=code:
                 state["appVersionCode"]=code;changed=True
+            telemetry=sanitize_telemetry(body.get("telemetry"))
+            # Full inventory is never replaced by a lightweight heartbeat.
+            if telemetry and telemetry["sampledAt"]>state.get("sampledAt",0):
+                for key in ("wifiSignalLevel","wifiRssiDbm"):
+                    if key not in telemetry:state.pop(key,None)
+                state.update(telemetry)
+                changed=True
             if changed:
-                state["versionReportedAt"]=ts
+                if version or code is not None:state["versionReportedAt"]=ts
                 if state_row:
                     con.execute("UPDATE device_state SET state_json=? WHERE device_id=?",
                                 (json.dumps(state,ensure_ascii=False,separators=(",",":")),device_id))

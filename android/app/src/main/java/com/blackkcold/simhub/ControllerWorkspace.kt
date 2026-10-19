@@ -146,6 +146,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
+    var loadedLocationDevice by remember(selected){mutableStateOf("")}
+    var locationSample by remember(selected){mutableStateOf<ControllerLocationSample?>(null)}
+    var locationState by remember(selected){mutableStateOf(hubLabel("尚未读取","Not loaded"))}
+    var locationLoading by remember(selected){mutableStateOf(false)}
     var pendingManageAction by remember{mutableStateOf<Pair<JSONObject,String>?>(null)}
     var manageValue by remember{mutableStateOf("")}
     var manageCredential by remember{mutableStateOf("")}
@@ -202,6 +206,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
                 selected?.let{ControllerAccessGate.clear(it)}
                 localUnlocked=false;inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""
+                loadedLocationDevice="";locationSample=null;locationState=hubLabel("已锁定","Locked")
             }
         }
         activity?.lifecycle?.addObserver(observer)
@@ -402,6 +407,37 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             }finally{busy=false}
         }
     }
+    fun loadLocation(device:JSONObject){
+        val api=client?:return
+        if(!authorized || (requireLocalUnlock && !localUnlocked) || locationLoading)return
+        val id=device.optString("id")
+        if(id.isEmpty())return
+        locationLoading=true;locationState=hubLabel("正在安全读取…","Loading encrypted location…")
+        scope.launch {
+            try{
+                val sample=withContext(Dispatchers.IO){
+                    val envelope=api.api("/api/v1/devices/"+Uri.encode(id)+"/location")
+                        .optJSONObject("location") ?: return@withContext null
+                    if(envelope.optString("deviceId")!=id)throw SecurityException("Location identity mismatch")
+                    val vault=api.vault()
+                    try {
+                        ControllerLocationFacts.parse(api.decryptEvent(envelope,device,vault),envelope)
+                            ?: throw IllegalStateException("Invalid location coordinates")
+                    }finally{vault.fill(0)}
+                }
+                if(selectedDevice?.optString("id")==id && authorized && (!requireLocalUnlock || localUnlocked)){
+                    locationSample=sample;loadedLocationDevice=id
+                    locationState=if(sample==null)hubLabel("没有已保存的加密位置","No encrypted position saved")
+                        else hubLabel("最近一次位置快照","Last recorded location")
+                }
+            }catch(error:Exception){
+                if(selectedDevice?.optString("id")==id && authorized){
+                    locationSample=null;loadedLocationDevice=id
+                    locationState=hubLabel("位置读取或解密失败","Location read/decryption failed")
+                }
+            }finally{locationLoading=false}
+        }
+    }
     fun refreshDelta(){load("delta")}
     fun loadOlderPage(){load("older")}
     fun navigateToLatest(){load("latest")}
@@ -418,6 +454,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             "sync-older"->"sms.sync_older"
             "restore-history"->"sms.restore_history"
             "refresh"->"device.refresh_state"
+            "location-once"->"device.location_once"
             "diagnostics"->"diagnostics.request"
             "ota-install"->"ota.install"
             "ota-cancel"->"ota.cancel"
@@ -426,6 +463,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             else->return
         }
         val state=device.optJSONObject("state")?:JSONObject()
+        if(action=="location-once" && (
+            state.optBoolean("locationSharingEnabled")!=true ||
+            state.optBoolean("locationRemoteAllowed")!=true)){
+            actionError="远程定位需要在 SIM 节点本机开启授权";return
+        }
         if(action.startsWith("ota-") && (
             device.optString("nodeType")!="android" || !state.optBoolean("remoteOtaSupported") ||
             !(state.optInt("sdk")>=36 || state.optBoolean("remoteOtaDeveloperOverride")) ||
@@ -790,7 +832,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         }
                     }
                     gridItems(devices,key={it.optString("id")}){device->
-                        ControllerDeviceCard(device){selectedDevice=device;actionError=""}
+                        ControllerDeviceCard(device){
+                            selectedDevice=device;actionError=""
+                            loadedLocationDevice="";locationSample=null
+                            locationState=hubLabel("尚未读取","Not loaded")
+                        }
                     }
                 }
             }else{
@@ -1008,7 +1054,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 ControllerDeviceDetails(device,busy=actionBusy,
                     lastStatus=if(lastCommandDevice==device.optString("name"))lastCommandState else "",
                     error=actionError,
-                    onClose={selectedDevice=null;actionError=""},
+                    onClose={selectedDevice=null;actionError="";
+                        locationSample=null;loadedLocationDevice=""},
                     onAction={action->queueDeviceAction(device,action)},
                     onManage={action->
                         pendingManageAction=device to action
@@ -1018,6 +1065,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     onAdvanced={
                         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
                             Uri.parse(selected+"/")))
+                    },
+                    locationSample=if(loadedLocationDevice==device.optString("id"))locationSample else null,
+                    locationStatus=locationState,
+                    locationLoading=locationLoading,
+                    onLocationLoad={loadLocation(device)},
+                    onLocationOpen={
+                        val sample=locationSample
+                        if(sample!=null && loadedLocationDevice==device.optString("id")){
+                            context.startActivity(android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,Uri.parse(sample.openStreetMapUrl())))
+                        }
                     })
             }
         }

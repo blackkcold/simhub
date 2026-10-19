@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 import hashlib
 
 with tempfile.TemporaryDirectory(prefix="simhub-turn-sandbox-") as folder:
-    service = PeerConnect(folder + "/connect.db", turn_secret="sandbox-only-never-production", turn_urls=("turn:127.0.0.1:13478?transport=udp",))
+    service = PeerConnect(folder + "/connect.db", turn_secret="simhub-sandbox-only-never-production-32-bytes", turn_urls=("turn:127.0.0.1:13478?transport=udp",))
     key = ec.generate_private_key(ec.SECP256R1())
     der = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     identity = b64(hashlib.sha256(der).digest())

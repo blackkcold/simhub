@@ -24,6 +24,15 @@ public final class PeerCenterProtocol {
      * TURN URLs are dropped rather than silently enabled.
      */
     public static JSONArray iceServers(Context context, String peerId) throws Exception {
+        return iceServers(context, peerId, new JSONArray());
+    }
+
+    /**
+     * TURN ICE entries come only from an authenticated, pinned center's create
+     * or join response. In-band SDP/ICE cannot supply TURN endpoints.
+     * Both the peer policy and this device's explicit TURN consent are checked.
+     */
+    public static JSONArray iceServers(Context context, String peerId, JSONArray issuedTurn) throws Exception {
         JSONArray urls = DEFAULT_STUN;
         try {
             JSONObject profile = PeerStore.get(context).peer(peerId);
@@ -39,7 +48,33 @@ public final class PeerCenterProtocol {
         } catch (Exception ignored) {
             // An unreadable profile falls back to the published STUN defaults.
         }
-        return new JSONArray().put(new JSONObject().put("urls", urls));
+        JSONArray result = new JSONArray().put(new JSONObject().put("urls", urls));
+        JSONObject peer = PeerStore.get(context).peer(peerId);
+        if (!ConnectionPolicy.valueOf(peer.getString("policy")).permits(
+                "TURN", peer.optBoolean("fallbackConsent"),
+                "ACTIVE".equals(peer.optString("relayBindingState")), peer.optBoolean("turnConsent")))
+            return result;
+        if (issuedTurn == null) return result;
+        for (int i = 0; i < issuedTurn.length() && i < 2; i++) {
+            JSONObject item = issuedTurn.optJSONObject(i);
+            if (item == null) continue;
+            String username = item.optString("username", "");
+            String credential = item.optString("credential", "");
+            long now = System.currentTimeMillis() / 1000;
+            if (!TurnIceCredentialPolicy.allowsCredentials(username, credential, now)) continue;
+            JSONArray supplied = item.optJSONArray("urls");
+            if (supplied == null) continue;
+            JSONArray allowed = new JSONArray();
+            for (int j = 0; j < supplied.length() && j < 4; j++) {
+                String url = supplied.optString(j, "");
+                if (TurnIceCredentialPolicy.allowsUrl(url))
+                    allowed.put(url);
+            }
+            if (allowed.length() > 0)
+                result.put(new JSONObject().put("urls", allowed)
+                        .put("username", username).put("credential", credential));
+        }
+        return result;
     }
 
     private PeerCenterProtocol() {

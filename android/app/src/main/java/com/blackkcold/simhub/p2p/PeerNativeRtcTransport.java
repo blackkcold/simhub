@@ -128,7 +128,7 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
         if (closed || !online) throw new IOException("peer_ice_not_connected");
         JSONObject current = store.peer(peer.getString("id"));
         if (!ConnectionPolicy.valueOf(current.getString("policy")).permits(route, current.optBoolean("fallbackConsent"),
-                "ACTIVE".equals(current.optString("relayBindingState"))))
+                "ACTIVE".equals(current.optString("relayBindingState")), current.optBoolean("turnConsent")))
             throw new SecurityException("peer_route_not_authorized");
         CompletableFuture<JSONObject> future = new CompletableFuture<>();
         if (pending.putIfAbsent(id, future) != null) throw new IllegalStateException("request_already_pending");
@@ -485,8 +485,13 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
             retryRoute(own, attempt, connection);
             return;
         }
+        // ICE CONNECTED is not the same as an OPEN DataChannel. Do not report
+        // online or dispatch peer RPC before the channel state callback fires.
+        DataChannel currentChannel = channel;
+        if (currentChannel == null || currentChannel.state() != DataChannel.State.OPEN) return;
         connection.getStats(report -> post(() -> {
-            if (!valid(own) || pc != connection) return;
+            if (!valid(own) || pc != connection || channel != currentChannel
+                    || currentChannel.state() != DataChannel.State.OPEN) return;
             Map<String, RTCStats> stats = report.getStatsMap();
             String selectedId = null;
             for (RTCStats row : stats.values()) {
@@ -664,8 +669,10 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
                 CompletableFuture<JSONObject> future = pending.get(id);
                 if (future != null) future.complete(plaintext);
             } else {
-                if ("TURN".equals(route) && (!current.optBoolean("fallbackConsent")
-                        || !"P2P_RELAY_FALLBACK".equals(current.optString("policy"))))
+                if ("TURN".equals(route) && !ConnectionPolicy.valueOf(current.getString("policy"))
+                        .permits("TURN", current.optBoolean("fallbackConsent"),
+                                "ACTIVE".equals(current.optString("relayBindingState")),
+                                current.optBoolean("turnConsent")))
                     throw new SecurityException("peer_fallback_not_allowed");
                 JSONObject result = new PeerRpc(store).dispatch(peerId, id, plaintext);
                 store.markTransport(peerId, route);

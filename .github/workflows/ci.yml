@@ -91,7 +91,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
           gradle-version: '9.6.0'
-      - run: gradle -p android -PcenterConfigFake=true :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDevRelease -PsimhubDevSequence=1 --stacktrace
+      - run: gradle -p android -PcenterConfigFake=true :peer-core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDevRelease -PsimhubDevSequence=1 --stacktrace
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: simhub-agent-debug

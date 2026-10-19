@@ -72,6 +72,12 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
     }
 
     /** True only for a real, authenticated data channel; a signaling session is not enough. */
+    public static String dataChannelRoute(String id) {
+        PeerCenterConnector connector = ACTIVE.get(id);
+        if (connector == null || !dataChannelOnline(id)) return "OFFLINE";
+        return connector.route();
+    }
+
     public static boolean dataChannelOnline(String id) {
         PeerCenterConnector connector = ACTIVE.get(id);
         PeerNativeRtcTransport transport = connector == null ? null : connector.rtc;
@@ -142,6 +148,7 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
     private volatile long lastAttempt;
     private volatile long lastOffer;
     private volatile int failures;
+    private volatile JSONArray issuedTurn = new JSONArray();
 
     private PeerCenterConnector(Context context, String peerId) throws Exception {
         this.context = context.getApplicationContext();
@@ -157,13 +164,19 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
         // The auxiliary path requires a trusted description for this role's exact
         // origin. A pairing hint or an enrolled address is not trust.
         JSONObject hint = profile.optJSONObject("relayHint");
-        String centerOrigin = NODE.equals(role)
-                ? new com.blackkcold.simhub.AgentConfig(context).server()
-                : (hint == null ? "" : hint.optString("origin", ""));
         CenterTrust trust = CenterTrustStore.get(context).effective();
-        String trustRole = NODE.equals(role) ? CenterTrust.ROLE_NODE : CenterTrust.ROLE_CONTROLLER;
-        if (trust == null || !trust.covers(trustRole, centerOrigin))
-            throw new SecurityException("CENTER_SETUP_REQUIRED");
+        if (trust == null) throw new SecurityException("CENTER_SETUP_REQUIRED");
+        String centerOrigin;
+        if (NODE.equals(role)) {
+            centerOrigin = new com.blackkcold.simhub.AgentConfig(context).server();
+            if (!trust.covers(CenterTrust.ROLE_NODE, centerOrigin))
+                throw new SecurityException("CENTER_SETUP_REQUIRED");
+        } else {
+            // The signed pairing QR contains the node endpoint. Controller
+            // authentication MUST use the independently pinned admin endpoint.
+            String nodeOrigin = hint == null ? "" : hint.optString("origin", "");
+            centerOrigin = trust.controllerOriginForNode(nodeOrigin);
+        }
         this.carrier = NODE.equals(role)
                 ? new NodeCarrier(new ApiClient(context))
                 : new ControllerCarrier(new ControllerSecureClient(context, centerOrigin));
@@ -255,8 +268,29 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
     private void backoff() {
         failures = Math.min(failures + 1, 8);
         lastAttempt = System.currentTimeMillis() + Math.min(60000, 2000L * (1L << Math.min(5, failures)));
+        // A failed/expired session MUST NOT reuse its old ICE engine or
+        // signal queue with a different session ID or ephemeral TURN key.
+        PeerNativeRtcTransport previous = rtc;
+        rtc = null;
+        if (previous != null) previous.close();
+        synchronized (outgoing) { outgoing.clear(); }
+        issuedTurn = new JSONArray();
+        incomingSeq = 0;
+        outgoingSeq = 0;
+        String obsoleteSession = sessionId;
         sessionId = "";
         centerId = "";
+        closeObsoleteSession(obsoleteSession);
+    }
+
+    private void closeObsoleteSession(String oldId) {
+        if (oldId == null || oldId.isEmpty()) return;
+        try {
+            CLOSER.execute(() -> {
+                try { carrier.close(oldId); }
+                catch (Exception ignored) { /* The center's session TTL is authoritative. */ }
+            });
+        } catch (RejectedExecutionException ignored) { /* Bounded shutdown. */ }
     }
 
     private boolean authorized() throws Exception {
@@ -319,7 +353,7 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
             if (!bindingId.equals(candidate.optString("bindingId"))) continue;
             if (!peerId.equals(candidate.optString("controllerPeerId"))) continue;
             String id = candidate.getString("sessionId");
-            if ("awaiting_node".equals(candidate.optString("state"))) {
+            if ("awaiting_node".equals(candidate.optString("state")) || "active".equals(candidate.optString("state"))) {
                 JSONObject challenge = carrier.challenge("");
                 String challengeId = challenge.getString("challengeId");
                 long expires = candidate.getLong("expires");
@@ -333,7 +367,9 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
                         .put("revision", candidate.optInt("revision")).put("challengeId", challengeId)
                         .put("expires", expires)
                         .put("signature", PeerSignalingProtocol.signTranscript(store.identity().getPrivate(), transcript));
-                carrier.join(id, body);
+                JSONObject joined = carrier.join(id, body);
+                issuedTurn = joined.optJSONArray("iceServers");
+                if (issuedTurn == null) issuedTurn = new JSONArray();
             }
             sessionId = id;
             centerId = candidate.optString("centerId");
@@ -376,6 +412,8 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
         centerId = center;
         revision = sessionRevision;
         ((ControllerCarrier) carrier).sessionToken = result.optString("sessionToken");
+        issuedTurn = result.optJSONArray("iceServers");
+        if (issuedTurn == null) issuedTurn = new JSONArray();
         incomingSeq = 0;
         outgoingSeq = 0;
         failures = 0;
@@ -388,12 +426,16 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
 
     private void createTransport() throws Exception {
         final boolean initiator = CONTROLLER.equals(role);
-        PeerNativeRtcTransport created = new PeerNativeRtcTransport(context, store.peer(peerId), false,
+        JSONObject profile = store.peer(peerId);
+        boolean turnAllowed = ConnectionPolicy.valueOf(profile.getString("policy")).permits(
+                "TURN", profile.optBoolean("fallbackConsent"),
+                "ACTIVE".equals(profile.optString("relayBindingState")), profile.optBoolean("turnConsent"));
+        PeerNativeRtcTransport created = new PeerNativeRtcTransport(context, profile, turnAllowed,
                 signal -> submit(() -> queueSignal(signal)));
         try {
             // Initialize on the signaling worker before polling or dispatching SDP/ICE.
             // Async initialization used to queue remote ICE before reset(), losing it.
-            created.init(PeerCenterProtocol.iceServers(context, peerId), initiator);
+            created.init(PeerCenterProtocol.iceServers(context, peerId, issuedTurn), initiator);
             rtc = created;
             lastOffer = System.currentTimeMillis();
         } catch (Exception error) {
@@ -523,8 +565,11 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
             synchronized (outgoing) {
                 outgoing.clear();
             }
+            String obsolete = sessionId;
             sessionId = "";
             centerId = "";
+            issuedTurn = new JSONArray();
+            closeObsoleteSession(obsolete);
             lastAttempt = 0;
             failures = 0;
             lastOffer = 0;

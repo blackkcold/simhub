@@ -28,7 +28,11 @@ public final class PeerCryptoSandbox {
             check(!p.permits("TURN",false,true));check(!p.permits("MAILBOX",true,false));
         }
         check(!ConnectionPolicy.P2P_ONLY.permits("TURN",true,true));check(ConnectionPolicy.P2P_ONLY.permits("DIRECT",false,false));
-        check(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("MAILBOX",true,true));check(!ConnectionPolicy.P2P_RELAY_FALLBACK.permits("LEGACY_RELAY",true,true));
+        check(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("MAILBOX",true,true));
+        check(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("LEGACY_RELAY",true,true));
+        check(!ConnectionPolicy.P2P_RELAY_FALLBACK.permits("TURN",true,true));
+        check(ConnectionPolicy.P2P_RELAY_FALLBACK.permits("TURN",false,false,true));
+        check(!ConnectionPolicy.P2P_ONLY.permits("TURN",true,true,true));
         System.out.println("{\"assertions\":"+assertions+",\"crypto\":\"passed\",\"policy\":\"passed\"}");
     }
 }

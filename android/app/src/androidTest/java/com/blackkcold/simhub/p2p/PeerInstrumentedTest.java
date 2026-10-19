@@ -110,7 +110,11 @@ public final class PeerInstrumentedTest {
         store.revoke(controllerId);try{PeerRelayRpc.execute(c,PeerProtocol.seal(root,controllerId,store.myId(),id,now+120,request));fail("Relay bypassed revocation");}catch(SecurityException expected){}
     }
     @Test public void testConfiguredRelayIsPreferredAndP2PIsBackup()throws Exception{
-        JSONObject profile=store.peer(controllerId);profile.put("relayConfigured",true);store.update(profile);int[] calls={0,0};
+        JSONObject profile=store.peer(controllerId);
+        // Hybrid routing needs both an explicit mixed policy and a separately
+        // authorized legacy Relay. A P2P_ONLY profile must never select Relay.
+        profile.put("policy","P2P_RELAY_FALLBACK").put("relayConfigured",true);
+        store.update(profile);int[] calls={0,0};
         ConnectionCoordinator coordinator=new ConnectionCoordinator(store);
         coordinator.relay(new HubTransport(){public String route(){return "LEGACY_RELAY";}public JSONObject request(JSONObject p,String id,JSONObject req)throws Exception{calls[0]++;if(calls[0]>1)throw new java.io.IOException("relay unavailable");return new JSONObject().put("path","relay");}});
         coordinator.internet(new HubTransport(){public String route(){return "DIRECT";}public JSONObject request(JSONObject p,String id,JSONObject req)throws Exception{calls[1]++;return new JSONObject().put("path","p2p");}});

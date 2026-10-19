@@ -19,6 +19,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MAIN = ROOT / "android/app/src/main/java/com/blackkcold/simhub"
 P2P = MAIN / "p2p"
+PROTOCOL = ROOT / "android/peer-core/src/main/java/com/blackkcold/simhub/p2p"
 
 
 def _sources(folder):
@@ -35,6 +36,8 @@ def verify_native_engine():
                  "PeerCloudProtocol.java"):
         assert not (P2P / name).exists(), f"retired signaling sink still present: {name}"
     transport = (P2P / "PeerNativeRtcTransport.java").read_text(encoding="utf-8")
+    assert (ROOT / "android/peer-core/build.gradle.kts").exists(), "protocol module missing"
+    assert not (P2P / "PeerCrypto.java").exists(), "duplicate protocol in app source"
     for marker in ("org.webrtc", '"simhub-peer-v1"', "createDataChannel", "getStats",
                    "selectedCandidatePairId", "engineReady", "onDataChannel", "restartIce"):
         assert marker in transport, f"native engine invariant missing: {marker}"
@@ -74,7 +77,7 @@ def verify_pinned_shared_client():
 
 def verify_signaling_protocol():
     """Purpose-separated signaling: its own domain, its own subkey and its own vectors."""
-    signaling = (P2P / "PeerSignalingProtocol.java").read_text(encoding="utf-8")
+    signaling = (PROTOCOL / "PeerSignalingProtocol.java").read_text(encoding="utf-8")
     for marker in ('"simhub-peer-signal-v1"', "deriveKey", "canonicalAad", "bindingTranscript",
                    "sessionTranscript", "END_OF_CANDIDATES"):
         assert marker in signaling, f"signaling protocol invariant missing: {marker}"
@@ -87,6 +90,17 @@ def verify_signaling_protocol():
     for marker in ("CENTER_SETUP_REQUIRED", "store.signaling(", 'optBoolean("consent")',
                    "PeerSignalingProtocol.seal", "PeerSignalingProtocol.open"):
         assert marker in connector, f"center connector invariant missing: {marker}"
+    policy = (PROTOCOL / "ConnectionPolicy.java").read_text(encoding="utf-8")
+    assert 'case "TURN" -> this==P2P_RELAY_FALLBACK && turnConsent' in policy, (
+        "TURN must remain independent of legacy Relay enrollment")
+    center = (ROOT / "server/simhub_server.py").read_text(encoding="utf-8")
+    assert 'result["iceServers"] = peer_turn.configured_ice(now())' in center, (
+        "only authenticated session create/join may issue optional TURN ICE")
+    connector = (P2P / "PeerCenterConnector.java").read_text(encoding="utf-8")
+    assert "controllerOriginForNode(nodeOrigin)" in connector, (
+        "signed NODE origin must never be used for controller authentication")
+    assert "PeerCenterProtocol.iceServers(context, peerId, issuedTurn)" in connector, (
+        "TURN may enter the RTC engine only from the authenticated session response")
     store = (P2P / "PeerStore.java").read_text(encoding="utf-8")
     assert "migrateSignalingConsent" in store, "idempotent consent migration missing"
     assert '"signalingConsent",false' in store.replace(" ", ""), "signaling consent must default to false"
@@ -120,13 +134,13 @@ def main():
     verify_pinned_shared_client()
     verify_signaling_protocol()
     verify_no_generated_config_in_source()
-    suites = ["server.test_peer_connect", "server.test_peer_signaling", "server.test_peer_signaling_http"]
+    suites = ["server.test_peer_connect", "server.test_peer_signaling", "server.test_peer_signaling_http", "server.test_peer_turn"]
     result = subprocess.run([sys.executable, "-m", "unittest", "-v", *suites], cwd=ROOT,
                             env={**os.environ, "PYTHONPATH": str(ROOT / "server")})
     if result.returncode:
         return result.returncode
     with tempfile.TemporaryDirectory(prefix="simhub-peer-jvm-") as folder:
-        source = P2P
+        source = PROTOCOL
         runner = ROOT / "scripts/PeerCryptoSandbox.java"
         dump = ROOT / "scripts/SignalingVectorDump.java"
         compiler = ["javac"] if shutil.which("javac") else ["java", "-m", "jdk.compiler/com.sun.tools.javac.Main"]

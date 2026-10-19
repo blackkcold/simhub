@@ -77,7 +77,8 @@ class PeerActivity:ComponentActivity(){
     private fun reload(){
         val stored=store().list()
         peers=(0 until stored.length()).map{stored.getJSONObject(it)}
-        listening=PeerService.localListening()
+        // Remote WebRTC may run even when Android 17 denies LAN listener access.
+        listening=PeerService.enabled()
         val secrets=SecretStore(applicationContext)
         recentSendIds=peers.mapNotNull{p->
             val id=p.optString("id")
@@ -240,10 +241,10 @@ class PeerActivity:ComponentActivity(){
                 Text("步骤 1 / 3 · 开启本机服务，选择授权后生成二维码",style=MaterialTheme.typography.titleSmall)
                 Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Switch(listening,{if(it)startNode() else{PeerService.stop(this@PeerActivity);listening=false}});Text("允许已配对设备连接")}
                 Text("持续监听会显示前台通知；关闭后此 SIM 节点无法通过 P2P 接收请求。",style=MaterialTheme.typography.bodySmall)
-                if(PeerService.enabled()&&!PeerService.localListening())Text("后台服务已启动，但局域网监听未就绪。请检查 Android 本地网络权限；信令与监听是不同状态。",style=MaterialTheme.typography.bodySmall)
+                if(PeerService.enabled()&&!PeerService.localListening())Text("设备直连服务已启动，但局域网监听不可用；可继续完成配对并尝试已授权的公网 WebRTC。局域网使用需检查本地网络权限。",style=MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick={requestAccess()}){Text("检查短信读取权限")}
                 Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Checkbox(allowSend,{allowSend=it});Text("允许本次配对发送短信（默认关闭）")}
-                Button(onClick={work{if(!PeerService.localListening())throw IllegalStateException("start_node_listener_first");qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).offer(Build.MODEL,allowSend,PeerService.endpoints())};notice="步骤 2 / 3 · 请使用管理手机扫描二维码，然后使用本机扫描其响应二维码"}},enabled=listening){Text("生成配对二维码")}
+                Button(onClick={work{if(!PeerService.enabled())throw IllegalStateException("start_peer_service_first");qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).offer(Build.MODEL,allowSend,PeerService.endpoints())};notice="步骤 2 / 3 · 请使用管理手机扫描二维码，然后使用本机扫描其响应二维码"}},enabled=listening){Text("生成配对二维码")}
                 if(!SmsSendPolicy.canSend(this@PeerActivity))Text("发送短信需要本机系统短信角色及相应权限；仅授权读取时无需切换默认短信应用。",style=MaterialTheme.typography.bodySmall)
             }else if(pairingRole==1){
                 Text("步骤 2 / 3 · 扫描节点二维码，再让节点扫描本机响应二维码",style=MaterialTheme.typography.titleSmall)
@@ -321,6 +322,28 @@ class PeerActivity:ComponentActivity(){
                 if(p.optLong("lastSyncAt",0)>0)Text("最后通信：${java.text.SimpleDateFormat("MM-dd HH:mm",java.util.Locale.getDefault()).format(java.util.Date(p.optLong("lastSyncAt")*1000))}",style=MaterialTheme.typography.labelSmall)
                 Text("设备身份：${p.optString("id").take(16)}…",style=MaterialTheme.typography.labelSmall)
                 if(p.optBoolean("signalingConsent")){
+                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                        Switch(checked=p.optBoolean("turnConsent"),onCheckedChange={allow->
+                            work{
+                                withContext(Dispatchers.IO){
+                                    val fresh=store().peer(p.getString("id"))
+                                    fresh.put("turnConsent",allow)
+                                    if(allow)fresh.put("policy","P2P_RELAY_FALLBACK")
+                                    else if(!fresh.optBoolean("relayConfigured")&&!fresh.optBoolean("fallbackConsent"))
+                                        fresh.put("policy","P2P_ONLY")
+                                    store().update(fresh)
+                                    PeerCenterConnector.closePeer(p.getString("id"))
+                                    PeerCenterConnector.ensure(applicationContext,p.getString("id"))
+                                }
+                                notice=if(allow)"已允许此配对使用可信中心签发的临时 TURN 中继；对端也必须明确授权。"
+                                    else "此配对 TURN 已禁用；只使用已授权的直接或独立 Relay 路径。"
+                            }
+                        })
+                        Text("允许 TURN 辅助连接（仅此配对）",style=MaterialTheme.typography.bodySmall)
+                    }
+                    Text("TURN 可能经第三方服务器转发加密数据；双方须分别授权，并且可信中心必须配置 coturn。",
+                        style=MaterialTheme.typography.bodySmall)
                     if(p.optString("localRole")=="NODE"){
                         if(p.optString("signalingCenterBinding").isBlank())Text("节点已授权，正在等待可信中心返回绑定编号。检查节点的注册状态及网络。",style=MaterialTheme.typography.bodySmall)
                         else OutlinedButton(onClick={work{qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).signalingBindingQr(p.getString("id"))};tab=0;notice="请用管理手机的「连接详情 → 扫描节点授权码」读取二维码；仅交换已验证的中心绑定编号。"}}){Text("生成节点信令授权二维码")}
@@ -346,7 +369,11 @@ class PeerActivity:ComponentActivity(){
                     val isNode=p.optString("localRole")=="NODE"
                     val trust=CenterTrustStore.get(applicationContext).effective()
                     val origin=if(isNode)AgentConfig(applicationContext).server() else p.optJSONObject("relayHint")?.optString("origin","")?:""
-                    val trusted=trust!=null&&trust.covers(if(isNode)CenterTrust.ROLE_NODE else CenterTrust.ROLE_CONTROLLER,origin)
+                    // The signed node hint names the node surface, not the
+                    // controller login surface. Check both pinned roles before
+                    // offering the public signaling flow.
+                    val trusted=if(isNode) trust!=null&&trust.covers(CenterTrust.ROLE_NODE,origin)
+                        else try{trust?.controllerOriginForNode(origin)!=null}catch(_:SecurityException){false}
                     if(isNode&&trusted){
                         OutlinedButton(onClick={work{
                             withContext(Dispatchers.IO){
@@ -379,7 +406,7 @@ class PeerActivity:ComponentActivity(){
         else->"尚未连接"
     }
     private fun diagnosticLabel(p:JSONObject):String {
-        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "数据通道已连接；可读取状态和短信。"
+        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "数据通道已连接（${routeLabel(PeerCenterConnector.dataChannelRoute(p.optString("id")))}）；可读取状态和短信。"
         if(p.optString("pairState")=="PENDING")return "未完成节点对响应码的确认，请先完成双向扫码。"
         if(!p.optBoolean("signalingConsent"))return "局域网以外的连接尚未授权；进入连接详情查看可信中心设置。"
         if(p.optString("signalingCenterBinding").isBlank())return "尚未取得已验证的中心绑定；节点需生成授权码，管理端需扫码确认。"
@@ -392,7 +419,11 @@ class PeerActivity:ComponentActivity(){
     }
     private fun pairLabel(p:JSONObject)=when(p.optString("pairState")){"PENDING"->"待双向确认";"ACTIVE"->"已配对";"REVOKED"->"已撤销";else->"待配对"}
     private fun connectionLabel(p:JSONObject):String {
-        if(PeerCenterConnector.dataChannelOnline(p.optString("id")))return "设备 P2P 直连已建立"
+        if(PeerCenterConnector.dataChannelOnline(p.optString("id"))) {
+            val route=PeerCenterConnector.dataChannelRoute(p.optString("id"))
+            return if(route=="TURN")"数据通道已连接 · 加密 TURN 中继"
+                else "数据通道已连接 · ${routeLabel(route)}"
+        }
         val last=p.optLong("lastSyncAt",0)
         val recentlyUsed=last>0&&System.currentTimeMillis()/1000-last<30
         if(recentlyUsed)return "最近通过${routeLabel(p.optString("activeTransport"))}通信"

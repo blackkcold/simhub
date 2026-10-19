@@ -87,6 +87,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation(project(":peer-core"))
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     // Data-only native WebRTC engine. Pinned exact version; no dynamic ranges.
     // Verified before adoption: Maven Central aar, BSD-3-Clause, webrtc-sdk/android.

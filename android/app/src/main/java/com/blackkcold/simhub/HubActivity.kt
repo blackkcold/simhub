@@ -71,6 +71,7 @@ interface HubController {
     fun syncNow()
     fun syncDeviceState()
     fun setLocationSharing(enabled:Boolean)
+    fun setRemoteLocationAllowed(enabled:Boolean)
     fun locateOnce()
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
@@ -198,6 +199,7 @@ class HubActivity: ComponentActivity(), HubController {
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
         tools.locationEnabled=NodeLocationManager.enabled(applicationContext)
+        tools.remoteLocationAllowed=NodeLocationManager.remoteAllowed(applicationContext)
         Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
         Shizuku.addBinderReceivedListenerSticky(shizukuBinderListener)
         Shizuku.addBinderDeadListener(shizukuDeadListener)
@@ -529,12 +531,14 @@ class HubActivity: ComponentActivity(), HubController {
             if(NodeLocationManager.permissionGranted(this)){
                 NodeLocationManager.setEnabled(applicationContext,true)
                 tools.locationEnabled=true
+                tools.remoteLocationAllowed=NodeLocationManager.remoteAllowed(applicationContext)
                 refresh()
             }else locationPermissionLauncher.launch(arrayOf(
                 Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         }else{
             NodeLocationManager.setEnabled(applicationContext,false)
             tools.locationEnabled=false
+            tools.remoteLocationAllowed=false
             lifecycleScope.launch(Dispatchers.IO) {
                 try{NodeLocationManager.purgeIfNeeded(applicationContext,ApiClient(applicationContext))}
                 catch(_:Exception){SyncJobService.scheduleNow(applicationContext)}
@@ -542,6 +546,12 @@ class HubActivity: ComponentActivity(), HubController {
             toast(actionLabel("位置共享已关闭，服务器密文清理已请求",
                 "Location sharing disabled; server ciphertext cleanup requested"))
         }
+    }
+    override fun setRemoteLocationAllowed(enabled:Boolean){
+        NodeLocationManager.setRemoteAllowed(applicationContext,enabled)
+        tools.remoteLocationAllowed=NodeLocationManager.remoteAllowed(applicationContext)
+        toast(actionLabel(if(tools.remoteLocationAllowed)"已允许前台远程定位" else "已关闭远程定位",
+            if(tools.remoteLocationAllowed)"Foreground remote positioning enabled" else "Remote positioning disabled"))
     }
     override fun locateOnce(){
         if(!NodeLocationManager.enabled(this)){
@@ -553,7 +563,9 @@ class HubActivity: ComponentActivity(), HubController {
                 val status=withContext(Dispatchers.IO){
                     NodeLocationManager.captureAndQueue(applicationContext)
                 }
-                toast(actionLabel("加密位置已上传","Encrypted one-shot location uploaded"))
+                toast(if(status.optBoolean("published",false))
+                    actionLabel("加密位置已上传并确认","Encrypted location confirmed by Relay")
+                else actionLabel("位置已加密排队，尚未收到服务器确认","Encrypted location queued; Relay ACK pending"))
             }catch(error:Exception){
                 // Deliberately do not log raw location or errors that may contain coordinates.
                 toast(actionLabel("定位失败："+(error.message?:"unavailable"),

@@ -56,7 +56,7 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 
 ## Native Android experience
 
-Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. SMS, devices, tasks and settings use native Compose screens. The controller inbox supports paged history beyond 50 events, compact filters and a scroll-aware header; device management offers rename, network fallback and step-up protected actions. Passkey and enrollment cryptography remain in the trusted browser.
+Use SIM Hub as a **SIM Node**, **Management Center**, or both. A native Material 3 shell offers adaptive navigation, separate role themes, paged messages and encrypted device management; browser authentication stays in the trusted system browser.
 
 **SIM Node settings:** Five compact native categories, adaptive foldable layout and on-demand diagnostics.
 

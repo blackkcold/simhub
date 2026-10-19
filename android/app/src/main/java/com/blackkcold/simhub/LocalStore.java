@@ -68,6 +68,14 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     /** Withdrawing optional location consent must discard unsent local ciphertext too. */
+    public synchronized boolean isEventPending(String id){
+        try(Cursor row=getReadableDatabase().query("events",new String[]{"id"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst();}
+    }
+    public synchronized boolean hasUploadedReceipt(String id){
+        try(Cursor row=getReadableDatabase().query("uploaded_event_ids",new String[]{"id"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst();}
+    }
     public synchronized void clearPendingLocation(){
         getWritableDatabase().delete("events","kind=?",new String[]{"device.location"});
     }

@@ -55,12 +55,15 @@ public final class CommandProcessor {
                 }
                 case "device.location_once" -> {
                     if(!NodeLocationManager.enabled(c)){ack(id,"failed",new JSONObject().put("reason","location_sharing_disabled"));return;}
+                    if(!NodeLocationManager.remoteAllowed(c)){ack(id,"rejected",new JSONObject().put("reason","remote_location_not_authorized"));return;}
                     if(!NodeLocationManager.permissionGranted(c)){ack(id,"failed",new JSONObject().put("reason","permission_required"));return;}
                     if(!HubActivity.visibleForLocation){ack(id,"failed",new JSONObject().put("reason","background_restricted"));return;}
                     JSONObject published=NodeLocationManager.captureAndQueue(c);
                     result.put("sampledAt",published.optLong("sampledAt",0))
-                        .put("encrypted",true);
-                    ack(id,"succeeded",result);
+                        .put("encrypted",true)
+                        .put("uploaded",published.optBoolean("published",false))
+                        .put("queued",published.optBoolean("queued",false));
+                    ack(id,published.optBoolean("published",false)?"succeeded":"submitted",result);
                 }
                 case "diagnostics.request" -> {JSONObject d=StateCollector.collect(c).put("diagnosticAt",now).put("requestId",id);EventQueue.diagnostics(c,d);result.put("queued",true);ack(id,"succeeded",result);}
                 case "ota.cancel" -> {if(!RemoteOta.cancel(c)){ack(id,"rejected",new JSONObject().put("reason","ota_cannot_cancel_after_install_commit"));return;}ack(id,"succeeded",new JSONObject());}

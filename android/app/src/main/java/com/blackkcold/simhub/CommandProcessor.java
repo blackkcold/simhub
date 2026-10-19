@@ -53,6 +53,15 @@ public final class CommandProcessor {
                     result.put("refreshed",true).put("requestId",id).put("sampledAt",sample.optLong("sampledAt",0));
                     ack(id,"succeeded",result);
                 }
+                case "device.location_once" -> {
+                    if(!NodeLocationManager.enabled(c)){ack(id,"failed",new JSONObject().put("reason","location_sharing_disabled"));return;}
+                    if(!NodeLocationManager.permissionGranted(c)){ack(id,"failed",new JSONObject().put("reason","permission_required"));return;}
+                    if(!HubActivity.visibleForLocation){ack(id,"failed",new JSONObject().put("reason","background_restricted"));return;}
+                    JSONObject published=NodeLocationManager.captureAndQueue(c);
+                    result.put("sampledAt",published.optLong("sampledAt",0))
+                        .put("encrypted",true);
+                    ack(id,"succeeded",result);
+                }
                 case "diagnostics.request" -> {JSONObject d=StateCollector.collect(c).put("diagnosticAt",now).put("requestId",id);EventQueue.diagnostics(c,d);result.put("queued",true);ack(id,"succeeded",result);}
                 case "ota.cancel" -> {if(!RemoteOta.cancel(c)){ack(id,"rejected",new JSONObject().put("reason","ota_cannot_cancel_after_install_commit"));return;}ack(id,"succeeded",new JSONObject());}
                 case "ota.install" -> {JSONObject accepted=RemoteOta.request(c,id,p.optString("targetVersion","latest"));ack(id,"submitted",accepted);}

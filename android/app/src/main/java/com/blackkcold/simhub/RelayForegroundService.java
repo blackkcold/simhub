@@ -2,6 +2,11 @@ package com.blackkcold.simhub;
 
 import android.app.Service;
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
@@ -44,6 +49,26 @@ public final class RelayForegroundService extends Service {
         }
     };
     private boolean observingProvider=false;
+    private boolean observingBattery=false,observingNetwork=false;
+    private final BroadcastReceiver batteryObserver=new BroadcastReceiver(){
+        @Override public void onReceive(Context context,Intent intent){
+            TelemetryPolicy.onObserved(RelayForegroundService.this);
+        }
+    };
+    private final ConnectivityManager.NetworkCallback networkObserver=new ConnectivityManager.NetworkCallback(){
+        @Override public void onAvailable(Network network){TelemetryPolicy.onObserved(RelayForegroundService.this);}
+        @Override public void onLost(Network network){TelemetryPolicy.onObserved(RelayForegroundService.this);}
+        @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities caps){
+            TelemetryPolicy.onObserved(RelayForegroundService.this);
+        }
+    };
+    private void registerTelemetryObservers(){
+        try{registerReceiver(batteryObserver,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            observingBattery=true;}catch(Exception error){AppLogger.e(this,"Telemetry","Battery observer unavailable",error);}
+        try{ConnectivityManager cm=getSystemService(ConnectivityManager.class);
+            if(cm!=null){cm.registerDefaultNetworkCallback(networkObserver);observingNetwork=true;}
+        }catch(Exception error){AppLogger.e(this,"Telemetry","Network observer unavailable",error);}
+    }
     private void registerSmsObserver(){
         if(checkSelfPermission(Manifest.permission.READ_SMS)!=PackageManager.PERMISSION_GRANTED)return;
         try{
@@ -100,6 +125,7 @@ public final class RelayForegroundService extends Service {
         sendBroadcast(new Intent(ACTION_RELAY_STATE).setPackage(getPackageName()));
         AppLogger.i(this,"RelayService","Foreground relay service started");
         registerSmsObserver();
+        registerTelemetryObservers();
         // JobScheduler is the durable recovery mechanism. The foreground service
         // only adds a lightweight remote command check and periodic maintenance.
         SyncJobService.scheduleNow(this);
@@ -145,6 +171,8 @@ public final class RelayForegroundService extends Service {
     }
     @Override public void onDestroy(){
         if(observingProvider)try{getContentResolver().unregisterContentObserver(providerObserver);}catch(Exception ignored){}
+        if(observingBattery)try{unregisterReceiver(batteryObserver);}catch(Exception ignored){}
+        if(observingNetwork)try{getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkObserver);}catch(Exception ignored){}
         AppLogger.i(this,"RelayService","Foreground relay service stopped");
         if(maintenanceTask!=null)maintenanceTask.cancel(true);
         if(commandTask!=null)commandTask.cancel(true);

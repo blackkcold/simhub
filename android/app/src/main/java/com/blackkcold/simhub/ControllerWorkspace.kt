@@ -46,7 +46,8 @@ internal object ControllerCommandProgress {
     fun describe(cmd:JSONObject):String = when(val state=cmd.optString("state","queued")){
         "queued"->"排队中：等待设备唤醒领取（节能模式可能需要数分钟）"
         "dispatched"->"设备已领取，等待最终执行 ACK"
-        "submitted"->"短信已提交系统，尚未确认发送"
+        "submitted"->if(cmd.optString("type")=="device.location_once")
+            "位置已加密排队，等待上传回执" else "短信已提交系统，尚未确认发送"
         "sent"->"系统已发送，等待运营商回执"
         "delivered"->"运营商已确认送达"
         "succeeded"->"任务执行成功"
@@ -146,6 +147,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
+    var loadedLocationDevice by remember(selected){mutableStateOf("")}
+    var locationSample by remember(selected){mutableStateOf<ControllerLocationSample?>(null)}
+    val nativeLabel:(String,String)->String={zh,en->
+        if(context.resources.configuration.locales.get(0)?.language=="zh")zh else en
+    }
+    var locationState by remember(selected){mutableStateOf(nativeLabel("尚未读取","Not loaded"))}
+    var locationLoading by remember(selected){mutableStateOf(false)}
     var pendingManageAction by remember{mutableStateOf<Pair<JSONObject,String>?>(null)}
     var manageValue by remember{mutableStateOf("")}
     var manageCredential by remember{mutableStateOf("")}
@@ -199,9 +207,14 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     val activity=context as? androidx.activity.ComponentActivity
     DisposableEffect(activity,selected,requireLocalUnlock){
         val observer=LifecycleEventObserver{_,event->
+            if(event==Lifecycle.Event.ON_STOP){
+                locationSample=null;loadedLocationDevice=""
+                locationState=nativeLabel("尚未读取","Not loaded")
+            }
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
                 selected?.let{ControllerAccessGate.clear(it)}
                 localUnlocked=false;inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""
+                loadedLocationDevice="";locationSample=null;locationState=nativeLabel("已锁定","Locked")
             }
         }
         activity?.lifecycle?.addObserver(observer)
@@ -402,6 +415,37 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             }finally{busy=false}
         }
     }
+    fun loadLocation(device:JSONObject){
+        val api=client?:return
+        if(!authorized || (requireLocalUnlock && !localUnlocked) || locationLoading)return
+        val id=device.optString("id")
+        if(id.isEmpty())return
+        locationLoading=true;locationState=nativeLabel("正在安全读取…","Loading encrypted location…")
+        scope.launch {
+            try{
+                val sample=withContext(Dispatchers.IO){
+                    val envelope=api.api("/api/v1/devices/"+Uri.encode(id)+"/location")
+                        .optJSONObject("location") ?: return@withContext null
+                    if(envelope.optString("deviceId")!=id)throw SecurityException("Location identity mismatch")
+                    val vault=api.vault()
+                    try {
+                        ControllerLocationFacts.parse(api.decryptEvent(envelope,device,vault),envelope)
+                            ?: throw IllegalStateException("Invalid location coordinates")
+                    }finally{vault.fill(0)}
+                }
+                if(selectedDevice?.optString("id")==id && authorized && (!requireLocalUnlock || localUnlocked)){
+                    locationSample=sample;loadedLocationDevice=id
+                    locationState=if(sample==null)nativeLabel("没有已保存的加密位置","No encrypted position saved")
+                        else nativeLabel("最近一次位置快照","Last recorded location")
+                }
+            }catch(error:Exception){
+                if(selectedDevice?.optString("id")==id && authorized){
+                    locationSample=null;loadedLocationDevice=id
+                    locationState=nativeLabel("位置读取或解密失败","Location read/decryption failed")
+                }
+            }finally{locationLoading=false}
+        }
+    }
     fun refreshDelta(){load("delta")}
     fun loadOlderPage(){load("older")}
     fun navigateToLatest(){load("latest")}
@@ -418,6 +462,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             "sync-older"->"sms.sync_older"
             "restore-history"->"sms.restore_history"
             "refresh"->"device.refresh_state"
+            "location-once"->"device.location_once"
             "diagnostics"->"diagnostics.request"
             "ota-install"->"ota.install"
             "ota-cancel"->"ota.cancel"
@@ -426,6 +471,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             else->return
         }
         val state=device.optJSONObject("state")?:JSONObject()
+        if(action=="location-once" && (
+            state.optBoolean("locationSharingEnabled")!=true ||
+            state.optBoolean("locationRemoteAllowed")!=true)){
+            actionError="远程定位需要在 SIM 节点本机开启授权";return
+        }
         if(action.startsWith("ota-") && (
             device.optString("nodeType")!="android" || !state.optBoolean("remoteOtaSupported") ||
             !(state.optInt("sdk")>=36 || state.optBoolean("remoteOtaDeveloperOverride")) ||
@@ -790,7 +840,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         }
                     }
                     gridItems(devices,key={it.optString("id")}){device->
-                        ControllerDeviceCard(device){selectedDevice=device;actionError=""}
+                        ControllerDeviceCard(device){
+                            selectedDevice=device;actionError=""
+                            loadedLocationDevice="";locationSample=null
+                            locationState=nativeLabel("尚未读取","Not loaded")
+                        }
                     }
                 }
             }else{
@@ -1008,7 +1062,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 ControllerDeviceDetails(device,busy=actionBusy,
                     lastStatus=if(lastCommandDevice==device.optString("name"))lastCommandState else "",
                     error=actionError,
-                    onClose={selectedDevice=null;actionError=""},
+                    onClose={selectedDevice=null;actionError="";
+                        locationSample=null;loadedLocationDevice=""},
                     onAction={action->queueDeviceAction(device,action)},
                     onManage={action->
                         pendingManageAction=device to action
@@ -1018,18 +1073,30 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     onAdvanced={
                         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
                             Uri.parse(selected+"/")))
+                    },
+                    locationSample=if(loadedLocationDevice==device.optString("id"))locationSample else null,
+                    locationStatus=locationState,
+                    locationLoading=locationLoading,
+                    onLocationLoad={loadLocation(device)},
+                    onLocationOpen={
+                        val sample=locationSample
+                        if(sample!=null && loadedLocationDevice==device.optString("id")){
+                            context.startActivity(android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,Uri.parse(sample.openStreetMapUrl())))
+                        }
                     })
             }
         }
     }
     pendingManageAction?.let{(device,action)->
-        val destructive=action in listOf("purge","revoke","delete")
+        val destructive=action in listOf("purge","revoke","delete","location-purge")
         val sensitive=destructive || action=="network"
         val channels=ControllerNodePolicy.channels(device)
         val title=when(action){
             "rename"->hubLabel("修改设备名称","Rename node")
             "network"->hubLabel("备用移动数据策略","Mobile network fallback")
             "purge"->hubLabel("清理中继短信","Purge relay SMS")
+            "location-purge"->hubLabel("清理中继位置","Purge relay location")
             "revoke"->hubLabel("撤销设备授权","Revoke device")
             else->hubLabel("强制删除设备","Force delete device")
         }
@@ -1065,13 +1132,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     Text(when(action){
                         "purge"->hubLabel("删除该设备在中继服务器保存的短信及共享池副本，不能撤销。设备本地原始短信不受此操作影响。",
                             "Deletes relay SMS and shared-pool copies; local node SMS remain.")
+                        "location-purge"->hubLabel("只删除服务器保存的位置密文，不会改变手机本机权限。",
+                            "Delete only Relay location ciphertext; local permission is unchanged.")
                         "revoke"->hubLabel("撤销云端设备授权，设备需要重新配对。","Re-enrollment is required after revoke.")
                         else->hubLabel("强制删除设备与云端记录，需重新配对。","Deletes the node and cloud records; re-enrollment required.")
                     },color=MaterialTheme.colorScheme.error,
                         style=MaterialTheme.typography.bodySmall)
-                    if(action=="purge" || action=="delete")
+                    if(action=="purge" || action=="delete" || action=="location-purge")
                         OutlinedTextField(manageConfirm,{manageConfirm=it},
-                            label={Text(if(action=="purge")"输入 PURGE" else "输入 DELETE")},
+                            label={Text(when(action){"purge"->"输入 PURGE";"location-purge"->"输入 LOCATION";else->"输入 DELETE"})},
                             singleLine=true)
                 }
                 if(sensitive)OutlinedTextField(manageCredential,{manageCredential=it},
@@ -1085,6 +1154,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 enabled=!manageBusy && (action!="rename" || manageValue.trim().isNotEmpty()) &&
                     (!sensitive || manageCredential.isNotBlank()) &&
                     (action!="purge" || manageConfirm=="PURGE") &&
+                    (action!="location-purge" || manageConfirm=="LOCATION") &&
                     (action!="delete" || manageConfirm=="DELETE") &&
                     (action!="network" || manageChannelIndex==-1 ||
                         channels.optJSONObject(manageChannelIndex)!=null),
@@ -1112,12 +1182,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                             "revoke"->api.api(uri+"/manage","POST",JSONObject()
                                                 .put("action","revoke"))
                                             "purge"->api.api(uri+"/sms","DELETE")
+                                             "location-purge"->api.api(uri+"/location","DELETE")
                                             "delete"->api.api(uri,"DELETE")
                                             else->throw IllegalArgumentException("Unsupported device action")
                                         }
                                     }
                                     pendingManageAction=null
-                                    if(destructive){
+                                    if(action=="location-purge"){
+                                        locationSample=null
+                                        loadedLocationDevice=device.optString("id")
+                                        locationState=nativeLabel("服务器位置密文已删除","Relay location deleted")
+                                    }else if(destructive){
                                         // A removed or revoked source must disappear from
                                         // the decrypted inbox immediately, not on next restart.
                                         inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList()

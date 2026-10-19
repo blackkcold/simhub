@@ -75,13 +75,12 @@ internal fun ControllerHealthSummary(device:JSONObject){
         HubCard(Modifier.fillMaxWidth()){
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
                 Box(Modifier.size(76.dp),contentAlignment=Alignment.Center){
-                    if(battery!=null)CircularProgressIndicator(
-                        progress={battery/100f},modifier=Modifier.fillMaxSize(),
-                        strokeWidth=6.dp,color=MaterialTheme.colorScheme.primary)
-                    else CircularProgressIndicator(progress={0f},modifier=Modifier.fillMaxSize(),
-                        strokeWidth=6.dp,color=MaterialTheme.colorScheme.outlineVariant)
-                    Text(battery?.let{"$it%"}?:"—",fontWeight=FontWeight.Bold,
-                        style=MaterialTheme.typography.titleMedium)
+                    Column(horizontalAlignment=Alignment.CenterHorizontally,
+                        verticalArrangement=Arrangement.spacedBy(4.dp)){
+                        ControllerBatteryGauge(battery,state.optBoolean("charging"))
+                        Text(battery?.let{"$it%"}?:"—",fontWeight=FontWeight.Bold,
+                            style=MaterialTheme.typography.titleSmall)
+                    }
                 }
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)){
                     Text(hubLabel("设备连接与电量","Connection & power"),
@@ -101,6 +100,7 @@ internal fun ControllerHealthSummary(device:JSONObject){
                 if(state.optBoolean("dataFallbackEnabled"))state.optString("dataFallbackStatus","已启用")
                 else if(state.has("dataFallbackEnabled"))hubLabel("未启用","Disabled") else "—")
         }
+        ControllerRadioSummary(state)
     }
 }
 

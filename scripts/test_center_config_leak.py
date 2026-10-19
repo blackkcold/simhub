@@ -36,6 +36,8 @@ ALLOWED_HOSTS = {
     "api.github.com", "github.com", "raw.githubusercontent.com", "shizuku.rikka.app",
     "token.actions.githubusercontent.com", "uploads.github.com", "objects.githubusercontent.com",
     "developer.android.com", "docs.github.com", "kotlinlang.org",
+    # Public OSM map view, not a configured center domain or deployment endpoint.
+    "www.openstreetmap.org",
     "maven.google.com", "repo.maven.apache.org", "dl.google.com",
     "services.gradle.org", "plugins.gradle.org", "repo1.maven.org",
 }

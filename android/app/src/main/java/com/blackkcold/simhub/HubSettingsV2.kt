@@ -43,6 +43,8 @@ class HubToolsState {
     var installedAt by mutableStateOf("")
     var language by mutableIntStateOf(0)
     var poolEnabled by mutableStateOf(false)
+    var locationEnabled by mutableStateOf(false)
+    var remoteLocationAllowed by mutableStateOf(false)
     var poolApproved by mutableStateOf(false)
     var poolStatus by mutableStateOf("未开启")
     var compatibilityOpen by mutableStateOf(false)
@@ -398,6 +400,51 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
 }
 
 @Composable
+private fun LocationPrivacyCard(state:HubSnapshot?,tools:HubToolsState,
+                                controller:HubController,modifier:Modifier){
+    ToolSection(hubLabel("位置与隐私","Location & privacy"),modifier){
+        Row(verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(12.dp)){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("按需共享设备位置","Share location on demand"),
+                    fontWeight=FontWeight.Medium)
+                Text(hubLabel("默认关闭 · 仅本机授权 · 位置以 Node Key 端到端加密。不会后台持续定位。",
+                    "Off by default · local permission only · encrypted with the Node Key. No ongoing GPS."),
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked=tools.locationEnabled,onCheckedChange=controller::setLocationSharing,
+                enabled=state?.enrolled==true)
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(12.dp)){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("允许管理中心请求单次定位","Allow remote one-shot positioning"),
+                    fontWeight=FontWeight.Medium)
+                Text(hubLabel("默认关闭 · 仅在本机界面位于前台时执行 · 不授予后台持续定位。",
+                    "Off by default · requires this app in foreground · no background tracking."),
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked=tools.remoteLocationAllowed,
+                onCheckedChange=controller::setRemoteLocationAllowed,
+                enabled=tools.locationEnabled&&state?.enrolled==true)
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(onClick=controller::locateOnce,
+            enabled=tools.locationEnabled&&state?.enrolled==true,
+            modifier=Modifier.fillMaxWidth()){
+            Text(hubLabel("立即定位一次并加密上传","Locate once and upload encrypted"))
+        }
+        Text(hubLabel("管理端不能远程开启定位权限；关闭共享后清理服务器保存的最近位置密文。",
+            "Controllers cannot grant location permission; disabling requests deletion of stored ciphertext."),
+            style=MaterialTheme.typography.labelSmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
 private fun SharingCard(state:HubSnapshot?,tools:HubToolsState,controller:HubController,modifier:Modifier){
     ToolSection(hubLabel("共享短信池","Shared SMS pool"),modifier){
         Row(verticalAlignment=Alignment.CenterVertically){
@@ -726,6 +773,13 @@ private fun NodeStatusOverview(state:HubSnapshot?,tools:HubToolsState,controller
                 state?.pending?.toString()?:"—",Modifier.weight(1f))
         }
         Spacer(Modifier.height(12.dp))
+        OutlinedButton(onClick=controller::syncDeviceState,enabled=enrolled&&!blocked,
+            modifier=Modifier.fillMaxWidth()){
+            HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(hubLabel("立即同步设备状态","Refresh device state now"))
+        }
+        Spacer(Modifier.height(8.dp))
         Button(onClick=controller::syncNow,enabled=enrolled&&!blocked,
             modifier=Modifier.fillMaxWidth()){
             HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp))
@@ -824,8 +878,9 @@ private fun LazyListScope.settingsCategoryContent(page:Int,state:HubSnapshot?,
         SETTINGS_RUNTIME->item(key="runtime"){
             RelayRuntimeCard(state,controller,tools,Modifier.fillMaxWidth())
         }
-        SETTINGS_SHARING->item(key="sharing"){
-            SharingCard(state,tools,controller,Modifier.fillMaxWidth())
+        SETTINGS_SHARING->{
+            item(key="sharing"){SharingCard(state,tools,controller,Modifier.fillMaxWidth())}
+            item(key="location"){LocationPrivacyCard(state,tools,controller,Modifier.fillMaxWidth())}
         }
         SETTINGS_UPDATES->{
             item(key="updates"){UpdatePreferencesCard(tools,controller,Modifier.fillMaxWidth())}

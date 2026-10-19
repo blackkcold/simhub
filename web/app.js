@@ -1,4 +1,5 @@
 import {renderNodeDashboard} from './device-dashboard.js';
+import {validateNodeLocation} from './device-location.js';
 import {createToastHost} from './toast.js';
 import {NotificationCenter} from './notifications.js';
 import {bindNotificationUI} from './notification-ui.js';
@@ -29,6 +30,8 @@ let olderCursor=null,historyHasMore=true,visibleCount=40,activeConversationKey=n
 let historyFetchInFlight=null,loadObserver=null,lastAutoScroll=-1;
 let poolState=null,globalVault=null;
 const expandedDeviceDetails=new Set();
+// Decrypted coordinates live in this tab's RAM only and disappear on Vault lock.
+const locationCache=new Map(),locationMaps=new Set();
 let enrollStep=1,enrollMode='package',nodeBaseUrl='',enrollStartingDevices=new Set();
 const eventIds=new Set();
 let securityEpoch=0;
@@ -506,6 +509,7 @@ function lockVault(broadcast=true){
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
   vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
   poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();
+  locationCache.clear();locationMaps.clear();
   simProfileIndex.clear();simProfileIndexVersion='';lastSeq=0;oldestSeq=0;
   initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
@@ -643,6 +647,8 @@ async function ingestEvents(batch,notify=true){
   for(const e of batch){
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return false;
     lastSeq=Math.max(lastSeq,e.seq||0);
+    // The location endpoint is opt-in: general SMS/event refresh never decrypts coordinates.
+    if(e.kind==='device.location')continue;
     const id=e.deviceId+':'+e.eventId;
     if(eventIds.has(id))continue;
     // An SMS uploaded today can carry an older provider timestamp. Keep it visible
@@ -1061,12 +1067,20 @@ function renderDeviceDetail(id) {
   if(!d)return false;
   const content=$('deviceDetailContent');
   const previousScroll=content.scrollTop;
+  const mapFrame=content.querySelector('.node-map-frame');
+  const oldMapSrc=mapFrame?.querySelector('iframe')?.getAttribute('src');
   const expanded=[...content.querySelectorAll('.node-tasks-details')].map(x=>x.open);
   $('deviceDetailTitle').textContent=d.name;
   content.innerHTML=renderNodeDashboard(d,{
     escapeHtml,fmtTime,deviceStatusText,channels:nodeChannels(d),
-    buttons:deviceButtons(d),zh:getLocale()==='zh-CN'
+    buttons:deviceButtons(d),zh:getLocale()==='zh-CN',
+    locationInfo:locationCache.get(d.id)||null,mapVisible:locationMaps.has(d.id)
   });
+  // Preserve a deliberately loaded map across routine status refreshes.
+  // Rebuilding its iframe on each SSE update would repeatedly disclose position.
+  const nextMap=content.querySelector('.node-map-frame');
+  if(mapFrame && nextMap && oldMapSrc===nextMap.querySelector('iframe')?.getAttribute('src'))
+    nextMap.replaceWith(mapFrame);
   content.querySelectorAll('.node-tasks-details').forEach((x,i)=>{x.open=expanded[i]||false;});
   content.scrollTop=previousScroll;
   return true;
@@ -1736,11 +1750,69 @@ async function configureNetworkFallback(id){
   await queueCommand(id,'device.network_policy',{enabled,channelId:enabled?String(channel.id):'',channelRevision:enabled?Number(channel.revision||channel.channelRevision||1):0},900);
   toast(enabled?'备用数据策略已提交；请确认 Android 系统默认数据 SIM 一致':'关闭备用数据监控已提交');
 }
+async function loadEncryptedLocation(id){
+  if(!vaultKey)throw Error('Vault locked');
+  const epoch=securityEpoch;
+  try{
+    const result=await api('/api/v1/devices/'+encodeURIComponent(id)+'/location');
+    if(epoch!==securityEpoch||!vaultKey)return;
+    const encrypted=result?.location;
+    if(!encrypted){
+      locationCache.set(id,{kind:'none'});locationMaps.delete(id);
+    }else{
+      if(encrypted.deviceId!==id||encrypted.kind!=='device.location')
+        throw Error('Location identity mismatch');
+      const payload=await decryptEvent(encrypted);
+      if(epoch!==securityEpoch||!vaultKey)return;
+      const point=validateNodeLocation(payload,encrypted);
+      if(!point)throw Error('Invalid encrypted coordinate or accuracy');
+      locationCache.set(id,{kind:'loaded',location:point});
+      // New sample must require a new explicit external-map disclosure.
+      locationMaps.delete(id);
+    }
+  }catch(error){
+    if(epoch!==securityEpoch||!vaultKey)return;
+    locationCache.set(id,{kind:'error'});
+    locationMaps.delete(id);
+    throw error;
+  }finally{
+    if(epoch===securityEpoch&&vaultKey&&$('deviceDetailDialog')?.open
+       &&$('deviceDetailDialog').dataset.deviceId===id)renderDeviceDetail(id);
+  }
+}
 async function handleDeviceAction(btn){
   const id=btn.dataset.id,action=btn.dataset.action;
   const d=devices.find(x=>x.id===id);
   if(!d)return;
   const zh=getLocale()==='zh-CN';
+  if(action==='location-load'){
+    await loadEncryptedLocation(id);
+    return;
+  }
+  if(action==='location-map'){
+    if(!locationCache.get(id)?.location)throw Error(zh?'先读取并解密位置':'Load and decrypt the location first');
+    locationMaps.add(id);
+    renderDeviceDetail(id);
+    return;
+  }
+  if(action==='location-purge'){
+    if(!confirm(zh?'删除该设备在 Relay 保存的加密位置。不会关闭手机上的本机共享授权。':'Delete this device\'s stored encrypted position from Relay? This does not disable local permission.'))return;
+    await ensureStepUp();
+    await api('/api/v1/devices/'+encodeURIComponent(id)+'/location',{method:'DELETE'});
+    locationCache.set(id,{kind:'none'});locationMaps.delete(id);
+    renderDeviceDetail(id);
+    toast(zh?'服务器位置密文已删除':'Encrypted location deleted');
+    return;
+  }
+  if(action==='location-remote'){
+    const state=d.state||{};
+    if(state.locationSharingEnabled!==true||state.locationRemoteAllowed!==true)
+      throw Error(zh?'该设备未在本机允许远程定位':'Remote location is not authorized on the device');
+    await queueCommand(id,'device.location_once',{},1200);
+    toast(zh?'已排队：手机需处于前台且具有本机授权；稍后点击“读取加密位置”核实回执':'Queued: the phone must be in foreground with permission. Load encrypted position after the ACK.');
+    await loadCommandActivity();
+    return;
+  }
   if(action==='ota-cancel'){
     if(!confirm(zh?'仅能取消尚未提交系统安装器的更新。继续？':'Cancel this update if installation has not been committed?'))return;
     await queueCommand(id,'ota.cancel',{},900);

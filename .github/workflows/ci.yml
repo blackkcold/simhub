@@ -30,7 +30,7 @@ jobs:
         with: {node-version: '22'}
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050 server.test_pairing
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state server.test_device_telemetry server.test_device_location
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening server.test_controller_auth server.test_controller_http server.test_global_vault
       - run: PYTHONPATH=server python3 -m unittest -v server.test_peer_signaling server.test_peer_signaling_http
       - run: python3 scripts/test_center_config_leak.py
@@ -54,8 +54,9 @@ jobs:
       - run: PYTHONPATH=server python3 server/test_migration.py
       - run: PYTHONPATH=server python3 server/test_maintenance.py
       - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
-      - run: node --check web/app.js && node --check web/device-dashboard.js && node --check web/i18n.js && node --check web/sw.js
+      - run: node --check web/app.js && node --check web/device-dashboard.js && node --check web/device-location.js && node --check web/i18n.js && node --check web/sw.js
       - run: node web/test_node_dashboard.mjs
+      - run: node web/test_device_location.mjs
       - run: node web/test_sms_logic.mjs
       - run: node web/test_service_worker.mjs
       - run: node web/test_crypto_vector.mjs

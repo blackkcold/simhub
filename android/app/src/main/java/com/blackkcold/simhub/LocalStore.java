@@ -67,6 +67,19 @@ public final class LocalStore extends SQLiteOpenHelper {
         try(Cursor c=getReadableDatabase().query("events",new String[]{"id"},"id=?",new String[]{id},null,null,null)){return c.moveToFirst();}
     }
 
+    /** Withdrawing optional location consent must discard unsent local ciphertext too. */
+    public synchronized boolean isEventPending(String id){
+        try(Cursor row=getReadableDatabase().query("events",new String[]{"id"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst();}
+    }
+    public synchronized boolean hasUploadedReceipt(String id){
+        try(Cursor row=getReadableDatabase().query("uploaded_event_ids",new String[]{"id"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst();}
+    }
+    public synchronized void clearPendingLocation(){
+        getWritableDatabase().delete("events","kind=?",new String[]{"device.location"});
+    }
+
     public synchronized List<JSONObject> pendingEvents(int limit)throws Exception{
         List<JSONObject> out=new ArrayList<>();
         try(Cursor c=getReadableDatabase().query("events",null,null,null,null,null,"CASE WHEN kind='sms.received' THEN 0 WHEN kind='sms.history' THEN 2 ELSE 1 END ASC, created_at ASC",String.valueOf(limit))){

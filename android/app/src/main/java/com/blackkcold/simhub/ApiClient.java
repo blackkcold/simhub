@@ -91,7 +91,7 @@ public final class ApiClient {
         boolean poolRetry=new SharedPoolClient(c).retryDue();
         boolean commandFallback=!RelayForegroundService.isRunning() &&
                 EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
-        boolean outstanding=poolRetry || RemoteOta.needsStateUpload(c) || DeviceMetadataSync.fullDirty(c) || DeviceMetadataSync.needsLight(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
+        boolean outstanding=NodeLocationManager.purgePending(c) || poolRetry || RemoteOta.needsStateUpload(c) || DeviceMetadataSync.fullDirty(c) || DeviceMetadataSync.needsLight(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
         if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding&&!commandFallback){
             SYNC_BUSY.set(false);return;
@@ -151,6 +151,12 @@ public final class ApiClient {
                 flushCommandAcks();fetchCommands();flushCommandAcks();
                 if(commandFallback)EnergyPolicy.mark(c,"command_fallback",System.currentTimeMillis());
             }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
+            if(NodeLocationManager.purgePending(c))try{
+                NodeLocationManager.purgeIfNeeded(c,this);
+            }catch(Exception locationError){
+                // Location cleanup retries independently; it must not suppress SMS delivery.
+                SyncJobService.scheduleAfter(c,60_000L);
+            }
             flushEvents();
             if(maintenance||pendingBefore>0||poolRetry){
                 try{new SharedPoolClient(c).sync();}
@@ -423,8 +429,23 @@ public final class ApiClient {
         return "/api/v1/devices/"+cfg.deviceId()+"/peer-signaling/sessions/"+sessionId+"/"+action;
     }
     public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");cfg.recordCommandFetch(arr==null?0:arr.length());if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
-    public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}
-    public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("appVersionCode",RemoteOta.installedVersionCode(c)).put("osVersion",Build.VERSION.RELEASE));}
+    public void putState()throws Exception{putState(null);}
+    /** The returned sample is acknowledged only after Relay durably accepts the state. */
+    public JSONObject putState(String requestId)throws Exception{
+        JSONObject sample=StateCollector.collect(c);
+        if(requestId!=null&&!requestId.isBlank())sample.put("manualRequestId",requestId);
+        request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",sample);
+        return sample;
+    }
+    public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("appVersionCode",RemoteOta.installedVersionCode(c)).put("osVersion",Build.VERSION.RELEASE).put("telemetry",DeviceTelemetry.capture(c)));}
+    public void activateLocation(String epoch)throws Exception {
+        if(epoch==null||!epoch.matches("[0-9a-fA-F-]{36}"))throw new SecurityException("invalid_location_epoch");
+        request("POST","/api/v1/devices/"+cfg.deviceId()+"/location/activate",
+            new JSONObject().put("epoch",epoch));
+    }
+    public void purgeLocation()throws Exception{
+        request("POST","/api/v1/devices/"+cfg.deviceId()+"/location/purge",new JSONObject());
+    }
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}
     JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){logRequestFailure(method,e);throw e;}}
     private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){logRequestFailure(method,e);throw e;}}

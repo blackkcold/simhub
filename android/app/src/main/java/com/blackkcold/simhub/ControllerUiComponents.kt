@@ -109,7 +109,9 @@ internal fun ControllerDeviceCard(device:JSONObject,onClick:()->Unit){
 
 @Composable
 internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:String,
-    error:String,onClose:()->Unit,onAction:(String)->Unit,onManage:(String)->Unit,onAdvanced:()->Unit){
+    error:String,onClose:()->Unit,onAction:(String)->Unit,onManage:(String)->Unit,onAdvanced:()->Unit,
+    locationSample:ControllerLocationSample?,locationStatus:String,locationLoading:Boolean,
+    onLocationLoad:()->Unit,onLocationOpen:()->Unit){
     val state=device.optJSONObject("state")?:JSONObject()
     val channels=ControllerNodePolicy.channels(device)
     val isAndroid=device.optString("nodeType")!="modem"
@@ -154,6 +156,10 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
             verticalArrangement=Arrangement.spacedBy(12.dp)){
             item { ControllerHealthSummary(device) }
             item { ControllerHealthCommunication(device) }
+            if(isAndroid)item {
+                ControllerLocationCard(device,locationSample,locationStatus,locationLoading,
+                    onLocationLoad,onLocationOpen,{onAction("location-once")},{onManage("location-purge")})
+            }
             item{
                 HubCard(Modifier.fillMaxWidth()){
                     HubSectionTitle(hubLabel("SIM 通道","SIM channels"))

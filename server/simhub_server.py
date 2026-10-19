@@ -117,6 +117,7 @@ ALLOWED_COMMANDS = {
     "sms.restore_history",
     "device.network_policy",
     "device.refresh_state",
+    "device.location_once",
     "subscription.refresh",
     "diagnostics.request",
     "ota.check",
@@ -450,7 +451,7 @@ def purge_device_record(con: sqlite3.Connection, device_id: str, ts: int) -> boo
             )
     shared_pool.member_departure(con,device_id)
     peer_signaling.forget_device(con,device_id)
-    for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history"):
+    for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history", "location_purge"):
         con.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
     con.execute("DELETE FROM devices WHERE id=?", (device_id,))
     return True
@@ -473,6 +474,7 @@ def init_db() -> None:
         peer_signaling.init(con)
         global_vault.init(con)
         _add_column(con,"admin_sessions","controller_id","TEXT NOT NULL DEFAULT ''")
+        _add_column(con,"location_purge","active_epoch","TEXT NOT NULL DEFAULT ''")
         con.execute("PRAGMA user_version=13")
     run_maintenance()
 
@@ -692,6 +694,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
         return {}
     allowed_by_kind = {
         "sms.received": {"parts","source"},
+        "device.location": {"locationEpoch"},
         "sms.history": {"providerType","history"},
         "sms.sent": {"stage"},
         "sms.failed": {"stage","resultCode"},
@@ -705,20 +708,69 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
         if key not in value:
             continue
         v = value[key]
+        if kind=="device.location":
+            if key=="locationEpoch" and isinstance(v,str) and re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",v):
+                out[key]=v
+            continue
         if isinstance(v, (str,int,float,bool)) or v is None:
             out[key] = v
+    return out
+
+
+def sanitize_telemetry(body: Any) -> dict[str,Any]:
+    """Bounded numeric and boolean device health; never receives Wi-Fi identifiers."""
+    if not isinstance(body,dict):return {}
+    out:dict[str,Any]={}
+    sample=body.get("sampledAt")
+    if type(sample) is not int or not 0<sample<=now()+300:return {}
+    out["sampledAt"]=sample
+    pct=body.get("batteryPct")
+    if type(pct) is int and 0<=pct<=100:out["batteryPct"]=pct
+    for key in ("charging","wifiConnected","cellularConnected","internetValidated"):
+        if type(body.get(key)) is bool:out[key]=body[key]
+    level=body.get("wifiSignalLevel")
+    if type(level) is int and 0<=level<=4:out["wifiSignalLevel"]=level
+    rssi=body.get("wifiRssiDbm")
+    if type(rssi) is int and -126<=rssi<=0:out["wifiRssiDbm"]=rssi
+    channels=[]
+    raw_signals=body.get("signals")
+    if isinstance(raw_signals,list):
+        for row in raw_signals[:8]:
+            if not isinstance(row,dict):continue
+            cid=row.get("channelId");rev=row.get("channelRevision")
+            level=row.get("signalLevel")
+            if not isinstance(cid,str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}",cid):continue
+            if type(rev) is not int or not 0<rev<2**31:continue
+            if level is not None and (type(level) is not int or not 0<=level<=4):continue
+            channels.append({"channelId":cid,"channelRevision":rev,"signalLevel":level})
+    if channels:out["signals"]=channels
     return out
 
 
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"p2pPairedControllers","p2pIdentityId","peerRpcVersion","androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","appVersionCode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaTargetCode","remoteOtaError","remoteOtaUpdatedAt"}
+    scalar = {"p2pPairedControllers","p2pIdentityId","peerRpcVersion","androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","sampledAt","manualRequestId","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","appVersionCode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","locationSharingEnabled","locationPermissionGranted","locationRemoteAllowed","locationForegroundEligible","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaTargetCode","remoteOtaError","remoteOtaUpdatedAt"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
         if isinstance(v,(str,int,float,bool)) or v is None:
             out[k]=v
+    sampled=out.get("sampledAt")
+    if type(sampled) is not int or sampled<=0 or sampled>now()+300:
+        out.pop("sampledAt",None)
+    request_id=out.get("manualRequestId")
+    if not isinstance(request_id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",request_id):
+        out.pop("manualRequestId",None)
+    telemetry=sanitize_telemetry(body)
+    if telemetry:
+        for key in ("sampledAt","batteryPct","charging","wifiConnected","cellularConnected","internetValidated","wifiSignalLevel","wifiRssiDbm"):
+            out.pop(key,None)
+        out.update(telemetry)
+    else:
+        # Older clients have no sample time: retain legacy scalar compatibility.
+        out.pop("wifiSignalLevel",None)
+        out.pop("wifiRssiDbm",None)
     # Energy diagnostics only allow numeric counters and the selected profile;
     # never accept arbitrary nested JSON as a relay-visible state field.
     stats=body.get("energyStats")
@@ -899,7 +951,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_header("Cross-Origin-Opener-Policy","same-origin")
         self.send_header("Cross-Origin-Resource-Policy","same-origin")
         self.send_header("X-Permitted-Cross-Domain-Policies","none")
-        self.send_header("Content-Security-Policy","default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'")
+        self.send_header("Content-Security-Policy","default-src 'self'; connect-src 'self'; img-src 'self' data:; frame-src https://www.openstreetmap.org; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'")
 
     def send_json(self,status:int,obj:Any,extra_headers:dict[str,str]|None=None) -> None:
         data=json.dumps(obj,ensure_ascii=False,separators=(",",":")).encode()
@@ -1317,6 +1369,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.get_ota(); return
             if not self.require_admin(): return
             self.get_ota(); return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="location":
+            if not self.require_admin():return
+            self.get_latest_location(p[3]);return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="state":
             if not self.require_admin(): return
             self.get_device_state(p[3]); return
@@ -1591,6 +1646,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
             except (ValueError,TypeError,KeyError) as error:
                 self.send_error_json(400,"invalid_peer_response",str(error));return
             signal_stream();self.send_json(200,{"ok":True});return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["location","activate"]:
+            if not self.require_device(p[3]):return
+            body=self.read_json()
+            if body is None:return
+            self.activate_location(p[3],body);return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["location","purge"]:
+            if not self.require_device(p[3]):return
+            self.purge_latest_location(p[3]);return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return
             body=self.read_json()
@@ -1601,6 +1664,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         path,p,q=self.route()
         if not self.preflight("DELETE", path): return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="location":
+            if not self.require_stepup():return
+            self.purge_latest_location(p[3]);return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="sms":
             if not self.require_stepup():return
             self.purge_device_sms(p[3]); return
@@ -2136,8 +2202,29 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 state["appVersion"]=version;changed=True
             if code is not None and state.get("appVersionCode")!=code:
                 state["appVersionCode"]=code;changed=True
+            telemetry=sanitize_telemetry(body.get("telemetry"))
+            # Full inventory is never replaced by a lightweight heartbeat.
+            if telemetry and telemetry["sampledAt"]>(state.get("sampledAt") if type(state.get("sampledAt")) is int else 0):
+                for key in ("wifiSignalLevel","wifiRssiDbm"):
+                    if key not in telemetry:state.pop(key,None)
+                signals=telemetry.pop("signals",[])
+                state.update(telemetry)
+                # Only update signals of the same channel identity and revision.
+                for bucket in ("subscriptions","channels"):
+                    rows=state.get(bucket)
+                    if not isinstance(rows,list):continue
+                    for row in rows:
+                        if not isinstance(row,dict):continue
+                        cid=row.get("channelId") or row.get("id")
+                        rev=row.get("channelRevision") or row.get("revision")
+                        for signal in signals:
+                            if cid==signal["channelId"] and type(rev) is int and rev==signal["channelRevision"]:
+                                if signal["signalLevel"] is None:row.pop("signalLevel",None)
+                                else:row["signalLevel"]=signal["signalLevel"]
+                                break
+                changed=True
             if changed:
-                state["versionReportedAt"]=ts
+                if version or code is not None:state["versionReportedAt"]=ts
                 if state_row:
                     con.execute("UPDATE device_state SET state_json=? WHERE device_id=?",
                                 (json.dumps(state,ensure_ascii=False,separators=(",",":")),device_id))
@@ -2147,6 +2234,38 @@ class SimHubHandler(BaseHTTPRequestHandler):
             changed=changed or bool(version and version!=previous)
         if changed:signal_stream()
         self.send_json(200,{"ok":True,"serverTime":ts})
+
+    def get_latest_location(self,device_id:str) -> None:
+        # Only an opaque E2EE envelope is ever returned to an authenticated controller.
+        with open_db() as con:
+            row=con.execute("SELECT id,occurred_at,received_at,subscription_id,has_otp,ciphertext_json FROM events WHERE device_id=? AND kind='device.location' ORDER BY occurred_at DESC,seq DESC LIMIT 1",(device_id,)).fetchone()
+        if row is None:
+            self.send_json(200,{"location":None});return
+        self.send_json(200,{"location":{"deviceId":device_id,"eventId":row["id"],"kind":"device.location",
+            "occurredAt":row["occurred_at"],"receivedAt":row["received_at"],
+            "subscriptionId":row["subscription_id"],"hasOtp":bool(row["has_otp"]),
+            "ciphertext":safe_json_loads(row["ciphertext_json"],{})}})
+
+    def activate_location(self,device_id:str,body:dict[str,Any]) -> None:
+        epoch=body.get("epoch")
+        if not isinstance(epoch,str) or not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",epoch):
+            self.send_error_json(400,"invalid_location_epoch","Invalid consent revision");return
+        with open_db() as con:
+            con.execute("INSERT INTO location_purge(device_id,purged_at,active_epoch) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET active_epoch=excluded.active_epoch",
+                (device_id,now(),epoch))
+        self.send_json(200,{"ok":True})
+
+    def purge_latest_location(self,device_id:str) -> None:
+        with open_db() as con:
+            row=con.execute("SELECT id FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not row:
+                self.send_error_json(404,"device_not_found","Device unavailable");return
+            # Commit a revocation fence atomically with deletion. Late offline uploads cannot restore it.
+            con.execute("INSERT INTO location_purge(device_id,purged_at,active_epoch) VALUES(?,?,'') ON CONFLICT(device_id) DO UPDATE SET purged_at=MAX(purged_at,excluded.purged_at),active_epoch=''",(device_id,now()))
+            deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).rowcount
+        audit("location.purge",device_id,"ok",self.ip)
+        signal_stream()
+        self.send_json(200,{"ok":True,"deleted":deleted})
 
     def ingest_event(self,device_id:str,body:dict[str,Any]) -> None:
         event_id=str(body.get("eventId","")); kind=str(body.get("kind",""))[:80]; cipher=body.get("ciphertext")
@@ -2163,11 +2282,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 threshold=con.execute("SELECT sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()["sms_purged_before"]
                 if kind.startswith("sms.") and occurred<=threshold:
                     self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
+                if kind=="device.location":
+                    fence=con.execute("SELECT purged_at,active_epoch FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
+                    if not fence or not fence["active_epoch"] or not hmac.compare_digest(metadata.get("locationEpoch",""),fence["active_epoch"]) or occurred<=fence["purged_at"]:
+                        self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
+                    latest=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
+                    if latest is not None and occurred<=latest:
+                        self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                 cur=con.execute(
                     "INSERT INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",
                     (event_id,device_id,kind,occurred,received,sub,1 if has_otp else 0,json.dumps(metadata,separators=(",",":")),json.dumps(cipher,separators=(",",":"))),
                 )
                 seq=cur.lastrowid
+                if kind=="device.location":con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
                 d=con.execute("SELECT name FROM devices WHERE id=?",(device_id,)).fetchone()
         except sqlite3.IntegrityError:
@@ -2208,9 +2335,21 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if row[2].startswith("sms.") and row[3]<=d["sms_purged_before"]:
                     results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
                     continue
+                if row[2]=="device.location":
+                    fence=con.execute("SELECT purged_at,active_epoch FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
+                    epoch=safe_json_loads(row[7],{}).get("locationEpoch","")
+                    if not fence or not fence["active_epoch"] or not isinstance(epoch,str) or not hmac.compare_digest(epoch,fence["active_epoch"]) or row[3]<=fence["purged_at"]:
+                        results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                        continue
+                    recent=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
+                    if recent is not None and row[3]<=recent:
+                        results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                        continue
                 cur=con.execute("INSERT OR IGNORE INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",row)
                 duplicate=cur.rowcount==0
                 seq=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,row[0])).fetchone()["seq"]
+                if row[2]=="device.location" and not duplicate:
+                    con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 results.append({"eventId":row[0],"accepted":True,"duplicate":duplicate,"serverSequence":seq})
                 if not duplicate and row[2]=="sms.received": notifications.append((bool(row[6]),row[3]))
             con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
@@ -2424,7 +2563,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not isinstance(result,dict): result={}
         # Positive allowlist: a compromised node must not smuggle SMS text into
         # command status/audit metadata via arbitrary result keys.
-        safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate","targetVersion"}
+        safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate","targetVersion","uploaded","encrypted","sampledAt","requestId"}
         result={k:(v[:120] if isinstance(v,str) else v) for k,v in result.items()
                 if k in safe_result_keys and isinstance(v,(str,int,float,bool,type(None)))}
         # Terminal ACKs are immutable; duplicate ACKs never replace stored result metadata.

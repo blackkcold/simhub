@@ -51,6 +51,10 @@ public final class StateCollector {
                     .put("smsChangeGeneration",cfg.smsChangeGeneration())
                     .put("smsScannedGeneration",cfg.smsScannedGeneration())
                     .put("network",network(c))
+                    .put("locationSharingEnabled",NodeLocationManager.enabled(c))
+                    .put("locationPermissionGranted",NodeLocationManager.permissionGranted(c))
+                    .put("locationRemoteAllowed",NodeLocationManager.remoteAllowed(c))
+                    .put("locationForegroundEligible",HubActivity.visibleForLocation)
                     .put("pendingEvents",LocalStore.get(c).pendingEventCount())
                     .put("pendingCommandAcks",LocalStore.get(c).pendingCommandAckCount())
                     .put("pendingEventTasks",LocalStore.get(c).pendingEventTaskPreview(10))
@@ -88,6 +92,9 @@ public final class StateCollector {
             }
 
 
+            JSONObject telemetry=DeviceTelemetry.capture(c);
+            if(telemetry.has("wifiSignalLevel"))o.put("wifiSignalLevel",telemetry.optInt("wifiSignalLevel"));
+            if(telemetry.has("wifiRssiDbm"))o.put("wifiRssiDbm",telemetry.optInt("wifiRssiDbm"));
             o.put("dataFallbackEnabled",cfg.dataFallbackEnabled())
                     .put("dataFallbackChannelId",cfg.dataFallbackChannel())
                     .put("dataFallbackStatus",NetworkFailoverPolicy.status(c));
@@ -169,6 +176,7 @@ public final class StateCollector {
             AppLogger.e(c,"StateCollector","Partial device state collected",error);
             try{o.put("stateCollectionError",error.getClass().getSimpleName());}catch(Exception ignored){}
         }
+        try{o.put("sampledAt",System.currentTimeMillis()/1000);}catch(Exception ignored){}
         return o;
     }
 

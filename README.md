@@ -56,7 +56,7 @@ Android uses **one native Material 3 shell** for SIM Node and Management Center,
 
 ## Native Android experience
 
-Use one app as **SIM Node**, **Management Center**, or both. A shared Compose top bar and four-tab bottom navigation (large-screen rail on tablets/foldables) change between teal node and indigo controller themes. SMS, devices, tasks and settings use native Compose screens. The controller inbox supports paged history beyond 50 events, compact filters and a scroll-aware header; device management offers rename, network fallback and step-up protected actions. Passkey and enrollment cryptography remain in the trusted browser.
+Use SIM Hub as a **SIM Node**, **Management Center**, or both. A native Material 3 shell offers adaptive navigation, separate role themes, paged messages and encrypted device management; browser authentication stays in the trusted system browser.
 
 **SIM Node settings:** Five compact native categories, adaptive foldable layout and on-demand diagnostics.
 
@@ -69,6 +69,7 @@ Use one app as **SIM Node**, **Management Center**, or both. A shared Compose to
 | **SMS and OTP** | Local/remote conversations, OTP extraction for accessible texts, SIM tags, filters and paging; read-only companion mode versus permission-gated full SMS-handler sending |
 | **Native Android UI** | Material 3 dual roles, distinct themes, four-tab navigation, foldable layouts, quick actions and native device detail |
 | **Devices and SIMs** | Android / Linux modem nodes, SIM channel identity, signal, battery, Wi-Fi, installed app version and task states |
+| **Private telemetry & one-shot location (Dev)** | Battery/Wi-Fi/SIM gauges; opt-in Node Key–encrypted location, separately authorized remote requests and user-triggered OpenStreetMap viewing. [Details](docs/DEVICE_TELEMETRY_LOCATION.md) |
 | **Shared SMS (opt-in)** | Authorized members decrypt an encrypted common pool with source attribution, history pagination, revocation and key rotation |
 | **Pairing and security** | QR/link or eight-digit pairing code and fingerprint, one Global Vault, independent Node Keys, password/TOTP/Passkeys, native controller identity |
 | **Reliability** | Encrypted local queue, manual immediate command/SMS sync, older-history rescan, foreground HTTPS long-poll, offline retry and durable acknowledgements |

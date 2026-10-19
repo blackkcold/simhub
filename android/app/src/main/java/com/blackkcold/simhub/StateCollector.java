@@ -88,6 +88,9 @@ public final class StateCollector {
             }
 
 
+            JSONObject telemetry=DeviceTelemetry.capture(c);
+            if(telemetry.has("wifiSignalLevel"))o.put("wifiSignalLevel",telemetry.optInt("wifiSignalLevel"));
+            if(telemetry.has("wifiRssiDbm"))o.put("wifiRssiDbm",telemetry.optInt("wifiRssiDbm"));
             o.put("dataFallbackEnabled",cfg.dataFallbackEnabled())
                     .put("dataFallbackChannelId",cfg.dataFallbackChannel())
                     .put("dataFallbackStatus",NetworkFailoverPolicy.status(c));

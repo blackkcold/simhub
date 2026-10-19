@@ -18,8 +18,20 @@ public final class PeerRpc {
     public JSONObject dispatch(String peerId,String id,JSONObject request)throws Exception{
         synchronized(store){
             JSONObject peer=store.peer(peerId);
-            if(!"NODE".equals(peer.optString("localRole"))||!"ACTIVE".equals(peer.optString("pairState")))throw new SecurityException("peer_not_authorized");
-            String action=request.getString("action");Set<String> grants=new HashSet<>(Arrays.asList(peer.getString("permissions").split(",")));
+            boolean pendingV2=peer.optInt("protocolVersion",1)>=2
+                &&"PENDING".equals(peer.optString("pairState"));
+            if((!"ACTIVE".equals(peer.optString("pairState"))&&!pendingV2)
+                ||(peer.optInt("protocolVersion",1)<2&&!"NODE".equals(peer.optString("localRole"))))
+                throw new SecurityException("peer_not_authorized");
+            String action=request.getString("action");
+            if(!"peer.revoke".equals(action)&&!PeerGrantPolicy.allows(peer,action,true))
+                throw new SecurityException("peer_permission_denied");
+            // Only an authenticated transport should invoke dispatch; in a v2
+            // pending relationship that proves the responder accepted the QR.
+            if(pendingV2){peer.put("pairState","ACTIVE");store.update(peer);}
+            String granted=peer.optInt("protocolVersion",1)>=2
+                ?peer.optString("grantsToRemote",""):peer.optString("permissions","");
+            Set<String> grants=new HashSet<>(Arrays.asList(granted.split(",")));
             return switch(action){
                 case "device.state" -> {require(grants,"state");yield state(peer);}
                 case "sms.page" -> {require(grants,"read");require(grants,"history");yield page(peer,request);}

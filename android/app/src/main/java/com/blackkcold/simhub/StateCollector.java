@@ -169,6 +169,7 @@ public final class StateCollector {
             AppLogger.e(c,"StateCollector","Partial device state collected",error);
             try{o.put("stateCollectionError",error.getClass().getSimpleName());}catch(Exception ignored){}
         }
+        try{o.put("sampledAt",System.currentTimeMillis()/1000);}catch(Exception ignored){}
         return o;
     }
 

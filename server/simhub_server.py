@@ -945,7 +945,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_header("Cross-Origin-Opener-Policy","same-origin")
         self.send_header("Cross-Origin-Resource-Policy","same-origin")
         self.send_header("X-Permitted-Cross-Domain-Policies","none")
-        self.send_header("Content-Security-Policy","default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'")
+        self.send_header("Content-Security-Policy","default-src 'self'; connect-src 'self'; img-src 'self' data:; frame-src https://www.openstreetmap.org; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'")
 
     def send_json(self,status:int,obj:Any,extra_headers:dict[str,str]|None=None) -> None:
         data=json.dumps(obj,ensure_ascii=False,separators=(",",":")).encode()

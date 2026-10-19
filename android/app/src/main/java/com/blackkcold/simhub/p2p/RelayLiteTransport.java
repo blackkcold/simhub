@@ -44,6 +44,8 @@ public final class RelayLiteTransport implements HubTransport {
 
     public JSONObject request(JSONObject target,String id,JSONObject request)throws Exception{
         String targetId=target.getString("id"),sourceId=store.myId();
+        JSONObject previouslyDelivered=RelayLiteClient.cachedResult(context,targetId,id);
+        if(previouslyDelivered!=null)return previouslyDelivered;
         String action=request.getString("action");
         if(!PeerGrantPolicy.allows(target,action,false))
             throw new SecurityException("relay_lite_target_grant_missing");

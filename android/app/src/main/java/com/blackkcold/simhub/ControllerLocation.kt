@@ -40,7 +40,7 @@ internal object ControllerLocationFacts {
 @Composable
 internal fun ControllerLocationCard(
     device:JSONObject,sample:ControllerLocationSample?,status:String,loading:Boolean,
-    onLoad:()->Unit,onOpenMap:()->Unit,onRemote:()->Unit
+    onLoad:()->Unit,onOpenMap:()->Unit,onRemote:()->Unit,onPurge:()->Unit
 ){
     val state=device.optJSONObject("state")?:JSONObject()
     HubCard(Modifier.fillMaxWidth()){
@@ -76,6 +76,9 @@ internal fun ControllerLocationCard(
             OutlinedButton(onClick=onRemote,modifier=Modifier.fillMaxWidth()){
                 Text(hubLabel("请求远程单次定位","Request remote one-shot position"))
             }
+        }
+        OutlinedButton(onClick=onPurge,modifier=Modifier.fillMaxWidth()){
+            Text(hubLabel("清除服务器位置密文（需验证）","Delete Relay location (step-up required)"))
         }
         Text(hubLabel("位置不会自动发送至地图服务，且 Relay 无法解密坐标。",
             "Location is never sent automatically to the map provider. Relay cannot decrypt coordinates."),

@@ -474,6 +474,7 @@ def init_db() -> None:
         peer_signaling.init(con)
         global_vault.init(con)
         _add_column(con,"admin_sessions","controller_id","TEXT NOT NULL DEFAULT ''")
+        _add_column(con,"location_purge","active_epoch","TEXT NOT NULL DEFAULT ''")
         con.execute("PRAGMA user_version=13")
     run_maintenance()
 
@@ -693,6 +694,7 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
         return {}
     allowed_by_kind = {
         "sms.received": {"parts","source"},
+        "device.location": {"locationEpoch"},
         "sms.history": {"providerType","history"},
         "sms.sent": {"stage"},
         "sms.failed": {"stage","resultCode"},
@@ -744,7 +746,7 @@ def sanitize_telemetry(body: Any) -> dict[str,Any]:
 def sanitize_state(body: Any) -> dict[str,Any]:
     if not isinstance(body, dict):
         return {}
-    scalar = {"p2pPairedControllers","p2pIdentityId","peerRpcVersion","androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","sampledAt","manualRequestId","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","appVersionCode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaTargetCode","remoteOtaError","remoteOtaUpdatedAt"}
+    scalar = {"p2pPairedControllers","p2pIdentityId","peerRpcVersion","androidVersion","sdk","model","appVersion","network","pendingEvents","batteryPct","charging","sampledAt","manualRequestId","queueFailures","lastQueueFailureAt","nodeType","cryptoKeyId","cryptoKeyMode","appVersionCode","smsRoleHeld","smsMode","smsReadPermission","smsReceivePermission","smsSendPermission","smsSendAllowed","smsReceiveOperational","smsSendOperational","smsOperational","pendingCommandAcks","uploadedEventReceipts","lastEventUploadAt","lastEventUploadCount","uploadedEventTotal","lastUploadAttemptAt","lastUploadError","lastEventQueueError","lastSmsProviderChangeAt","lastSmsBroadcastAt","lastReconcileAt","lastReconcileCount","lastSmsReceivedAt","lastSmsSentAt","lastSyncSuccessAt","lastSyncError","smsProviderError","stateCollectionError","nextSyncAllowedAt","syncBackoffFailures","dataFallbackEnabled","dataFallbackChannelId","dataFallbackStatus","internetValidated","wifiConnected","cellularConnected","energyMode","effectiveEnergyMode","foregroundRelay","foregroundRelayRequested","lastCommandFetchAt","lastCommandFetchCount","lastCommandFetchError","smsChangeGeneration","smsScannedGeneration","locationSharingEnabled","locationPermissionGranted","locationRemoteAllowed","locationForegroundEligible","remoteOtaSupported","remoteOtaNativeSupported","remoteOtaDeveloperOverride","remoteOtaAuthorized","remoteOtaInstallPermission","remoteOtaStage","remoteOtaTarget","remoteOtaTargetCode","remoteOtaError","remoteOtaUpdatedAt"}
     out: dict[str,Any] = {}
     for k in scalar:
         v=body.get(k)
@@ -1640,6 +1642,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             except (ValueError,TypeError,KeyError) as error:
                 self.send_error_json(400,"invalid_peer_response",str(error));return
             signal_stream();self.send_json(200,{"ok":True});return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["location","activate"]:
+            if not self.require_device(p[3]):return
+            body=self.read_json()
+            if body is None:return
+            self.activate_location(p[3],body);return
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["location","purge"]:
             if not self.require_device(p[3]):return
             self.purge_latest_location(p[3]);return
@@ -2235,13 +2242,22 @@ class SimHubHandler(BaseHTTPRequestHandler):
             "subscriptionId":row["subscription_id"],"hasOtp":bool(row["has_otp"]),
             "ciphertext":safe_json_loads(row["ciphertext_json"],{})}})
 
+    def activate_location(self,device_id:str,body:dict[str,Any]) -> None:
+        epoch=body.get("epoch")
+        if not isinstance(epoch,str) or not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",epoch):
+            self.send_error_json(400,"invalid_location_epoch","Invalid consent revision");return
+        with open_db() as con:
+            con.execute("INSERT INTO location_purge(device_id,purged_at,active_epoch) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET active_epoch=excluded.active_epoch",
+                (device_id,now(),epoch))
+        self.send_json(200,{"ok":True})
+
     def purge_latest_location(self,device_id:str) -> None:
         with open_db() as con:
             row=con.execute("SELECT id FROM devices WHERE id=?",(device_id,)).fetchone()
             if not row:
                 self.send_error_json(404,"device_not_found","Device unavailable");return
             # Commit a revocation fence atomically with deletion. Late offline uploads cannot restore it.
-            con.execute("INSERT INTO location_purge(device_id,purged_at) VALUES(?,?) ON CONFLICT(device_id) DO UPDATE SET purged_at=MAX(purged_at,excluded.purged_at)",(device_id,now()))
+            con.execute("INSERT INTO location_purge(device_id,purged_at,active_epoch) VALUES(?,?,'') ON CONFLICT(device_id) DO UPDATE SET purged_at=MAX(purged_at,excluded.purged_at),active_epoch=''",(device_id,now()))
             deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).rowcount
         audit("location.purge",device_id,"ok",self.ip)
         signal_stream()
@@ -2263,8 +2279,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if kind.startswith("sms.") and occurred<=threshold:
                     self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                 if kind=="device.location":
-                    fence=con.execute("SELECT purged_at FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
-                    if fence and occurred<=fence["purged_at"]:
+                    fence=con.execute("SELECT purged_at,active_epoch FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
+                    if not fence or not fence["active_epoch"] or not hmac.compare_digest(metadata.get("locationEpoch",""),fence["active_epoch"]) or occurred<=fence["purged_at"]:
                         self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                     latest=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
                     if latest is not None and occurred<=latest:
@@ -2316,8 +2332,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
                     continue
                 if row[2]=="device.location":
-                    fence=con.execute("SELECT purged_at FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
-                    if fence and row[3]<=fence["purged_at"]:
+                    fence=con.execute("SELECT purged_at,active_epoch FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
+                    epoch=safe_json_loads(row[7],{}).get("locationEpoch","")
+                    if not fence or not fence["active_epoch"] or not isinstance(epoch,str) or not hmac.compare_digest(epoch,fence["active_epoch"]) or row[3]<=fence["purged_at"]:
                         results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
                         continue
                     recent=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]

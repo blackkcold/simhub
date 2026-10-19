@@ -14,37 +14,52 @@ public final class PeerPairingManager {
     public PeerPairingManager(Context c){store=PeerStore.get(c);secrets=new SecretStore(c);}
     public String offer(String name,boolean allowSend,JSONArray endpoints)throws Exception{
         KeyPair eph=PeerCrypto.ephemeral();String sid=UUID.randomUUID().toString();long expires=System.currentTimeMillis()/1000+300;
-        JSONObject body=new JSONObject().put("v",1).put("kind","offer").put("sid",sid).put("expires",expires).put("publicKey",store.publicKey()).put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded())).put("name",name.substring(0,Math.min(name.length(),80))).put("signalingCapability",PeerCenterProtocol.MODE).put("relayHint",relayHint(store.context())).put("permissions",allowSend?"read,history,state,send":"read,history,state").put("endpoints",endpoints);
+        JSONObject body=new JSONObject().put("v",2).put("kind","offer").put("sid",sid).put("expires",expires).put("publicKey",store.publicKey()).put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded())).put("name",name.substring(0,Math.min(name.length(),80))).put("signalingCapability",PeerCenterProtocol.MODE).put("relayHint",relayHint(store.context())).put("permissions",allowSend?"read,history,state,send":"read,history,state").put("endpoints",endpoints);
         String packed=PeerCrypto.b64(PeerCrypto.utf8(body.toString()));
         secrets.putString("p2p.pair.offer",packed);secrets.putBytes("p2p.pair.ephemeral",eph.getPrivate().getEncoded());
         return encode(packed,PeerCrypto.sign(store.identity().getPrivate(),packed));
     }
-    public String respond(String qr,String name)throws Exception{
+    public String respond(String qr,String name)throws Exception{return respond(qr,name,false,false);}
+    /** Reverse grants require explicit user consent, never inherited from the QR. */
+    public String respond(String qr,String name,boolean allowReverseRead,boolean allowReverseSend)throws Exception{
         String raw=decode(qr);JSONObject offer=new JSONObject(new String(PeerCrypto.unb64(raw),java.nio.charset.StandardCharsets.UTF_8));
         validateOffer(offer);String node=offer.getString("publicKey");if(node.equals(store.publicKey()))throw new SecurityException("cannot_pair_with_self");
         String id=PeerCrypto.digest(PeerCrypto.publicKey(node).getEncoded());requireNew(id);
         KeyPair eph=PeerCrypto.ephemeral();
-        String transcript=PeerCrypto.pairTranscript(offer.getString("sid"),offer.getLong("expires"),node,offer.getString("ephemeral"),store.publicKey(),PeerCrypto.b64(eph.getPublic().getEncoded()),offer.getString("permissions"));
+        if(allowReverseSend&&!allowReverseRead)throw new SecurityException("reverse_send_requires_read");
+        String reverse=offer.optInt("v")==2?(allowReverseSend?PeerGrantPolicy.READ_SEND:allowReverseRead?PeerGrantPolicy.READ:""):"";
+        String transcript=PeerCrypto.pairTranscript(offer.getString("sid"),offer.getLong("expires"),node,offer.getString("ephemeral"),store.publicKey(),PeerCrypto.b64(eph.getPublic().getEncoded()),offer.getString("permissions")+(offer.optInt("v")==2?"|"+reverse:""));
         byte[] shared=PeerCrypto.dh(eph.getPrivate(),PeerCrypto.publicKey(offer.getString("ephemeral")));
         byte[] root=PeerCrypto.derive(shared,PeerCrypto.utf8(PeerCrypto.digest(PeerCrypto.utf8(transcript))),"content-root");
         try{
-            JSONObject p=profile(id,node,offer.optString("name","SIM Node"),"CONTROLLER",offer,"PENDING");store.save(p,root);
-            JSONObject reply=new JSONObject().put("v",1).put("kind","response").put("offer",raw).put("offerHash",PeerCrypto.digest(PeerCrypto.utf8(raw))).put("publicKey",store.publicKey()).put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded())).put("name",name.substring(0,Math.min(80,name.length())));
+            JSONObject p=offer.optInt("v")==2
+                ?profileV2(id,node,offer.optString("name","SIM Node"),"CONTROLLER",offer,"PENDING",reverse,offer.getString("permissions"),offer.getJSONArray("endpoints"))
+                :profile(id,node,offer.optString("name","SIM Node"),"CONTROLLER",offer,"PENDING");
+            store.save(p,root);
+            JSONObject reply=new JSONObject().put("v",offer.getInt("v")).put("kind","response").put("reversePermissions",reverse).put("endpoints",PeerService.endpoints()).put("offer",raw).put("offerHash",PeerCrypto.digest(PeerCrypto.utf8(raw))).put("publicKey",store.publicKey()).put("ephemeral",PeerCrypto.b64(eph.getPublic().getEncoded())).put("name",name.substring(0,Math.min(80,name.length())));
             String packed=PeerCrypto.b64(PeerCrypto.utf8(reply.toString()));return encode(packed,PeerCrypto.sign(store.identity().getPrivate(),packed));
         }finally{Arrays.fill(shared,(byte)0);Arrays.fill(root,(byte)0);}
     }
     public String accept(String qr)throws Exception{
         String raw=decode(qr);JSONObject response=new JSONObject(new String(PeerCrypto.unb64(raw),java.nio.charset.StandardCharsets.UTF_8));
-        if(response.optInt("v")!=1||!"response".equals(response.optString("kind")))throw new SecurityException("pair_response_required");
+        if((response.optInt("v")!=1&&response.optInt("v")!=2)||!"response".equals(response.optString("kind")))throw new SecurityException("pair_response_required");
         String packed=secrets.getString("p2p.pair.offer");byte[] der=secrets.getBytes("p2p.pair.ephemeral");
         if(packed==null||der==null||!packed.equals(response.optString("offer"))||!PeerCrypto.digest(PeerCrypto.utf8(packed)).equals(response.optString("offerHash")))throw new SecurityException("pair_session_mismatch");
         JSONObject offer=new JSONObject(new String(PeerCrypto.unb64(packed),java.nio.charset.StandardCharsets.UTF_8));validateOffer(offer);
+        if(offer.getInt("v")!=response.getInt("v"))throw new SecurityException("pair_version_mismatch");
+        String reverse=response.optString("reversePermissions","");
+        if(offer.optInt("v")==2&&(!PeerGrantPolicy.valid(reverse)||response.optJSONArray("endpoints")==null
+            ||response.getJSONArray("endpoints").length()>12))throw new SecurityException("invalid_reverse_grants_or_endpoints");
         String controller=response.getString("publicKey"),id=PeerCrypto.digest(PeerCrypto.publicKey(controller).getEncoded());requireNew(id);
-        String transcript=PeerCrypto.pairTranscript(offer.getString("sid"),offer.getLong("expires"),store.publicKey(),offer.getString("ephemeral"),controller,response.getString("ephemeral"),offer.getString("permissions"));
+        String transcript=PeerCrypto.pairTranscript(offer.getString("sid"),offer.getLong("expires"),store.publicKey(),offer.getString("ephemeral"),controller,response.getString("ephemeral"),offer.getString("permissions")+(offer.optInt("v")==2?"|"+reverse:""));
         PrivateKey privateKey=KeyFactory.getInstance("EC").generatePrivate(new PKCS8EncodedKeySpec(der));
         byte[] shared=PeerCrypto.dh(privateKey,PeerCrypto.publicKey(response.getString("ephemeral")));
         byte[] root=PeerCrypto.derive(shared,PeerCrypto.utf8(PeerCrypto.digest(PeerCrypto.utf8(transcript))),"content-root");
-        try{store.save(profile(id,controller,response.optString("name","Controller"),"NODE",offer,"ACTIVE"),root);secrets.remove("p2p.pair.offer");secrets.remove("p2p.pair.ephemeral");return id;}finally{Arrays.fill(der,(byte)0);Arrays.fill(shared,(byte)0);Arrays.fill(root,(byte)0);}
+        try{
+            JSONObject p=offer.optInt("v")==2
+                ?profileV2(id,controller,response.optString("name","Controller"),"NODE",offer,"ACTIVE",offer.getString("permissions"),reverse,response.getJSONArray("endpoints"))
+                :profile(id,controller,response.optString("name","Controller"),"NODE",offer,"ACTIVE");
+            store.save(p,root);secrets.remove("p2p.pair.offer");secrets.remove("p2p.pair.ephemeral");return id;}finally{Arrays.fill(der,(byte)0);Arrays.fill(shared,(byte)0);Arrays.fill(root,(byte)0);}
     }
 
     /**
@@ -118,6 +133,16 @@ public final class PeerPairingManager {
     private JSONObject profile(String id,String pub,String name,String role,JSONObject offer,String state)throws Exception{
         return new JSONObject().put("id",id).put("publicKey",pub).put("name",name).put("localRole",role).put("permissions",offer.getString("permissions")).put("pairState",state).put("policy","P2P_ONLY").put("signalingCapability",offer.optString("signalingCapability","")).put("signalingConsent",false).put("signalingConsentRevision",0).put("signalingCenterBinding","").put("discoveryState","WAITING").put("relayHint",role.equals("CONTROLLER")?offer.optJSONObject("relayHint"):new JSONObject()).put("fallbackConsent",false).put("turnConsent",false).put("relayBindingState","NONE").put("activeTransport","OFFLINE").put("endpoints",role.equals("CONTROLLER")?offer.getJSONArray("endpoints"):new JSONArray());
     }
+    /** Versioned profile preserves legacy roles only for signaling coordination. */
+    private JSONObject profileV2(String id,String pub,String name,String role,JSONObject offer,String state,
+            String toRemote,String fromRemote,JSONArray endpoints)throws Exception{
+        if(!PeerGrantPolicy.valid(toRemote)||!PeerGrantPolicy.valid(fromRemote))
+            throw new SecurityException("invalid_pair_grants");
+        return profile(id,pub,name,role,offer,state)
+            .put("protocolVersion",2)
+            .put("grantsToRemote",toRemote).put("grantsFromRemote",fromRemote)
+            .put("endpoints",endpoints);
+    }
     public static String kind(String qr)throws Exception{return new JSONObject(new String(PeerCrypto.unb64(decode(qr)),java.nio.charset.StandardCharsets.UTF_8)).getString("kind");}
     private static String encode(String body,String sig)throws Exception{return "simhub-peer:"+PeerCrypto.b64(PeerCrypto.utf8(new JSONObject().put("body",body).put("signature",sig).toString()));}
     private static String decode(String qr)throws Exception{
@@ -126,7 +151,7 @@ public final class PeerPairingManager {
     }
     private static void validateOffer(JSONObject p)throws Exception{
         long now=System.currentTimeMillis()/1000;
-        if(p.optInt("v")!=1||!"offer".equals(p.optString("kind"))||p.getLong("expires")<now||p.getLong("expires")>now+310||!p.getString("sid").matches("[a-f0-9-]{36}")||!Set.of("read,history,state","read,history,state,send").contains(p.optString("permissions")))throw new SecurityException("peer_offer_invalid_or_expired");
+        if((p.optInt("v")!=1&&p.optInt("v")!=2)||!"offer".equals(p.optString("kind"))||p.getLong("expires")<now||p.getLong("expires")>now+310||!p.getString("sid").matches("[a-f0-9-]{36}")||!Set.of("read,history,state","read,history,state,send").contains(p.optString("permissions")))throw new SecurityException("peer_offer_invalid_or_expired");
         PeerCrypto.publicKey(p.getString("publicKey"));PeerCrypto.publicKey(p.getString("ephemeral"));
         if(p.getJSONArray("endpoints").length()>12)throw new SecurityException("too_many_peer_endpoints");
     }

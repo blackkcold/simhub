@@ -6,6 +6,9 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
+import android.location.LocationListener;
+import android.os.Build;
+import android.os.Looper;
 import android.os.CancellationSignal;
 import android.os.SystemClock;
 import org.json.JSONObject;
@@ -53,8 +56,15 @@ public final class NodeLocationManager {
         CancellationSignal cancel=new CancellationSignal();
         CompletableFuture<Location> result=new CompletableFuture<>();
         try{
-            manager.getCurrentLocation(provider,cancel,c.getMainExecutor(),result::complete);
-            Location sample=result.get(20,TimeUnit.SECONDS);
+            LocationListener legacy=new LocationListener(){
+                @Override public void onLocationChanged(Location sample){result.complete(sample);}
+            };
+            if(Build.VERSION.SDK_INT>=30)
+                manager.getCurrentLocation(provider,cancel,c.getMainExecutor(),result::complete);
+            else manager.requestSingleUpdate(provider,legacy,Looper.getMainLooper());
+            Location sample;
+            try{sample=result.get(20,TimeUnit.SECONDS);}
+            finally{if(Build.VERSION.SDK_INT<30)manager.removeUpdates(legacy);}
             if(sample==null)throw new IllegalStateException("location_unavailable");
             if(!sample.hasAccuracy())throw new IllegalStateException("location_accuracy_unknown");
             return sample;

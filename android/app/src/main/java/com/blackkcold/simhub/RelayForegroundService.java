@@ -99,6 +99,13 @@ public final class RelayForegroundService extends Service {
         commandFailures=0;
         scheduleCommand(0);
     }
+    /** Main-thread network and Telephony callbacks never run expensive sampling inline. */
+    static void enqueueTelemetry(Context c){
+        RelayForegroundService live=ACTIVE;
+        if(live==null||live.exec.isShutdown())return;
+        try{live.exec.execute(()->TelemetryPolicy.sampleOnWorker(live));}
+        catch(java.util.concurrent.RejectedExecutionException ignored){}
+    }
     public static void kick(Context c){
         RelayForegroundService live=ACTIVE;
         if(live==null||live.exec.isShutdown()){SyncJobService.scheduleNow(c);return;}

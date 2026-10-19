@@ -31,6 +31,28 @@ public class PeerCoreContractTest {
         Arrays.fill(signalKey, (byte)0);
     }
 
+    @Test public void acceptsOnlyWellScopedCoturnRestCredentials() {
+        long now = 1700000000L;
+        assertTrue(TurnIceCredentialPolicy.allowsUrl("turn:turn.example.org:3478?transport=udp"));
+        assertTrue(TurnIceCredentialPolicy.allowsUrl("turns:turn.example.org:5349?transport=tcp"));
+        assertFalse(TurnIceCredentialPolicy.allowsUrl("https://untrusted.invalid"));
+        assertFalse(TurnIceCredentialPolicy.allowsUrl("turn:user@host.invalid"));
+        assertFalse(TurnIceCredentialPolicy.allowsUrl("turn:host.invalid/route"));
+        assertFalse(TurnIceCredentialPolicy.allowsUrl("turn:host.invalid?transport=invalid"));
+        assertTrue(TurnIceCredentialPolicy.allowsCredentials(
+                "1700000600:0123456789abcdef0123456789abcdef",
+                "B0Mq+R1KJkDerHMmygIlTzYKDkA=", now));
+        assertFalse(TurnIceCredentialPolicy.allowsCredentials(
+                "1700000600:0123456789abcdef0123456789abcdef",
+                "B0Mq+R1KJkDerHMmygIlTzYKDkA=", 1700000600L));
+        assertFalse(TurnIceCredentialPolicy.allowsCredentials(
+                "1700000600:0123456789abcdef0123456789abcdef",
+                "B0Mq+R1KJkDerHMmygIlTzYKDkA=", 1699999000L));
+        assertFalse(TurnIceCredentialPolicy.allowsCredentials(
+                "1700000600:0123456789abcdef0123456789abcdef",
+                "not-base64", now));
+    }
+
     @Test public void deniedNetworkNeverGrantsBusinessPermission() {
         for (ConnectionPolicy policy : ConnectionPolicy.values()) {
             assertFalse(policy.permits("TURN", true, true));

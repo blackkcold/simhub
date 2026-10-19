@@ -485,8 +485,13 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
             retryRoute(own, attempt, connection);
             return;
         }
+        // ICE CONNECTED is not the same as an OPEN DataChannel. Do not report
+        // online or dispatch peer RPC before the channel state callback fires.
+        DataChannel currentChannel = channel;
+        if (currentChannel == null || currentChannel.state() != DataChannel.State.OPEN) return;
         connection.getStats(report -> post(() -> {
-            if (!valid(own) || pc != connection) return;
+            if (!valid(own) || pc != connection || channel != currentChannel
+                    || currentChannel.state() != DataChannel.State.OPEN) return;
             Map<String, RTCStats> stats = report.getStatsMap();
             String selectedId = null;
             for (RTCStats row : stats.values()) {

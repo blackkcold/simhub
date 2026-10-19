@@ -7,11 +7,14 @@ untrusted signaling frame and credentials are never logged or persisted.
 """
 from __future__ import annotations
 
-import base64
-import hmac
 import os
 import re
 import secrets
+
+try:
+    from .peer_connect import issue_coturn_rest_credential
+except ImportError:
+    from peer_connect import issue_coturn_rest_credential
 
 # Explicit operator-owned endpoints only. No browser, node or peer may select
 # TURN destinations through signaling frames.
@@ -38,8 +41,5 @@ def configured_ice(now: int) -> list[dict]:
             urls.append(url)
         if len(urls) > 4:
             return []
-    username = f"{int(now) + 600}:{secrets.token_hex(16)}"
-    credential = base64.b64encode(
-        hmac.digest(secret.encode("utf-8"), username.encode("ascii"), "sha1")
-    ).decode("ascii")
+    username, credential = issue_coturn_rest_credential(secret, now, ttl=600)
     return [{"urls": urls, "username": username, "credential": credential}]

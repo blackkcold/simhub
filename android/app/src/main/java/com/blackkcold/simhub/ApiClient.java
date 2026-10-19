@@ -91,7 +91,7 @@ public final class ApiClient {
         boolean poolRetry=new SharedPoolClient(c).retryDue();
         boolean commandFallback=!RelayForegroundService.isRunning() &&
                 EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
-        boolean outstanding=poolRetry || RemoteOta.needsStateUpload(c) || DeviceMetadataSync.fullDirty(c) || DeviceMetadataSync.needsLight(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
+        boolean outstanding=NodeLocationManager.purgePending(c) || poolRetry || RemoteOta.needsStateUpload(c) || DeviceMetadataSync.fullDirty(c) || DeviceMetadataSync.needsLight(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
                 !cfg.pendingPairId().isBlank();
         if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding&&!commandFallback){
             SYNC_BUSY.set(false);return;
@@ -151,6 +151,12 @@ public final class ApiClient {
                 flushCommandAcks();fetchCommands();flushCommandAcks();
                 if(commandFallback)EnergyPolicy.mark(c,"command_fallback",System.currentTimeMillis());
             }else if(store.pendingCommandAckCount()>0)flushCommandAcks();
+            if(NodeLocationManager.purgePending(c))try{
+                NodeLocationManager.purgeIfNeeded(c,this);
+            }catch(Exception locationError){
+                // Location cleanup retries independently; it must not suppress SMS delivery.
+                SyncJobService.scheduleAfter(c,60_000L);
+            }
             flushEvents();
             if(maintenance||pendingBefore>0||poolRetry){
                 try{new SharedPoolClient(c).sync();}

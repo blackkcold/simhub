@@ -728,7 +728,7 @@ private fun NodeStatusOverview(state:HubSnapshot?,tools:HubToolsState,controller
         Spacer(Modifier.height(12.dp))
         OutlinedButton(onClick=controller::syncDeviceState,enabled=enrolled&&!blocked,
             modifier=Modifier.fillMaxWidth()){
-            HubIcon(R.drawable.ic_hub_activity,Modifier.size(20.dp))
+            HubIcon(R.drawable.ic_hub_sync,Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(hubLabel("立即同步设备状态","Refresh device state now"))
         }

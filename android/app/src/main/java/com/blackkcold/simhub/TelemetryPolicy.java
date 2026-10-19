@@ -16,17 +16,19 @@ public final class TelemetryPolicy {
         int battery=state.optInt("batteryPct",-1), old=prefs.getInt("battery",-1);
         boolean charging=state.optBoolean("charging"), wifi=state.optBoolean("wifiConnected");
         boolean cell=state.optBoolean("cellularConnected");
+        String signals=state.optJSONArray("signals")==null?"":state.optJSONArray("signals").toString();
         int wifiLevel=state.optInt("wifiSignalLevel",-1);
         boolean networkChanged=!prefs.contains("wifi")||prefs.getBoolean("wifi",false)!=wifi
                 ||prefs.getBoolean("cell",false)!=cell
-                ||prefs.getInt("wifiLevel",-1)!=wifiLevel;
+                ||prefs.getInt("wifiLevel",-1)!=wifiLevel
+                ||!prefs.getString("signals","").equals(signals);
         boolean batteryChanged=battery>=0&&(old<0||Math.abs(battery-old)>=2
                 ||(old>20&&battery<=20)||(old>10&&battery<=10));
         boolean chargingChanged=!prefs.contains("charging")||prefs.getBoolean("charging",false)!=charging;
         if(!networkChanged&&!batteryChanged&&!chargingChanged)return;
         prefs.edit().putInt("battery",battery).putBoolean("charging",charging)
             .putBoolean("wifi",wifi).putBoolean("cell",cell)
-            .putInt("wifiLevel",wifiLevel).apply();
+            .putInt("wifiLevel",wifiLevel).putString("signals",signals).apply();
         DeviceMetadataSync.requestLight(c);
     }
 }

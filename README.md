@@ -69,6 +69,7 @@ Use one app as **SIM Node**, **Management Center**, or both. A shared Compose to
 | **SMS and OTP** | Local/remote conversations, OTP extraction for accessible texts, SIM tags, filters and paging; read-only companion mode versus permission-gated full SMS-handler sending |
 | **Native Android UI** | Material 3 dual roles, distinct themes, four-tab navigation, foldable layouts, quick actions and native device detail |
 | **Devices and SIMs** | Android / Linux modem nodes, SIM channel identity, signal, battery, Wi-Fi, installed app version and task states |
+| **Private telemetry & one-shot location (Dev)** | Battery/Wi-Fi/SIM gauges; opt-in Node Key–encrypted location, separately authorized remote requests and user-triggered OpenStreetMap viewing. [Details](docs/DEVICE_TELEMETRY_LOCATION.md) |
 | **Shared SMS (opt-in)** | Authorized members decrypt an encrypted common pool with source attribution, history pagination, revocation and key rotation |
 | **Pairing and security** | QR/link or eight-digit pairing code and fingerprint, one Global Vault, independent Node Keys, password/TOTP/Passkeys, native controller identity |
 | **Reliability** | Encrypted local queue, manual immediate command/SMS sync, older-history rescan, foreground HTTPS long-poll, offline retry and durable acknowledgements |

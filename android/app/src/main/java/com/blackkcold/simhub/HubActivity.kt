@@ -197,6 +197,7 @@ class HubActivity: ComponentActivity(), HubController {
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
+        tools.locationEnabled=NodeLocationManager.enabled(applicationContext)
         Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
         Shizuku.addBinderReceivedListenerSticky(shizukuBinderListener)
         Shizuku.addBinderDeadListener(shizukuDeadListener)

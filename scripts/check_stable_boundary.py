@@ -16,10 +16,20 @@ def violations(root: Path) -> list[str]:
                 "webrtc" in file.name.lower()
             ):
                 problems.append("Experimental Android module in Stable: " + file.relative_to(root).as_posix())
+    # A library module is still experimental even when the old source paths
+    # have been removed from the application. Guard both sources and wiring.
+    for module in ("peer-core", "peer-transport", "peer-android"):
+        folder = root / "android" / module
+        if folder.exists():
+            problems.append("Experimental peer library in Stable: android/" + module)
+    settings = root / "android" / "settings.gradle.kts"
+    if settings.exists() and any(name in settings.read_text("utf-8")
+                                 for name in ('":peer-core"', '":peer-transport"', '":peer-android"')):
+        problems.append("Experimental peer Gradle include in Stable")
     gradle = root / "android" / "app" / "build.gradle.kts"
     if gradle.exists():
         text = gradle.read_text("utf-8")
-        for dependency in ("io.github.webrtc-sdk:android", "org.webrtc:google-webrtc"):
+        for dependency in ("io.github.webrtc-sdk:android", "org.webrtc:google-webrtc", 'project(":peer-core")'):
             if dependency in text:
                 problems.append("WebRTC dependency included in Stable Android build: " + dependency)
     server = root / "server"

@@ -92,8 +92,13 @@ public final class PeerPairingManager {
         JSONObject hint=peer.optJSONObject("relayHint");
         String origin=hint==null?"":hint.optString("origin","");
         com.blackkcold.simhub.CenterTrust trust=com.blackkcold.simhub.CenterTrustStore.get(store.context()).effective();
-        if(trust==null||!trust.covers(com.blackkcold.simhub.CenterTrust.ROLE_CONTROLLER,origin))
+        // The signed QR advertises the NODE endpoint, not the admin endpoint.
+        // The trusted center description must independently pin both roles.
+        if(trust==null)throw new SecurityException("CENTER_SETUP_REQUIRED");
+        try{trust.controllerOriginForNode(origin);}
+        catch(com.blackkcold.simhub.CenterTrust.Invalid invalid){
             throw new SecurityException("CENTER_SETUP_REQUIRED");
+        }
         JSONObject old=store.signaling(id);
         if(old.optBoolean("consent")&&binding.equals(old.optString("bindingId"))
             &&revision==old.optInt("revision"))return id;

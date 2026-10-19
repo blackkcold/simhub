@@ -743,9 +743,15 @@ def sanitize_state(body: Any) -> dict[str,Any]:
     request_id=out.get("manualRequestId")
     if not isinstance(request_id,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",request_id):
         out.pop("manualRequestId",None)
-    for key in ("sampledAt","batteryPct","charging","wifiConnected","cellularConnected","internetValidated","wifiSignalLevel","wifiRssiDbm"):
-        out.pop(key,None)
-    out.update(sanitize_telemetry(body))
+    telemetry=sanitize_telemetry(body)
+    if telemetry:
+        for key in ("sampledAt","batteryPct","charging","wifiConnected","cellularConnected","internetValidated","wifiSignalLevel","wifiRssiDbm"):
+            out.pop(key,None)
+        out.update(telemetry)
+    else:
+        # Older clients have no sample time: retain legacy scalar compatibility.
+        out.pop("wifiSignalLevel",None)
+        out.pop("wifiRssiDbm",None)
     # Energy diagnostics only allow numeric counters and the selected profile;
     # never accept arbitrary nested JSON as a relay-visible state field.
     stats=body.get("energyStats")
@@ -2165,7 +2171,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 state["appVersionCode"]=code;changed=True
             telemetry=sanitize_telemetry(body.get("telemetry"))
             # Full inventory is never replaced by a lightweight heartbeat.
-            if telemetry and telemetry["sampledAt"]>state.get("sampledAt",0):
+            if telemetry and telemetry["sampledAt"]>(state.get("sampledAt") if type(state.get("sampledAt")) is int else 0):
                 for key in ("wifiSignalLevel","wifiRssiDbm"):
                     if key not in telemetry:state.pop(key,None)
                 state.update(telemetry)

@@ -423,7 +423,14 @@ public final class ApiClient {
         return "/api/v1/devices/"+cfg.deviceId()+"/peer-signaling/sessions/"+sessionId+"/"+action;
     }
     public void fetchCommands()throws Exception{JSONObject r=request("GET","/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50",null);JSONArray arr=r.optJSONArray("commands");cfg.recordCommandFetch(arr==null?0:arr.length());if(arr!=null&&arr.length()>0)AppLogger.i(c,"ApiClient","Fetched remote commands count="+arr.length());new CommandProcessor(c,this).process(arr);}
-    public void putState()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",StateCollector.collect(c));}
+    public void putState()throws Exception{putState(null);}
+    /** The returned sample is acknowledged only after Relay durably accepts the state. */
+    public JSONObject putState(String requestId)throws Exception{
+        JSONObject sample=StateCollector.collect(c);
+        if(requestId!=null&&!requestId.isBlank())sample.put("manualRequestId",requestId);
+        request("POST","/api/v1/devices/"+cfg.deviceId()+"/state",sample);
+        return sample;
+    }
     public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("appVersionCode",RemoteOta.installedVersionCode(c)).put("osVersion",Build.VERSION.RELEASE));}
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}
     JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){logRequestFailure(method,e);throw e;}}

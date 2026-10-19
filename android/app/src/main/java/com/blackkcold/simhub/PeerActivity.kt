@@ -62,7 +62,12 @@ class PeerActivity:ComponentActivity(){
     private var sendId:String?=null
     private var channelIndex by mutableIntStateOf(0)
     private var discovery:PeerDiscovery?=null
-    private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){reload()}
+    private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
+        if(Build.VERSION.SDK_INT>=37
+            &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")==PackageManager.PERMISSION_GRANTED
+            &&PeerService.enabled()&&!PeerService.localListening())PeerService.start(this)
+        reload()
+    }
     private val role=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){reload()}
     private fun store()=PeerStore.get(this)
     override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);UiLocale.apply(this);reload()
@@ -93,6 +98,12 @@ class PeerActivity:ComponentActivity(){
                     else->"设备暂时不可达。请检查两端网络与前台服务；无 Relay 授权时不会隐藏转发短信。"
                 }}}finally{busy=false;reload()}}}
     private fun requestAccess(){if(!SmsAccessPolicy.rolePermitsAccess(this)){getSystemService(RoleManager::class.java)?.let{role.launch(it.createRequestRoleIntent(RoleManager.ROLE_SMS))};return};val list=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,Manifest.permission.READ_PHONE_STATE);if(Build.VERSION.SDK_INT>=33)list.add(Manifest.permission.POST_NOTIFICATIONS);if(Build.VERSION.SDK_INT>=37)list.add("android.permission.ACCESS_LOCAL_NETWORK");if(SmsSendPolicy.canSend(this)||getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true)list.add(Manifest.permission.SEND_SMS);permissions.launch(list.toTypedArray())}
+    private fun requestLanAccess(){
+        if(Build.VERSION.SDK_INT>=37
+            &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")!=PackageManager.PERMISSION_GRANTED)
+            permissions.launch(arrayOf("android.permission.ACCESS_LOCAL_NETWORK"))
+        else startNode()
+    }
     private fun startNode(){PeerService.start(this);lifecycleScope.launch{delay(800);reload();notice=PeerService.error()}}
     private fun scan(){IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt("扫描另一台手机的 P2P 二维码").setBeepEnabled(false).setOrientationLocked(false).initiateScan()}
     @Deprecated("ZXing compatibility") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);val result:IntentResult?=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);val contents=result?.contents?:return
@@ -242,6 +253,11 @@ class PeerActivity:ComponentActivity(){
                 Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Switch(listening,{if(it)startNode() else{PeerService.stop(this@PeerActivity);listening=false}});Text("允许已配对设备连接")}
                 Text("持续监听会显示前台通知；关闭后此 SIM 节点无法通过 P2P 接收请求。",style=MaterialTheme.typography.bodySmall)
                 if(PeerService.enabled()&&!PeerService.localListening())Text("设备直连服务已启动，但局域网监听不可用；可继续完成配对并尝试已授权的公网 WebRTC。局域网使用需检查本地网络权限。",style=MaterialTheme.typography.bodySmall)
+                if(Build.VERSION.SDK_INT>=37
+                    &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")!=PackageManager.PERMISSION_GRANTED){
+                    Text("当前未授予局域网设备访问权限；此权限与短信角色独立。",style=MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick={requestLanAccess()}){Text("授权局域网连接")}
+                }
                 OutlinedButton(onClick={requestAccess()}){Text("检查短信读取权限")}
                 Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Checkbox(allowSend,{allowSend=it});Text("允许本次配对发送短信（默认关闭）")}
                 Button(onClick={work{if(!PeerService.enabled())throw IllegalStateException("start_peer_service_first");qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).offer(Build.MODEL,allowSend,PeerService.endpoints())};notice="步骤 2 / 3 · 请使用管理手机扫描二维码，然后使用本机扫描其响应二维码"}},enabled=listening){Text("生成配对二维码")}

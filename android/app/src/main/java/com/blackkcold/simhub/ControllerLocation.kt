@@ -24,8 +24,10 @@ internal data class ControllerLocationSample(
 internal object ControllerLocationFacts {
     fun parse(payload:JSONObject,event:JSONObject):ControllerLocationSample? {
         if(event.optString("kind")!="device.location")return null
-        val rawLat=payload.opt("latitude"),rawLon=payload.opt("longitude")
-        val rawAccuracy=payload.opt("accuracyMeters"),rawTime=payload.opt("sampledAt")
+        val rawLat=payload.opt("latitude")
+        val rawLon=payload.opt("longitude")
+        val rawAccuracy=payload.opt("accuracyMeters")
+        val rawTime=payload.opt("sampledAt")
         if(rawLat !is Number || rawLon !is Number || rawAccuracy !is Number || rawTime !is Number)
             return null
         val lat=rawLat.toDouble();val lon=rawLon.toDouble();val accuracy=rawAccuracy.toDouble()

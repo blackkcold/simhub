@@ -69,6 +69,7 @@ interface HubController {
     fun setRealtime(value:Boolean)
     fun setEnergyMode(mode:String)
     fun syncNow()
+    fun syncDeviceState()
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
     fun requestContacts()
@@ -500,6 +501,23 @@ class HubActivity: ComponentActivity(), HubController {
         }catch(e:Exception){
             AppLogger.e(this,"Relay","Foreground service toggle failed",e)
             toast(UiErrors.message(this,e))
+        }
+    }
+    override fun syncDeviceState(){
+        if(!AgentConfig(this).isEnrolled()){toast(getString(R.string.enroll_first));return}
+        lifecycleScope.launch {
+            try{
+                val sampled=withContext(Dispatchers.IO) {
+                    // Direct, one-shot upload. Does not enumerate the SMS Provider or GPS.
+                    ApiClient(applicationContext).putState(null).optLong("sampledAt",0)
+                }
+                toast(actionLabel("设备状态已提交 · 采样时间 $sampled",
+                    "Device state committed · sample $sampled"))
+                refresh()
+            }catch(error:Exception){
+                AppLogger.e(this@HubActivity,"ManualState","State refresh failed",error)
+                toast(UiErrors.message(this@HubActivity,error))
+            }
         }
     }
     override fun syncNow(){

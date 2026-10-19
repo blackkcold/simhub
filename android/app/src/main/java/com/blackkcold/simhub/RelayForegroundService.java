@@ -50,6 +50,7 @@ public final class RelayForegroundService extends Service {
     };
     private boolean observingProvider=false;
     private boolean observingBattery=false,observingNetwork=false;
+    private SimSignalObserver simSignals;
     private final BroadcastReceiver batteryObserver=new BroadcastReceiver(){
         @Override public void onReceive(Context context,Intent intent){
             TelemetryPolicy.onObserved(RelayForegroundService.this);
@@ -126,6 +127,8 @@ public final class RelayForegroundService extends Service {
         AppLogger.i(this,"RelayService","Foreground relay service started");
         registerSmsObserver();
         registerTelemetryObservers();
+        simSignals=new SimSignalObserver(this);
+        simSignals.start();
         // JobScheduler is the durable recovery mechanism. The foreground service
         // only adds a lightweight remote command check and periodic maintenance.
         SyncJobService.scheduleNow(this);
@@ -171,6 +174,7 @@ public final class RelayForegroundService extends Service {
     }
     @Override public void onDestroy(){
         if(observingProvider)try{getContentResolver().unregisterContentObserver(providerObserver);}catch(Exception ignored){}
+        if(simSignals!=null)simSignals.stop();
         if(observingBattery)try{unregisterReceiver(batteryObserver);}catch(Exception ignored){}
         if(observingNetwork)try{getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkObserver);}catch(Exception ignored){}
         AppLogger.i(this,"RelayService","Foreground relay service stopped");

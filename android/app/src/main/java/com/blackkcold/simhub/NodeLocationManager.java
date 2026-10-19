@@ -27,10 +27,28 @@ public final class NodeLocationManager {
         return c.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE);
     }
     public static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false);}
+    public static boolean remoteAllowed(Context c){return enabled(c)&&prefs(c).getBoolean("remoteAllowed",false);}
+    public static void setRemoteAllowed(Context c,boolean value){
+        prefs(c).edit().putBoolean("remoteAllowed",enabled(c)&&value).commit();
+        DeviceMetadataSync.requestFull(c);
+    }
+    private static String epoch(Context c){return prefs(c).getString("epoch","");}
     public static boolean purgePending(Context c){return prefs(c).getBoolean("purgePending",false);}
     public static void setEnabled(Context c,boolean enabled){
-        prefs(c).edit().putBoolean("enabled",enabled).putBoolean("purgePending",!enabled||purgePending(c)).commit();
+        SharedPreferences p=prefs(c);
+        SharedPreferences.Editor editor=p.edit()
+            .putBoolean("enabled",enabled)
+            .putBoolean("purgePending",!enabled||purgePending(c));
+        if(enabled&&!p.getBoolean("enabled",false)){
+            editor.putString("epoch",UUID.randomUUID().toString())
+                .remove("registeredEpoch").putBoolean("remoteAllowed",false);
+        }
+        if(!enabled){
+            editor.remove("epoch").remove("registeredEpoch").putBoolean("remoteAllowed",false);
+        }
+        editor.commit();
         if(!enabled)LocalStore.get(c).clearPendingLocation();
+        DeviceMetadataSync.requestFull(c);
     }
     public static void purgeIfNeeded(Context c,ApiClient api)throws Exception{
         if(!purgePending(c))return;
@@ -79,12 +97,19 @@ public final class NodeLocationManager {
         // A prior opt-out must be applied before another point may be published.
         ApiClient api=new ApiClient(c);
         purgeIfNeeded(c,api);
+        String consentEpoch=epoch(c);
+        if(consentEpoch.isBlank())throw new SecurityException("location_consent_missing");
+        if(!consentEpoch.equals(prefs(c).getString("registeredEpoch",""))){
+            api.activateLocation(consentEpoch);
+            prefs(c).edit().putString("registeredEpoch",consentEpoch).commit();
+        }
         Location location=current(c);
         if(!enabled(c))throw new SecurityException("location_sharing_disabled");
         if(!Double.isFinite(location.getLatitude())||!Double.isFinite(location.getLongitude())
                 ||Math.abs(location.getLatitude())>90||Math.abs(location.getLongitude())>180)
             throw new IllegalStateException("invalid_location");
-        long ts=System.currentTimeMillis()/1000;
+        if(!consentEpoch.equals(epoch(c)))throw new SecurityException("location_consent_changed");
+        long ts=System.currentTimeMillis()/1000+1;
         JSONObject inner=new JSONObject()
             .put("latitude",location.getLatitude())
             .put("longitude",location.getLongitude())
@@ -92,10 +117,12 @@ public final class NodeLocationManager {
             .put("sampledAt",location.getTime()/1000)
             .put("source","android-one-shot");
         String id="location-"+UUID.randomUUID();
-        if(!EventQueue.queue(c,id,"device.location",ts,-1,false,inner,new JSONObject()))
+        if(!EventQueue.queue(c,id,"device.location",ts,-1,false,inner,
+                new JSONObject().put("locationEpoch",consentEpoch)))
             throw new IllegalStateException("location_queue_failed");
         api.flushEvents();
         return new JSONObject().put("sampledAt",inner.optLong("sampledAt"))
-            .put("published",true);
+            .put("published",LocalStore.get(c).hasUploadedReceipt(id))
+            .put("queued",LocalStore.get(c).isEventPending(id));
     }
 }

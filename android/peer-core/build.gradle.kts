@@ -7,6 +7,8 @@ java {
 dependencies {
     // Android platform supplies org.json at runtime; never package a competing JSON implementation.
     compileOnly("org.json:json:20240303")
+    testImplementation("org.json:json:20240303")
+    testImplementation("junit:junit:4.13.2")
 }
 
 // Pure Java business and signaling protocol. No Android SDK, networking, or Relay credentials.

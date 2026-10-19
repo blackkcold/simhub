@@ -117,6 +117,7 @@ ALLOWED_COMMANDS = {
     "sms.restore_history",
     "device.network_policy",
     "device.refresh_state",
+    "device.location_once",
     "subscription.refresh",
     "diagnostics.request",
     "ota.check",
@@ -1362,6 +1363,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.get_ota(); return
             if not self.require_admin(): return
             self.get_ota(); return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="location":
+            if not self.require_admin():return
+            self.get_latest_location(p[3]);return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="state":
             if not self.require_admin(): return
             self.get_device_state(p[3]); return
@@ -1636,6 +1640,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
             except (ValueError,TypeError,KeyError) as error:
                 self.send_error_json(400,"invalid_peer_response",str(error));return
             signal_stream();self.send_json(200,{"ok":True});return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["location","purge"]:
+            if not self.require_device(p[3]):return
+            self.purge_latest_location(p[3]);return
         if len(p)==7 and p[:3]==["api","v1","devices"] and p[4]=="commands" and p[6]=="ack":
             if not self.require_device(p[3]):return
             body=self.read_json()
@@ -1646,6 +1653,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         path,p,q=self.route()
         if not self.preflight("DELETE", path): return
+        if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="location":
+            if not self.require_stepup():return
+            self.purge_latest_location(p[3]);return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="sms":
             if not self.require_stepup():return
             self.purge_device_sms(p[3]); return
@@ -2214,6 +2224,27 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if changed:signal_stream()
         self.send_json(200,{"ok":True,"serverTime":ts})
 
+    def get_latest_location(self,device_id:str) -> None:
+        # Only an opaque E2EE envelope is ever returned to an authenticated controller.
+        with open_db() as con:
+            row=con.execute("SELECT id,occurred_at,received_at,subscription_id,has_otp,ciphertext_json FROM events WHERE device_id=? AND kind='device.location' ORDER BY occurred_at DESC,seq DESC LIMIT 1",(device_id,)).fetchone()
+        if row is None:
+            self.send_json(200,{"location":None});return
+        self.send_json(200,{"location":{"deviceId":device_id,"eventId":row["id"],"kind":"device.location",
+            "occurredAt":row["occurred_at"],"receivedAt":row["received_at"],
+            "subscriptionId":row["subscription_id"],"hasOtp":bool(row["has_otp"]),
+            "ciphertext":safe_json_loads(row["ciphertext_json"],{})}})
+
+    def purge_latest_location(self,device_id:str) -> None:
+        with open_db() as con:
+            row=con.execute("SELECT id FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not row:
+                self.send_error_json(404,"device_not_found","Device unavailable");return
+            deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).rowcount
+        audit("location.purge",device_id,"ok",self.ip)
+        signal_stream()
+        self.send_json(200,{"ok":True,"deleted":deleted})
+
     def ingest_event(self,device_id:str,body:dict[str,Any]) -> None:
         event_id=str(body.get("eventId","")); kind=str(body.get("kind",""))[:80]; cipher=body.get("ciphertext")
         if not event_id or len(event_id)>160 or not kind or not validate_cipher(cipher):
@@ -2229,11 +2260,16 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 threshold=con.execute("SELECT sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()["sms_purged_before"]
                 if kind.startswith("sms.") and occurred<=threshold:
                     self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
+                if kind=="device.location":
+                    latest=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
+                    if latest is not None and occurred<=latest:
+                        self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                 cur=con.execute(
                     "INSERT INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",
                     (event_id,device_id,kind,occurred,received,sub,1 if has_otp else 0,json.dumps(metadata,separators=(",",":")),json.dumps(cipher,separators=(",",":"))),
                 )
                 seq=cur.lastrowid
+                if kind=="device.location":con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
                 d=con.execute("SELECT name FROM devices WHERE id=?",(device_id,)).fetchone()
         except sqlite3.IntegrityError:
@@ -2274,9 +2310,16 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if row[2].startswith("sms.") and row[3]<=d["sms_purged_before"]:
                     results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
                     continue
+                if row[2]=="device.location":
+                    recent=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
+                    if recent is not None and row[3]<=recent:
+                        results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                        continue
                 cur=con.execute("INSERT OR IGNORE INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",row)
                 duplicate=cur.rowcount==0
                 seq=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,row[0])).fetchone()["seq"]
+                if row[2]=="device.location" and not duplicate:
+                    con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 results.append({"eventId":row[0],"accepted":True,"duplicate":duplicate,"serverSequence":seq})
                 if not duplicate and row[2]=="sms.received": notifications.append((bool(row[6]),row[3]))
             con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))

@@ -26,7 +26,7 @@ public final class NodeLocationManager {
     public static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false);}
     public static boolean purgePending(Context c){return prefs(c).getBoolean("purgePending",false);}
     public static void setEnabled(Context c,boolean enabled){
-        prefs(c).edit().putBoolean("enabled",enabled).putBoolean("purgePending",!enabled).commit();
+        prefs(c).edit().putBoolean("enabled",enabled).putBoolean("purgePending",!enabled||purgePending(c)).commit();
         if(!enabled)LocalStore.get(c).clearPendingLocation();
     }
     public static void purgeIfNeeded(Context c,ApiClient api)throws Exception{

@@ -48,7 +48,11 @@ public final class CommandProcessor {
                     result.put("enabled",enabled).put("status",status);
                     api.putState();ack(id,"succeeded",result);
                 }
-                case "device.refresh_state","subscription.refresh" -> {api.putState();result.put("refreshed",true);ack(id,"succeeded",result);}
+                case "device.refresh_state","subscription.refresh" -> {
+                    JSONObject sample=api.putState(id);
+                    result.put("refreshed",true).put("requestId",id).put("sampledAt",sample.optLong("sampledAt",0));
+                    ack(id,"succeeded",result);
+                }
                 case "diagnostics.request" -> {JSONObject d=StateCollector.collect(c).put("diagnosticAt",now).put("requestId",id);EventQueue.diagnostics(c,d);result.put("queued",true);ack(id,"succeeded",result);}
                 case "ota.cancel" -> {if(!RemoteOta.cancel(c)){ack(id,"rejected",new JSONObject().put("reason","ota_cannot_cancel_after_install_commit"));return;}ack(id,"succeeded",new JSONObject());}
                 case "ota.install" -> {JSONObject accepted=RemoteOta.request(c,id,p.optString("targetVersion","latest"));ack(id,"submitted",accepted);}

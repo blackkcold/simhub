@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS events(
 CREATE TABLE IF NOT EXISTS location_purge(
   device_id TEXT PRIMARY KEY,
   purged_at INTEGER NOT NULL,
+  active_epoch TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(device_id) REFERENCES devices(id)
 );
 CREATE INDEX IF NOT EXISTS idx_events_device_seq ON events(device_id,seq);

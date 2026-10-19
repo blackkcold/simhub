@@ -725,6 +725,18 @@ def sanitize_telemetry(body: Any) -> dict[str,Any]:
     if type(level) is int and 0<=level<=4:out["wifiSignalLevel"]=level
     rssi=body.get("wifiRssiDbm")
     if type(rssi) is int and -126<=rssi<=0:out["wifiRssiDbm"]=rssi
+    channels=[]
+    raw_signals=body.get("signals")
+    if isinstance(raw_signals,list):
+        for row in raw_signals[:8]:
+            if not isinstance(row,dict):continue
+            cid=row.get("channelId");rev=row.get("channelRevision")
+            level=row.get("signalLevel")
+            if not isinstance(cid,str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}",cid):continue
+            if type(rev) is not int or not 0<rev<2**31:continue
+            if level is not None and (type(level) is not int or not 0<=level<=4):continue
+            channels.append({"channelId":cid,"channelRevision":rev,"signalLevel":level})
+    if channels:out["signals"]=channels
     return out
 
 
@@ -2174,7 +2186,21 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if telemetry and telemetry["sampledAt"]>(state.get("sampledAt") if type(state.get("sampledAt")) is int else 0):
                 for key in ("wifiSignalLevel","wifiRssiDbm"):
                     if key not in telemetry:state.pop(key,None)
+                signals=telemetry.pop("signals",[])
                 state.update(telemetry)
+                # Only update signals of the same channel identity and revision.
+                for bucket in ("subscriptions","channels"):
+                    rows=state.get(bucket)
+                    if not isinstance(rows,list):continue
+                    for row in rows:
+                        if not isinstance(row,dict):continue
+                        cid=row.get("channelId") or row.get("id")
+                        rev=row.get("channelRevision") or row.get("revision")
+                        for signal in signals:
+                            if cid==signal["channelId"] and type(rev) is int and rev==signal["channelRevision"]:
+                                if signal["signalLevel"] is None:row.pop("signalLevel",None)
+                                else:row["signalLevel"]=signal["signalLevel"]
+                                break
                 changed=True
             if changed:
                 if version or code is not None:state["versionReportedAt"]=ts

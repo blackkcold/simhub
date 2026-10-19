@@ -44,6 +44,9 @@ class PeerActivity:ComponentActivity(){
     private var tab by mutableIntStateOf(0)
     private var pairingRole by mutableIntStateOf(-1) // -1 = closed; 0 = SIM node; 1 = controller
     private var allowSend by mutableStateOf(false)
+    // Independent opt-in on scanning side; never infer reciprocal SMS access.
+    private var reverseRead by mutableStateOf(false)
+    private var reverseSend by mutableStateOf(false)
     private var selected by mutableStateOf<JSONObject?>(null)
     private var remoteState by mutableStateOf<JSONObject?>(null)
     private var peerEpoch=0L
@@ -107,7 +110,13 @@ class PeerActivity:ComponentActivity(){
     private fun startNode(){PeerService.start(this);lifecycleScope.launch{delay(800);reload();notice=PeerService.error()}}
     private fun scan(){IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt("扫描另一台手机的 P2P 二维码").setBeepEnabled(false).setOrientationLocked(false).initiateScan()}
     @Deprecated("ZXing compatibility") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);val result:IntentResult?=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);val contents=result?.contents?:return
-        work{val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL);"response"->{manager.accept(contents);""};"signal-binding"->{manager.acceptSignalingBindingQr(contents);"SIGNALING_BOUND"};else->throw SecurityException("peer_qr_kind_rejected")}};qr=if(resultQr=="SIGNALING_BOUND")"" else resultQr;PeerService.start(this@PeerActivity);notice=when(resultQr){""->"双向扫码已完成。本地网络可尝试直接连接；跨网络使用需要另外完成可信中心信令授权。";"SIGNALING_BOUND"->"已验证节点签名及信令绑定，开始尝试建立 WebRTC 数据直连。";else->"请让 SIM 节点扫描此响应二维码。跨网络连接还需要可信中心信令授权。"}}
+        work{
+            // A reciprocal pairing response must advertise a live LAN listener.
+            if(PeerPairingManager.kind(contents)=="offer"){
+                PeerService.start(this@PeerActivity)
+                delay(550)
+            }
+            val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL,reverseRead,reverseSend);"response"->{manager.accept(contents);""};"signal-binding"->{manager.acceptSignalingBindingQr(contents);"SIGNALING_BOUND"};else->throw SecurityException("peer_qr_kind_rejected")}};qr=if(resultQr=="SIGNALING_BOUND")"" else resultQr;PeerService.start(this@PeerActivity);notice=when(resultQr){""->"双向扫码已完成。本地网络可尝试直接连接；跨网络使用需要另外完成可信中心信令授权。";"SIGNALING_BOUND"->"已验证节点签名及信令绑定，开始尝试建立 WebRTC 数据直连。";else->"请让 SIM 节点扫描此响应二维码。跨网络连接还需要可信中心信令授权。"}}
     }
     private suspend fun rpc(p:JSONObject,id:String,request:JSONObject):JSONObject{
         return withContext(Dispatchers.IO){PeerHubGateway.request(applicationContext,p.getString("id"),id,request)}
@@ -198,7 +207,7 @@ class PeerActivity:ComponentActivity(){
                 1->{val p=selected;if(p==null){Text("请先双机扫码，然后选择管理设备",Modifier.padding(24.dp))}else{
                     Text("${p.optString("name")} · ${connectionLabel(p)} · 端到端加密",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium)
                     if(!inbox.unlocked)Button(onClick={work{load(false)}},Modifier.padding(16.dp)){Text("连接并读取短信")}
-                    else NativeControllerInbox(inbox,onRefresh={work{load(false)}},onOlder={work{load(true)}},onNewer={work{load(false)}},onOpenLogin={tab=0},onWrite={beginWrite()},onReply={beginWrite(it)},canCompose=p.optString("permissions").contains("send")&&remoteState?.optBoolean("smsSendAllowed")==true)
+                    else NativeControllerInbox(inbox,onRefresh={work{load(false)}},onOlder={work{load(true)}},onNewer={work{load(false)}},onOpenLogin={tab=0},onWrite={beginWrite()},onReply={beginWrite(it)},canCompose=PeerGrantPolicy.allows(p,"sms.send",false)&&remoteState?.optBoolean("smsSendAllowed")==true)
                 }}
                 else->ConnectionScreen()
             }
@@ -264,6 +273,17 @@ class PeerActivity:ComponentActivity(){
                 if(!SmsSendPolicy.canSend(this@PeerActivity))Text("发送短信需要本机系统短信角色及相应权限；仅授权读取时无需切换默认短信应用。",style=MaterialTheme.typography.bodySmall)
             }else if(pairingRole==1){
                 Text("步骤 2 / 3 · 扫描节点二维码，再让节点扫描本机响应二维码",style=MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                    Checkbox(checked=reverseRead,onCheckedChange={reverseRead=it;if(!it)reverseSend=false})
+                    Text("同时允许对方读取本机短信和状态",style=MaterialTheme.typography.bodySmall)
+                }
+                if(reverseRead)Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                    Checkbox(checked=reverseSend,onCheckedChange={reverseSend=it})
+                    Text("也允许对方通过本机 SIM 发送短信",style=MaterialTheme.typography.bodySmall)
+                }
+                if(Build.VERSION.SDK_INT>=37
+                    &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")!=PackageManager.PERMISSION_GRANTED)
+                    OutlinedButton(onClick={requestLanAccess()}){Text("授权本机局域网连接")}
                 Button(onClick={scan()}){Text("扫描节点二维码")}
                 Text("双向扫码确认身份。跨网络连接需要两端可信中心配置及单独授权；如果本地网络无法互通，可在连接详情中扫码导入节点签名的中心绑定。",style=MaterialTheme.typography.bodySmall)
             }
@@ -274,7 +294,7 @@ class PeerActivity:ComponentActivity(){
         }}
         items(peers,key={it.optString("id")}){p->HubCard(Modifier.fillMaxWidth()){
             Text(p.optString("name"),style=MaterialTheme.typography.titleMedium)
-            Text("${if(p.optString("localRole")=="NODE")"已授权管理终端" else "SIM 节点"} · ${pairLabel(p)}",style=MaterialTheme.typography.bodySmall)
+            Text("${if(p.optInt("protocolVersion",1)>=2)"对等设备" else if(p.optString("localRole")=="NODE")"已授权管理终端" else "SIM 节点"} · ${pairLabel(p)}",style=MaterialTheme.typography.bodySmall)
             Text(connectionLabel(p),color=if(PeerCenterConnector.dataChannelOnline(p.optString("id")))MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             Text(if(p.optBoolean("relayConfigured"))"授权：P2P + Relay · Relay 优先" else "授权：仅 P2P · 未配置备用路径",style=MaterialTheme.typography.bodySmall)
             if(p.optString("pairState")=="PENDING")Text("等待节点扫描响应二维码；完成双向确认后才能读取短信。",style=MaterialTheme.typography.bodySmall)
@@ -283,13 +303,13 @@ class PeerActivity:ComponentActivity(){
                 Text("Android ${state.optString("androidVersion")} · ${state.optString("appVersion")} · ${if(state.optBoolean("smsSendAllowed"))"系统允许发送" else "当前仅允许读取"}")
             }
             // Full identity fingerprints and ICE diagnostics are available only in device details.
-            if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
+            if(PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
                 val rows=withContext(Dispatchers.IO){store().outbound(p.getString("id"))}
                 pendingCommands=(0 until rows.length()).map{rows.getJSONObject(it)}
                 pendingTarget=p
                 if(pendingCommands.isEmpty())notice="没有待确认的短信命令"
             }}){Text("查看待确认命令")}
-            if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
+            if(PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED"){
                 recentSendIds[p.optString("id")]?.let{commandId->
                     OutlinedButton(onClick={work{
                         val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",commandId))
@@ -306,11 +326,11 @@ class PeerActivity:ComponentActivity(){
                 }
             }
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
+                if(PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED"){
                     Button(onClick={select(p)}){Text(if(p.optString("pairState")=="PENDING")"验证连接" else "管理短信")}
                     OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接详情")}
                 }
-                if(p.optString("localRole")=="NODE"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接 / 授权")}
+                if(!PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接 / 授权")}
                 if(p.optString("pairState")!="REVOKED")TextButton(onClick={revokeTarget=p}){Text(if(p.optString("pairState")=="PENDING")"取消配对" else "撤销授权")}
             }
         }}

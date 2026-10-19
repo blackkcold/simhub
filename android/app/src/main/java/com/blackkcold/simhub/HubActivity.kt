@@ -70,6 +70,8 @@ interface HubController {
     fun setEnergyMode(mode:String)
     fun syncNow()
     fun syncDeviceState()
+    fun setLocationSharing(enabled:Boolean)
+    fun locateOnce()
     fun syncHistory(older:Boolean)
     fun sendSms(subId:Int,to:String,body:String,onSuccess:()->Unit)
     fun requestContacts()
@@ -111,6 +113,9 @@ interface HubController {
     fun clearCompatibilityAudit()
 }
 class HubActivity: ComponentActivity(), HubController {
+    companion object {
+        @Volatile @JvmField var visibleForLocation=false
+    }
     private var snapshot by mutableStateOf<HubSnapshot?>(null)
     private val tools=HubToolsState()
     private var pendingDiagnosticFile:File?=null
@@ -168,6 +173,19 @@ class HubActivity: ComponentActivity(), HubController {
     private val smsRoleLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){refresh()}
     private val permissionsLauncher=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){refresh()}
     private val contactsLauncher=registerForActivityResult(ActivityResultContracts.RequestPermission()){refresh()}
+    private val locationPermissionLauncher=registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()){ grants->
+        if(grants.values.any{it}) {
+            NodeLocationManager.setEnabled(applicationContext,true)
+            tools.locationEnabled=true
+            toast(actionLabel("位置共享已授权，默认只会按需定位",
+                "Location consent enabled; positioning is on demand only"))
+        }else{
+            tools.locationEnabled=false
+            toast(actionLabel("位置授权被拒绝","Location permission denied"))
+        }
+        refresh()
+    }
     private val exportLauncher=registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         val source=pendingDiagnosticFile; pendingDiagnosticFile=null
         if(uri!=null && source!=null)lifecycleScope.launch {
@@ -226,6 +244,7 @@ class HubActivity: ComponentActivity(), HubController {
     }
     override fun onStart(){
         super.onStart()
+        visibleForLocation=true
         val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
         poolFilter.addAction(EnrollmentManager.ACTION_ENROLLMENT_CHANGED)
         poolFilter.addAction(RelayForegroundService.ACTION_RELAY_STATE)
@@ -256,6 +275,7 @@ class HubActivity: ComponentActivity(), HubController {
         }
     }
     override fun onStop(){
+        visibleForLocation=false
         try{unregisterReceiver(poolObserver)}catch(_:Exception){}
         try{contentResolver.unregisterContentObserver(smsObserver)}
         catch(_:Exception){}
@@ -501,6 +521,43 @@ class HubActivity: ComponentActivity(), HubController {
         }catch(e:Exception){
             AppLogger.e(this,"Relay","Foreground service toggle failed",e)
             toast(UiErrors.message(this,e))
+        }
+    }
+    override fun setLocationSharing(enabled:Boolean){
+        if(enabled){
+            if(NodeLocationManager.permissionGranted(this)){
+                NodeLocationManager.setEnabled(applicationContext,true)
+                tools.locationEnabled=true
+                refresh()
+            }else locationPermissionLauncher.launch(arrayOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
+        }else{
+            NodeLocationManager.setEnabled(applicationContext,false)
+            tools.locationEnabled=false
+            lifecycleScope.launch(Dispatchers.IO) {
+                try{NodeLocationManager.purgeIfNeeded(applicationContext,ApiClient(applicationContext))}
+                catch(_:Exception){SyncJobService.scheduleNow(applicationContext)}
+            }
+            toast(actionLabel("位置共享已关闭，服务器密文清理已请求",
+                "Location sharing disabled; server ciphertext cleanup requested"))
+        }
+    }
+    override fun locateOnce(){
+        if(!NodeLocationManager.enabled(this)){
+            toast(actionLabel("请先开启位置共享","Enable location sharing on this device first"))
+            return
+        }
+        lifecycleScope.launch {
+            try{
+                val status=withContext(Dispatchers.IO){
+                    NodeLocationManager.captureAndQueue(applicationContext)
+                }
+                toast(actionLabel("加密位置已上传","Encrypted one-shot location uploaded"))
+            }catch(error:Exception){
+                // Deliberately do not log raw location or errors that may contain coordinates.
+                toast(actionLabel("定位失败："+(error.message?:"unavailable"),
+                    "Location unavailable: "+(error.message?:"unknown")))
+            }
         }
     }
     override fun syncDeviceState(){

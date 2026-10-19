@@ -16,6 +16,8 @@ import java.util.*;
 /** User-started listener. No boot auto-start or background service launch. */
 public final class PeerService extends Service {
     private PeerNodeServer server;
+    // Discovery must outlive PeerActivity; peer endpoints change after Wi-Fi handover.
+    private PeerDiscovery discovery;
     private final java.util.concurrent.ScheduledExecutorService relayPump=java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     private NsdManager nsd;
     private ConnectivityManager connectivity;
@@ -57,6 +59,10 @@ public final class PeerService extends Service {
             nsd=getSystemService(NsdManager.class);NsdServiceInfo info=new NsdServiceInfo();info.setServiceName("simhub_"+PeerStore.get(this).myId().substring(0,16));info.setServiceType("_simhub-peer._tcp.");info.setPort(server.port());
             registration=new NsdManager.RegistrationListener(){public void onRegistrationFailed(NsdServiceInfo i,int e){}public void onUnregistrationFailed(NsdServiceInfo i,int e){}public void onServiceRegistered(NsdServiceInfo i){}public void onServiceUnregistered(NsdServiceInfo i){}};
             nsd.registerService(info,NsdManager.PROTOCOL_DNS_SD,registration);
+            // A background controller still needs to discover a paired LAN node.
+            // Failure to discover must not take down the accepting TCP listener.
+            try{discovery=new PeerDiscovery(this);discovery.start();}
+            catch(Exception discoveryError){failure="peer_discovery_unavailable";}
             }
             connectivity=getSystemService(ConnectivityManager.class);
             networkCallback=new ConnectivityManager.NetworkCallback(){public void onAvailable(Network n){PeerCenterConnector.networkChangedAll();}public void onLost(Network n){PeerCenterConnector.networkChangedAll();}};
@@ -80,6 +86,6 @@ public final class PeerService extends Service {
         try{if(new com.blackkcold.simhub.AgentConfig(this).isEnrolled())new com.blackkcold.simhub.ApiClient(this).putState();}catch(Exception ignored){}
     });}
     public int onStartCommand(Intent i,int flags,int id){refresh();return START_NOT_STICKY;}
-    public void onDestroy(){running=null;relayPump.shutdownNow();PeerCenterConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    public void onDestroy(){running=null;relayPump.shutdownNow();PeerCenterConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(discovery!=null)discovery.close();if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
     public IBinder onBind(Intent i){return null;}
 }

@@ -16,7 +16,10 @@ function icon(name){return '<svg class="node-icon" viewBox="0 0 24 24" width="21
 const validNumber = (value) => value===null||value===undefined||value==='' ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
 export function nodeDashboardModel(device){
   const s=device.state||{}, revoked=!!device.revoked, online=!!device.online&&!revoked;
-  const battery=validNumber(s.batteryPct),pct=battery===null?null:Math.max(0,Math.min(100,battery));
+  const battery=validNumber(s.batteryPct),pct=battery!==null&&Number.isInteger(battery)&&battery>=0&&battery<=100?battery:null;
+  const sampledAt=validNumber(s.sampledAt),age=sampledAt===null?null:Math.floor(Date.now()/1000)-sampledAt;
+  const maxAge=s.energyMode==='eco'?1800:s.energyMode==='realtime'?300:900;
+  const freshness=age===null||age< -300?'unknown':age>maxAge?'stale':'fresh';
   const pending=validNumber(s.pendingEvents),ack=validNumber(s.pendingCommandAcks);
   const mode=s.smsMode||'', send=mode==='default'&&s.smsSendPermission===true&&s.smsSendAllowed!==false;
   const developerSend=mode==='companion'&&s.smsDeveloperOverride===true&&s.smsSendAllowed===true&&s.smsSendPermission===true;
@@ -28,19 +31,44 @@ export function nodeDashboardModel(device){
     ['同步完成',s.lastSyncSuccessAt]
   ].filter(([,time])=>time!==null&&time!==undefined&&time!==''&&Number.isFinite(Number(time))&&Number(time)>0)
    .map(([label,time])=>({label,time:Number(time)})).sort((a,b)=>b.time-a.time);
-  return {s,online,pct,pending,ack,mode,send,developerSend,events,revoked};
+  return {s,online,pct,pending,ack,mode,send,developerSend,events,revoked,sampledAt,freshness};
+}
+/** Each lit mark corresponds to an actual SDK signal level, not continuous animation. */
+export function signalBars(level){
+  const n=validNumber(level),known=n!==null&&Number.isInteger(n)&&n>=0&&n<=4;
+  return '<svg class="node-signal-bars" role="img" aria-label="'+(known?'Signal '+n+' of 4':'Signal unknown')+'" viewBox="0 0 48 32">'+
+    [0,1,2,3].map(i=>'<rect x="'+(2+i*12)+'" y="'+(24-i*6)+'" width="9" height="'+(8+i*6)+'" rx="2" class="'+(known&&i<n?'node-lit':'node-dim')+'"/>').join('')+'</svg>';
+}
+export function wifiArcs(connected,level){
+  const n=validNumber(level),known=connected===true&&n!==null&&Number.isInteger(n)&&n>=0&&n<=4;
+  const parts=['M20 30 L20 30','M14 25 Q20 20 26 25','M8 19 Q20 8 32 19','M2 13 Q20 -2 38 13'];
+  return '<svg class="node-wifi-arcs" viewBox="0 0 40 36" role="img" aria-label="'+(!connected?'Wi-Fi disconnected':!known?'Wi-Fi strength unknown':'Wi-Fi '+n+' of 4')+'">'+
+    parts.map((path,i)=>'<path d="'+path+'" class="'+(known&&i<n?'node-lit':'node-dim')+'" fill="none" stroke-width="3.5" stroke-linecap="round"/>').join('')+'</svg>';
+}
+export function batteryLevel(pct,charging){
+  const n=validNumber(pct),known=n!==null&&Number.isInteger(n)&&n>=0&&n<=100;
+  return '<svg class="node-battery-level" viewBox="0 0 62 34" role="img" aria-label="'+(known?'Battery '+n+'%':'Battery unknown')+'">'+
+    '<rect x="2" y="4" width="52" height="26" rx="6" class="node-battery-shell"/><rect x="55" y="12" width="5" height="10" rx="2" class="node-battery-terminal"/>'+
+    (known?'<rect x="5" y="7" width="'+(46*n/100).toFixed(1)+'" height="20" rx="3" class="node-battery-fill"/>':'')+
+    (charging===true?'<path d="M30 7L24 18h6l-2 9 10-13h-7l3-7z" class="node-charge-icon"/>':'')+'</svg>';
 }
 export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusText,channels,buttons,zh=true}){
   const m=nodeDashboardModel(device),s=m.s, e=(v)=>esc(v==null?'—':String(v));
   const t=(cn,en)=>zh?cn:en;
   const number=(n)=>n==null?'—':e(n);
+  const freshness=m.freshness==='fresh'?t('最近采样','Recently sampled'):m.freshness==='stale'?t('状态已过期','Stale snapshot'):t('采样时间未知','Sample time unknown');
+  const telemetryTime=m.sampledAt&&m.freshness!=='unknown'?time(m.sampledAt):'—';
+  const networkCard=(label,glyph,detail)=>'<div class="node-network-card">'+glyph+'<div><strong>'+e(label)+'</strong><small>'+e(detail)+'</small></div></div>';
+  const wifiDetail=s.wifiConnected===false?t('未连接','Disconnected'):s.wifiConnected!==true?t('状态未知','Unknown'):
+    s.wifiSignalLevel===undefined||s.wifiSignalLevel===null?t('已连接 · 强度未知','Connected · strength unknown'):
+    t('信号等级','Signal level')+' '+e(s.wifiSignalLevel)+'/4';
   const time=(x)=>x?e(fmtTime(x)):t('暂无记录','No record');
   const header=(symbol,title,subtitle='')=>'<div class="node-panel-heading"><span class="node-icon-box">'+icon(symbol)+'</span><div><h3>'+e(title)+'</h3>'+(subtitle?'<p>'+e(subtitle)+'</p>':'')+'</div></div>';
   const row=(label,value,mark='')=>'<div class="node-fact"><span>'+e(label)+'</span><strong'+(mark?' class="'+mark+'"':'')+'>'+e(value)+'</strong></div>';
   const chip=(name,value,kind='')=>'<div class="node-health-metric '+kind+'"><div class="node-metric-head">'+icon(name)+'</div><strong>'+e(value)+'</strong><small>'+({battery:t('设备电量','Battery'),message:t('短信总量','Messages'),sync:t('待上传事件','Pending events')}[name]||'')+'</small></div>';
   const perm=(label,value)=>row(label,value===true?t('已授权','Granted'):value===false?t('未授权','Not granted'):t('未报告','Unknown'),value===true?'node-positive':value===false?'node-warning':'');
   const sims=channels.map((c,i)=>'<div class="node-sim-row">'+
-    '<span class="node-icon-box">'+icon('sim')+'</span><div class="node-sim-main"><strong>'+e(c.displayName||c.alias||c.carrierName||'SIM '+(i+1))+'</strong>'+
+    '<span class="node-icon-box">'+signalBars(c.signalLevel)+'</span><div class="node-sim-main"><strong>'+e(c.displayName||c.alias||c.carrierName||'SIM '+(i+1))+'</strong>'+
     '<small>'+e(c.phoneNumber||t('号码未设置','Number unknown'))+' · '+e(c.serviceState||c.carrierName||'—')+
     ' · '+t('信号','Signal')+' '+e(c.signalLevel??'—')+'</small></div>'+
     '<button class="ghost mini" type="button" data-action="edit-sim" data-id="'+e(device.id)+'" data-channel="'+e(c.id)+'">'+t('设置号码','Edit number')+'</button></div>').join('');
@@ -64,9 +92,11 @@ export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusT
     '<section class="node-identity"><div class="node-identity-title">'+
     '<span class="status-pill '+(m.online?'online':'')+'">'+e(deviceStatusText(device))+'</span>'+
     '<span>'+e(device.model||device.nodeType||'Android')+' · v'+e(device.appVersion||'—')+'</span></div>'+
-    (!m.online?'<p class="node-stale">'+t('设备不在线：以下为最近一次上报的状态，并非实时值。','Device offline: last reported values, not live data.')+'</p>':'')+'</section>'+
+    (!m.online?'<p class="node-stale">'+t('设备不在线：以下为最近一次上报的状态，并非实时值。','Device offline: last reported values, not live data.')+'</p>':'')+
+    '<p class="node-sample-time '+(m.freshness==='fresh'?'':'node-stale')+'">'+e(freshness)+' · '+telemetryTime+'</p></section>'+
     '<section class="node-metrics" aria-label="'+t('设备关键指标','Device metrics')+'">'+
-    chip('battery',m.pct==null?'—':m.pct+'%')+chip('message',device.smsCount??'—')+chip('sync',number(m.pending))+'</section>'+
+    '<div class="node-health-metric"><div class="node-metric-head">'+batteryLevel(m.pct,s.charging)+'</div><strong>'+e(m.pct==null?'—':m.pct+'%')+'</strong><small>'+t('设备电量','Battery')+'</small></div>'+
+    chip('message',device.smsCount??'—')+chip('sync',number(m.pending))+'</section>'+
     '<div class="node-dashboard-grid">'+
     '<section class="node-panel">'+header('shield',t('SIM 与短信能力','SIM & SMS capability'))+
       '<div class="node-emphasis">'+e(sendMode)+'</div>'+perm(t('短信读取','SMS read'),s.smsReadPermission)+
@@ -83,7 +113,11 @@ export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusT
     '<section class="node-panel">'+header('sim',t('SIM 通道','SIM channels'))+
       (sims||'<p class="node-empty">'+t('尚无通道上报','No channels reported')+'</p>')+'</section>'+
     '<section class="node-panel">'+header('network',t('设备与网络','Device & connectivity'))+
-      '<div class="node-battery-row">'+rings+'<div>'+row(t('网络','Network'),s.network||'—')+
+      '<div class="node-network-visuals">'+
+        networkCard('Wi-Fi',wifiArcs(s.wifiConnected,s.wifiSignalLevel),wifiDetail)+
+        channels.slice(0,8).map((ch,i)=>networkCard(ch.displayName||ch.alias||'SIM '+(i+1),
+          signalBars(ch.signalLevel),ch.signalLevel==null?t('信号未知','Signal unknown'):t('信号','Signal')+' '+ch.signalLevel+'/4')).join('')+
+      '</div><div class="node-battery-row">'+rings+'<div>'+row(t('网络','Network'),s.network||'—')+
       row(t('充电','Charging'),s.charging===true?t('充电中','Charging'):s.charging===false?t('未充电','Not charging'):t('未知','Unknown'))+'</div></div>'+
       row(t('蜂窝数据接管','Cellular data fallback'),s.dataFallbackEnabled===true?(s.dataFallbackStatus||t('已开启','Enabled')):s.dataFallbackEnabled===false?t('未开启','Disabled'):t('未知','Unknown'))+'</section>'+
     '<section class="node-panel">'+header('activity',t('最近活动','Recent activity'),t('真实上报事件','Reported events'))+activity+

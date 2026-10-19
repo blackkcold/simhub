@@ -432,6 +432,9 @@ public final class ApiClient {
         return sample;
     }
     public void heartbeat()throws Exception{request("POST","/api/v1/devices/"+cfg.deviceId()+"/heartbeat",new JSONObject().put("appVersion",BuildConfig.VERSION_NAME).put("appVersionCode",RemoteOta.installedVersionCode(c)).put("osVersion",Build.VERSION.RELEASE).put("telemetry",DeviceTelemetry.capture(c)));}
+    public void purgeLocation()throws Exception{
+        request("POST","/api/v1/devices/"+cfg.deviceId()+"/location/purge",new JSONObject());
+    }
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}
     JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){logRequestFailure(method,e);throw e;}}
     private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){logRequestFailure(method,e);throw e;}}

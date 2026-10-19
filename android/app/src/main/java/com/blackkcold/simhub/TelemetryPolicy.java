@@ -2,13 +2,25 @@ package com.blackkcold.simhub;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
+import java.util.concurrent.atomic.AtomicLong;
 import org.json.JSONObject;
 
 /** Event de-noising: no telemetry timer, new process or extra persistent connection. */
 public final class TelemetryPolicy {
     private static final String PREF="simhub_telemetry_observed_v1";
+    private static final AtomicLong LAST_SAMPLE=new AtomicLong(0);
     private TelemetryPolicy(){}
-    public static synchronized void onObserved(Context context){
+    public static void onObserved(Context context){
+        Context c=context.getApplicationContext();
+        long now=SystemClock.elapsedRealtime(),prev=LAST_SAMPLE.get();
+        String mode=EnergyPolicy.effectiveMode(c);
+        long interval="eco".equals(mode)?60_000L:"realtime".equals(mode)?5_000L:20_000L;
+        if(prev>0&&now-prev<interval)return;
+        if(!LAST_SAMPLE.compareAndSet(prev,now))return;
+        RelayForegroundService.enqueueTelemetry(c);
+    }
+    static synchronized void sampleOnWorker(Context context){
         Context c=context.getApplicationContext();
         if(!new AgentConfig(c).isEnrolled())return;
         JSONObject state=DeviceTelemetry.capture(c);

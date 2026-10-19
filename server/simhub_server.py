@@ -451,7 +451,7 @@ def purge_device_record(con: sqlite3.Connection, device_id: str, ts: int) -> boo
             )
     shared_pool.member_departure(con,device_id)
     peer_signaling.forget_device(con,device_id)
-    for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history"):
+    for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history", "location_purge"):
         con.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
     con.execute("DELETE FROM devices WHERE id=?", (device_id,))
     return True
@@ -2240,6 +2240,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
             row=con.execute("SELECT id FROM devices WHERE id=?",(device_id,)).fetchone()
             if not row:
                 self.send_error_json(404,"device_not_found","Device unavailable");return
+            # Commit a revocation fence atomically with deletion. Late offline uploads cannot restore it.
+            con.execute("INSERT INTO location_purge(device_id,purged_at) VALUES(?,?) ON CONFLICT(device_id) DO UPDATE SET purged_at=MAX(purged_at,excluded.purged_at)",(device_id,now()))
             deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).rowcount
         audit("location.purge",device_id,"ok",self.ip)
         signal_stream()
@@ -2261,6 +2263,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if kind.startswith("sms.") and occurred<=threshold:
                     self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                 if kind=="device.location":
+                    fence=con.execute("SELECT purged_at FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
+                    if fence and occurred<=fence["purged_at"]:
+                        self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
                     latest=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
                     if latest is not None and occurred<=latest:
                         self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
@@ -2311,6 +2316,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
                     continue
                 if row[2]=="device.location":
+                    fence=con.execute("SELECT purged_at FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
+                    if fence and row[3]<=fence["purged_at"]:
+                        results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                        continue
                     recent=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
                     if recent is not None and row[3]<=recent:
                         results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})

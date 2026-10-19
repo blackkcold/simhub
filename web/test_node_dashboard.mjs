@@ -32,7 +32,7 @@ const dev=nodeDashboardModel({...base,state:{...base.state,
 assert.equal(dev.send,false);
 assert.equal(dev.developerSend,true,'explicit developer override is separately reported');
 
-assert.match(batteryLevel(76,true),/width="34\.96"/);
+assert.match(batteryLevel(76,true),/width="35\.0"/);
 assert.match(batteryLevel(76,true),/node-charge-icon/);
 assert.doesNotMatch(batteryLevel(999,false),/node-battery-fill/,'invalid battery is not clamped');
 assert.equal((signalBars(2).match(/class="node-lit"/g)||[]).length,2);

@@ -708,6 +708,10 @@ def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
         if key not in value:
             continue
         v = value[key]
+        if kind=="device.location":
+            if key=="locationEpoch" and isinstance(v,str) and re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",v):
+                out[key]=v
+            continue
         if isinstance(v, (str,int,float,bool)) or v is None:
             out[key] = v
     return out

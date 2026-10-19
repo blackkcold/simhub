@@ -24,7 +24,12 @@ public final class PeerRpc {
                 ||(peer.optInt("protocolVersion",1)<2&&!"NODE".equals(peer.optString("localRole"))))
                 throw new SecurityException("peer_not_authorized");
             String action=request.getString("action");
-            if(!"peer.revoke".equals(action)&&!PeerGrantPolicy.allows(peer,action,true))
+            boolean relayAction=action.startsWith("relay.");
+            // Relay authorization is orthogonal to SMS/management grants.
+            if(relayAction&&(!peer.optBoolean("relayLiteAllowRemote",false)
+                ||!RelayLiteMailbox.get(c).enabled()))
+                throw new SecurityException("relay_lite_not_authorized");
+            if(!relayAction&&!"peer.revoke".equals(action)&&!PeerGrantPolicy.allows(peer,action,true))
                 throw new SecurityException("peer_permission_denied");
             // Only an authenticated transport should invoke dispatch; in a v2
             // pending relationship that proves the responder accepted the QR.
@@ -39,6 +44,22 @@ public final class PeerRpc {
                 case "events.ack" -> {require(grants,"read");store.ackEvents(peerId,request.getJSONArray("sequences"));yield new JSONObject().put("state","acknowledged");}
                 case "sms.send" -> {require(grants,"send");yield send(peerId,id,request);}
                 case "command.status" -> {require(grants,"send");String command=request.getString("commandId");String localId="p2p-"+PeerCrypto.digest(PeerCrypto.utf8(peerId+"|"+command));String status=LocalStore.get(c).commandState(localId);JSONObject receipt=store.receipt(peerId,command,null);yield new JSONObject().put("state",status!=null?status:receipt!=null?receipt.optString("state","unknown"):"unknown");}
+                case "relay.put" -> {
+                    String target=request.getString("target");
+                    JSONObject recipient=store.peer(target);
+                    if(!"ACTIVE".equals(recipient.optString("pairState"))
+                        ||!recipient.optBoolean("relayLiteAllowRemote",false))
+                        throw new SecurityException("relay_lite_target_not_authorized");
+                    yield RelayLiteMailbox.get(c).enqueue(peerId,target,request.getJSONObject("frame"));
+                }
+                case "relay.pull" -> {
+                    yield RelayLiteMailbox.get(c).pull(peerId,request.optInt("limit",2));
+                }
+                case "relay.ack" -> {
+                    boolean removed=RelayLiteMailbox.get(c).ack(peerId,
+                        request.getString("source"),request.getString("messageId"));
+                    yield new JSONObject().put("state","acknowledged").put("removed",removed);
+                }
                 case "peer.revoke" -> {store.revoke(peerId);yield new JSONObject().put("state","revoked");}
                 default -> throw new SecurityException("unsupported_peer_action");
             };

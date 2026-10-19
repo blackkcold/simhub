@@ -18,7 +18,12 @@ public final class PeerNodeServer implements AutoCloseable {
     private void serve(Socket socket){byte[] root=null,session=null;
         try(socket){
             JSONObject hello=DirectPeerTransport.read(socket.getInputStream());String from=hello.getString("from"),to=store.myId();JSONObject peer=store.peer(from);
-            if(!"NODE".equals(peer.optString("localRole"))||!"ACTIVE".equals(peer.optString("pairState"))||"RELAY_ONLY".equals(peer.optString("policy")))throw new SecurityException("peer_not_authorized");
+            boolean v2=peer.optInt("protocolVersion",1)>=2;
+            boolean accepted="ACTIVE".equals(peer.optString("pairState"))
+                ||(v2&&"PENDING".equals(peer.optString("pairState")));
+            if(!accepted||(!v2&&!"NODE".equals(peer.optString("localRole")))
+                ||"RELAY_ONLY".equals(peer.optString("policy")))
+                throw new SecurityException("peer_not_authorized");
             root=store.key(from);JSONObject h=PeerProtocol.open(root,from,to,hello,System.currentTimeMillis()/1000);
             if(!"hello".equals(h.optString("action")))throw new SecurityException("peer_hello_required");
             String helloId=hello.getString("id");KeyPair eph=PeerCrypto.ephemeral();byte[] shared=PeerCrypto.dh(eph.getPrivate(),PeerCrypto.publicKey(h.getString("ephemeral")));

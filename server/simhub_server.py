@@ -2563,7 +2563,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not isinstance(result,dict): result={}
         # Positive allowlist: a compromised node must not smuggle SMS text into
         # command status/audit metadata via arbitrary result keys.
-        safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate","targetVersion"}
+        safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate","targetVersion","uploaded","encrypted","sampledAt","requestId"}
         result={k:(v[:120] if isinstance(v,str) else v) for k,v in result.items()
                 if k in safe_result_keys and isinstance(v,(str,int,float,bool,type(None)))}
         # Terminal ACKs are immutable; duplicate ACKs never replace stored result metadata.

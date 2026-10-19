@@ -52,7 +52,7 @@ public final class DeviceTelemetry {
                 }
                 if(info!=null){
                     int rssi=info.getRssi();
-                    if(rssi>WifiInfo.INVALID_RSSI&&rssi<=0){
+                    if(rssi>=-126&&rssi<=0){
                         out.put("wifiRssiDbm",rssi);
                         out.put("wifiSignalLevel",WifiManager.calculateSignalLevel(rssi,5));
                     }

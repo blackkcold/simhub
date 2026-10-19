@@ -59,38 +59,50 @@ public final class NodeLocationManager {
         return c.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED
             ||c.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED;
     }
+    /** An explicit one-shot may try two providers, with a hard total wait budget. */
+    private static Location providerOnce(Context c,LocationManager manager,
+                                         String provider,long timeoutMs)throws Exception{
+        Location cached=manager.getLastKnownLocation(provider);
+        if(cached!=null && cached.hasAccuracy() && cached.getAccuracy()<=2000f
+                && SystemClock.elapsedRealtimeNanos()-cached.getElapsedRealtimeNanos()
+                    <=300_000_000_000L)return cached;
+        CancellationSignal cancel=new CancellationSignal();
+        CompletableFuture<Location> result=new CompletableFuture<>();
+        LocationListener legacy=new LocationListener(){
+            @Override public void onLocationChanged(Location sample){result.complete(sample);}
+        };
+        try{
+            if(Build.VERSION.SDK_INT>=30)
+                manager.getCurrentLocation(provider,cancel,c.getMainExecutor(),result::complete);
+            else manager.requestSingleUpdate(provider,legacy,Looper.getMainLooper());
+            try{return result.get(timeoutMs,TimeUnit.MILLISECONDS);}
+            catch(java.util.concurrent.TimeoutException expired){return null;}
+        }finally{
+            cancel.cancel();
+            if(Build.VERSION.SDK_INT<30)manager.removeUpdates(legacy);
+        }
+    }
     private static Location current(Context c)throws Exception{
         if(!permissionGranted(c))throw new SecurityException("permission_required");
         LocationManager manager=c.getSystemService(LocationManager.class);
         if(manager==null||!manager.isLocationEnabled())throw new IllegalStateException("location_disabled");
-        String provider=manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-            ?LocationManager.NETWORK_PROVIDER:LocationManager.GPS_PROVIDER;
-        if(!manager.isProviderEnabled(provider))throw new IllegalStateException("location_disabled");
-        Location cached=null;
-        try{cached=manager.getLastKnownLocation(provider);}catch(SecurityException denied){throw denied;}
-        if(cached!=null&&cached.hasAccuracy()&&cached.getAccuracy()<=2000f
-                &&SystemClock.elapsedRealtimeNanos()-cached.getElapsedRealtimeNanos()<=300_000_000_000L)
-            return cached;
-        CancellationSignal cancel=new CancellationSignal();
-        CompletableFuture<Location> result=new CompletableFuture<>();
-        try{
-            LocationListener legacy=new LocationListener(){
-                @Override public void onLocationChanged(Location sample){result.complete(sample);}
-            };
-            if(Build.VERSION.SDK_INT>=30)
-                manager.getCurrentLocation(provider,cancel,c.getMainExecutor(),result::complete);
-            else manager.requestSingleUpdate(provider,legacy,Looper.getMainLooper());
-            Location sample;
-            try{sample=result.get(20,TimeUnit.SECONDS);}
-            finally{if(Build.VERSION.SDK_INT<30)manager.removeUpdates(legacy);}
-            if(sample==null)throw new IllegalStateException("location_unavailable");
-            if(!sample.hasAccuracy())throw new IllegalStateException("location_accuracy_unknown");
-            return sample;
-        }catch(java.util.concurrent.TimeoutException timedOut){
-            throw new IllegalStateException("location_timeout");
-        }finally{cancel.cancel();}
+        boolean network=manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+        boolean gps=manager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        if(!network&&!gps)throw new IllegalStateException("location_disabled");
+        Location sample=null;
+        if(network)sample=providerOnce(c,manager,LocationManager.NETWORK_PROVIDER,12_000L);
+        if((sample==null||!sample.hasAccuracy())&&gps)
+            sample=providerOnce(c,manager,LocationManager.GPS_PROVIDER,18_000L);
+        if(sample==null)throw new IllegalStateException("location_unavailable");
+        if(!sample.hasAccuracy())throw new IllegalStateException("location_accuracy_unknown");
+        return sample;
     }
     public static JSONObject captureAndQueue(Context c)throws Exception{
+        return captureAndQueue(c,false);
+    }
+    public static JSONObject captureAndQueue(Context c,boolean requireForeground)throws Exception{
+        if(requireForeground&&!HubActivity.visibleForLocation)
+            throw new SecurityException("background_restricted");
         if(!enabled(c))throw new SecurityException("location_sharing_disabled");
         AgentConfig config=new AgentConfig(c);
         if(!config.isEnrolled())throw new IllegalStateException("not_enrolled");
@@ -104,6 +116,8 @@ public final class NodeLocationManager {
             prefs(c).edit().putString("registeredEpoch",consentEpoch).commit();
         }
         Location location=current(c);
+        if(requireForeground&&!HubActivity.visibleForLocation)
+            throw new SecurityException("background_restricted");
         if(!enabled(c))throw new SecurityException("location_sharing_disabled");
         if(!Double.isFinite(location.getLatitude())||!Double.isFinite(location.getLongitude())
                 ||Math.abs(location.getLatitude())>90||Math.abs(location.getLongitude())>180)

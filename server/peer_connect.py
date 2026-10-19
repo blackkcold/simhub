@@ -43,6 +43,24 @@ class Rejected(Exception):
         self.status = status
 
 
+def issue_coturn_rest_credential(secret: str, now: int, ttl: int = 300) -> tuple[str, str]:
+    """Wire-compatible coturn REST auth; NOT a password hash.
+
+    Coturn's shared-secret REST credential protocol mandates HMAC-SHA1. This
+    implementation authenticates a newly randomized, short-lived username;
+    SHA-1 is not used for identity hashing, signatures or collision resistance.
+    Future cryptographic upgrades require upgrading the TURN server protocol.
+    """
+    if not isinstance(secret, str) or len(secret) < 32 or len(secret) > 4096:
+        raise ValueError("turn_secret_invalid")
+    if ttl < 60 or ttl > 900:
+        raise ValueError("turn_ttl_invalid")
+    label = f"{int(now) + ttl}:{secrets.token_hex(16)}"
+    password = base64.b64encode(hmac.digest(secret.encode("utf-8"),
+                                label.encode("ascii"), "sha1")).decode("ascii")
+    return label, password
+
+
 class PeerConnect:
     def __init__(self, path, clock=time.time, turn_secret=None, stun_urls=(), turn_urls=()):
         self.path, self.clock = path, clock
@@ -134,10 +152,7 @@ class PeerConnect:
             # hash an identity, password, or other sensitive user data. Use the
             # one-shot HMAC API (not a bare SHA-1 digest); SHA-256 is incompatible
             # with coturn's shared-secret verification in this configuration.
-            ephemeral_turn_label = f'{now + 300}:{secrets.token_hex(16)}'
-            password = base64.b64encode(
-                hmac.digest(self.turn_secret.encode("utf-8"), ephemeral_turn_label.encode("utf-8"), "sha1")
-            ).decode("ascii")
+            ephemeral_turn_label, password = issue_coturn_rest_credential(self.turn_secret, now)
             ice.append({"urls": list(self.turn_urls), "username": ephemeral_turn_label, "credential": password})
         return {"token": token, "expires": now + 3600, "iceServers": ice, "relayBindingState": "ACTIVE"}
 

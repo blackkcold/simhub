@@ -44,6 +44,7 @@ class HubToolsState {
     var language by mutableIntStateOf(0)
     var poolEnabled by mutableStateOf(false)
     var locationEnabled by mutableStateOf(false)
+    var remoteLocationAllowed by mutableStateOf(false)
     var poolApproved by mutableStateOf(false)
     var poolStatus by mutableStateOf("未开启")
     var compatibilityOpen by mutableStateOf(false)
@@ -414,6 +415,21 @@ private fun LocationPrivacyCard(state:HubSnapshot?,tools:HubToolsState,
             }
             Switch(checked=tools.locationEnabled,onCheckedChange=controller::setLocationSharing,
                 enabled=state?.enrolled==true)
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(12.dp)){
+            Column(Modifier.weight(1f)){
+                Text(hubLabel("允许管理中心请求单次定位","Allow remote one-shot positioning"),
+                    fontWeight=FontWeight.Medium)
+                Text(hubLabel("默认关闭 · 仅在本机界面位于前台时执行 · 不授予后台持续定位。",
+                    "Off by default · requires this app in foreground · no background tracking."),
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked=tools.remoteLocationAllowed,
+                onCheckedChange=controller::setRemoteLocationAllowed,
+                enabled=tools.locationEnabled&&state?.enrolled==true)
         }
         Spacer(Modifier.height(10.dp))
         OutlinedButton(onClick=controller::locateOnce,

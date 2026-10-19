@@ -60,21 +60,14 @@ public final class PeerCenterProtocol {
             if (item == null) continue;
             String username = item.optString("username", "");
             String credential = item.optString("credential", "");
-            int separator = username.indexOf(':');
-            if (separator < 10 || separator > 12 || credential.isBlank()
-                    || credential.length() > 128 || !credential.matches("[A-Za-z0-9+/=]{20,128}")) continue;
-            long expires;
-            try { expires = Long.parseLong(username.substring(0, separator)); }
-            catch (NumberFormatException invalid) { continue; }
             long now = System.currentTimeMillis() / 1000;
-            if (expires <= now || expires > now + 900) continue;
+            if (!TurnIceCredentialPolicy.allowsCredentials(username, credential, now)) continue;
             JSONArray supplied = item.optJSONArray("urls");
             if (supplied == null) continue;
             JSONArray allowed = new JSONArray();
             for (int j = 0; j < supplied.length() && j < 4; j++) {
                 String url = supplied.optString(j, "");
-                if (url.length() <= 280 && url.matches(
-                        "turns?:[A-Za-z0-9][A-Za-z0-9.-]{0,251}(?::[0-9]{1,5})?(?:\\?transport=(?:udp|tcp))?"))
+                if (TurnIceCredentialPolicy.allowsUrl(url))
                     allowed.put(url);
             }
             if (allowed.length() > 0)

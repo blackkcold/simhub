@@ -25,7 +25,7 @@ jobs:
         with: {gradle-version: '9.6.0'}
       # Public CI uses the same configuration generator and loader as a private build,
       # with pins derived from the checked-in test certificate. No production value.
-      - run: gradle -p android -Pp2pAndroidSandbox=true -PcenterConfigFake=true :app:testP2pPreviewUnitTest :app:assembleP2pPreview :app:assembleStorePreview --stacktrace
+      - run: gradle -p android -Pp2pAndroidSandbox=true -PcenterConfigFake=true :peer-core:test :app:testP2pPreviewUnitTest :app:assembleP2pPreview :app:assembleStorePreview --stacktrace
       - run: python3 -m pip install -r server/requirements.txt
       - run: python3 scripts/test_p2p_sandbox.py
       - run: python3 scripts/test_p2p_preview_export.py

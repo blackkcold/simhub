@@ -647,6 +647,8 @@ async function ingestEvents(batch,notify=true){
   for(const e of batch){
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return false;
     lastSeq=Math.max(lastSeq,e.seq||0);
+    // The location endpoint is opt-in: general SMS/event refresh never decrypts coordinates.
+    if(e.kind==='device.location')continue;
     const id=e.deviceId+':'+e.eventId;
     if(eventIds.has(id))continue;
     // An SMS uploaded today can carry an older provider timestamp. Keep it visible
@@ -1065,6 +1067,8 @@ function renderDeviceDetail(id) {
   if(!d)return false;
   const content=$('deviceDetailContent');
   const previousScroll=content.scrollTop;
+  const mapFrame=content.querySelector('.node-map-frame');
+  const oldMapSrc=mapFrame?.querySelector('iframe')?.getAttribute('src');
   const expanded=[...content.querySelectorAll('.node-tasks-details')].map(x=>x.open);
   $('deviceDetailTitle').textContent=d.name;
   content.innerHTML=renderNodeDashboard(d,{
@@ -1072,6 +1076,11 @@ function renderDeviceDetail(id) {
     buttons:deviceButtons(d),zh:getLocale()==='zh-CN',
     locationInfo:locationCache.get(d.id)||null,mapVisible:locationMaps.has(d.id)
   });
+  // Preserve a deliberately loaded map across routine status refreshes.
+  // Rebuilding its iframe on each SSE update would repeatedly disclose position.
+  const nextMap=content.querySelector('.node-map-frame');
+  if(mapFrame && nextMap && oldMapSrc===nextMap.querySelector('iframe')?.getAttribute('src'))
+    nextMap.replaceWith(mapFrame);
   content.querySelectorAll('.node-tasks-details').forEach((x,i)=>{x.open=expanded[i]||false;});
   content.scrollTop=previousScroll;
   return true;

@@ -1086,13 +1086,14 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         }
     }
     pendingManageAction?.let{(device,action)->
-        val destructive=action in listOf("purge","revoke","delete")
+        val destructive=action in listOf("purge","revoke","delete","location-purge")
         val sensitive=destructive || action=="network"
         val channels=ControllerNodePolicy.channels(device)
         val title=when(action){
             "rename"->hubLabel("修改设备名称","Rename node")
             "network"->hubLabel("备用移动数据策略","Mobile network fallback")
             "purge"->hubLabel("清理中继短信","Purge relay SMS")
+            "location-purge"->hubLabel("清理中继位置","Purge relay location")
             "revoke"->hubLabel("撤销设备授权","Revoke device")
             else->hubLabel("强制删除设备","Force delete device")
         }
@@ -1128,13 +1129,15 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     Text(when(action){
                         "purge"->hubLabel("删除该设备在中继服务器保存的短信及共享池副本，不能撤销。设备本地原始短信不受此操作影响。",
                             "Deletes relay SMS and shared-pool copies; local node SMS remain.")
+                        "location-purge"->hubLabel("只删除服务器保存的位置密文，不会改变手机本机权限。",
+                            "Delete only Relay location ciphertext; local permission is unchanged.")
                         "revoke"->hubLabel("撤销云端设备授权，设备需要重新配对。","Re-enrollment is required after revoke.")
                         else->hubLabel("强制删除设备与云端记录，需重新配对。","Deletes the node and cloud records; re-enrollment required.")
                     },color=MaterialTheme.colorScheme.error,
                         style=MaterialTheme.typography.bodySmall)
-                    if(action=="purge" || action=="delete")
+                    if(action=="purge" || action=="delete" || action=="location-purge")
                         OutlinedTextField(manageConfirm,{manageConfirm=it},
-                            label={Text(if(action=="purge")"输入 PURGE" else "输入 DELETE")},
+                            label={Text(when(action){"purge"->"输入 PURGE";"location-purge"->"输入 LOCATION";else->"输入 DELETE"})},
                             singleLine=true)
                 }
                 if(sensitive)OutlinedTextField(manageCredential,{manageCredential=it},
@@ -1148,6 +1151,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 enabled=!manageBusy && (action!="rename" || manageValue.trim().isNotEmpty()) &&
                     (!sensitive || manageCredential.isNotBlank()) &&
                     (action!="purge" || manageConfirm=="PURGE") &&
+                    (action!="location-purge" || manageConfirm=="LOCATION") &&
                     (action!="delete" || manageConfirm=="DELETE") &&
                     (action!="network" || manageChannelIndex==-1 ||
                         channels.optJSONObject(manageChannelIndex)!=null),
@@ -1175,12 +1179,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                             "revoke"->api.api(uri+"/manage","POST",JSONObject()
                                                 .put("action","revoke"))
                                             "purge"->api.api(uri+"/sms","DELETE")
+                                             "location-purge"->api.api(uri+"/location","DELETE")
                                             "delete"->api.api(uri,"DELETE")
                                             else->throw IllegalArgumentException("Unsupported device action")
                                         }
                                     }
                                     pendingManageAction=null
-                                    if(destructive){
+                                    if(action=="location-purge"){
+                                        locationSample=null
+                                        loadedLocationDevice=device.optString("id")
+                                        locationState=hubLabel("服务器位置密文已删除","Relay location deleted")
+                                    }else if(destructive){
                                         // A removed or revoked source must disappear from
                                         // the decrypted inbox immediately, not on next restart.
                                         inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList()

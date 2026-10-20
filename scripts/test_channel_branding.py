@@ -27,7 +27,7 @@ class ChannelBrandingTest(unittest.TestCase):
             colors={e.get("name") for e in d}
             self.assertIn("brand_primary",colors)
             self.assertNotIn("danger",colors)
-        gradle=(app.parent/"app/build.gradle.kts").read_text("utf-8")
+        gradle=(app.parent/"build.gradle.kts").read_text("utf-8")
         self.assertIn('applicationIdSuffix = ".dev"',gradle)
         self.assertIn('buildConfigField("String", "RELEASE_CHANNEL", "\\\"dev\\\"")',gradle)
 

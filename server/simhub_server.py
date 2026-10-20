@@ -48,6 +48,20 @@ BIND = os.getenv("SIMHUB_BIND", "0.0.0.0")
 PORT = int(os.getenv("SIMHUB_PORT", "8787"))
 DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
 WEB_ROOT = Path(os.getenv("SIMHUB_WEB_ROOT", str(Path(__file__).resolve().parents[1] / "web")))
+# Only files inventoried inside the immutable Web root may be served. Untrusted
+# request strings are dictionary keys, never components of filesystem paths.
+_WEB_BASE = WEB_ROOT.resolve()
+WEB_STATIC_ASSETS = {
+    item.relative_to(_WEB_BASE).as_posix(): resolved
+    for item in _WEB_BASE.rglob("*")
+    if item.is_file() and (resolved := item.resolve()).is_relative_to(_WEB_BASE)
+}
+WEB_MIME_TYPES = {
+    ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
+    ".mjs": "application/javascript", ".svg": "image/svg+xml",
+    ".webmanifest": "application/manifest+json", ".json": "application/json",
+    ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2"
+}
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 PUBLIC_BASE_URL = os.getenv("SIMHUB_PUBLIC_BASE_URL", "").rstrip("/")
 ADMIN_TOKEN = os.getenv("SIMHUB_ADMIN_TOKEN", "")
@@ -2687,30 +2701,29 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(503,"ota_unavailable","Update metadata temporarily unavailable")
 
     def serve_static(self,path:str) -> None:
-        rel="index.html" if path in ("","/") else path.lstrip("/")
-        rel=rel.split("?",1)[0]; candidate=(WEB_ROOT/rel).resolve()
-        try: candidate.relative_to(WEB_ROOT.resolve())
-        except ValueError:
-            self.send_error(403); return
-        # The static icon URL remains stable; the runtime channel chooses artwork.
-        # This avoids building and maintaining two separate Web applications.
-        if RELEASE_CHANNEL=="dev" and rel=="icon.svg":
-            candidate=(WEB_ROOT/"icon-dev.svg").resolve()
-        if not candidate.is_file():
-            if "." not in Path(rel).name: candidate=WEB_ROOT/"index.html"
-            else: self.send_error(404); return
-        if rel=="manifest.webmanifest":
-            if RELEASE_CHANNEL=="dev":
-                manifest=json.loads(candidate.read_text("utf-8"))
-                manifest.update({"name":"SIM Hub Dev","short_name":"SIM Hub Dev",
-                                 "id":"/simhub-dev","theme_color":"#E87936"})
-                data=json.dumps(manifest,ensure_ascii=False,separators=(",",":")).encode("utf-8")
-            else:
-                data=candidate.read_bytes()
-            ctype="application/manifest+json"
+        rel="index.html" if path in ("","/") else path.lstrip("/").split("?",1)[0]
+        # Reject any traversal/ambiguous path even though the file inventory also
+        # prevents arbitrary access. Never concatenate rel into a filesystem path.
+        if not rel or any(part in ("", ".", "..") for part in rel.split("/")):
+            self.send_error(404); return
+        # The public icon URL stays stable; Dev receives its own inventoried SVG.
+        key = "icon-dev.svg" if RELEASE_CHANNEL=="dev" and rel=="icon.svg" else rel
+        candidate=WEB_STATIC_ASSETS.get(key)
+        if candidate is None:
+            if "." in rel.rsplit("/",1)[-1]:
+                self.send_error(404); return
+            candidate=WEB_STATIC_ASSETS.get("index.html")
+        if candidate is None:
+            self.send_error(404); return
+        if rel=="manifest.webmanifest" and RELEASE_CHANNEL=="dev":
+            manifest=json.loads(candidate.read_text("utf-8"))
+            manifest.update({"name":"SIM Hub Dev","short_name":"SIM Hub Dev",
+                             "id":"/simhub-dev","theme_color":"#E87936"})
+            data=json.dumps(manifest,ensure_ascii=False,separators=(",",":")).encode("utf-8")
         else:
             data=candidate.read_bytes()
-            ctype=mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+        # All Content-Type values come from code-owned constants, never a URI.
+        ctype=WEB_MIME_TYPES.get(candidate.suffix.lower(),"application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type",ctype+("; charset=utf-8" if ctype.startswith("text/") or ctype in {"application/javascript","application/json","application/manifest+json"} else ""))
         self.send_header("Content-Length",str(len(data)))

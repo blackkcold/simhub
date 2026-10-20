@@ -122,10 +122,42 @@ class PeerActivity:ComponentActivity(){
     private suspend fun rpc(p:JSONObject,id:String,request:JSONObject):JSONObject{
         return withContext(Dispatchers.IO){PeerHubGateway.request(applicationContext,p.getString("id"),id,request)}
     }
-    private suspend fun load(older:Boolean){val p=selected?:return;val generation=peerEpoch;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
-        val page=rpc(p,UUID.randomUUID().toString(),req);if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return;if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
+    /** One stable request ID per unresolved async operation, including after app restart. */
+    private fun pendingKey(peerId:String,action:String,tail:String):String =
+        "p2p.pending."+PeerCrypto.digest(PeerCrypto.utf8("$peerId|$action|$tail"))
+    private suspend fun pendingId(key:String):String=withContext(Dispatchers.IO){
+        val secrets=SecretStore(applicationContext)
+        secrets.getString(key) ?: UUID.randomUUID().toString().also{secrets.putString(key,it)}
+    }
+    private suspend fun clearPendingId(key:String)=withContext(Dispatchers.IO){
+        SecretStore(applicationContext).remove(key)
+    }
+    private suspend fun load(older:Boolean){
+        val p=selected?:return
+        val generation=peerEpoch
+        val req=JSONObject().put("action","sms.page").put("limit",100)
+        if(older&&cursor!=null)req.put("cursor",cursor)
+        val key=pendingKey(p.getString("id"),"sms.page",if(older)cursor?.toString()?:"older" else "latest")
+        val page=rpc(p,pendingId(key),req)
+        if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
+        if(page.optString("state")=="queued"){
+            notice="短信读取请求已由 Relay Lite 加密暂存，目标设备在线处理后可自动或手动重试查询结果"
+            return
+        }
+        if(page.optString("state")!="succeeded"){
+            notice="短信读取未完成：${page.optString("reason",page.optString("state"))}"
+            return
+        }
+        clearPendingId(key)
+        if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
         if(!older){
-            val stateResult=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"))
+            val stateKey=pendingKey(p.getString("id"),"device.state","latest")
+            val stateResult=rpc(p,pendingId(stateKey),JSONObject().put("action","device.state"))
+            if(stateResult.optString("state")=="queued"){
+                notice="设备状态已提交 Relay Lite，待远端回应"
+                return
+            }
+            if(stateResult.optString("state")=="succeeded")clearPendingId(stateKey)
             if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
             remoteState=stateResult.optJSONObject("device")
             stateResult.optJSONObject("relayHint")?.let{hint->withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayHint",hint);store().update(fresh)}}

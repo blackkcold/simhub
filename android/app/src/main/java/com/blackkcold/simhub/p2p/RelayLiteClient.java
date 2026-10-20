@@ -86,7 +86,15 @@ public final class RelayLiteClient {
             responseFrame=new JSONObject(stored);
         }else{
             JSONObject result;
-            try{result=new PeerRpc(store).dispatch(from,id,decrypted);}
+            try{
+                // Relay Lite envelopes are capped at 64 KiB, unlike live RPC.
+                // Bound offline SMS history pages before applying provider work.
+                if("sms.page".equals(decrypted.optString("action"))){
+                    decrypted.put("limit",Math.min(10,decrypted.optInt("limit",100)));
+                    decrypted.put("maxBytes",32000);
+                }
+                result=new PeerRpc(store).dispatch(from,id,decrypted);
+            }
             catch(SecurityException rejected){result=new JSONObject().put("state","failed").put("reason","relay_lite_peer_permission_denied");}
             // A response may be larger than one bounded offline frame. Fail closed
             // with a small explicit error rather than misrepresenting delivery.

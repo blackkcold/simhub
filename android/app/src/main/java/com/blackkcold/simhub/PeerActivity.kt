@@ -408,7 +408,11 @@ class PeerActivity:ComponentActivity(){
             HorizontalDivider()
             (selected?.let{listOf(it)}?:emptyList()).filter{it.optString("pairState")!="REVOKED"}.forEach{p->
                 Text("${p.optString("name")} · ${connectionLabel(p)}")
-                Text("P2P 授权：${pairLabel(p)} · 读取${if(p.optString("permissions").split(",").contains("send"))"、发送" else "（只读）"}",style=MaterialTheme.typography.bodySmall)
+                val grantsFrom=if(p.optInt("protocolVersion",1)>=2)p.optString("grantsFromRemote","")
+                    else if(p.optString("localRole")=="CONTROLLER")p.optString("permissions","") else ""
+                val grantsTo=if(p.optInt("protocolVersion",1)>=2)p.optString("grantsToRemote","")
+                    else if(p.optString("localRole")=="NODE")p.optString("permissions","") else ""
+                Text("可管理对方：${if(grantsFrom.contains("read"))"读取" else "未授权"}${if(grantsFrom.contains("send"))"、发送" else ""} · 对方管理本机：${if(grantsTo.contains("read"))"读取" else "未授权"}${if(grantsTo.contains("send"))"、发送" else ""}",style=MaterialTheme.typography.bodySmall)
                 if("ACTIVE"==p.optString("pairState")){
                     Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
                         Switch(checked=p.optBoolean("relayLiteAllowRemote"),onCheckedChange={enabled->
@@ -576,7 +580,7 @@ class PeerActivity:ComponentActivity(){
             else->"未连接 · 等待设备上线"
         }
     }
-    private fun routeLabel(route:String)=when(route){"LAN"->"局域网直连";"DIRECT"->"P2P 直连";"TURN"->"加密 TURN 中继";"MAILBOX"->"加密信箱";"LEGACY_RELAY"->"Relay";else->"上次路径未知"}
+    private fun routeLabel(route:String)=when(route){"LAN"->"局域网直连";"DIRECT"->"P2P 直连";"TURN"->"加密 TURN 中继";"MAILBOX"->"加密信箱";"LEGACY_RELAY"->"Relay";"RELAY_LITE"->"Android Relay Lite";"RELAY_LITE_QUEUED"->"Android Relay Lite（等待目标处理）";else->"上次路径未知"}
 }
 
 @Composable fun PeerEntryCard(){val context=androidx.compose.ui.platform.LocalContext.current;HubCard(Modifier.fillMaxWidth()){

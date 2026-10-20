@@ -16,6 +16,10 @@ import java.util.*;
 /** User-started listener. No boot auto-start or background service launch. */
 public final class PeerService extends Service {
     private PeerNodeServer server;
+    private volatile long relayLiteNextCheckMs;
+    private volatile long relayLiteBackoffMs=60_000L;
+    // Discovery must outlive PeerActivity; peer endpoints change after Wi-Fi handover.
+    private PeerDiscovery discovery;
     private final java.util.concurrent.ScheduledExecutorService relayPump=java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     private NsdManager nsd;
     private ConnectivityManager connectivity;
@@ -43,29 +47,66 @@ public final class PeerService extends Service {
         for(InetAddress address:addresses)if(a.length()<12)a.put(new JSONObject().put("host",address.getHostAddress()).put("port",service.server.port()));
         return a;
     }
+    /** Called on initial startup and again after an Android 17 LAN permission grant. */
+    private synchronized void startLocalIfPermitted() throws Exception {
+        if(server!=null)return;
+        boolean allowed=Build.VERSION.SDK_INT<37
+            ||checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")==PackageManager.PERMISSION_GRANTED;
+        if(!allowed){failure="local_network_permission_required";return;}
+        server=new PeerNodeServer(PeerStore.get(this));
+        new Thread(server::run,"simhub-peer-listener").start();
+        nsd=getSystemService(NsdManager.class);
+        NsdServiceInfo info=new NsdServiceInfo();
+        info.setServiceName("simhub_"+PeerStore.get(this).myId().substring(0,16));
+        info.setServiceType("_simhub-peer._tcp.");
+        info.setPort(server.port());
+        registration=new NsdManager.RegistrationListener(){
+            public void onRegistrationFailed(NsdServiceInfo i,int code){}
+            public void onUnregistrationFailed(NsdServiceInfo i,int code){}
+            public void onServiceRegistered(NsdServiceInfo i){}
+            public void onServiceUnregistered(NsdServiceInfo i){}
+        };
+        nsd.registerService(info,NsdManager.PROTOCOL_DNS_SD,registration);
+        try{discovery=new PeerDiscovery(this);discovery.start();}
+        catch(Exception discoveryError){failure="peer_discovery_unavailable";}
+        if("local_network_permission_required".equals(failure))failure="";
+    }
+    private synchronized void pollRelayLite(boolean networkChanged){
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(networkChanged){relayLiteBackoffMs=60_000L;relayLiteNextCheckMs=0;}
+        if(now<relayLiteNextCheckMs)return;
+        relayLiteNextCheckMs=now+relayLiteBackoffMs;
+        com.blackkcold.simhub.AgentExecutors.io().execute(()->{
+            int count=RelayLiteClient.pollAll(PeerService.this);
+            synchronized(PeerService.this){
+                relayLiteBackoffMs=count>0?60_000L:Math.min(300_000L,relayLiteBackoffMs*2);
+                relayLiteNextCheckMs=android.os.SystemClock.elapsedRealtime()+relayLiteBackoffMs;
+            }
+        });
+    }
     public void onCreate(){super.onCreate();
         NotificationManager nm=getSystemService(NotificationManager.class);nm.createNotificationChannel(new NotificationChannel("simhub-p2p","P2P device access",NotificationManager.IMPORTANCE_LOW));
         Intent open=new Intent(this,com.blackkcold.simhub.PeerActivity.class);PendingIntent pi=PendingIntent.getActivity(this,741,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         startForeground(741,new NotificationCompat.Builder(this,"simhub-p2p").setSmallIcon(R.drawable.ic_simhub).setContentTitle("SIM Hub · P2P").setContentText("用户已开启设备直连 · 仅接受已配对设备").setContentIntent(pi).setOngoing(true).build());
         try{
             running=this;failure="";
-            boolean localAllowed=Build.VERSION.SDK_INT<37||checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")==PackageManager.PERMISSION_GRANTED;
-            if(!localAllowed)failure="local_network_permission_required";
-            if(localAllowed){
-            server=new PeerNodeServer(PeerStore.get(this));
-            new Thread(server::run,"simhub-peer-listener").start();
-            nsd=getSystemService(NsdManager.class);NsdServiceInfo info=new NsdServiceInfo();info.setServiceName("simhub_"+PeerStore.get(this).myId().substring(0,16));info.setServiceType("_simhub-peer._tcp.");info.setPort(server.port());
-            registration=new NsdManager.RegistrationListener(){public void onRegistrationFailed(NsdServiceInfo i,int e){}public void onUnregistrationFailed(NsdServiceInfo i,int e){}public void onServiceRegistered(NsdServiceInfo i){}public void onServiceUnregistered(NsdServiceInfo i){}};
-            nsd.registerService(info,NsdManager.PROTOCOL_DNS_SD,registration);
-            }
+            startLocalIfPermitted();
             connectivity=getSystemService(ConnectivityManager.class);
-            networkCallback=new ConnectivityManager.NetworkCallback(){public void onAvailable(Network n){PeerCenterConnector.networkChangedAll();}public void onLost(Network n){PeerCenterConnector.networkChangedAll();}};
+            networkCallback=new ConnectivityManager.NetworkCallback(){
+                public void onAvailable(Network n){
+                    PeerCenterConnector.networkChangedAll();
+                    pollRelayLite(true);
+                }
+                public void onLost(Network n){PeerCenterConnector.networkChangedAll();}
+            };
             connectivity.registerDefaultNetworkCallback(networkCallback);
             refresh();
             relayPump.scheduleWithFixedDelay(()->{try{
                 if(new com.blackkcold.simhub.AgentConfig(this).isEnrolled()&&!com.blackkcold.simhub.RelayForegroundService.isRunning()){
                     com.blackkcold.simhub.ApiClient api=new com.blackkcold.simhub.ApiClient(this);api.fetchCommands();api.flushCommandAcks();
                 }
+                // Inbox sync is opt-in: empty installations do not make outbound calls.
+                pollRelayLite(false);
             }catch(Exception ignored){}},1,5,java.util.concurrent.TimeUnit.SECONDS);
         }catch(Exception e){failure=e instanceof SecurityException?"local_network_permission_required":"listener_start_failed";stopSelf();}
     }
@@ -79,7 +120,14 @@ public final class PeerService extends Service {
         }catch(Exception ignored){}
         try{if(new com.blackkcold.simhub.AgentConfig(this).isEnrolled())new com.blackkcold.simhub.ApiClient(this).putState();}catch(Exception ignored){}
     });}
-    public int onStartCommand(Intent i,int flags,int id){refresh();return START_NOT_STICKY;}
-    public void onDestroy(){running=null;relayPump.shutdownNow();PeerCenterConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    public int onStartCommand(Intent i,int flags,int id){
+        // A permission request may have completed while this service was running
+        // with a WebRTC-only path; do not require force-stopping the application.
+        try{startLocalIfPermitted();}
+        catch(Exception error){failure="listener_start_failed";}
+        refresh();
+        return START_NOT_STICKY;
+    }
+    public void onDestroy(){running=null;relayPump.shutdownNow();PeerCenterConnector.closeAll();if(connectivity!=null&&networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}if(discovery!=null)discovery.close();if(server!=null)server.close();if(nsd!=null&&registration!=null)try{nsd.unregisterService(registration);}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
     public IBinder onBind(Intent i){return null;}
 }

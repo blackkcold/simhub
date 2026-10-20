@@ -44,6 +44,9 @@ class PeerActivity:ComponentActivity(){
     private var tab by mutableIntStateOf(0)
     private var pairingRole by mutableIntStateOf(-1) // -1 = closed; 0 = SIM node; 1 = controller
     private var allowSend by mutableStateOf(false)
+    // Independent opt-in on scanning side; never infer reciprocal SMS access.
+    private var reverseRead by mutableStateOf(false)
+    private var reverseSend by mutableStateOf(false)
     private var selected by mutableStateOf<JSONObject?>(null)
     private var remoteState by mutableStateOf<JSONObject?>(null)
     private var peerEpoch=0L
@@ -61,16 +64,21 @@ class PeerActivity:ComponentActivity(){
     private var sendRequest:JSONObject?=null
     private var sendId:String?=null
     private var channelIndex by mutableIntStateOf(0)
-    private var discovery:PeerDiscovery?=null
-    private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){reload()}
+    private var relayLiteEnabled by mutableStateOf(false)
+    private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
+        if(Build.VERSION.SDK_INT>=37
+            &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")==PackageManager.PERMISSION_GRANTED
+            &&PeerService.enabled()&&!PeerService.localListening())PeerService.start(this)
+        reload()
+    }
     private val role=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){reload()}
     private fun store()=PeerStore.get(this)
     override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);UiLocale.apply(this);reload()
         setContent{HubTheme(if(pairingRole==0||selected?.optString("localRole")=="NODE")"node" else "controller"){Surface(Modifier.fillMaxSize()){Screen()}}}
+        // PeerService owns NSD for the entire user-authorized listener lifetime.
+        // Multiple activity-owned discovery sessions can contend on Android NSD.
         lifecycleScope.launch{repeatOnLifecycle(Lifecycle.State.STARTED){
-            discovery=PeerDiscovery(this@PeerActivity)
-            try{discovery?.start()}catch(_:Exception){notice="局域网发现不可用；请检查本地网络权限"}
-            try{while(isActive){delay(12000);reload();if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)}}finally{discovery?.close();discovery=null}
+            while(isActive){delay(12000);reload();if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)}
         }}
     }
     override fun onStop(){super.onStop();peerEpoch++;selectionRefresh?.cancel();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}
@@ -79,6 +87,7 @@ class PeerActivity:ComponentActivity(){
         peers=(0 until stored.length()).map{stored.getJSONObject(it)}
         // Remote WebRTC may run even when Android 17 denies LAN listener access.
         listening=PeerService.enabled()
+        relayLiteEnabled=RelayLiteMailbox.get(applicationContext).enabled()
         val secrets=SecretStore(applicationContext)
         recentSendIds=peers.mapNotNull{p->
             val id=p.optString("id")
@@ -93,18 +102,62 @@ class PeerActivity:ComponentActivity(){
                     else->"设备暂时不可达。请检查两端网络与前台服务；无 Relay 授权时不会隐藏转发短信。"
                 }}}finally{busy=false;reload()}}}
     private fun requestAccess(){if(!SmsAccessPolicy.rolePermitsAccess(this)){getSystemService(RoleManager::class.java)?.let{role.launch(it.createRequestRoleIntent(RoleManager.ROLE_SMS))};return};val list=mutableListOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS,Manifest.permission.READ_PHONE_STATE);if(Build.VERSION.SDK_INT>=33)list.add(Manifest.permission.POST_NOTIFICATIONS);if(Build.VERSION.SDK_INT>=37)list.add("android.permission.ACCESS_LOCAL_NETWORK");if(SmsSendPolicy.canSend(this)||getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS)==true)list.add(Manifest.permission.SEND_SMS);permissions.launch(list.toTypedArray())}
+    private fun requestLanAccess(){
+        if(Build.VERSION.SDK_INT>=37
+            &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")!=PackageManager.PERMISSION_GRANTED)
+            permissions.launch(arrayOf("android.permission.ACCESS_LOCAL_NETWORK"))
+        else startNode()
+    }
     private fun startNode(){PeerService.start(this);lifecycleScope.launch{delay(800);reload();notice=PeerService.error()}}
     private fun scan(){IntentIntegrator(this).setDesiredBarcodeFormats(IntentIntegrator.QR_CODE).setPrompt("扫描另一台手机的 P2P 二维码").setBeepEnabled(false).setOrientationLocked(false).initiateScan()}
     @Deprecated("ZXing compatibility") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);val result:IntentResult?=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);val contents=result?.contents?:return
-        work{val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL);"response"->{manager.accept(contents);""};"signal-binding"->{manager.acceptSignalingBindingQr(contents);"SIGNALING_BOUND"};else->throw SecurityException("peer_qr_kind_rejected")}};qr=if(resultQr=="SIGNALING_BOUND")"" else resultQr;PeerService.start(this@PeerActivity);notice=when(resultQr){""->"双向扫码已完成。本地网络可尝试直接连接；跨网络使用需要另外完成可信中心信令授权。";"SIGNALING_BOUND"->"已验证节点签名及信令绑定，开始尝试建立 WebRTC 数据直连。";else->"请让 SIM 节点扫描此响应二维码。跨网络连接还需要可信中心信令授权。"}}
+        work{
+            // A reciprocal pairing response must advertise a live LAN listener.
+            if(PeerPairingManager.kind(contents)=="offer"){
+                PeerService.start(this@PeerActivity)
+                delay(550)
+            }
+            val resultQr=withContext(Dispatchers.IO){val manager=PeerPairingManager(applicationContext);when(PeerPairingManager.kind(contents)){"offer"->manager.respond(contents,Build.MODEL,reverseRead,reverseSend);"response"->{manager.accept(contents);""};"signal-binding"->{manager.acceptSignalingBindingQr(contents);"SIGNALING_BOUND"};else->throw SecurityException("peer_qr_kind_rejected")}};qr=if(resultQr=="SIGNALING_BOUND")"" else resultQr;PeerService.start(this@PeerActivity);notice=when(resultQr){""->"双向扫码已完成。本地网络可尝试直接连接；跨网络使用需要另外完成可信中心信令授权。";"SIGNALING_BOUND"->"已验证节点签名及信令绑定，开始尝试建立 WebRTC 数据直连。";else->"请让 SIM 节点扫描此响应二维码。跨网络连接还需要可信中心信令授权。"}}
     }
     private suspend fun rpc(p:JSONObject,id:String,request:JSONObject):JSONObject{
         return withContext(Dispatchers.IO){PeerHubGateway.request(applicationContext,p.getString("id"),id,request)}
     }
-    private suspend fun load(older:Boolean){val p=selected?:return;val generation=peerEpoch;val req=JSONObject().put("action","sms.page").put("limit",100);if(older&&cursor!=null)req.put("cursor",cursor)
-        val page=rpc(p,UUID.randomUUID().toString(),req);if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return;if(page.optString("state")!="succeeded"){notice="短信读取未完成：${page.optString("reason")}";return};if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
+    /** One stable request ID per unresolved async operation, including after app restart. */
+    private fun pendingKey(peerId:String,action:String,tail:String):String =
+        "p2p.pending."+PeerCrypto.digest(PeerCrypto.utf8("$peerId|$action|$tail"))
+    private suspend fun pendingId(key:String):String=withContext(Dispatchers.IO){
+        val secrets=SecretStore(applicationContext)
+        secrets.getString(key) ?: UUID.randomUUID().toString().also{secrets.putString(key,it)}
+    }
+    private suspend fun clearPendingId(key:String)=withContext(Dispatchers.IO){
+        SecretStore(applicationContext).remove(key)
+    }
+    private suspend fun load(older:Boolean){
+        val p=selected?:return
+        val generation=peerEpoch
+        val req=JSONObject().put("action","sms.page").put("limit",100)
+        if(older&&cursor!=null)req.put("cursor",cursor)
+        val key=pendingKey(p.getString("id"),"sms.page",if(older)cursor?.toString()?:"older" else "latest")
+        val page=rpc(p,pendingId(key),req)
+        if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
+        if(page.optString("state")=="queued"){
+            notice="短信读取请求已由 Relay Lite 加密暂存，目标设备在线处理后可自动或手动重试查询结果"
+            return
+        }
+        if(page.optString("state")!="succeeded"){
+            notice="短信读取未完成：${page.optString("reason",page.optString("state"))}"
+            return
+        }
+        clearPendingId(key)
+        if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
         if(!older){
-            val stateResult=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","device.state"))
+            val stateKey=pendingKey(p.getString("id"),"device.state","latest")
+            val stateResult=rpc(p,pendingId(stateKey),JSONObject().put("action","device.state"))
+            if(stateResult.optString("state")=="queued"){
+                notice="设备状态已提交 Relay Lite，待远端回应"
+                return
+            }
+            if(stateResult.optString("state")=="succeeded")clearPendingId(stateKey)
             if(generation!=peerEpoch||selected?.optString("id")!=p.optString("id")||!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))return
             remoteState=stateResult.optJSONObject("device")
             stateResult.optJSONObject("relayHint")?.let{hint->withContext(Dispatchers.IO){val fresh=store().peer(p.getString("id"));fresh.put("relayHint",hint);store().update(fresh)}}
@@ -187,7 +240,7 @@ class PeerActivity:ComponentActivity(){
                 1->{val p=selected;if(p==null){Text("请先双机扫码，然后选择管理设备",Modifier.padding(24.dp))}else{
                     Text("${p.optString("name")} · ${connectionLabel(p)} · 端到端加密",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium)
                     if(!inbox.unlocked)Button(onClick={work{load(false)}},Modifier.padding(16.dp)){Text("连接并读取短信")}
-                    else NativeControllerInbox(inbox,onRefresh={work{load(false)}},onOlder={work{load(true)}},onNewer={work{load(false)}},onOpenLogin={tab=0},onWrite={beginWrite()},onReply={beginWrite(it)},canCompose=p.optString("permissions").contains("send")&&remoteState?.optBoolean("smsSendAllowed")==true)
+                    else NativeControllerInbox(inbox,onRefresh={work{load(false)}},onOlder={work{load(true)}},onNewer={work{load(false)}},onOpenLogin={tab=0},onWrite={beginWrite()},onReply={beginWrite(it)},canCompose=PeerGrantPolicy.allows(p,"sms.send",false)&&remoteState?.optBoolean("smsSendAllowed")==true)
                 }}
                 else->ConnectionScreen()
             }
@@ -242,12 +295,28 @@ class PeerActivity:ComponentActivity(){
                 Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Switch(listening,{if(it)startNode() else{PeerService.stop(this@PeerActivity);listening=false}});Text("允许已配对设备连接")}
                 Text("持续监听会显示前台通知；关闭后此 SIM 节点无法通过 P2P 接收请求。",style=MaterialTheme.typography.bodySmall)
                 if(PeerService.enabled()&&!PeerService.localListening())Text("设备直连服务已启动，但局域网监听不可用；可继续完成配对并尝试已授权的公网 WebRTC。局域网使用需检查本地网络权限。",style=MaterialTheme.typography.bodySmall)
+                if(Build.VERSION.SDK_INT>=37
+                    &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")!=PackageManager.PERMISSION_GRANTED){
+                    Text("当前未授予局域网设备访问权限；此权限与短信角色独立。",style=MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick={requestLanAccess()}){Text("授权局域网连接")}
+                }
                 OutlinedButton(onClick={requestAccess()}){Text("检查短信读取权限")}
                 Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Checkbox(allowSend,{allowSend=it});Text("允许本次配对发送短信（默认关闭）")}
                 Button(onClick={work{if(!PeerService.enabled())throw IllegalStateException("start_peer_service_first");qr=withContext(Dispatchers.IO){PeerPairingManager(applicationContext).offer(Build.MODEL,allowSend,PeerService.endpoints())};notice="步骤 2 / 3 · 请使用管理手机扫描二维码，然后使用本机扫描其响应二维码"}},enabled=listening){Text("生成配对二维码")}
                 if(!SmsSendPolicy.canSend(this@PeerActivity))Text("发送短信需要本机系统短信角色及相应权限；仅授权读取时无需切换默认短信应用。",style=MaterialTheme.typography.bodySmall)
             }else if(pairingRole==1){
                 Text("步骤 2 / 3 · 扫描节点二维码，再让节点扫描本机响应二维码",style=MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                    Checkbox(checked=reverseRead,onCheckedChange={reverseRead=it;if(!it)reverseSend=false})
+                    Text("同时允许对方读取本机短信和状态",style=MaterialTheme.typography.bodySmall)
+                }
+                if(reverseRead)Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                    Checkbox(checked=reverseSend,onCheckedChange={reverseSend=it})
+                    Text("也允许对方通过本机 SIM 发送短信",style=MaterialTheme.typography.bodySmall)
+                }
+                if(Build.VERSION.SDK_INT>=37
+                    &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")!=PackageManager.PERMISSION_GRANTED)
+                    OutlinedButton(onClick={requestLanAccess()}){Text("授权本机局域网连接")}
                 Button(onClick={scan()}){Text("扫描节点二维码")}
                 Text("双向扫码确认身份。跨网络连接需要两端可信中心配置及单独授权；如果本地网络无法互通，可在连接详情中扫码导入节点签名的中心绑定。",style=MaterialTheme.typography.bodySmall)
             }
@@ -258,7 +327,7 @@ class PeerActivity:ComponentActivity(){
         }}
         items(peers,key={it.optString("id")}){p->HubCard(Modifier.fillMaxWidth()){
             Text(p.optString("name"),style=MaterialTheme.typography.titleMedium)
-            Text("${if(p.optString("localRole")=="NODE")"已授权管理终端" else "SIM 节点"} · ${pairLabel(p)}",style=MaterialTheme.typography.bodySmall)
+            Text("${if(p.optInt("protocolVersion",1)>=2)"对等设备" else if(p.optString("localRole")=="NODE")"已授权管理终端" else "SIM 节点"} · ${pairLabel(p)}",style=MaterialTheme.typography.bodySmall)
             Text(connectionLabel(p),color=if(PeerCenterConnector.dataChannelOnline(p.optString("id")))MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             Text(if(p.optBoolean("relayConfigured"))"授权：P2P + Relay · Relay 优先" else "授权：仅 P2P · 未配置备用路径",style=MaterialTheme.typography.bodySmall)
             if(p.optString("pairState")=="PENDING")Text("等待节点扫描响应二维码；完成双向确认后才能读取短信。",style=MaterialTheme.typography.bodySmall)
@@ -267,13 +336,13 @@ class PeerActivity:ComponentActivity(){
                 Text("Android ${state.optString("androidVersion")} · ${state.optString("appVersion")} · ${if(state.optBoolean("smsSendAllowed"))"系统允许发送" else "当前仅允许读取"}")
             }
             // Full identity fingerprints and ICE diagnostics are available only in device details.
-            if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
+            if(PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={work{
                 val rows=withContext(Dispatchers.IO){store().outbound(p.getString("id"))}
                 pendingCommands=(0 until rows.length()).map{rows.getJSONObject(it)}
                 pendingTarget=p
                 if(pendingCommands.isEmpty())notice="没有待确认的短信命令"
             }}){Text("查看待确认命令")}
-            if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
+            if(PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED"){
                 recentSendIds[p.optString("id")]?.let{commandId->
                     OutlinedButton(onClick={work{
                         val result=rpc(p,UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",commandId))
@@ -290,11 +359,11 @@ class PeerActivity:ComponentActivity(){
                 }
             }
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                if(p.optString("localRole")=="CONTROLLER"&&p.optString("pairState")!="REVOKED"){
+                if(PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED"){
                     Button(onClick={select(p)}){Text(if(p.optString("pairState")=="PENDING")"验证连接" else "管理短信")}
                     OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接详情")}
                 }
-                if(p.optString("localRole")=="NODE"&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接 / 授权")}
+                if(!PeerGrantPolicy.allows(p,"sms.page",false)&&p.optString("pairState")!="REVOKED")OutlinedButton(onClick={selected=p;remoteState=null;tab=2}){Text("连接 / 授权")}
                 if(p.optString("pairState")!="REVOKED")TextButton(onClick={revokeTarget=p}){Text(if(p.optString("pairState")=="PENDING")"取消配对" else "撤销授权")}
             }
         }}
@@ -314,9 +383,84 @@ class PeerActivity:ComponentActivity(){
             Text("同一局域网优先本地直连。跨网络可选择已注册的可信中心仅传递端到端加密的建连信令，需要双方已有对应中心账户或设备配置，以及单独授权。")
             Text("本功能不提供公共信令服务器。未配置 Relay 时不启用 TURN、信箱或业务中继，受限 NAT 下可能无法连接。中心可以看到关联及网络元数据，但不能解密信令或短信。")
             Text("Relay 独立配置；同时配置时优先 Relay，失败后尝试已授权 P2P。")
+            HorizontalDivider()
+            Text("Android Relay Lite · 密文中继",style=MaterialTheme.typography.titleMedium)
+            Text("仅为明确授权的已配对设备提供密文存储转发。此手机不因此获得公网地址；若希望跨运营商连接，仍需双方实际可达的加密传输路径。",style=MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                Switch(checked=relayLiteEnabled,onCheckedChange={enabled->
+                    work{
+                        withContext(Dispatchers.IO){RelayLiteMailbox.get(applicationContext).setEnabled(enabled)}
+                        relayLiteEnabled=enabled
+                        if(enabled)PeerService.start(this@PeerActivity)
+                        notice=if(enabled)"已允许此设备提供 Relay Lite；仍须逐个允许对端转发。" else "Relay Lite 已关闭；本地待发队列保留至过期。"
+                    }
+                })
+                Text("本机提供 Relay Lite",style=MaterialTheme.typography.bodySmall)
+            }
+            OutlinedButton(onClick={work{
+                val stats=withContext(Dispatchers.IO){RelayLiteMailbox.get(applicationContext).stats()}
+                notice="Relay Lite：待处理 ${stats.optInt("queued")} 条，密文 ${stats.optLong("bytes")} 字节"
+            }}){Text("查看密文队列状态")}
+            OutlinedButton(onClick={work{
+                val count=withContext(Dispatchers.IO){RelayLiteClient.pollAll(applicationContext)}
+                notice="Relay Lite 已检查已授权信箱；本次确认处理 $count 条"
+            }}){Text("立即检查 Relay Lite 信箱")}
+            HorizontalDivider()
             (selected?.let{listOf(it)}?:emptyList()).filter{it.optString("pairState")!="REVOKED"}.forEach{p->
                 Text("${p.optString("name")} · ${connectionLabel(p)}")
-                Text("P2P 授权：${pairLabel(p)} · 读取${if(p.optString("permissions").split(",").contains("send"))"、发送" else "（只读）"}",style=MaterialTheme.typography.bodySmall)
+                val grantsFrom=if(p.optInt("protocolVersion",1)>=2)p.optString("grantsFromRemote","")
+                    else if(p.optString("localRole")=="CONTROLLER")p.optString("permissions","") else ""
+                val grantsTo=if(p.optInt("protocolVersion",1)>=2)p.optString("grantsToRemote","")
+                    else if(p.optString("localRole")=="NODE")p.optString("permissions","") else ""
+                Text("可管理对方：${if(grantsFrom.contains("read"))"读取" else "未授权"}${if(grantsFrom.contains("send"))"、发送" else ""} · 对方管理本机：${if(grantsTo.contains("read"))"读取" else "未授权"}${if(grantsTo.contains("send"))"、发送" else ""}",style=MaterialTheme.typography.bodySmall)
+                if("ACTIVE"==p.optString("pairState")){
+                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                        Switch(checked=p.optBoolean("relayLiteAllowRemote"),onCheckedChange={enabled->
+                            work{withContext(Dispatchers.IO){
+                                val fresh=store().peer(p.getString("id"))
+                                fresh.put("relayLiteAllowRemote",enabled)
+                                store().update(fresh)
+                            };notice=if(enabled)"已授权该设备使用本机 Relay Lite（不授予短信内容权限）" else "已撤销该设备的本机中继授权"}
+                        })
+                        Text("允许此设备使用本机 Relay Lite",style=MaterialTheme.typography.bodySmall)
+                    }
+                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                        Switch(checked=p.optBoolean("relayLiteInbox"),onCheckedChange={enabled->
+                            work{withContext(Dispatchers.IO){
+                                val fresh=store().peer(p.getString("id"))
+                                fresh.put("relayLiteInbox",enabled)
+                                store().update(fresh)
+                            };if(enabled)PeerService.start(this@PeerActivity)
+                            notice=if(enabled)"将定期从该设备拉取发给本机的密文" else "已停止从该设备轮询 Relay Lite"}
+                        })
+                        Text("从该设备接收 Relay Lite 密文",style=MaterialTheme.typography.bodySmall)
+                    }
+                    Text("通过其他已配对设备转发到本设备的消息：",style=MaterialTheme.typography.bodySmall)
+                    val current=p.optString("relayLiteVia","")
+                    Text(if(p.optBoolean("relayLiteConfigured"))"当前选用中继：${peers.find{it.optString("id")==current}?.optString("name")?:"不可用"}" else "未配置中继（默认直连）",style=MaterialTheme.typography.bodySmall)
+                    if(p.optBoolean("relayLiteConfigured"))TextButton(onClick={work{
+                        withContext(Dispatchers.IO){
+                            val fresh=store().peer(p.getString("id"))
+                            fresh.put("relayLiteConfigured",false).remove("relayLiteVia")
+                            store().update(fresh)
+                        }
+                        notice="已关闭此设备的 Relay Lite 兜底"
+                    }}){Text("关闭此设备 Relay Lite 兜底")}
+                    peers.filter{other->other.optString("id")!=p.optString("id")
+                        &&other.optString("pairState")=="ACTIVE"}.forEach{candidate->
+                        OutlinedButton(onClick={work{
+                            withContext(Dispatchers.IO){
+                                val live=store().peer(candidate.getString("id"))
+                                if(!"ACTIVE".equals(live.optString("pairState")))throw SecurityException("relay_lite_peer_not_active")
+                                val target=store().peer(p.getString("id"))
+                                target.put("relayLiteConfigured",true)
+                                    .put("relayLiteVia",candidate.getString("id"))
+                                store().update(target)
+                            }
+                            notice="已为此设备选择中继 ${candidate.optString("name")}；需对端及中继均确认转发授权，并验证可达性"
+                        }}){Text("选用 ${candidate.optString("name")} 作为 Relay Lite")}
+                    }
+                }
                 Text("连接阶段：${discoveryLabel(p.optString("discoveryState","WAITING"))} · 上次成功路径：${routeLabel(p.optString("activeTransport"))}",style=MaterialTheme.typography.bodySmall)
                 Text(diagnosticLabel(p),color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
                 if(p.optLong("lastSyncAt",0)>0)Text("最后通信：${java.text.SimpleDateFormat("MM-dd HH:mm",java.util.Locale.getDefault()).format(java.util.Date(p.optLong("lastSyncAt")*1000))}",style=MaterialTheme.typography.labelSmall)
@@ -436,7 +580,7 @@ class PeerActivity:ComponentActivity(){
             else->"未连接 · 等待设备上线"
         }
     }
-    private fun routeLabel(route:String)=when(route){"LAN"->"局域网直连";"DIRECT"->"P2P 直连";"TURN"->"加密 TURN 中继";"MAILBOX"->"加密信箱";"LEGACY_RELAY"->"Relay";else->"上次路径未知"}
+    private fun routeLabel(route:String)=when(route){"LAN"->"局域网直连";"DIRECT"->"P2P 直连";"TURN"->"加密 TURN 中继";"MAILBOX"->"加密信箱";"LEGACY_RELAY"->"Relay";"RELAY_LITE"->"Android Relay Lite";"RELAY_LITE_QUEUED"->"Android Relay Lite（等待目标处理）";else->"上次路径未知"}
 }
 
 @Composable fun PeerEntryCard(){val context=androidx.compose.ui.platform.LocalContext.current;HubCard(Modifier.fillMaxWidth()){

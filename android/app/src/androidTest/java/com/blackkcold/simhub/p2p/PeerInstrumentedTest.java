@@ -29,11 +29,13 @@ public final class PeerInstrumentedTest {
         PeerPairingManager manager=new PeerPairingManager(c);String offerQr=manager.offer("Sandbox Node","testSmsReceiptSurvivesRouteSwitchAndExpiry".equals(testName.getMethodName()),new JSONArray());
         JSONObject qr=new JSONObject(new String(PeerCrypto.unb64(offerQr.substring(12)),java.nio.charset.StandardCharsets.UTF_8));String offerBody=qr.getString("body");
         JSONObject offer=new JSONObject(new String(PeerCrypto.unb64(offerBody),java.nio.charset.StandardCharsets.UTF_8));PeerCrypto.verify(offer.getString("publicKey"),offerBody,qr.getString("signature"));
-        JSONObject response=new JSONObject().put("v",1).put("kind","response").put("offer",offerBody).put("offerHash",PeerCrypto.digest(PeerCrypto.utf8(offerBody))).put("publicKey",pub).put("ephemeral",epub).put("name","Sandbox Controller");
+        JSONObject response=new JSONObject().put("v",offer.getInt("v")).put("kind","response").put("reversePermissions","").put("endpoints",new JSONArray()).put("offer",offerBody).put("offerHash",PeerCrypto.digest(PeerCrypto.utf8(offerBody))).put("publicKey",pub).put("ephemeral",epub).put("name","Sandbox Controller");
         String reply=PeerCrypto.b64(PeerCrypto.utf8(response.toString()));String replyQr="simhub-peer:"+PeerCrypto.b64(PeerCrypto.utf8(new JSONObject().put("body",reply).put("signature",PeerCrypto.sign(identity.getPrivate(),reply)).toString()));
-        String transcript=PeerCrypto.pairTranscript(offer.getString("sid"),offer.getLong("expires"),offer.getString("publicKey"),offer.getString("ephemeral"),pub,epub,offer.getString("permissions"));
+        String transcript=PeerCrypto.pairTranscript(offer.getString("sid"),offer.getLong("expires"),offer.getString("publicKey"),offer.getString("ephemeral"),pub,epub,offer.getString("permissions")+(offer.optInt("v")==2?"|":""));
         root=PeerCrypto.derive(PeerCrypto.dh(ephemeral.getPrivate(),PeerCrypto.publicKey(offer.getString("ephemeral"))),PeerCrypto.utf8(PeerCrypto.digest(PeerCrypto.utf8(transcript))),"content-root");
         assertEquals(controllerId,manager.accept(replyQr));assertTrue(Arrays.equals(root,store.key(controllerId)));
+        assertEquals(2,store.peer(controllerId).getInt("protocolVersion"));
+        assertFalse(PeerGrantPolicy.allows(store.peer(controllerId),"sms.page",false));
         try{manager.accept(replyQr);fail("replayed QR must fail");}catch(SecurityException expected){}
     }
     @After public void tearDown()throws Exception{PeerCenterConnector.closePeer(controllerId);server.close();store.revoke(controllerId);Arrays.fill(root,(byte)0);}
@@ -48,6 +50,44 @@ public final class PeerInstrumentedTest {
             byte[] session=PeerCrypto.derive(PeerCrypto.dh(eph.getPrivate(),PeerCrypto.publicKey(answer.getString("ephemeral"))),root,"session|"+controllerId+"|"+to+"|"+helloId);
             try{DirectPeerTransport.write(socket.getOutputStream(),PeerProtocol.seal(session,controllerId,to,id,expires,req));return PeerProtocol.open(session,to,controllerId,DirectPeerTransport.read(socket.getInputStream()),System.currentTimeMillis()/1000);}finally{Arrays.fill(session,(byte)0);}
         }
+    }
+    @Test public void testRelayLiteCiphertextQueueAndScopedAcknowledgement()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        RelayLiteMailbox box=RelayLiteMailbox.get(c);
+        box.setEnabled(true);
+        try{
+            long now=System.currentTimeMillis()/1000;
+            String id=UUID.randomUUID().toString();
+            JSONObject inner=PeerOfflineProtocol.seal(root,controllerId,store.myId(),id,now,
+                now+600,new JSONObject().put("action","device.state").put("marker","sensitive-sandbox-data"));
+            JSONObject accepted=box.enqueue(controllerId,store.myId(),inner);
+            assertEquals("accepted",accepted.getString("state"));
+            assertFalse(accepted.getBoolean("duplicate"));
+            assertTrue(box.enqueue(controllerId,store.myId(),inner).getBoolean("duplicate"));
+            JSONObject messages=box.pull(store.myId(),4);
+            assertEquals(1,messages.getJSONArray("items").length());
+            JSONObject first=messages.getJSONArray("items").getJSONObject(0);
+            assertFalse(first.toString().contains("sensitive-sandbox-data"));
+            assertEquals("sensitive-sandbox-data",PeerOfflineProtocol.open(root,controllerId,
+                store.myId(),first.getJSONObject("frame"),now).getString("marker"));
+            assertFalse(box.ack(controllerId,controllerId,id));
+            assertTrue(box.ack(store.myId(),controllerId,id));
+            assertEquals(0,box.pull(store.myId(),4).getJSONArray("items").length());
+        }finally{box.setEnabled(false);}
+    }
+
+    @Test public void testRelayLiteOutboundIdempotenceAfterRetry()throws Exception{
+        JSONObject body=new JSONObject().put("action","device.state");
+        long now=System.currentTimeMillis()/1000,expires=now+600;
+        String id=UUID.randomUUID().toString();
+        JSONObject first=store.liteOutbound(controllerId,id,body,expires);
+        JSONObject retry=store.liteOutbound(controllerId,id,body,expires);
+        assertEquals(first.toString(),retry.toString());
+        try{
+            store.liteOutbound(controllerId,id,new JSONObject().put("action","sms.send"),expires);
+            fail("mutated request reused a logical id");
+        }catch(SecurityException expected){}
+        store.clearLiteOutbound(controllerId,id);
     }
     @Test public void testAuthenticatedDirectStateAndRevocation()throws Exception{
         assertEquals("succeeded",rpc(new JSONObject().put("action","device.state")).getString("state"));

@@ -18,15 +18,48 @@ public final class PeerRpc {
     public JSONObject dispatch(String peerId,String id,JSONObject request)throws Exception{
         synchronized(store){
             JSONObject peer=store.peer(peerId);
-            if(!"NODE".equals(peer.optString("localRole"))||!"ACTIVE".equals(peer.optString("pairState")))throw new SecurityException("peer_not_authorized");
-            String action=request.getString("action");Set<String> grants=new HashSet<>(Arrays.asList(peer.getString("permissions").split(",")));
+            boolean pendingV2=peer.optInt("protocolVersion",1)>=2
+                &&"PENDING".equals(peer.optString("pairState"));
+            if((!"ACTIVE".equals(peer.optString("pairState"))&&!pendingV2)
+                ||(peer.optInt("protocolVersion",1)<2&&!"NODE".equals(peer.optString("localRole"))))
+                throw new SecurityException("peer_not_authorized");
+            String action=request.getString("action");
+            boolean relayAction=action.startsWith("relay.");
+            // Relay authorization is orthogonal to SMS/management grants.
+            if(relayAction&&(!peer.optBoolean("relayLiteAllowRemote",false)
+                ||!RelayLiteMailbox.get(c).enabled()))
+                throw new SecurityException("relay_lite_not_authorized");
+            if(!relayAction&&!"peer.revoke".equals(action)&&!PeerGrantPolicy.allows(peer,action,true))
+                throw new SecurityException("peer_permission_denied");
+            // Only an authenticated transport should invoke dispatch; in a v2
+            // pending relationship that proves the responder accepted the QR.
+            if(pendingV2){peer.put("pairState","ACTIVE");store.update(peer);}
+            String granted=peer.optInt("protocolVersion",1)>=2
+                ?peer.optString("grantsToRemote",""):peer.optString("permissions","");
+            Set<String> grants=new HashSet<>(Arrays.asList(granted.split(",")));
             return switch(action){
                 case "device.state" -> {require(grants,"state");yield state(peer);}
                 case "sms.page" -> {require(grants,"read");require(grants,"history");yield page(peer,request);}
-                case "events.page" -> {require(grants,"read");yield store.events(peerId,request.optLong("after",0));}
+                case "events.page" -> {require(grants,"read");yield store.events(peerId,request.optLong("after",0),request.optInt("limit",100),request.optInt("maxBytes",300000));}
                 case "events.ack" -> {require(grants,"read");store.ackEvents(peerId,request.getJSONArray("sequences"));yield new JSONObject().put("state","acknowledged");}
                 case "sms.send" -> {require(grants,"send");yield send(peerId,id,request);}
                 case "command.status" -> {require(grants,"send");String command=request.getString("commandId");String localId="p2p-"+PeerCrypto.digest(PeerCrypto.utf8(peerId+"|"+command));String status=LocalStore.get(c).commandState(localId);JSONObject receipt=store.receipt(peerId,command,null);yield new JSONObject().put("state",status!=null?status:receipt!=null?receipt.optString("state","unknown"):"unknown");}
+                case "relay.put" -> {
+                    String target=request.getString("target");
+                    JSONObject recipient=store.peer(target);
+                    if(!"ACTIVE".equals(recipient.optString("pairState"))
+                        ||!recipient.optBoolean("relayLiteAllowRemote",false))
+                        throw new SecurityException("relay_lite_target_not_authorized");
+                    yield RelayLiteMailbox.get(c).enqueue(peerId,target,request.getJSONObject("frame"));
+                }
+                case "relay.pull" -> {
+                    yield RelayLiteMailbox.get(c).pull(peerId,request.optInt("limit",2));
+                }
+                case "relay.ack" -> {
+                    boolean removed=RelayLiteMailbox.get(c).ack(peerId,
+                        request.getString("source"),request.getString("messageId"));
+                    yield new JSONObject().put("state","acknowledged").put("removed",removed);
+                }
                 case "peer.revoke" -> {store.revoke(peerId);yield new JSONObject().put("state","revoked");}
                 default -> throw new SecurityException("unsupported_peer_action");
             };
@@ -45,7 +78,9 @@ public final class PeerRpc {
     }
     private JSONObject page(JSONObject peer,JSONObject req)throws Exception{
         if(!SmsAccessPolicy.canRead(c))return new JSONObject().put("state","rejected").put("reason","read_sms_permission_missing");
-        int limit=Math.max(1,Math.min(100,req.optInt("limit",100)));JSONObject cursor=req.optJSONObject("cursor");
+        int limit=Math.max(1,Math.min(100,req.optInt("limit",100)));
+        int maxBytes=Math.max(16000,Math.min(300000,req.optInt("maxBytes",300000)));
+        JSONObject cursor=req.optJSONObject("cursor");
         String selection=Telephony.Sms.TYPE+"<>?";List<String> args=new ArrayList<>();args.add(String.valueOf(Telephony.Sms.MESSAGE_TYPE_DRAFT));
         if(cursor!=null){long date=cursor.getLong("date"),id=cursor.getLong("id");if(date<0||id<0)throw new SecurityException("invalid_history_cursor");selection+=" AND (date<? OR (date=? AND _id<?))";args.add(String.valueOf(date));args.add(String.valueOf(date));args.add(String.valueOf(id));}
         Bundle query=new Bundle();query.putString(ContentResolver.QUERY_ARG_SQL_SELECTION,selection);query.putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,args.toArray(new String[0]));query.putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER,"date DESC, _id DESC");query.putInt(ContentResolver.QUERY_ARG_LIMIT,limit+1);
@@ -60,7 +95,7 @@ public final class PeerRpc {
                 OtpParser.Result otp=type==Telephony.Sms.MESSAGE_TYPE_INBOX?OtpParser.parse(body):OtpParser.parse("");
                 JSONObject message=new JSONObject().put("id","peer-"+store.myId()+"-"+providerId).put("thread",PeerCrypto.digest(PeerCrypto.utf8(store.myId()+"|"+sub+"|"+address))).put("sender",address).put("address",address).put("body",body.substring(0,Math.min(4000,body.length()))).put("timestamp",date/1000).put("inbound",type==Telephony.Sms.MESSAGE_TYPE_INBOX).put("device",android.os.Build.MODEL).put("sim",sim).put("sourceId",store.myId()+"-"+sub).put("otp",otp.detected?otp.value:"").put("failed",type==Telephony.Sms.MESSAGE_TYPE_FAILED);
                 int size=message.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
-                if(bytes+size>300000){more=true;break;}rows.put(message);bytes+=size;lastDate=date;lastId=providerId;
+                if(bytes+size>maxBytes){more=true;break;}rows.put(message);bytes+=size;lastDate=date;lastId=providerId;
             }
         }
         JSONObject out=new JSONObject().put("state","succeeded").put("type","snapshot").put("v",1).put("messages",rows).put("hasMore",more);

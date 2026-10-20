@@ -16,14 +16,22 @@ public final class PeerStore extends SQLiteOpenHelper {
     private final Context context;
     private static final String IDENTITY="simhub-p2p-identity-v1";
     public static synchronized PeerStore get(Context c){if(INSTANCE==null)INSTANCE=new PeerStore(c.getApplicationContext());return INSTANCE;}
-    private PeerStore(Context c){super(c,"simhub-peers-v1.db",null,2);context=c;setWriteAheadLoggingEnabled(true);}
+    private PeerStore(Context c){super(c,"simhub-peers-v1.db",null,3);context=c;setWriteAheadLoggingEnabled(true);}
     public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE peers(id TEXT PRIMARY KEY,profile TEXT NOT NULL)");
         db.execSQL("CREATE TABLE receipts(peer TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,result TEXT,state TEXT NOT NULL,PRIMARY KEY(peer,id))");
         createEvents(db);
+        createLiteOutbox(db);
         db.execSQL("CREATE TABLE outbox(peer TEXT NOT NULL,id TEXT NOT NULL,cipher TEXT NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(peer,id))");
     }
-    public void onUpgrade(SQLiteDatabase db,int a,int b){if(a<2)createEvents(db);}
+    public void onUpgrade(SQLiteDatabase db,int a,int b){
+        if(a<2)createEvents(db);
+        if(a<3)createLiteOutbox(db);
+    }
+    private static void createLiteOutbox(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE IF NOT EXISTS lite_outbox(peer TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,expires INTEGER NOT NULL,frame TEXT NOT NULL,PRIMARY KEY(peer,id))");
+        db.execSQL("CREATE INDEX IF NOT EXISTS lite_outbox_expiry ON lite_outbox(expires)");
+    }
     private static void createEvents(SQLiteDatabase db){db.execSQL("CREATE TABLE IF NOT EXISTS peer_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,peer TEXT NOT NULL,event TEXT NOT NULL,kind TEXT NOT NULL,cipher TEXT NOT NULL,occurred INTEGER NOT NULL,UNIQUE(peer,event))");}
 
     public synchronized KeyPair identity()throws Exception{
@@ -44,9 +52,9 @@ public final class PeerStore extends SQLiteOpenHelper {
     }
     public synchronized JSONObject peer(String id)throws Exception{try(Cursor c=getReadableDatabase().rawQuery("SELECT profile FROM peers WHERE id=?",new String[]{id})){if(!c.moveToFirst())throw new SecurityException("peer_not_authorized");return new JSONObject(c.getString(0));}}
     public synchronized JSONArray list(){JSONArray a=new JSONArray();try(Cursor c=getReadableDatabase().rawQuery("SELECT profile FROM peers ORDER BY id",null)){while(c.moveToNext())try{a.put(new JSONObject(c.getString(0)));}catch(Exception e){throw new IllegalStateException(e);}}return a;}
-    public synchronized void update(JSONObject p)throws Exception{JSONObject previous=peer(p.getString("id"));if("REVOKED".equals(previous.optString("pairState"))&&!"REVOKED".equals(p.optString("pairState")))throw new SecurityException("peer_revoked");for(String field:List.of("publicKey","localRole","permissions"))if(!previous.optString(field).equals(p.optString(field)))throw new SecurityException("immutable_peer_grant");ContentValues v=new ContentValues();v.put("profile",p.toString());if(getWritableDatabase().update("peers",v,"id=?",new String[]{p.getString("id")})!=1)throw new SecurityException("peer_not_authorized");}
+    public synchronized void update(JSONObject p)throws Exception{JSONObject previous=peer(p.getString("id"));if("REVOKED".equals(previous.optString("pairState"))&&!"REVOKED".equals(p.optString("pairState")))throw new SecurityException("peer_revoked");for(String field:List.of("publicKey","localRole","permissions","protocolVersion","grantsToRemote","grantsFromRemote"))if(!previous.optString(field).equals(p.optString(field)))throw new SecurityException("immutable_peer_grant");ContentValues v=new ContentValues();v.put("profile",p.toString());if(getWritableDatabase().update("peers",v,"id=?",new String[]{p.getString("id")})!=1)throw new SecurityException("peer_not_authorized");}
     public byte[] key(String id)throws Exception{JSONObject p=peer(id);if("REVOKED".equals(p.optString("pairState")))throw new SecurityException("peer_revoked");byte[] key=new SecretStore(context).getBytes("p2p.content."+id);if(key==null||key.length!=32)throw new SecurityException("peer_key_unavailable");return key;}
-    public synchronized void revoke(String id)throws Exception{JSONObject p=peer(id);p.put("pairState","REVOKED").put("activeTransport","OFFLINE");update(p);new SecretStore(context).remove("p2p.content."+id);getWritableDatabase().delete("outbox","peer=?",new String[]{id});getWritableDatabase().delete("peer_events","peer=?",new String[]{id});}
+    public synchronized void revoke(String id)throws Exception{JSONObject p=peer(id);p.put("pairState","REVOKED").put("activeTransport","OFFLINE");update(p);new SecretStore(context).remove("p2p.content."+id);getWritableDatabase().delete("outbox","peer=?",new String[]{id});getWritableDatabase().delete("peer_events","peer=?",new String[]{id});getWritableDatabase().delete("lite_outbox","peer=?",new String[]{id});RelayLiteMailbox.get(context).revokePeer(id);}
     /** Atomic durable claim. A crash after dispatch remains 'indeterminate', never blindly resends. */
     public synchronized JSONObject receipt(String peer,String id,String digest)throws Exception{
         try(Cursor c=getReadableDatabase().rawQuery("SELECT digest,result FROM receipts WHERE peer=? AND id=?",new String[]{peer,id})){
@@ -76,18 +84,64 @@ public final class PeerStore extends SQLiteOpenHelper {
         }finally{java.util.Arrays.fill(key,(byte)0);}
     }
     public synchronized JSONObject events(String peer,long after)throws Exception{
+        return events(peer,after,100,300000);
+    }
+    public synchronized JSONObject events(String peer,long after,int requestedLimit,int requestedBytes)throws Exception{
+        int limit=Math.max(1,Math.min(100,requestedLimit));
+        int maxBytes=Math.max(16000,Math.min(300000,requestedBytes));
         JSONArray rows=new JSONArray();int bytes=0;byte[] key=key(peer);
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT seq,event,kind,cipher,occurred FROM peer_events WHERE peer=? AND seq>? ORDER BY seq LIMIT 100",new String[]{peer,String.valueOf(Math.max(0,after))})){
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT seq,event,kind,cipher,occurred FROM peer_events WHERE peer=? AND seq>? ORDER BY seq LIMIT ?",new String[]{peer,String.valueOf(Math.max(0,after)),String.valueOf(limit)})){
             while(c.moveToNext()){
                 JSONObject cipher=new JSONObject(c.getString(3));JSONObject payload=new JSONObject(new String(PeerCrypto.crypt(false,key,PeerCrypto.unb64(cipher.getString("iv")),"event|"+peer+"|"+c.getString(1)+"|"+c.getString(2),PeerCrypto.unb64(cipher.getString("ct"))),java.nio.charset.StandardCharsets.UTF_8));
                 JSONObject row=new JSONObject().put("seq",c.getLong(0)).put("id",c.getString(1)).put("kind",c.getString(2)).put("occurred",c.getLong(4)).put("payload",payload);
-                int size=PeerCrypto.utf8(row.toString()).length;if(bytes+size>300000)break;bytes+=size;rows.put(row);
+                int size=PeerCrypto.utf8(row.toString()).length;if(bytes+size>maxBytes)break;bytes+=size;rows.put(row);
             }
         }finally{java.util.Arrays.fill(key,(byte)0);}
         return new JSONObject().put("state","succeeded").put("events",rows);
     }
     public synchronized void ackEvents(String peer,JSONArray sequences)throws Exception{
         if(sequences.length()>100)throw new SecurityException("too_many_event_acks");SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(int i=0;i<sequences.length();i++)db.delete("peer_events","peer=? AND seq=?",new String[]{peer,String.valueOf(sequences.getLong(i))});db.setTransactionSuccessful();}finally{db.endTransaction();}
+    }
+    /**
+     * Retries MUST reuse the exact authenticated ciphertext and IV. Regenerating
+     * an AEAD frame for the same logical id is not a valid idempotent retry.
+     */
+    public synchronized JSONObject liteOutbound(String peer,String id,JSONObject request,long expiry)throws Exception{
+        long now=System.currentTimeMillis()/1000;
+        if(expiry<=now||expiry>now+PeerOfflineProtocol.MAX_TTL_SECONDS)
+            throw new SecurityException("relay_lite_expiry_invalid");
+        String digest=PeerCrypto.digest(PeerCrypto.utf8(request.toString()));
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{
+            db.delete("lite_outbox","expires<=?",new String[]{String.valueOf(now)});
+            try(Cursor c=db.rawQuery("SELECT digest,expires,frame FROM lite_outbox WHERE peer=? AND id=?",
+                new String[]{peer,id})){
+                if(c.moveToFirst()){
+                    if(!digest.equals(c.getString(0)))throw new SecurityException("relay_lite_request_id_reused");
+                    if(c.getLong(1)<=now)throw new SecurityException("relay_lite_request_expired");
+                    JSONObject saved=new JSONObject(c.getString(2));
+                    db.setTransactionSuccessful();
+                    return saved;
+                }
+            }
+            try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM lite_outbox WHERE peer=?",new String[]{peer})){
+                if(count.moveToFirst()&&count.getLong(0)>=256)
+                    throw new IllegalStateException("relay_lite_outbound_full");
+            }
+            byte[] root=key(peer);
+            JSONObject sealed;
+            try{sealed=PeerOfflineProtocol.seal(root,myId(),peer,id,now,expiry,request);}
+            finally{java.util.Arrays.fill(root,(byte)0);}
+            ContentValues row=new ContentValues();
+            row.put("peer",peer);row.put("id",id);row.put("digest",digest);
+            row.put("expires",expiry);row.put("frame",sealed.toString());
+            db.insertOrThrow("lite_outbox",null,row);
+            db.setTransactionSuccessful();
+            return sealed;
+        }finally{db.endTransaction();}
+    }
+    public synchronized void clearLiteOutbound(String peer,String id){
+        getWritableDatabase().delete("lite_outbox","peer=? AND id=?",new String[]{peer,id});
     }
     public synchronized void queueOutbound(String peer,String id,JSONObject request)throws Exception{
         byte[] key=key(peer);long expires=request.getLong("commandExpires");try{

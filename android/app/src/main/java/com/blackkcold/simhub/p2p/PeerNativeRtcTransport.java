@@ -665,9 +665,15 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
         try {
             JSONObject plaintext = PeerProtocol.open(key, peerId, store.myId(), frame, System.currentTimeMillis() / 1000);
             String id = frame.getString("id");
-            if ("CONTROLLER".equals(current.optString("localRole"))) {
-                CompletableFuture<JSONObject> future = pending.get(id);
-                if (future != null) future.complete(plaintext);
+            CompletableFuture<JSONObject> future = pending.get(id);
+            boolean symmetric = current.optInt("protocolVersion",1)>=2;
+            if (future != null && (symmetric
+                    ||"CONTROLLER".equals(current.optString("localRole")))) {
+                // v2 either endpoint can originate an RPC and receive its reply.
+                future.complete(plaintext);
+            } else if(!symmetric && "CONTROLLER".equals(current.optString("localRole"))) {
+                // v1 controllers remain receive-only: ignore unsolicited RPCs.
+                return;
             } else {
                 if ("TURN".equals(route) && !ConnectionPolicy.valueOf(current.getString("policy"))
                         .permits("TURN", current.optBoolean("fallbackConsent"),

@@ -16,7 +16,7 @@ GRADLE = ROOT / "android/app/build.gradle.kts"
 APK = ROOT / "android/app/build/outputs/apk/p2pPreview/app-p2pPreview.apk"
 TEST_RESULTS = ROOT / "android-sandbox-results.txt"
 TEST_GUIDE = ROOT / "docs/p2p/TEST_GUIDE.zh-CN.md"
-EXPECTED_COUNT = 13
+EXPECTED_COUNT = 15  # Keep in sync with PeerInstrumentedTest; never weaken acceptance.
 
 
 def export_package(root: Path = ROOT) -> Path:

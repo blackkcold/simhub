@@ -105,5 +105,5 @@ jobs:
             echo "Artifact: [simhub-p2p-tested-package](${TEST_APK_URL})"
             echo "Package includes APK, SHA-256 and Android-runner test evidence."
             echo "Public signaling is retired; the preview build carries the fake test description only."
-            echo "PR #84 remains draft and must not be merged without manual approval."
+            echo "Dev experimental preview: real-device and public-network acceptance remain separate release gates."
           } >> "$GITHUB_STEP_SUMMARY"

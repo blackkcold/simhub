@@ -41,6 +41,7 @@ object PeerHubGateway {
                 PeerCenterConnector.active(peerId)?.let{coordinator.internet(it)}
             }catch(_:Exception){}
         }
+        RelayLiteTransport.configured(c,store,p)?.let{coordinator.relayLite(it)}
         return coordinator.request(peerId,id,request)
     }
     fun linked(c:Context,origin:String):List<JSONObject>{

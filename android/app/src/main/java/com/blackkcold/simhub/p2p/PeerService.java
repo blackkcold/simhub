@@ -16,7 +16,8 @@ import java.util.*;
 /** User-started listener. No boot auto-start or background service launch. */
 public final class PeerService extends Service {
     private PeerNodeServer server;
-    private int relayLiteTicks;
+    private volatile long relayLiteNextCheckMs;
+    private volatile long relayLiteBackoffMs=60_000L;
     // Discovery must outlive PeerActivity; peer endpoints change after Wi-Fi handover.
     private PeerDiscovery discovery;
     private final java.util.concurrent.ScheduledExecutorService relayPump=java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
@@ -70,6 +71,19 @@ public final class PeerService extends Service {
         catch(Exception discoveryError){failure="peer_discovery_unavailable";}
         if("local_network_permission_required".equals(failure))failure="";
     }
+    private synchronized void pollRelayLite(boolean networkChanged){
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(networkChanged){relayLiteBackoffMs=60_000L;relayLiteNextCheckMs=0;}
+        if(now<relayLiteNextCheckMs)return;
+        relayLiteNextCheckMs=now+relayLiteBackoffMs;
+        com.blackkcold.simhub.AgentExecutors.io().execute(()->{
+            int count=RelayLiteClient.pollAll(PeerService.this);
+            synchronized(PeerService.this){
+                relayLiteBackoffMs=count>0?60_000L:Math.min(300_000L,relayLiteBackoffMs*2);
+                relayLiteNextCheckMs=android.os.SystemClock.elapsedRealtime()+relayLiteBackoffMs;
+            }
+        });
+    }
     public void onCreate(){super.onCreate();
         NotificationManager nm=getSystemService(NotificationManager.class);nm.createNotificationChannel(new NotificationChannel("simhub-p2p","P2P device access",NotificationManager.IMPORTANCE_LOW));
         Intent open=new Intent(this,com.blackkcold.simhub.PeerActivity.class);PendingIntent pi=PendingIntent.getActivity(this,741,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
@@ -81,7 +95,7 @@ public final class PeerService extends Service {
             networkCallback=new ConnectivityManager.NetworkCallback(){
                 public void onAvailable(Network n){
                     PeerCenterConnector.networkChangedAll();
-                    com.blackkcold.simhub.AgentExecutors.io().execute(()->RelayLiteClient.pollAll(PeerService.this));
+                    pollRelayLite(true);
                 }
                 public void onLost(Network n){PeerCenterConnector.networkChangedAll();}
             };
@@ -92,8 +106,7 @@ public final class PeerService extends Service {
                     com.blackkcold.simhub.ApiClient api=new com.blackkcold.simhub.ApiClient(this);api.fetchCommands();api.flushCommandAcks();
                 }
                 // Inbox sync is opt-in: empty installations do not make outbound calls.
-                if(++relayLiteTicks%6==0)
-                    com.blackkcold.simhub.AgentExecutors.io().execute(()->RelayLiteClient.pollAll(PeerService.this));
+                pollRelayLite(false);
             }catch(Exception ignored){}},1,5,java.util.concurrent.TimeUnit.SECONDS);
         }catch(Exception e){failure=e instanceof SecurityException?"local_network_permission_required":"listener_start_failed";stopSelf();}
     }

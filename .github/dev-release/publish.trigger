@@ -1,6 +1,5 @@
-SIM Hub Dev prerelease trigger — 2026-10-19
-Release source: develop after merged PR #107 (merge 0c65a43d9ca6b1bdfe03e09dbbb2a7470eaee700).
-Scope: event-driven battery/Wi-Fi/SIM telemetry and native/Web gauges; manual state refresh; one-shot E2EE location with local and remote consent; revocable relay ciphertext and opt-in OSM map; device privacy tests and documentation.
-Verified on PR head 251b92de072b8b45905ec301e4e3a5a99d69ee8e:
-CI=success (Android, server-web); P2P preview and emulator sandbox=success; Security/CodeQL six jobs=success; Remote OTA prerelease checks=success.
-Dev-only experimental release. Stable main remains unchanged. Physical Android/OEM/Doze and external-network validation is required before any Stable promotion.
+SIM Hub Dev prerelease trigger — 2026-10-20
+Release source: develop after PR #110 (feat/dev-channel-branding).
+Scope: channel-aware Dev orange launcher icon, native Compose branding, runtime-branded Web/PWA icon and manifest, pre-login DEV indicators and channel-specific UI accents; Stable appearance unchanged.
+Verification: both Stable and Dev runtime routes, manifest/icon isolation and Android variant resource overlays; CI, P2P preview, security and CodeQL release gates must pass on the final develop SHA.
+Experimental Dev release only; do not promote to Stable. Continue to require physical Android and external-network validation before Stable promotion.

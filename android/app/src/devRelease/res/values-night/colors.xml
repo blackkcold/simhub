@@ -1,0 +1,8 @@
+<resources>
+    <!-- High-contrast Dev accents for dark mode. -->
+    <color name="brand_primary">#FFFFAC75</color>
+    <color name="button_primary">#FFFFAC75</color>
+    <color name="button_primary_text">#FF24150D</color>
+    <color name="button_secondary">#FF432C24</color>
+    <color name="button_secondary_text">#FFFFCFAF</color>
+</resources>

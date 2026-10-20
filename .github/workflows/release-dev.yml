@@ -67,6 +67,7 @@ jobs:
       - run: python3 scripts/test_release_pipeline.py
       - run: python3 scripts/test_deployment_bundle.py
       - run: python3 -m unittest -v scripts.test_release_checks
+      - run: PYTHONPATH=server python3 scripts/test_channel_branding.py
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py

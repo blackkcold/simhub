@@ -41,9 +41,9 @@ python3 scripts/test_center_config_packaging.py
 `.github/workflows/p2p-preview.yml`：
 
 - `preview` 作业以 `-PcenterConfigFake=true` 构建预览包，运行沙盒脚本、泄漏扫描与受控打包负向测试，并启动真实 coturn 运行 TURN 沙盒。
-- `android-sandbox` 作业在 API 35 模拟器安装预览包与仪器包，运行 `PeerInstrumentedTest`，要求 `OK (13 tests)`，并在通过后导出 APK、SHA-256 与测试记录。
+- `android-sandbox` 作业在 API 35 模拟器安装预览包与仪器包，运行 `PeerInstrumentedTest`，要求 `OK (15 tests)`，并在通过后导出 APK、SHA-256 与测试记录。
 
-仪器测试覆盖：生产 Keystore/双扫码/TCP、撤销、独立 Relay 授权、路由策略、重复短信回执幂等、1,205 行历史分页，以及本轮新增的「原生引擎就绪 + 未授权中心时辅助路径失败关闭 + 默认仅 STUN」与「节点中心绑定授权码签名、防篡改与明确同意」。
+仪器测试覆盖：生产 Keystore/双扫码/TCP、撤销、独立 Relay 授权、路由策略、重复短信回执幂等、1,205 行历史分页、Relay Lite 密文队列、按收件人鉴权的 ACK、离线请求密文持久化与重试，以及原生 RTC 引擎、可信中心授权码和失败关闭。模拟器测试不等于跨真机网络验收。
 
 **操作补充（已有可信中心）**：两台设备先完成双向扫码，节点进入「连接 / 授权」明确同意信令辅助建连；节点绑定成功后生成 5 分钟有效的签名绑定二维码，管理端进入「连接详情」扫码确认，才会尝试 WebRTC 公网直连。同一局域网不需要此步骤。此步骤不是新的公共服务器，不启用数据 Relay，也不能保证受限 NAT 下成功；无已有可信中心仍只能尝试同网直连。
 

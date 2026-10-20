@@ -1220,6 +1220,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path,p,q=self.route()
         if not self.preflight("GET", path): return
+        if path=="/api/v1/branding":
+            # Public display-only data; no deployment secrets or authentication state.
+            self.send_json(200,{"channel":RELEASE_CHANNEL},{"Cache-Control":"no-store"}); return
         if path=="/healthz":
             self.send_json(200,{"ok":True,"version":APP_VERSION,"time":now()}); return
         if path=="/readyz":
@@ -2689,14 +2692,29 @@ class SimHubHandler(BaseHTTPRequestHandler):
         try: candidate.relative_to(WEB_ROOT.resolve())
         except ValueError:
             self.send_error(403); return
+        # The static icon URL remains stable; the runtime channel chooses artwork.
+        # This avoids building and maintaining two separate Web applications.
+        if RELEASE_CHANNEL=="dev" and rel=="icon.svg":
+            candidate=(WEB_ROOT/"icon-dev.svg").resolve()
         if not candidate.is_file():
             if "." not in Path(rel).name: candidate=WEB_ROOT/"index.html"
             else: self.send_error(404); return
-        data=candidate.read_bytes(); ctype=mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+        if rel=="manifest.webmanifest":
+            if RELEASE_CHANNEL=="dev":
+                manifest=json.loads(candidate.read_text("utf-8"))
+                manifest.update({"name":"SIM Hub Dev","short_name":"SIM Hub Dev",
+                                 "id":"/simhub-dev","theme_color":"#E87936"})
+                data=json.dumps(manifest,ensure_ascii=False,separators=(",",":")).encode("utf-8")
+            else:
+                data=candidate.read_bytes()
+            ctype="application/manifest+json"
+        else:
+            data=candidate.read_bytes()
+            ctype=mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
         self.send_response(200)
-        self.send_header("Content-Type",ctype+("; charset=utf-8" if ctype.startswith("text/") or ctype in {"application/javascript","application/json"} else ""))
+        self.send_header("Content-Type",ctype+("; charset=utf-8" if ctype.startswith("text/") or ctype in {"application/javascript","application/json","application/manifest+json"} else ""))
         self.send_header("Content-Length",str(len(data)))
-        self.send_header("Cache-Control","no-cache" if candidate.name in {"sw.js","manifest.webmanifest"} else "no-store")
+        self.send_header("Cache-Control","no-cache" if rel in {"sw.js","manifest.webmanifest"} else "no-store")
         self.security_headers(); self.end_headers(); self.wfile.write(data)
 
 

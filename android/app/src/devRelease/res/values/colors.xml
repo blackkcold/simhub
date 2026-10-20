@@ -1,0 +1,8 @@
+<resources>
+    <!-- Variant-scoped brand colors: semantic status colors remain unchanged. -->
+    <color name="brand_primary">#FFB4511C</color>
+    <color name="button_primary">#FFB4511C</color>
+    <color name="button_primary_text">#FFFFFFFF</color>
+    <color name="button_secondary">#FFFFEEE4</color>
+    <color name="button_secondary_text">#FF873A14</color>
+</resources>

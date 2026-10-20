@@ -84,12 +84,17 @@ public final class PeerStore extends SQLiteOpenHelper {
         }finally{java.util.Arrays.fill(key,(byte)0);}
     }
     public synchronized JSONObject events(String peer,long after)throws Exception{
+        return events(peer,after,100,300000);
+    }
+    public synchronized JSONObject events(String peer,long after,int requestedLimit,int requestedBytes)throws Exception{
+        int limit=Math.max(1,Math.min(100,requestedLimit));
+        int maxBytes=Math.max(16000,Math.min(300000,requestedBytes));
         JSONArray rows=new JSONArray();int bytes=0;byte[] key=key(peer);
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT seq,event,kind,cipher,occurred FROM peer_events WHERE peer=? AND seq>? ORDER BY seq LIMIT 100",new String[]{peer,String.valueOf(Math.max(0,after))})){
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT seq,event,kind,cipher,occurred FROM peer_events WHERE peer=? AND seq>? ORDER BY seq LIMIT ?",new String[]{peer,String.valueOf(Math.max(0,after)),String.valueOf(limit)})){
             while(c.moveToNext()){
                 JSONObject cipher=new JSONObject(c.getString(3));JSONObject payload=new JSONObject(new String(PeerCrypto.crypt(false,key,PeerCrypto.unb64(cipher.getString("iv")),"event|"+peer+"|"+c.getString(1)+"|"+c.getString(2),PeerCrypto.unb64(cipher.getString("ct"))),java.nio.charset.StandardCharsets.UTF_8));
                 JSONObject row=new JSONObject().put("seq",c.getLong(0)).put("id",c.getString(1)).put("kind",c.getString(2)).put("occurred",c.getLong(4)).put("payload",payload);
-                int size=PeerCrypto.utf8(row.toString()).length;if(bytes+size>300000)break;bytes+=size;rows.put(row);
+                int size=PeerCrypto.utf8(row.toString()).length;if(bytes+size>maxBytes)break;bytes+=size;rows.put(row);
             }
         }finally{java.util.Arrays.fill(key,(byte)0);}
         return new JSONObject().put("state","succeeded").put("events",rows);

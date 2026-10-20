@@ -36,7 +36,7 @@ class ExportPreviewTests(unittest.TestCase):
         self.assertEqual((self.root / "P2P-TEST-GUIDE.md").read_text(), "test guide")
 
     def test_bad_or_absent_test_evidence_never_exports(self):
-        for text in ("FAILURES!!!\nTests run: 13, Failures: 1\n",
+        for text in ("FAILURES!!!\nTests run: 15, Failures: 1\n",
                      "OK (14 tests)\n", "OK (15 tests)\nFAILURES!!!\n"):
             with self.subTest(text=text):
                 self.evidence.write_text(text)

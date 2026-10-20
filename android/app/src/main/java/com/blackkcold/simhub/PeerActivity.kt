@@ -64,7 +64,7 @@ class PeerActivity:ComponentActivity(){
     private var sendRequest:JSONObject?=null
     private var sendId:String?=null
     private var channelIndex by mutableIntStateOf(0)
-    private var discovery:PeerDiscovery?=null
+    private var relayLiteEnabled by mutableStateOf(false)
     private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
         if(Build.VERSION.SDK_INT>=37
             &&checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")==PackageManager.PERMISSION_GRANTED
@@ -75,10 +75,10 @@ class PeerActivity:ComponentActivity(){
     private fun store()=PeerStore.get(this)
     override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);UiLocale.apply(this);reload()
         setContent{HubTheme(if(pairingRole==0||selected?.optString("localRole")=="NODE")"node" else "controller"){Surface(Modifier.fillMaxSize()){Screen()}}}
+        // PeerService owns NSD for the entire user-authorized listener lifetime.
+        // Multiple activity-owned discovery sessions can contend on Android NSD.
         lifecycleScope.launch{repeatOnLifecycle(Lifecycle.State.STARTED){
-            discovery=PeerDiscovery(this@PeerActivity)
-            try{discovery?.start()}catch(_:Exception){notice="局域网发现不可用；请检查本地网络权限"}
-            try{while(isActive){delay(12000);reload();if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)}}finally{discovery?.close();discovery=null}
+            while(isActive){delay(12000);reload();if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)}
         }}
     }
     override fun onStop(){super.onStop();peerEpoch++;selectionRefresh?.cancel();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}
@@ -87,6 +87,7 @@ class PeerActivity:ComponentActivity(){
         peers=(0 until stored.length()).map{stored.getJSONObject(it)}
         // Remote WebRTC may run even when Android 17 denies LAN listener access.
         listening=PeerService.enabled()
+        relayLiteEnabled=RelayLiteMailbox.get(applicationContext).enabled()
         val secrets=SecretStore(applicationContext)
         recentSendIds=peers.mapNotNull{p->
             val id=p.optString("id")
@@ -350,9 +351,80 @@ class PeerActivity:ComponentActivity(){
             Text("同一局域网优先本地直连。跨网络可选择已注册的可信中心仅传递端到端加密的建连信令，需要双方已有对应中心账户或设备配置，以及单独授权。")
             Text("本功能不提供公共信令服务器。未配置 Relay 时不启用 TURN、信箱或业务中继，受限 NAT 下可能无法连接。中心可以看到关联及网络元数据，但不能解密信令或短信。")
             Text("Relay 独立配置；同时配置时优先 Relay，失败后尝试已授权 P2P。")
+            HorizontalDivider()
+            Text("Android Relay Lite · 密文中继",style=MaterialTheme.typography.titleMedium)
+            Text("仅为明确授权的已配对设备提供密文存储转发。此手机不因此获得公网地址；若希望跨运营商连接，仍需双方实际可达的加密传输路径。",style=MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                Switch(checked=relayLiteEnabled,onCheckedChange={enabled->
+                    work{
+                        withContext(Dispatchers.IO){RelayLiteMailbox.get(applicationContext).setEnabled(enabled)}
+                        relayLiteEnabled=enabled
+                        if(enabled)PeerService.start(this@PeerActivity)
+                        notice=if(enabled)"已允许此设备提供 Relay Lite；仍须逐个允许对端转发。" else "Relay Lite 已关闭；本地待发队列保留至过期。"
+                    }
+                })
+                Text("本机提供 Relay Lite",style=MaterialTheme.typography.bodySmall)
+            }
+            OutlinedButton(onClick={work{
+                val stats=withContext(Dispatchers.IO){RelayLiteMailbox.get(applicationContext).stats()}
+                notice="Relay Lite：待处理 ${stats.optInt("queued")} 条，密文 ${stats.optLong("bytes")} 字节"
+            }}){Text("查看密文队列状态")}
+            OutlinedButton(onClick={work{
+                val count=withContext(Dispatchers.IO){RelayLiteClient.pollAll(applicationContext)}
+                notice="Relay Lite 已检查已授权信箱；本次确认处理 $count 条"
+            }}){Text("立即检查 Relay Lite 信箱")}
+            HorizontalDivider()
             (selected?.let{listOf(it)}?:emptyList()).filter{it.optString("pairState")!="REVOKED"}.forEach{p->
                 Text("${p.optString("name")} · ${connectionLabel(p)}")
                 Text("P2P 授权：${pairLabel(p)} · 读取${if(p.optString("permissions").split(",").contains("send"))"、发送" else "（只读）"}",style=MaterialTheme.typography.bodySmall)
+                if("ACTIVE"==p.optString("pairState")){
+                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                        Switch(checked=p.optBoolean("relayLiteAllowRemote"),onCheckedChange={enabled->
+                            work{withContext(Dispatchers.IO){
+                                val fresh=store().peer(p.getString("id"))
+                                fresh.put("relayLiteAllowRemote",enabled)
+                                store().update(fresh)
+                            };notice=if(enabled)"已授权该设备使用本机 Relay Lite（不授予短信内容权限）" else "已撤销该设备的本机中继授权"}
+                        })
+                        Text("允许此设备使用本机 Relay Lite",style=MaterialTheme.typography.bodySmall)
+                    }
+                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                        Switch(checked=p.optBoolean("relayLiteInbox"),onCheckedChange={enabled->
+                            work{withContext(Dispatchers.IO){
+                                val fresh=store().peer(p.getString("id"))
+                                fresh.put("relayLiteInbox",enabled)
+                                store().update(fresh)
+                            };if(enabled)PeerService.start(this@PeerActivity)
+                            notice=if(enabled)"将定期从该设备拉取发给本机的密文" else "已停止从该设备轮询 Relay Lite"}
+                        })
+                        Text("从该设备接收 Relay Lite 密文",style=MaterialTheme.typography.bodySmall)
+                    }
+                    Text("通过其他已配对设备转发到本设备的消息：",style=MaterialTheme.typography.bodySmall)
+                    val current=p.optString("relayLiteVia","")
+                    Text(if(p.optBoolean("relayLiteConfigured"))"当前选用中继：${peers.find{it.optString("id")==current}?.optString("name")?:"不可用"}" else "未配置中继（默认直连）",style=MaterialTheme.typography.bodySmall)
+                    if(p.optBoolean("relayLiteConfigured"))TextButton(onClick={work{
+                        withContext(Dispatchers.IO){
+                            val fresh=store().peer(p.getString("id"))
+                            fresh.put("relayLiteConfigured",false).remove("relayLiteVia")
+                            store().update(fresh)
+                        }
+                        notice="已关闭此设备的 Relay Lite 兜底"
+                    }}){Text("关闭此设备 Relay Lite 兜底")}
+                    peers.filter{other->other.optString("id")!=p.optString("id")
+                        &&other.optString("pairState")=="ACTIVE"}.forEach{candidate->
+                        OutlinedButton(onClick={work{
+                            withContext(Dispatchers.IO){
+                                val live=store().peer(candidate.getString("id"))
+                                if(!"ACTIVE".equals(live.optString("pairState")))throw SecurityException("relay_lite_peer_not_active")
+                                val target=store().peer(p.getString("id"))
+                                target.put("relayLiteConfigured",true)
+                                    .put("relayLiteVia",candidate.getString("id"))
+                                store().update(target)
+                            }
+                            notice="已为此设备选择中继 ${candidate.optString("name")}；需对端及中继均确认转发授权，并验证可达性"
+                        }}){Text("选用 ${candidate.optString("name")} 作为 Relay Lite")}
+                    }
+                }
                 Text("连接阶段：${discoveryLabel(p.optString("discoveryState","WAITING"))} · 上次成功路径：${routeLabel(p.optString("activeTransport"))}",style=MaterialTheme.typography.bodySmall)
                 Text(diagnosticLabel(p),color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
                 if(p.optLong("lastSyncAt",0)>0)Text("最后通信：${java.text.SimpleDateFormat("MM-dd HH:mm",java.util.Locale.getDefault()).format(java.util.Date(p.optLong("lastSyncAt")*1000))}",style=MaterialTheme.typography.labelSmall)

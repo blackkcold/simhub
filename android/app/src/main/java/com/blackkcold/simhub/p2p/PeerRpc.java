@@ -40,7 +40,7 @@ public final class PeerRpc {
             return switch(action){
                 case "device.state" -> {require(grants,"state");yield state(peer);}
                 case "sms.page" -> {require(grants,"read");require(grants,"history");yield page(peer,request);}
-                case "events.page" -> {require(grants,"read");yield store.events(peerId,request.optLong("after",0));}
+                case "events.page" -> {require(grants,"read");yield store.events(peerId,request.optLong("after",0),request.optInt("limit",100),request.optInt("maxBytes",300000));}
                 case "events.ack" -> {require(grants,"read");store.ackEvents(peerId,request.getJSONArray("sequences"));yield new JSONObject().put("state","acknowledged");}
                 case "sms.send" -> {require(grants,"send");yield send(peerId,id,request);}
                 case "command.status" -> {require(grants,"send");String command=request.getString("commandId");String localId="p2p-"+PeerCrypto.digest(PeerCrypto.utf8(peerId+"|"+command));String status=LocalStore.get(c).commandState(localId);JSONObject receipt=store.receipt(peerId,command,null);yield new JSONObject().put("state",status!=null?status:receipt!=null?receipt.optString("state","unknown"):"unknown");}

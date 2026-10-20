@@ -56,11 +56,9 @@ public final class RelayLiteTransport implements HubTransport {
         if("sms.send".equals(action))
             expiry=Math.min(expiry,request.optLong("commandExpires",now));
         if(expiry<=now)throw new SecurityException("relay_lite_command_expired");
-        byte[] root=store.key(targetId);
-        final JSONObject encrypted;
-        try{
-            encrypted=PeerOfflineProtocol.seal(root,sourceId,targetId,id,now,expiry,request);
-        }finally{Arrays.fill(root,(byte)0);}
+        // Store the exact sealed frame before network transmission. If the
+        // first ACK is lost, retry with the same IV, ciphertext, and request id.
+        final JSONObject encrypted=store.liteOutbound(targetId,id,request,expiry);
         JSONObject packet=new JSONObject().put("action","relay.put")
             .put("target",targetId).put("frame",encrypted);
         JSONObject result=requestRelay(context,store,relayId,UUID.randomUUID().toString(),packet);

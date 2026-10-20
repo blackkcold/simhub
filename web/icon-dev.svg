@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SIM Hub Dev">
+  <defs><linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F6A66C"/><stop offset="1" stop-color="#C35D26"/></linearGradient></defs>
+  <rect width="64" height="64" rx="17" fill="url(#brand)"/>
+  <path d="M22 13h15l10 10v23a5 5 0 0 1-5 5H22a5 5 0 0 1-5-5V18a5 5 0 0 1 5-5Z" fill="none" stroke="#fff" stroke-width="3.2" stroke-linejoin="round"/>
+  <path d="M37 13v10h10" fill="none" stroke="#fff" stroke-width="3.2" stroke-linejoin="round"/>
+  <path d="m25 37 9-8 7 11" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#fff"><circle cx="25" cy="37" r="3.2"/><circle cx="34" cy="29" r="3.2"/><circle cx="41" cy="40" r="3.2"/></g>
+  <circle cx="50" cy="15" r="6.5" fill="#873A14" stroke="#FFE1CA" stroke-width="2.5"/>
+  <path d="M48 12h2a3 3 0 0 1 0 6h-2Z" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

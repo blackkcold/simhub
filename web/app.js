@@ -5,6 +5,22 @@ import {NotificationCenter} from './notifications.js';
 import {bindNotificationUI} from './notification-ui.js';
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 const $ = (id) => document.getElementById(id);
+// Resolve the public deployment identity before login; no auth/session data is exposed.
+async function loadChannelBranding(){
+  try{
+    const response=await fetch('/api/v1/branding',{credentials:'same-origin',cache:'no-store'});
+    if(!response.ok)return;
+    const info=await response.json();
+    if(info.channel!=='stable'&&info.channel!=='dev')return;
+    const dev=info.channel==='dev';
+    document.documentElement.dataset.channel=info.channel;
+    document.querySelectorAll('[data-dev-indicator]').forEach(el=>{el.hidden=!dev;});
+    document.title=dev?'SIM Hub Dev':'SIM Hub';
+    const theme=document.querySelector('meta[name="theme-color"]');
+    if(theme)theme.content=dev?'#E87936':'#0c1223';
+  }catch(_error){/* Unavailable branding cannot block local login/offline shell. */}
+}
+loadChannelBranding();
 const androidShell = new URLSearchParams(location.search).get('native') === '1';
 const samePhoneControllerApproval = new URLSearchParams(location.search).get('controller') === 'local';
 let samePhoneApprovalOpened = false;

@@ -36,6 +36,8 @@ import java.text.DateFormat
 import java.util.Date
 
 private val Violet=Color(0xFF574FEA)
+private val DevOrange=Color(0xFFB4511C)
+private val DevOrangeDark=Color(0xFFFFAC75)
 private val Plum=Color(0xFFACA9FF)
 private val Teal=Color(0xFF087F74)
 private val Mint=Color(0xFF7BE3D3)
@@ -65,15 +67,16 @@ fun HubIcon(id:Int,modifier:Modifier=Modifier,tint:Color=LocalContentColor.curre
 @Composable
 internal fun HubTheme(surface:String,content:@Composable ()->Unit){
     val controller=surface=="controller"
-    val accent=if(controller)Violet else Teal
-    val darkAccent=if(controller)Plum else Mint
+    val dev=BuildConfig.RELEASE_CHANNEL=="dev"
+    val accent=if(dev)DevOrange else if(controller)Violet else Teal
+    val darkAccent=if(dev)DevOrangeDark else if(controller)Plum else Mint
     val dark=androidx.compose.foundation.isSystemInDarkTheme()
     val lightColors=lightColorScheme(primary=accent,onPrimary=Color.White,secondary=accent,
-        primaryContainer=if(controller)Color(0xFFEAE8FF) else Color(0xFFD8F4EF),
-        onPrimaryContainer=if(controller)Color(0xFF292276) else Color(0xFF09594F),background=LightBg,
+        primaryContainer=if(dev)Color(0xFFFFEEE4) else if(controller)Color(0xFFEAE8FF) else Color(0xFFD8F4EF),
+        onPrimaryContainer=if(dev)Color(0xFF873A14) else if(controller)Color(0xFF292276) else Color(0xFF09594F),background=LightBg,
         surface=Color.White,onSurface=Color(0xFF18223A),surfaceVariant=Color(0xFFF0F2FB),outlineVariant=Color(0xFFE1E5F0))
     val darkColors=darkColorScheme(primary=darkAccent,onPrimary=Color(0xFF0F1321),secondary=darkAccent,
-        primaryContainer=if(controller)Color(0xFF343063) else Color(0xFF154940),
+        primaryContainer=if(dev)Color(0xFF432C24) else if(controller)Color(0xFF343063) else Color(0xFF154940),
         background=DarkBg,
         surface=Color(0xFF181D2D),onSurface=Color(0xFFF1F2FA),surfaceVariant=Color(0xFF292E40),outlineVariant=Color(0xFF383E50))
     MaterialTheme(colorScheme=if(dark)darkColors else lightColors,
@@ -112,7 +115,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
         HubTheme("node") {
             Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,
                 horizontalAlignment=Alignment.CenterHorizontally) {
-                Text("SIM Hub",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold)
+                Text(if(BuildConfig.RELEASE_CHANNEL=="dev")"SIM Hub Dev" else "SIM Hub",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
                 Text("选择这台手机的用途",color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(30.dp))
@@ -176,7 +179,7 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
                                             Modifier.size(21.dp),MaterialTheme.colorScheme.onPrimary)
                                     }
                                     Column {
-                                        Text("SIM Hub",fontWeight=FontWeight.Bold,fontSize=18.sp)
+                                        Text(if(BuildConfig.RELEASE_CHANNEL=="dev")"SIM Hub Dev" else "SIM Hub",fontWeight=FontWeight.Bold,fontSize=18.sp)
                                         Text(if(isNode) "本机 SIM 节点" else if(compactInbox) "管理短信" else "管理控制台",
                                             style=MaterialTheme.typography.labelSmall,
                                             color=MaterialTheme.colorScheme.onSurfaceVariant)

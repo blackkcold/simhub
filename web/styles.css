@@ -716,3 +716,13 @@ dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:c
 .settings-panel > label { min-width:0; }
 .settings-panel > button + button { margin-left:8px; }
 @media(max-width:480px) { .vault-password-change > button { width:100%; } }
+
+/* Channel branding: the deployment channel selects colors, not the feature branch. */
+:root[data-channel="dev"]{--accent:#FFAC75;--accentText:#24150D;--ambient:rgba(232,121,54,.12)}
+@media(prefers-color-scheme:light){:root[data-channel="dev"]{--accent:#B4511C;--accentText:#fff;--ambient:rgba(232,121,54,.075)}}
+.channel-tag{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;padding:3px 7px;min-height:21px;border-radius:5px;border:1px solid currentColor;color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,transparent);font-size:10px;font-weight:800;line-height:1.2;letter-spacing:.07em}
+.channel-tag[hidden]{display:none!important}
+.brand .channel-tag{margin:5px 0 0}
+.topbar .channel-tag{margin-top:6px}
+.gate-mark .channel-tag{margin-left:auto}
+:root[data-channel="dev"] .brand img{filter:drop-shadow(0 8px 14px rgba(180,81,28,.20))}

@@ -89,7 +89,8 @@ public final class RelayLiteClient {
             try{
                 // Relay Lite envelopes are capped at 64 KiB, unlike live RPC.
                 // Bound offline SMS history pages before applying provider work.
-                if("sms.page".equals(decrypted.optString("action"))){
+                if("sms.page".equals(decrypted.optString("action"))
+                    ||"events.page".equals(decrypted.optString("action"))){
                     decrypted.put("limit",Math.min(10,decrypted.optInt("limit",100)));
                     decrypted.put("maxBytes",32000);
                 }

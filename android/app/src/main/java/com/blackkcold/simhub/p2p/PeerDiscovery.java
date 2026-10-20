@@ -40,8 +40,13 @@ public final class PeerDiscovery implements AutoCloseable {
                 for(int i=0;i<peers.length();i++){
                     JSONObject p=peers.getJSONObject(i);
                     String id=p.getString("id");
+                    // v2 peers are symmetric; a former NODE also discovers
+                    // the other peer's listener when reverse grants exist.
+                    boolean clientSide="CONTROLLER".equals(p.optString("localRole"))
+                        ||(p.optInt("protocolVersion",1)>=2
+                            &&!"".equals(p.optString("grantsFromRemote","")));
                     if(!"REVOKED".equals(p.optString("pairState"))
-                        &&"CONTROLLER".equals(p.optString("localRole"))
+                        &&clientSide
                         &&info.getServiceName().startsWith("simhub_"+id.substring(0,16))){
                         enqueue(info,id);
                     }
@@ -81,6 +86,7 @@ public final class PeerDiscovery implements AutoCloseable {
                 public void onServiceResolved(NsdServiceInfo service){
                     try{
                         if(service.getHost()==null||service.getPort()<1024||service.getPort()>65535)return;
+                        synchronized(PeerDiscovery.this){if(!started)return;}
                         JSONObject peer=store.peer(next.peerId);
                         if("REVOKED".equals(peer.optString("pairState")))return;
                         JSONArray endpoints=new JSONArray().put(new JSONObject()

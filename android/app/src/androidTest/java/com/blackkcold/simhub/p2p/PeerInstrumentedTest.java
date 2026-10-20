@@ -51,6 +51,44 @@ public final class PeerInstrumentedTest {
             try{DirectPeerTransport.write(socket.getOutputStream(),PeerProtocol.seal(session,controllerId,to,id,expires,req));return PeerProtocol.open(session,to,controllerId,DirectPeerTransport.read(socket.getInputStream()),System.currentTimeMillis()/1000);}finally{Arrays.fill(session,(byte)0);}
         }
     }
+    @Test public void testRelayLiteCiphertextQueueAndScopedAcknowledgement()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        RelayLiteMailbox box=RelayLiteMailbox.get(c);
+        box.setEnabled(true);
+        try{
+            long now=System.currentTimeMillis()/1000;
+            String id=UUID.randomUUID().toString();
+            JSONObject inner=PeerOfflineProtocol.seal(root,controllerId,store.myId(),id,now,
+                now+600,new JSONObject().put("action","device.state").put("marker","sensitive-sandbox-data"));
+            JSONObject accepted=box.enqueue(controllerId,store.myId(),inner);
+            assertEquals("accepted",accepted.getString("state"));
+            assertFalse(accepted.getBoolean("duplicate"));
+            assertTrue(box.enqueue(controllerId,store.myId(),inner).getBoolean("duplicate"));
+            JSONObject messages=box.pull(store.myId(),4);
+            assertEquals(1,messages.getJSONArray("items").length());
+            JSONObject first=messages.getJSONArray("items").getJSONObject(0);
+            assertFalse(first.toString().contains("sensitive-sandbox-data"));
+            assertEquals("sensitive-sandbox-data",PeerOfflineProtocol.open(root,controllerId,
+                store.myId(),first.getJSONObject("frame"),now).getString("marker"));
+            assertFalse(box.ack(controllerId,controllerId,id));
+            assertTrue(box.ack(store.myId(),controllerId,id));
+            assertEquals(0,box.pull(store.myId(),4).getJSONArray("items").length());
+        }finally{box.setEnabled(false);}
+    }
+
+    @Test public void testRelayLiteOutboundIdempotenceAfterRetry()throws Exception{
+        JSONObject body=new JSONObject().put("action","device.state");
+        long now=System.currentTimeMillis()/1000,expires=now+600;
+        String id=UUID.randomUUID().toString();
+        JSONObject first=store.liteOutbound(controllerId,id,body,expires);
+        JSONObject retry=store.liteOutbound(controllerId,id,body,expires);
+        assertEquals(first.toString(),retry.toString());
+        try{
+            store.liteOutbound(controllerId,id,new JSONObject().put("action","sms.send"),expires);
+            fail("mutated request reused a logical id");
+        }catch(SecurityException expected){}
+        store.clearLiteOutbound(controllerId,id);
+    }
     @Test public void testAuthenticatedDirectStateAndRevocation()throws Exception{
         assertEquals("succeeded",rpc(new JSONObject().put("action","device.state")).getString("state"));
         store.revoke(controllerId);try{rpc(new JSONObject().put("action","device.state"));fail("revoked peer accepted");}catch(java.io.IOException expected){}

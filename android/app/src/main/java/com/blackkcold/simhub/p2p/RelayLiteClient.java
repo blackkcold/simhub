@@ -74,6 +74,7 @@ public final class RelayLiteClient {
             JSONObject result=decrypted.getJSONObject("result");
             // Persist locally under the encrypted Android secret store before ACK.
             secrets.putString(responseKey(from,id),result.toString());
+            store.clearLiteOutbound(from,id);
             String state=result.optString("state");
             if("submitted".equals(state)||"succeeded".equals(state)||"failed".equals(state)
                 ||"delivered".equals(state)||"expired".equals(state))store.clearOutbound(from,id);

@@ -135,6 +135,8 @@ as new commands. Interrupted command claims are likewise kept for inspection;
 their result may be unknown, so do not automatically repeat them. Keep the archive until recovery is verified, then dispose of it
 under your normal key-retention policy.
 
+Command outcomes and Relay acknowledgements are committed together. After a crash, a staged `sms.sent` event restores the sent acknowledgement; uncertain commands are never sent again automatically.
+
 During a transient Relay outage, the Agent continues collecting and encrypting
 SMS locally before retrying the network. Authentication failures and confirmed
 reset requests still stop normal collection.

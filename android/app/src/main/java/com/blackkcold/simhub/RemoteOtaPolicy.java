@@ -15,4 +15,11 @@ public final class RemoteOtaPolicy {
     public static boolean canOffer(int sdk, boolean developerOverride, boolean localConsent) {
         return supported(sdk, developerOverride) && localConsent;
     }
+    public static boolean validTarget(String channel,String target){
+        if("latest".equals(target))return "stable".equals(channel)||"dev".equals(channel);
+        if(target==null)return false;
+        if("stable".equals(channel))return target.matches("[0-9]+\\.[0-9]+\\.[0-9]+");
+        if("dev".equals(channel))return target.matches("[0-9]+\\.[0-9]+\\.[0-9]+-dev\\.[1-9][0-9]*");
+        return false;
+    }
 }

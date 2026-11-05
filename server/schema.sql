@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS events(
   FOREIGN KEY(device_id) REFERENCES devices(id),
   UNIQUE(device_id,id)
 );
+-- Prevent queued/replayed location events from resurrecting coordinates after consent withdrawal.
+CREATE TABLE IF NOT EXISTS location_purge(
+  device_id TEXT PRIMARY KEY,
+  purged_at INTEGER NOT NULL,
+  active_epoch TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(device_id) REFERENCES devices(id)
+);
+-- Retain delete compatibility with earlier Relay versions after a rollback.
+CREATE TRIGGER IF NOT EXISTS delete_device_location_purge
+BEFORE DELETE ON devices BEGIN
+  DELETE FROM location_purge WHERE device_id=OLD.id;
+END;
 CREATE INDEX IF NOT EXISTS idx_events_device_seq ON events(device_id,seq);
 CREATE INDEX IF NOT EXISTS idx_events_kind_seq ON events(kind,seq);
 CREATE INDEX IF NOT EXISTS idx_events_occurred_seq ON events(occurred_at DESC,seq DESC);

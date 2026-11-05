@@ -39,8 +39,7 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                     JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
                     String state=st.failed?"failed":"sent";
                     EventQueue.queue(c,eventId(pid,id,state),st.failed?"sms.failed":"sms.sent",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage",st.failed?"modem_failed":"modem_sent").put("resultCode",resultCode).put("partIndex",partIndex));
-                    store.finishCommand(id,state);
-                    store.queueCommandAck(id,state,new JSONObject().put("modemAccepted",!st.failed).put("resultCode",resultCode));
+                    store.finishCommandAndQueueAck(id,state,new JSONObject().put("modemAccepted",!st.failed).put("resultCode",resultCode));
                     if(st.failed)store.removePendingSms(id);
                     SyncJobService.scheduleNow(c);
                 }
@@ -52,14 +51,12 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                 JSONObject payload=new CryptoBox(c).decryptLocal(st.eventCipher);
                 if(st.deliveryFailed){
                     EventQueue.queue(c,eventId(pid,id,"delivery-failed"),"sms.failed",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("stage","delivery_failed").put("resultCode",resultCode).put("partIndex",partIndex));
-                    store.finishCommand(id,"failed");
-                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","delivery_failed").put("resultCode",resultCode));
+                    store.finishCommandAndQueueAck(id,"failed",new JSONObject().put("reason","delivery_failed").put("resultCode",resultCode));
                     store.removePendingSms(id);
                     SyncJobService.scheduleNow(c);
                 }else if(st.delivered){
                     EventQueue.queue(c,eventId(pid,id,"delivered"),"sms.delivered",System.currentTimeMillis()/1000,st.subId,false,payload,new JSONObject().put("delivery",true));
-                    store.finishCommand(id,"delivered");
-                    store.queueCommandAck(id,"delivered",new JSONObject().put("delivered",true));
+                    store.finishCommandAndQueueAck(id,"delivered",new JSONObject().put("delivered",true));
                     store.removePendingSms(id);
                     SyncJobService.scheduleNow(c);
                 }

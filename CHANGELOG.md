@@ -1,3 +1,14 @@
+## v0.18.0 — Private device telemetry and delivery reliability
+
+- Add battery, Wi-Fi and SIM signal telemetry and device health dashboards.
+- Add default-off, Node Key encrypted one-shot location; remote requests need separate authorization and a foreground node. Revocation purges the Relay sample and rejects stale consent epochs.
+- Preserve pending encrypted Modem events, fragments, acknowledgements and interrupted claims in a private recovery archive before unpairing; import re-encrypts recoverable data under the new node key.
+- Keep collecting Modem SMS during transient Relay outages, recover complete multipart messages after restart and preserve their original SIM identity when known.
+- Report uncertain command outcomes without resending automatically, accept authenticated late receipts, and persist Android command state and acknowledgements atomically.
+- Derive update manifests from the actual signed APK, correct Dev version handling and paginate large release feeds.
+- Keep experimental P2P and Relay Lite outside the Stable channel.
+- Verify telemetry and location using a cloud Android emulator and isolated HTTPS Relay; physical SIM, OEM power management and physical-device location remain outside emulator coverage.
+
 ## v0.17.4 — Downloadable verified Stable server packages
 
 - Add a version-matched Rootless Docker deployment ZIP to GitHub Stable Releases alongside the signed Android APK and OCI image.

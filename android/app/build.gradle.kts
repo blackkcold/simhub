@@ -14,8 +14,8 @@ android {
         minSdk = 29
         targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 54
-        versionName = "0.17.4"
+        versionCode = 55
+        versionName = "0.18.0"
         buildConfigField("String", "RELEASE_CHANNEL", "\"stable\"")
     }
     buildFeatures { buildConfig = true; compose = true; aidl = true; resValues = true }

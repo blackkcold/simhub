@@ -142,9 +142,14 @@ ALLOWED_COMMANDS = {
 def remote_ota_capable(app_version: str, state: dict) -> bool:
     """Fail closed for missing or older Android Agent state. A developer override is explicit."""
     try:
-        version = tuple(int(p) for p in str(app_version).split("."))
+        # Dev packages use the same capability contract but carry a prerelease
+        # suffix. Accept only the two release formats the updater recognizes.
+        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-dev\.([1-9]\d*))?", str(app_version))
+        if not match:
+            return False
+        version = tuple(int(match.group(i)) for i in range(1, 4))
         sdk = state.get("sdk")
-        return (len(version) == 3 and version >= (0, 13, 3)
+        return (version >= (0, 13, 3)
                 and type(sdk) is int and sdk >= 29
                 and (sdk >= 36 or state.get("remoteOtaDeveloperOverride") is True)
                 and state.get("remoteOtaSupported") is True
@@ -867,6 +872,16 @@ def normalize_wrapped_key(key_id: Any, wrapped: Any) -> tuple[str,dict[str,Any]]
     if not validate_cipher(wrapped):
         raise ValueError("Invalid wrapped key envelope")
     return kid,wrapped
+
+
+def expire_commands(con: sqlite3.Connection, ts: int, device_id: str | None = None) -> None:
+    """Stop delivery at expiry without asserting that a dispatched command did not run."""
+    scope = " AND device_id=?" if device_id is not None else ""
+    args = (ts, ts, device_id) if device_id is not None else (ts, ts)
+    con.execute("UPDATE commands SET state='expired',ack_at=? "
+                "WHERE state='queued' AND expires_at<=?" + scope, args)
+    con.execute("UPDATE commands SET state='outcome_unknown',ack_at=? "
+                "WHERE state='dispatched' AND expires_at<=?" + scope, args)
 
 
 def signal_stream() -> None:
@@ -2562,7 +2577,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         try: limit=max(1,min(int(q.get("limit",["50"])[0]),200))
         except ValueError: limit=50
         with open_db() as con:
-            con.execute("UPDATE commands SET state='expired',ack_at=? WHERE device_id=? AND state IN ('queued','dispatched') AND expires_at<=?",(ts,device_id,ts))
+            expire_commands(con,ts,device_id)
             rows=con.execute("SELECT * FROM commands WHERE device_id=? AND state IN ('queued','dispatched') AND expires_at>? ORDER BY seq ASC LIMIT ?",(device_id,ts,limit)).fetchall()
             ids=[r["id"] for r in rows]
             if ids:
@@ -2573,7 +2588,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
 
     def ack_command(self,device_id:str,command_id:str,body:dict[str,Any]) -> None:
         state=str(body.get("state",""))
-        allowed={"submitted","sent","delivered","succeeded","failed","rejected","expired"}
+        allowed={"submitted","sent","delivered","succeeded","failed","rejected","expired","outcome_unknown"}
         if state not in allowed:
             self.send_error_json(400,"invalid_state","Invalid command state"); return
         result=body.get("result",{})
@@ -2583,11 +2598,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
         safe_result_keys={"reason","queued","scanned","submitted","subscriptionId","status","enabled","refreshed","rotated","keyId","checked","duplicate","targetVersion","uploaded","encrypted","sampledAt","requestId"}
         result={k:(v[:120] if isinstance(v,str) else v) for k,v in result.items()
                 if k in safe_result_keys and isinstance(v,(str,int,float,bool,type(None)))}
-        # Terminal ACKs are immutable; duplicate ACKs never replace stored result metadata.
+        # An authenticated late ACK can resolve an uncertain dispatch, including
+        # records marked expired by older Relays. Other terminal ACKs remain immutable.
         successors={
-            "queued":{"submitted","sent","delivered","succeeded","failed","rejected","expired"},
-            "dispatched":{"submitted","sent","delivered","succeeded","failed","rejected","expired"},
-            "submitted":{"sent","delivered","succeeded","failed"},
+            "queued":{"submitted","sent","delivered","succeeded","failed","rejected","expired","outcome_unknown"},
+            "dispatched":{"submitted","sent","delivered","succeeded","failed","rejected","expired","outcome_unknown"},
+            "outcome_unknown":{"submitted","sent","delivered","succeeded","failed","rejected","expired"},
+            "expired":{"submitted","sent","delivered","succeeded","failed","rejected"},
+            "submitted":{"sent","delivered","succeeded","failed","outcome_unknown"},
             "sent":{"delivered","failed"},
         }
         with open_db() as con:
@@ -2611,10 +2629,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
         except ValueError: limit=20
         ts=now()
         with open_db() as con:
-            # Commands must expire even if the Android node never reconnects.
-            # Otherwise the controller displays a phantom 'queued' task forever.
-            con.execute("UPDATE commands SET state='expired',ack_at=? WHERE state IN ('queued','dispatched') AND expires_at<=?",
-                        (ts,ts))
+            # Never call a dispatched command unexecuted: its ACK may be delayed.
+            expire_commands(con,ts)
             rows=con.execute("SELECT id,device_id,type,created_at,expires_at,ack_at,state,result_json FROM commands ORDER BY seq DESC LIMIT ?",(limit,)).fetchall()
         self.send_json(200,{"commands":[{"commandId":r["id"],"deviceId":r["device_id"],"type":r["type"],"createdAt":r["created_at"],"expiresAt":r["expires_at"],"ackAt":r["ack_at"],"state":r["state"],"result":safe_json_loads(r["result_json"],{})} for r in rows]})
 

@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -155,11 +156,85 @@ def decrypt_bootstrap_node_key(bootstrap: bytes, envelope: dict[str, Any], kid: 
 
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    tmp.replace(path)
-    os.chmod(path, 0o600)
+    fd,name=tempfile.mkstemp(prefix="."+path.name+"-",suffix=".tmp",dir=path.parent)
+    try:
+        with os.fdopen(fd,"w",encoding="utf-8") as output:
+            output.write(json.dumps(value,indent=2,ensure_ascii=False)+"\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(name,path)
+        sync_directory(path.parent)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def sync_directory(path: Path) -> None:
+    """Persist directory entries where the host filesystem supports directory fsync."""
+    try:
+        fd=os.open(path,os.O_RDONLY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+    except OSError:
+        pass
+
+
+def file_sha256(path: Path) -> str:
+    digest=hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda:source.read(1024*1024),b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def recovery_state(con: sqlite3.Connection) -> tuple[dict[str,int],str]:
+    """Fingerprint only pending encrypted records, without exposing their contents."""
+    queries={
+        "events":"SELECT id,kind,occurred_at,channel_id,has_otp,metadata_json,ciphertext_json,created_at FROM events ORDER BY id",
+        "parts":"SELECT group_id,part_no,total_parts,cipher_json,created_at FROM multipart_parts ORDER BY group_id,part_no",
+        "acks":"SELECT command_id,state,result_json,updated_at FROM command_acks ORDER BY command_id",
+        "claims":"SELECT id,state,processed_at FROM processed_commands WHERE state='claimed' ORDER BY id",
+    }
+    digest=hashlib.sha256();counts={}
+    for name,query in queries.items():
+        count=0
+        for row in con.execute(query):
+            data=json.dumps([name,*tuple(row)],ensure_ascii=True,separators=(",",":")).encode()
+            digest.update(len(data).to_bytes(8,"big"));digest.update(data);count+=1
+        counts[name]=count
+    return counts,digest.hexdigest()
+
+
+def private_path(path: Path, directory: bool) -> None:
+    info=path.lstat()
+    if (stat.S_ISLNK(info.st_mode) or (not stat.S_ISDIR(info.st_mode) if directory else not stat.S_ISREG(info.st_mode))
+            or info.st_mode & 0o077 or info.st_uid != os.geteuid()):
+        raise PermissionError("Recovery path must be private, owned by this user, and not a symlink")
+
+
+def open_recovery_archive(path: Path) -> tuple[dict[str,Any],sqlite3.Connection]:
+    """Open an explicitly selected archive read-only after identity and integrity checks."""
+    private_path(path,True)
+    manifest_path=path/"recovery.json"; database_path=path/"pending.db"
+    private_path(manifest_path,False);private_path(database_path,False)
+    if manifest_path.stat().st_size>16384:
+        raise ValueError("Recovery manifest too large")
+    manifest=load_json(manifest_path)
+    raw=ub64u(str(manifest.get("nodeKey","")))
+    if (manifest.get("format")!="simhub-modem-recovery-v1" or len(raw)!=32
+            or key_id(raw)!=manifest.get("keyId") or not isinstance(manifest.get("deviceId"),str)
+            or not manifest["deviceId"] or manifest.get("databaseSha256")!=file_sha256(database_path)):
+        raise ValueError("Recovery archive identity or checksum invalid")
+    uri="file:"+urllib.parse.quote(str(database_path.absolute()),safe="/")+"?mode=ro"
+    con=sqlite3.connect(uri,uri=True);con.row_factory=sqlite3.Row
+    try:
+        counts,fingerprint=recovery_state(con)
+        if counts!=manifest.get("counts") or fingerprint!=manifest.get("pendingFingerprint"):
+            raise ValueError("Recovery archive pending-data fingerprint invalid")
+        return manifest,con
+    except Exception:
+        con.close()
+        raise
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -191,7 +266,10 @@ class Relay:
         try:
             with urllib.request.urlopen(req, timeout=15) as response:
                 raw = response.read()
-                return json.loads(raw) if raw else {}
+                try:
+                    return json.loads(raw) if raw else {}
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise RuntimeError("relay invalid JSON response") from exc
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", "replace")
             try:
@@ -263,6 +341,12 @@ class Store:
               result_json TEXT NOT NULL,
               updated_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS recovery_imports(
+              source_device TEXT NOT NULL,
+              source_item TEXT NOT NULL,
+              imported_at INTEGER NOT NULL,
+              PRIMARY KEY(source_device,source_item)
+            );
             """
         )
         self.db.commit()
@@ -312,6 +396,12 @@ class Store:
 
     def multipart_group(self, group_id: str) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM multipart_parts WHERE group_id=? ORDER BY part_no ASC",(group_id,)).fetchall()
+
+    def complete_multipart_groups(self) -> list[str]:
+        rows=self.db.execute("""SELECT group_id FROM multipart_parts GROUP BY group_id
+            HAVING MIN(total_parts)=MAX(total_parts) AND COUNT(*)=MAX(total_parts)
+               AND MIN(part_no)=1 AND MAX(part_no)=MAX(total_parts)""").fetchall()
+        return [str(r["group_id"]) for r in rows]
 
     def stale_multipart_groups(self, age_seconds: int = 86400) -> list[str]:
         rows=self.db.execute(
@@ -373,10 +463,12 @@ class Store:
 
     def recover_interrupted_claims(self) -> None:
         rows = self.db.execute("SELECT id FROM processed_commands WHERE state='claimed' AND processed_at<?", (now() - 120,)).fetchall()
-        for r in rows:
-            self.finish_command(r["id"], "failed")
-            self.queue_ack(r["id"], "failed", {"reason": "interrupted_unknown"})
-        self.db.commit()
+        with self.db:
+            for r in rows:
+                self.db.execute("UPDATE processed_commands SET state='outcome_unknown',processed_at=? WHERE id=? AND state='claimed'",(now(),r["id"]))
+                self.db.execute("INSERT INTO command_acks(command_id,state,result_json,updated_at) VALUES(?,?,?,?) "
+                    "ON CONFLICT(command_id) DO UPDATE SET state=excluded.state,result_json=excluded.result_json,updated_at=excluded.updated_at",
+                    (r["id"],"outcome_unknown",json.dumps({"reason":"interrupted_unknown"}),now()))
 
 
 @dataclass
@@ -996,6 +1088,18 @@ class NodeResetComplete(Exception):
     """The current node has been removed from Relay and local credentials destroyed."""
 
 
+def transient_relay_error(error: Exception) -> bool:
+    """Collect locally during outages, but fail closed on revoked/authenticated resets."""
+    if isinstance(error, OSError):
+        return True
+    if isinstance(error, RuntimeError):
+        if str(error) == "relay invalid JSON response":
+            return True
+        match=re.match(r"^relay HTTP (\d{3}):",str(error))
+        return bool(match and (int(match.group(1)) in {408,425,429} or int(match.group(1))>=500))
+    return False
+
+
 class Agent:
     def __init__(self, config_path: Path, db_path: Path) -> None:
         self.config_path = config_path
@@ -1029,8 +1133,9 @@ class Agent:
     def channel_revision(self) -> int:
         return int(self.config.get("channelRevision", 1))
 
-    def encrypt_event(self, event_id: str, kind: str, occurred_at: int, has_otp: bool, payload: dict[str, Any]) -> dict[str, Any]:
-        return encrypt_payload(self.node_key, self.kid, payload, event_aad(str(self.config["deviceId"]), event_id, kind, occurred_at, self.channel_id, has_otp))
+    def encrypt_event(self, event_id: str, kind: str, occurred_at: int, has_otp: bool, payload: dict[str, Any], channel_id: str | None=None) -> dict[str, Any]:
+        channel=self.channel_id if channel_id is None else channel_id
+        return encrypt_payload(self.node_key, self.kid, payload, event_aad(str(self.config["deviceId"]), event_id, kind, occurred_at, channel, has_otp))
 
     def _multipart_group_id(self,sms: SmsRecord) -> str:
         base=[
@@ -1054,26 +1159,35 @@ class Agent:
     def _multipart_aad(group_id: str, part_no: int, total_parts: int) -> bytes:
         return f"simhub-modem-multipart-v1|{group_id}|{part_no}|{total_parts}".encode()
 
-    def _encrypt_multipart_part(self,group_id: str,sms: SmsRecord) -> dict[str,Any]:
+    def _encrypt_multipart_payload(self,group_id: str,part_no: int,total_parts: int,value: dict[str,Any]) -> dict[str,Any]:
         iv=os.urandom(12)
-        payload=json.dumps({
+        payload=json.dumps(value,ensure_ascii=False,separators=(",",":")).encode()
+        aad=self._multipart_aad(group_id,part_no,total_parts)
+        ct=AESGCM(self.node_key).encrypt(iv,payload,aad)
+        return {"v":1,"alg":"A256GCM","iv":b64u(iv),"ct":b64u(ct)}
+
+    def _encrypt_multipart_part(self,group_id: str,sms: SmsRecord) -> dict[str,Any]:
+        return self._encrypt_multipart_payload(group_id,sms.concat_seq,sms.concat_total,{
             "sender":sms.sender,
             "body":sms.body,
             "occurredAt":sms.occurred_at,
             "localId":sms.local_id,
-        },ensure_ascii=False,separators=(",",":")).encode()
-        aad=self._multipart_aad(group_id,sms.concat_seq,sms.concat_total)
-        ct=AESGCM(self.node_key).encrypt(iv,payload,aad)
-        return {"v":1,"alg":"A256GCM","iv":b64u(iv),"ct":b64u(ct)}
+            "channelId":self.channel_id,
+            "channelRevision":self.channel_revision,
+        })
 
-    def _decrypt_multipart_part(self,group_id: str,row: sqlite3.Row) -> dict[str,Any]:
+    @staticmethod
+    def _decrypt_multipart_with_key(key: bytes,group_id: str,row: sqlite3.Row) -> dict[str,Any]:
         env=json.loads(row["cipher_json"])
-        aad=self._multipart_aad(group_id,int(row["part_no"]),int(row["total_parts"]))
-        raw=AESGCM(self.node_key).decrypt(ub64u(str(env["iv"])),ub64u(str(env["ct"])),aad)
+        aad=Agent._multipart_aad(group_id,int(row["part_no"]),int(row["total_parts"]))
+        raw=AESGCM(key).decrypt(ub64u(str(env["iv"])),ub64u(str(env["ct"])),aad)
         value=json.loads(raw)
         if not isinstance(value,dict):
             raise ValueError("multipart part payload invalid")
         return value
+
+    def _decrypt_multipart_part(self,group_id: str,row: sqlite3.Row) -> dict[str,Any]:
+        return self._decrypt_multipart_with_key(self.node_key,group_id,row)
 
     def _emit_multipart_group(self,group_id: str,force: bool=False) -> bool:
         rows=self.store.multipart_group(group_id)
@@ -1091,6 +1205,11 @@ class Agent:
         body="".join(str(x[1].get("body","")) for x in by_part)
         sender=str(by_part[0][1].get("sender","")) if by_part else ""
         occurred=min(int(x[1].get("occurredAt",now())) for x in by_part) if by_part else now()
+        identities={(str(x[1].get("channelId") or ""),x[1].get("channelRevision")) for x in by_part}
+        channel,revision=next(iter(identities)) if len(identities)==1 else ("",0)
+        if not channel or type(revision) is not int or revision<=0:
+            # Existing pre-upgrade fragments did not preserve their SIM identity.
+            channel,revision="",0
         # Content-distinct multipart messages must never reuse an event ID.
         # The stable full-message digest prevents relay dedup from dropping a new body.
         event_id="modem-multipart-"+group_id+"-"+hashlib.sha256((sender+"\\0"+body+"\\0"+str(occurred)).encode()).hexdigest()[:20]
@@ -1099,8 +1218,8 @@ class Agent:
             "sender":sender,
             "body":body,
             "occurredAt":occurred,
-            "channelId":self.channel_id,
-            "channelRevision":self.channel_revision,
+            "channelId":channel,
+            "channelRevision":revision,
             "providerId":group_id,
             "partsReceived":len(numbers),
             "partsExpected":total,
@@ -1109,8 +1228,8 @@ class Agent:
         otp=parse_otp(body)
         if otp:
             payload["otp"]=otp
-        cipher=self.encrypt_event(event_id,"sms.received",occurred,bool(otp),payload)
-        if self.store.queue_event(event_id,"sms.received",occurred,self.channel_id,bool(otp),{"source":self.adapter.name,"parts":total},cipher):
+        cipher=self.encrypt_event(event_id,"sms.received",occurred,bool(otp),payload,channel)
+        if self.store.queue_event(event_id,"sms.received",occurred,channel,bool(otp),{"source":self.adapter.name,"parts":total},cipher):
             self.store.delete_multipart_group(group_id)
             return True
         return False
@@ -1164,9 +1283,12 @@ class Agent:
         atomic_write_json(self.config_path,self.config)
 
     def receive(self) -> None:
-        touched:set[str]=set()
         for sms in self.adapter.list_sms():
             if self.store.seen(sms.local_id):
+                # The prior attempt may have staged the SMS but failed to delete
+                # its hardware copy. Retry cleanup without staging a duplicate.
+                try:self.adapter.delete_sms(sms)
+                except Exception:pass
                 continue
             if sms.concat_ref and sms.concat_total>1 and 1<=sms.concat_seq<=sms.concat_total:
                 group_id=self._multipart_group_id(sms)
@@ -1180,7 +1302,6 @@ class Agent:
                         continue
                 cipher=self._encrypt_multipart_part(group_id,sms)
                 if self.store.queue_multipart_part(group_id,sms.concat_seq,sms.concat_total,cipher):
-                    touched.add(group_id)
                     self.store.mark_seen(sms.local_id)
                     try:
                         self.adapter.delete_sms(sms)
@@ -1207,7 +1328,8 @@ class Agent:
                     self.adapter.delete_sms(sms)
                 except Exception:
                     pass
-        for group_id in touched:
+        # Includes groups completed before a crash or imported from a recovery archive.
+        for group_id in self.store.complete_multipart_groups():
             self._emit_multipart_group(group_id)
         for group_id in self.store.stale_multipart_groups(86400):
             self._emit_multipart_group(group_id,force=True)
@@ -1337,18 +1459,134 @@ class Agent:
             {"appVersion": VERSION, "osVersion": sys.platform},
         )
 
+    def _preserve_pending(self) -> Path | None:
+        """Make a verified, private recovery snapshot before destroying enrollment."""
+        counts,fingerprint=recovery_state(self.store.db)
+        if not any(counts.values()):
+            return None
+        root=self.config_path.parent/"recovery"
+        root.mkdir(mode=0o700,parents=True,exist_ok=True)
+        private_path(root,True)
+        existing=self.config.get("pendingRecoveryArchive")
+        if isinstance(existing,str) and re.fullmatch(r"recovery-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}",existing):
+            target=root/existing
+            if target.exists():
+                manifest,snapshot=open_recovery_archive(target)
+                snapshot.close()
+                if (manifest["deviceId"]==str(self.config["deviceId"]) and manifest["keyId"]==self.kid
+                        and manifest["pendingFingerprint"]==fingerprint):
+                    return target
+
+        temporary=Path(tempfile.mkdtemp(prefix=".pending-",dir=root))
+        try:
+            database=temporary/"pending.db"
+            fd=os.open(database,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);os.close(fd)
+            with sqlite3.connect(database) as snapshot:
+                self.store.db.backup(snapshot)
+                snapshot.execute("PRAGMA journal_mode=DELETE")
+                saved_counts,saved_fingerprint=recovery_state(snapshot)
+            with database.open("rb") as saved:
+                os.fsync(saved.fileno())
+            current_counts,current_fingerprint=recovery_state(self.store.db)
+            if (saved_counts!=counts or saved_fingerprint!=fingerprint
+                    or current_counts!=counts or current_fingerprint!=fingerprint):
+                raise RuntimeError("Pending data changed during recovery snapshot; reset stopped")
+            manifest={"format":"simhub-modem-recovery-v1","createdAt":now(),
+                      "deviceId":str(self.config["deviceId"]),"keyId":self.kid,
+                      "nodeKey":b64u(self.node_key),"counts":counts,
+                      "pendingFingerprint":fingerprint,"databaseSha256":file_sha256(database)}
+            atomic_write_json(temporary/"recovery.json",manifest)
+            sync_directory(temporary)
+            name="recovery-"+time.strftime("%Y%m%dT%H%M%SZ",time.gmtime())+"-"+uuid.uuid4().hex
+            target=root/name
+            if target.exists():
+                raise FileExistsError("Recovery archive already exists")
+            os.rename(temporary,target)
+            sync_directory(root)
+            self.config["pendingRecoveryArchive"]=name
+            atomic_write_json(self.config_path,self.config)
+            return target
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+
+    def import_recovery(self,archive: Path) -> dict[str,int]:
+        """Explicitly re-encrypt pending records for this newly enrolled node.
+
+        The archive is read-only and retained. Old command ACKs belong to the
+        revoked enrollment and remain in the archive for operator inspection.
+        """
+        manifest,source=open_recovery_archive(archive)
+        try:
+            old_device=manifest["deviceId"]
+            if old_device==str(self.config["deviceId"]):
+                raise ValueError("Recovery requires a different, newly enrolled node")
+            old_key=ub64u(manifest["nodeKey"]);old_kid=manifest["keyId"]
+            imported={"events":0,"parts":0,"retainedAcks":manifest["counts"]["acks"],
+                      "retainedClaims":manifest["counts"]["claims"]}
+            completed_groups=set()
+            with self.store.db:
+                for row in source.execute("SELECT * FROM events ORDER BY created_at,id"):
+                    old_id=str(row["id"]);kind=str(row["kind"]);occurred=int(row["occurred_at"])
+                    channel=str(row["channel_id"]);has_otp=bool(row["has_otp"])
+                    payload=decrypt_payload(old_key,old_kid,json.loads(row["ciphertext_json"]),
+                        event_aad(old_device,old_id,kind,occurred,channel,has_otp))
+                    if old_id.startswith("modem-multipart-") and isinstance(payload.get("providerId"),str):
+                        completed_groups.add(payload["providerId"])
+                    item="event:"+old_id
+                    if self.store.db.execute("SELECT 1 FROM recovery_imports WHERE source_device=? AND source_item=?",(old_device,item)).fetchone():
+                        continue
+                    new_id="recovered-"+hashlib.sha256((old_device+"\0"+old_id).encode()).hexdigest()
+                    cipher=self.encrypt_event(new_id,kind,occurred,has_otp,payload,channel)
+                    self.store.db.execute("INSERT OR IGNORE INTO events(id,kind,occurred_at,channel_id,has_otp,metadata_json,ciphertext_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (new_id,kind,occurred,channel,int(has_otp),row["metadata_json"],json.dumps(cipher,separators=(",",":")),int(row["created_at"])))
+                    local_id=payload.get("providerId")
+                    if kind.startswith("sms.") and isinstance(local_id,str) and local_id.startswith(("dji-at-","mm-")):
+                        self.store.db.execute("INSERT OR IGNORE INTO seen_sms(local_id,seen_at) VALUES(?,?)",(local_id,now()))
+                    self.store.db.execute("INSERT INTO recovery_imports(source_device,source_item,imported_at) VALUES(?,?,?)",(old_device,item,now()))
+                    imported["events"]+=1
+                for row in source.execute("SELECT * FROM multipart_parts ORDER BY group_id,part_no"):
+                    old_group=str(row["group_id"]);part=int(row["part_no"]);total=int(row["total_parts"])
+                    if old_group in completed_groups:
+                        continue  # The complete event was already staged before the crash.
+                    if not 1<=part<=total<=255:
+                        raise ValueError("Invalid recovered multipart metadata")
+                    item="part:"+old_group+":"+str(part)
+                    if self.store.db.execute("SELECT 1 FROM recovery_imports WHERE source_device=? AND source_item=?",(old_device,item)).fetchone():
+                        continue
+                    value=self._decrypt_multipart_with_key(old_key,old_group,row)
+                    group="recovered-"+hashlib.sha256((old_device+"\0"+old_group).encode()).hexdigest()[:32]
+                    cipher=self._encrypt_multipart_payload(group,part,total,value)
+                    self.store.db.execute("INSERT OR IGNORE INTO multipart_parts(group_id,part_no,total_parts,cipher_json,created_at) VALUES(?,?,?,?,?)",
+                        (group,part,total,json.dumps(cipher,separators=(",",":")),int(row["created_at"])))
+                    local_id=value.get("localId")
+                    if isinstance(local_id,str) and local_id:
+                        self.store.db.execute("INSERT OR IGNORE INTO seen_sms(local_id,seen_at) VALUES(?,?)",(local_id,now()))
+                    self.store.db.execute("INSERT INTO recovery_imports(source_device,source_item,imported_at) VALUES(?,?,?)",(old_device,item,now()))
+                    imported["parts"]+=1
+            return imported
+        finally:
+            source.close()
+
+    def _clear_enrollment(self,archive: Path | None) -> None:
+        self.store.db.close()
+        self.config_path.unlink(missing_ok=True)
+        for path in (self.db_path,Path(str(self.db_path)+"-wal"),Path(str(self.db_path)+"-shm")):
+            path.unlink(missing_ok=True)
+        if archive:
+            print("SIM Hub modem enrollment reset; pending encrypted data retained in "+str(archive),flush=True)
+        else:
+            print("SIM Hub modem enrollment reset; SMS stored on the modem was not erased",flush=True)
+        raise NodeResetComplete()
+
     def _finish_reset(self) -> None:
+        archive=self._preserve_pending()
         try:
             self.relay.request("POST", f"/api/v1/devices/{self.config['deviceId']}/reset", {})
         except RuntimeError as exc:
             if "relay HTTP 410:" not in str(exc):
                 raise
-        self.store.db.close()
-        self.config_path.unlink(missing_ok=True)
-        for path in (self.db_path, Path(str(self.db_path)+"-wal"), Path(str(self.db_path)+"-shm")):
-            path.unlink(missing_ok=True)
-        print("SIM Hub modem enrollment reset; SMS stored on the modem was not erased",flush=True)
-        raise NodeResetComplete()
+        self._clear_enrollment(archive)
 
     def _check_reset(self) -> None:
         current=load_json(self.config_path)
@@ -1359,11 +1597,9 @@ class Agent:
             state=self.relay.request("GET",f"/api/v1/devices/{self.config['deviceId']}/lifecycle")
         except RuntimeError as exc:
             if "relay HTTP 410:" in str(exc):
-                self.store.db.close()
-                self.config_path.unlink(missing_ok=True)
-                for path in (self.db_path,Path(str(self.db_path)+"-wal"),Path(str(self.db_path)+"-shm")):
-                    path.unlink(missing_ok=True)
-                raise NodeResetComplete() from None
+                self.config["resetPending"]=True
+                archive=self._preserve_pending()
+                self._clear_enrollment(archive)
             if "relay HTTP 404:" in str(exc):
                 return  # Rolling upgrade against an older Relay
             raise
@@ -1373,8 +1609,17 @@ class Agent:
             self._finish_reset()
 
     def cycle(self) -> None:
-        self._check_reset()
-        self.rotate_device_token()
+        try:
+            self._check_reset()
+            self.rotate_device_token()
+        except (OSError,RuntimeError) as error:
+            if self.config.get("resetPending") or not transient_relay_error(error):
+                raise
+            # Preserve new SMS locally even when the Relay is temporarily offline.
+            # No authenticated network operation or remote command is attempted.
+            self._sync_channel_identity()
+            self.receive()
+            raise
         self.store.prune()
         self.store.recover_interrupted_claims()
         self._sync_channel_identity()
@@ -1461,6 +1706,8 @@ def main() -> None:
     sub.add_parser("run")
     sub.add_parser("once")
     sub.add_parser("reset",help="Request bidirectional unpair; completed once Relay acknowledges")
+    recovery=sub.add_parser("recover",help="Import a private recovery archive into a newly enrolled node")
+    recovery.add_argument("--archive",required=True,help="Path to the preserved recovery directory")
     args = p.parse_args()
     if args.command == "enroll":
         enroll(args)
@@ -1473,6 +1720,12 @@ def main() -> None:
         print("Reset queued. The next agent polling cycle will confirm with Relay.")
         return
     agent = Agent(Path(args.config), Path(args.db))
+    if args.command == "recover":
+        result=agent.import_recovery(Path(args.archive))
+        print("Recovered encrypted events="+str(result["events"])+" parts="+str(result["parts"])+
+              "; old acknowledgements retained="+str(result["retainedAcks"])+
+              "; uncertain command claims retained="+str(result["retainedClaims"])+". Archive was not modified.")
+        return
     if args.command == "once":
         try: agent.cycle()
         except NodeResetComplete: return

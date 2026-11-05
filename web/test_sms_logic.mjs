@@ -5,6 +5,12 @@ import {readFileSync} from "node:fs";
 import {runInNewContext} from "node:vm";
 
 const source=readFileSync(new URL("./app.js",import.meta.url),"utf8");
+const versionCode=source.slice(source.indexOf("function versionAtLeast("),source.indexOf("function otaView("));
+const {versionAtLeast}=runInNewContext(versionCode+"\n({versionAtLeast})",Object.create(null));
+assert.equal(versionAtLeast("0.17.4-dev.8","0.17.4"),true);
+assert.equal(versionAtLeast("0.17.4-dev.8","0.17.5"),false);
+assert.equal(versionAtLeast("0.17.4-dev.0","0.13.3"),false);
+assert.equal(versionAtLeast("1.invalid","0.13.3"),false);
 function segment(from,to){
   const a=source.indexOf(from),b=source.indexOf(to,a+from.length);
   assert.ok(a>=0&&b>a,"Missing conversation implementation: "+from);

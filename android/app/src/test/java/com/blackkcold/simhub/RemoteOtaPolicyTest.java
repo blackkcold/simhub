@@ -25,4 +25,13 @@ public class RemoteOtaPolicyTest {
         assertFalse(RemoteOtaPolicy.canOffer(35,true,false));
         assertTrue(RemoteOtaPolicy.canOffer(35,true,true));
     }
+    @Test public void targetMustMatchInstalledChannel() {
+        assertTrue(RemoteOtaPolicy.validTarget("stable","0.17.4"));
+        assertTrue(RemoteOtaPolicy.validTarget("dev","0.17.4-dev.9"));
+        assertTrue(RemoteOtaPolicy.validTarget("dev","latest"));
+        assertFalse(RemoteOtaPolicy.validTarget("stable","0.17.4-dev.9"));
+        assertFalse(RemoteOtaPolicy.validTarget("dev","0.17.4"));
+        assertFalse(RemoteOtaPolicy.validTarget("dev","0.17.4-dev.0"));
+        assertFalse(RemoteOtaPolicy.validTarget("unknown","latest"));
+    }
 }

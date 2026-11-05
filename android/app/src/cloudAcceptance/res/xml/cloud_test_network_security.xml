@@ -1,0 +1,9 @@
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+            <!-- Generated afresh on the isolated CI runner; never in Stable or Dev APKs. -->
+            <certificates src="@raw/simhub_ci_ca"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

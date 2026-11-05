@@ -84,16 +84,18 @@ jobs:
           node-version: '22'
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
       - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state server.test_device_telemetry server.test_device_location
       - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening server.test_controller_auth server.test_controller_http server.test_global_vault
       - run: PYTHONPATH=server python3 server/test_auth_stages.py
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_command_expiry server.test_schema_rollback
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
       - run: python3 scripts/check_stable_boundary.py
       - run: python3 scripts/test_release_pipeline.py
       - run: python3 scripts/test_deployment_bundle.py
       - run: python3 -m unittest -v scripts.test_release_checks
+      - run: python3 -m unittest -v scripts.test_apk_release_metadata
       - run: python3 scripts/test_icons.py
       - run: python3 server/test_simhub.py
       - run: python3 server/test_surfaces.py
@@ -101,7 +103,10 @@ jobs:
       - run: PYTHONPATH=server python3 server/test_migration.py
       - run: PYTHONPATH=server python3 server/test_maintenance.py
       - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
+      - run: PYTHONPATH=modem_agent python3 -m unittest -v modem_agent.test_recovery
       - run: node --check web/app.js && node --check web/i18n.js && node --check web/sw.js
+      - run: node web/test_node_dashboard.mjs
+      - run: node web/test_device_location.mjs
       - run: node web/test_sms_logic.mjs
       - run: node web/test_crypto_vector.mjs
       - run: node web/test_bootstrap_vector.mjs
@@ -223,6 +228,8 @@ jobs:
             echo "::error::Unexpected signing certificate digest: $ACTUAL"
             exit 1
           fi
+          python3 scripts/apk_release_metadata.py inspect --aapt "$ANDROID_HOME/build-tools/37.0.0/aapt" \
+            --apk "$APK" --metadata apk-metadata.json --channel stable --version "$VERSION"
           cp "$APK" "simhub-agent-v${VERSION}-release.apk"
           sha256sum "simhub-agent-v${VERSION}-release.apk" > "simhub-agent-v${VERSION}-release.apk.sha256"
           rm -f "$ANDROID_KEYSTORE_FILE"
@@ -234,6 +241,7 @@ jobs:
             simhub-agent-v*-release.apk
             simhub-agent-v*-release.apk.sha256
             signing-report.txt
+            apk-metadata.json
           if-no-files-found: error
 
   publish:
@@ -251,6 +259,11 @@ jobs:
         with:
           name: signed-apk
           path: release
+
+      - name: Verify APK metadata before creating the release tag
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: python3 scripts/apk_release_metadata.py verify --apk "release/simhub-agent-v${VERSION}-release.apk" --metadata release/apk-metadata.json --channel stable --version "$VERSION"
 
       - name: Require green current-head CI, security scan and native CodeQL
         env:
@@ -295,7 +308,7 @@ jobs:
             "release/simhub-v${VERSION}-source.zip" \
             "release/simhub-v${VERSION}-docs.zip" \
             "release/simhub-server-v${VERSION}-deploy.zip" > release/SHA256SUMS.txt
-          VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9]*\)/\1/p' android/app/build.gradle.kts | head -1)"
+          VERSION_CODE="$(python3 scripts/apk_release_metadata.py verify --apk "release/simhub-agent-v${VERSION}-release.apk" --metadata release/apk-metadata.json --channel stable --version "$VERSION")"
           export VERSION VERSION_CODE
           python3 - <<'PY'
           import hashlib,json,os,pathlib

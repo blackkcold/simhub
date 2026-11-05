@@ -70,6 +70,21 @@ public class ReleaseUpdateSourceTest {
         assertEquals("v0.17.2-dev.11",ReleaseUpdateSource.selectDev(all).getString("tag_name"));
     }
 
+    @Test public void devSelectionScansBoundedPages()throws Exception{
+        int[] calls={0};
+        JSONArray all=ReleaseUpdateSource.collectDevPages(page->{
+            calls[0]++;
+            JSONArray items=new JSONArray();
+            int count=page==1?20:1;
+            for(int i=0;i<count;i++)items.put(new JSONObject()
+                .put("tag_name","v0.17.4-dev."+(page==1?i+1:22))
+                .put("draft",false).put("prerelease",true).put("published_at","now"));
+            return items;
+        });
+        assertEquals(2,calls[0]);
+        assertEquals("v0.17.4-dev.22",ReleaseUpdateSource.selectDev(all).getString("tag_name"));
+    }
+
     @Test public void rejectsPrerelease()throws Exception{
         JSONObject r=release().put("prerelease",true);
         try{ReleaseUpdateSource.validate(r,manifest());fail("prerelease accepted");}

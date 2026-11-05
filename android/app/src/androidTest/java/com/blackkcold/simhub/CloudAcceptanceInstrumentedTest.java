@@ -131,9 +131,11 @@ public class CloudAcceptanceInstrumentedTest {
                 int level=signal.getInt("signalLevel");assertTrue(level>=0&&level<=4);knownSignals++;
             }
         }
-        System.out.println("SIMHUB_CI_TELEMETRY wifiConnected="+telemetry.optBoolean("wifiConnected",false)
+        Bundle coverage=new Bundle();
+        coverage.putString("simhubTelemetry","wifiConnected="+telemetry.optBoolean("wifiConnected",false)
             +" wifiSignalAvailable="+telemetry.has("wifiSignalLevel")
             +" activeSimSamples="+(signals==null?0:signals.length())+" knownSimSignals="+knownSignals);
+        InstrumentationRegistry.getInstrumentation().sendStatus(2,coverage);
         JSONObject posted=new ApiClient(context).putState("cloud-telemetry");
         JSONObject state=adminGet("/api/v1/devices/"+deviceId+"/state").getJSONObject("state");
         assertEquals(65,state.getInt("batteryPct"));

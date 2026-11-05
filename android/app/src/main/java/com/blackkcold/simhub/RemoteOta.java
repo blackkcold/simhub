@@ -101,7 +101,7 @@ public final class RemoteOta {
         if(!AppUpdater.pmCanInstall(c))throw new SecurityException("install_sources_permission_required");
         String blocked=prerequisites(c);
         if(!blocked.isBlank())throw new SecurityException(blocked);
-        if(!"latest".equals(target)&&!target.matches("[0-9]+\\.[0-9]+\\.[0-9]+"))
+        if(!RemoteOtaPolicy.validTarget(BuildConfig.RELEASE_CHANNEL,target))
             throw new SecurityException("invalid_target_version");
         SharedPreferences p=prefs(c);
         String active=p.getString(COMMAND,""),status=p.getString("stage","idle");
@@ -119,7 +119,7 @@ public final class RemoteOta {
                 fail(c,error!=null?"release_unavailable":"no_new_version");return;
             }
             if(!"latest".equals(target)&&!target.equals(metadata.optString("versionName"))){
-                fail(c,"target_not_latest_stable");return;
+                fail(c,"target_not_latest_channel");return;
             }
             prefs(c).edit().putInt("targetCode",metadata.optInt("versionCode"))
               .putString("target",metadata.optString("versionName")).commit();
@@ -150,8 +150,7 @@ public final class RemoteOta {
                 JSONObject result=new JSONObject();
                 if(!reason.isEmpty())result.put("reason",reason);
                 LocalStore store=LocalStore.get(c);
-                store.finishCommand(id,status);
-                store.queueCommandAck(id,status,result);
+                store.finishCommandAndQueueAck(id,status,result);
             }catch(Exception e){AppLogger.e(c,"RemoteOTA","Unable to persist OTA acknowledgement",e);}
         }
     }

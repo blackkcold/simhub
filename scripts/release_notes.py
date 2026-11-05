@@ -43,15 +43,35 @@ def render_notes(changelog: str, version: str) -> str:
     )
 
 
+def render_dev_notes(changelog: str, version: str) -> str:
+    match = re.fullmatch(r"([0-9]+\.[0-9]+\.[0-9]+)-dev\.([1-9][0-9]*)", version)
+    if not match:
+        raise ValueError("Invalid Dev prerelease version")
+    _, changes = section_for_version(changelog, match.group(1))
+    return (
+        f"# SIM Hub Dev v{version}\n\n"
+        "Experimental development prerelease. Use isolated devices and data volumes; "
+        "do not deploy over Stable.\n\n"
+        f"## Changes\n\n{changes}\n\n"
+        "## Verification and compatibility\n\n"
+        "Android emulator checks do not establish physical SIM, OEM background or "
+        "cross-network device behavior. P2P and Relay Lite remain experimental.\n"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--changelog", default="CHANGELOG.md")
     parser.add_argument("--output")
     parser.add_argument("--summary", action="store_true")
+    parser.add_argument("--dev", action="store_true")
     args = parser.parse_args()
     source = Path(args.changelog).read_text(encoding="utf-8")
-    result = summary_for_version(source, args.version) if args.summary else render_notes(source, args.version)
+    if args.dev and args.summary:
+        parser.error("--dev cannot be combined with --summary")
+    result = (render_dev_notes(source, args.version) if args.dev else
+              summary_for_version(source, args.version) if args.summary else render_notes(source, args.version))
     if args.output:
         Path(args.output).write_text(result + ("" if result.endswith("\n") else "\n"), encoding="utf-8")
     else:

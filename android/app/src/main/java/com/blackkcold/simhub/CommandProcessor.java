@@ -9,11 +9,11 @@ public final class CommandProcessor {
     private final Context c;private final ApiClient api;private final LocalStore store;
     CommandProcessor(Context c,ApiClient api){this.c=c.getApplicationContext();this.api=api;store=LocalStore.get(c);}
     public void process(JSONArray arr){if(arr==null)return;for(int i=0;i<arr.length();i++){try{one(arr.getJSONObject(i));}catch(Exception error){AppLogger.e(c,"Command","Remote command processing failed",error);}}}
-    private void ack(String id,String state,JSONObject result){store.finishCommand(id,state);store.queueCommandAck(id,state,result==null?new JSONObject():result);AppLogger.i(c,"Command","Command acknowledged state="+state);}
+    private void ack(String id,String state,JSONObject result){store.finishCommandAndQueueAck(id,state,result==null?new JSONObject():result);AppLogger.i(c,"Command","Command acknowledged state="+state);}
     private void one(JSONObject env)throws Exception{
         String id=env.getString("commandId"),type=env.getString("type"),idem=env.optString("idempotencyKey",id);AppLogger.i(c,"Command","Processing remote command type="+type);
         long created=env.optLong("createdAt",0),exp=env.optLong("expiresAt",0),now=System.currentTimeMillis()/1000;
-        if(exp>0&&exp<now){if(store.claimCommand(id,type))ack(id,"expired",new JSONObject());else store.queueCommandAck(id,"expired",new JSONObject().put("duplicate",true));return;}
+        if(exp>0&&exp<now){if(store.claimCommand(id,type))ack(id,"expired",new JSONObject());else{String state=store.commandState(id);if(state!=null&&!"claimed".equals(state))store.queueCommandAck(id,state,new JSONObject().put("duplicate",true));}return;}
         if(!store.claimCommand(id,type)){String state=store.commandState(id);if(state!=null&&!"claimed".equals(state))store.queueCommandAck(id,state,new JSONObject().put("duplicate",true));return;}
         JSONObject p;try{p=new CryptoBox(c).decryptCommand(env.getJSONObject("ciphertext"),id,type,created,exp,idem);}catch(Exception e){AppLogger.e(c,"Command","Command decryption rejected type="+type,e);ack(id,"rejected",new JSONObject().put("reason","decrypt_failed"));return;}
         if(!type.equals(p.optString("action"))||!id.equals(p.optString("commandId"))||p.optLong("expiresAt",exp)!=exp){ack(id,"rejected",new JSONObject().put("reason","binding_mismatch"));return;}

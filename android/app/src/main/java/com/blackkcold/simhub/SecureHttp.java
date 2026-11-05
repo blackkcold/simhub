@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLPeerUnverifiedException;
+import javax.net.ssl.SSLException;
 
 import okhttp3.CertificatePinner;
 import okhttp3.MediaType;
@@ -207,7 +208,9 @@ public final class SecureHttp {
     }
 
     /**
-     * Perform one JSON request. TLS pin failures are translated to a fixed code and
+     * Perform one JSON request. A failed read-only connection may be attempted once
+     * more; writes are never retried because their side effect may have happened.
+     * TLS pin failures are translated to a fixed code and
      * the original exception is discarded so a stack trace cannot carry the host.
      */
     public static Result exchange(OkHttpClient client, String method, String url, String jsonBody,
@@ -218,13 +221,23 @@ public final class SecureHttp {
         if (headers != null) for (Map.Entry<String, String> header : headers.entrySet())
             if (header.getValue() != null) builder.header(header.getKey(), header.getValue());
         Request request = builder.build();
-        try (Response response = timed(client, connectTimeoutSeconds, readTimeoutSeconds)
-                .newCall(request).execute()) {
-            ResponseBody body = response.body();
-            String text = body == null ? "" : BoundedHttpReader.readUtf8(body.byteStream(), MAX_BODY_BYTES);
-            return new Result(response.code(), text, response.header("Set-Cookie"), response.header("Retry-After"));
-        } catch (SSLPeerUnverifiedException pinFailure) {
-            throw new SecurityException(TLS_PIN_MISMATCH);
+        OkHttpClient bounded=timed(client, connectTimeoutSeconds, readTimeoutSeconds);
+        for(int attempt=0;;attempt++){
+            Response received;
+            try{
+                received=bounded.newCall(request).execute();
+            }catch(SSLPeerUnverifiedException pinFailure){
+                throw new SecurityException(TLS_PIN_MISMATCH);
+            }catch(IOException transportFailure){
+                boolean safeRead="GET".equals(method)||"HEAD".equals(method);
+                if(attempt==0&&safeRead&&!(transportFailure instanceof SSLException))continue;
+                throw transportFailure;
+            }
+            try(Response response=received){
+                ResponseBody body = response.body();
+                String text = body == null ? "" : BoundedHttpReader.readUtf8(body.byteStream(), MAX_BODY_BYTES);
+                return new Result(response.code(), text, response.header("Set-Cookie"), response.header("Retry-After"));
+            }
         }
     }
 

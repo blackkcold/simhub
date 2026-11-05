@@ -38,6 +38,7 @@ final class HttpsTestServer implements AutoCloseable {
     private volatile int status = 200;
     private volatile String body = "{}";
     private volatile String location;
+    private final java.util.concurrent.atomic.AtomicInteger closeWithoutResponse = new java.util.concurrent.atomic.AtomicInteger();
 
     HttpsTestServer(Path certPem, Path keyPem) throws Exception {
         server = (SSLServerSocket) contextFor(certPem, keyPem).getServerSocketFactory().createServerSocket(0, 8);
@@ -85,6 +86,7 @@ final class HttpsTestServer implements AutoCloseable {
         if (contentLength > 0) in.readNBytes(contentLength);
         String requestLine = requests.get(requests.size() - 1);
         paths.add(requestLine.split(" ").length > 1 ? requestLine.split(" ")[1] : "");
+        if(closeWithoutResponse.getAndUpdate(count -> Math.max(0,count-1))>0)return;
         byte[] reply = body.getBytes(StandardCharsets.UTF_8);
         String headText = "HTTP/1.1 " + status + " Status\r\n"
                 + "Content-Type: application/json\r\n"
@@ -105,6 +107,8 @@ final class HttpsTestServer implements AutoCloseable {
         this.status = status;
         this.body = body;
     }
+
+    void closeNextRequests(int count) {closeWithoutResponse.set(count);}
 
     void redirectTo(String location) {
         this.status = 302;

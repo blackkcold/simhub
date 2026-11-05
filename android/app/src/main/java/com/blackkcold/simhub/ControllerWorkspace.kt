@@ -46,6 +46,7 @@ internal object ControllerCommandProgress {
     fun describe(cmd:JSONObject):String = when(val state=cmd.optString("state","queued")){
         "queued"->"排队中：等待设备唤醒领取（节能模式可能需要数分钟）"
         "dispatched"->"设备已领取，等待最终执行 ACK"
+        "outcome_unknown"->"设备结果待确认，请勿重复发送"
         "submitted"->if(cmd.optString("type")=="device.location_once")
             "位置已加密排队，等待上传回执" else "短信已提交系统，尚未确认发送"
         "sent"->"系统已发送，等待运营商回执"
@@ -53,7 +54,7 @@ internal object ControllerCommandProgress {
         "succeeded"->"任务执行成功"
         "failed"->"任务失败："+cmd.optJSONObject("result")?.optString("reason").orEmpty().take(160)
         "rejected"->"设备拒绝任务"
-        "expired"->"任务已过期，未被确认为执行成功"
+        "expired"->"任务已过期，执行结果未确认"
         else->"任务状态：$state"
     }
 }

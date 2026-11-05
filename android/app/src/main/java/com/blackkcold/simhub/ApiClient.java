@@ -140,8 +140,7 @@ public final class ApiClient {
             store.recoverStaleClaims();
             if(maintenance){
                 for(String id:store.expireStalePendingSms(48L*3600)){
-                    store.finishCommand(id,"failed");
-                    store.queueCommandAck(id,"failed",new JSONObject().put("reason","status_timeout"));
+                    store.finishCommandAndQueueAck(id,"outcome_unknown",new JSONObject().put("reason","status_timeout"));
                 }
             }
             // Remote commands are NOT tied to SIM inventory/heartbeat cadence.

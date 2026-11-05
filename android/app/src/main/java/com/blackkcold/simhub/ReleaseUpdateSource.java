@@ -17,7 +17,8 @@ import java.util.regex.Pattern;
  */
 public final class ReleaseUpdateSource {
     private static final String STABLE_API="https://api.github.com/repos/blackkcold/simhub/releases/latest";
-    private static final String DEV_API="https://api.github.com/repos/blackkcold/simhub/releases?per_page=100";
+    private static final String DEV_API="https://api.github.com/repos/blackkcold/simhub/releases?per_page=20&page=";
+    private static final int DEV_PAGE_SIZE=20,DEV_MAX_PAGES=5;
     private static final Pattern STABLE=Pattern.compile("[0-9]+\\.[0-9]+\\.[0-9]+");
     private static final Pattern DEV=Pattern.compile("([0-9]+)\\.([0-9]+)\\.([0-9]+)-dev\\.([1-9][0-9]*)");
     private static final Pattern DIGEST=Pattern.compile("[0-9a-f]{64}");
@@ -130,10 +131,23 @@ public final class ReleaseUpdateSource {
         return winner;
     }
 
+    interface DevPageLoader { JSONArray load(int page)throws Exception; }
+
+    static JSONArray collectDevPages(DevPageLoader loader)throws Exception{
+        JSONArray all=new JSONArray();
+        for(int page=1;page<=DEV_MAX_PAGES;page++){
+            JSONArray entries=loader.load(page);
+            if(entries==null||entries.length()>DEV_PAGE_SIZE)throw new SecurityException("Invalid Dev release feed");
+            for(int i=0;i<entries.length();i++)all.put(entries.get(i));
+            if(entries.length()<DEV_PAGE_SIZE)break;
+        }
+        return all;
+    }
+
     public static JSONObject latest()throws Exception{
         boolean dev="dev".equals(BuildConfig.RELEASE_CHANNEL);
         JSONObject release=dev
-                ?selectDev(new JSONArray(fetchText(DEV_API,1048576)))
+                ?selectDev(collectDevPages(page->new JSONArray(fetchText(DEV_API+page,1048576))))
                 :fetchJson(STABLE_API,262144);
         String tag=release.optString("tag_name","");
         if(!tag.startsWith("v")||!(dev?DEV:STABLE).matcher(tag.substring(1)).matches())

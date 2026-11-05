@@ -21,7 +21,9 @@ from pathlib import Path
 
 REPO = "blackkcold/simhub"
 API = "https://api.github.com/repos/" + REPO + "/releases/latest"
-DEV_API = "https://api.github.com/repos/" + REPO + "/releases?per_page=100"
+DEV_API = "https://api.github.com/repos/" + REPO + "/releases?per_page=20&page="
+DEV_PAGE_SIZE = 20
+DEV_MAX_PAGES = 5
 REGISTRY = "ghcr.io/blackkcold/simhub-relay"
 CERT_IDENTITY = "https://github.com/blackkcold/simhub/.github/workflows/release.yml@refs/heads/main"
 DEV_CERT_IDENTITY = "https://github.com/blackkcold/simhub/.github/workflows/release-dev.yml@refs/heads/develop"
@@ -124,9 +126,14 @@ def latest():
         doc = fetch_json(API)
         candidates = [doc]
     else:
-        documents = fetch_json(DEV_API, 1048576)
-        if not isinstance(documents, list):
-            raise ValueError("Invalid Dev release listing")
+        documents = []
+        for page_number in range(1, DEV_MAX_PAGES + 1):
+            page = fetch_json(DEV_API + str(page_number), 1048576)
+            if not isinstance(page, list) or len(page) > DEV_PAGE_SIZE:
+                raise ValueError("Invalid Dev release listing")
+            documents.extend(page)
+            if len(page) < DEV_PAGE_SIZE:
+                break
         candidates = [entry for entry in documents
                       if isinstance(entry, dict) and
                       DEV_VERSION.fullmatch(str(entry.get("tag_name", ""))) and

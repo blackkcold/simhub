@@ -100,6 +100,19 @@ public class SecureHttpTrustTest {
     }
 
     @Test
+    public void retriesReadAfterClosedConnectionButNeverRepeatsWrite() throws Exception {
+        OkHttpClient trusted=client(trust(correctPin,wrongPin));
+        String url=SecureHttp.targetUrl(server.origin(),"/api/v1/devices/x/commands/pending");
+        server.closeNextRequests(1);
+        assertEquals(200,SecureHttp.exchange(trusted,"GET",url,null,Map.of(),5,5).status);
+        assertEquals(2,server.receivedRequests().size());
+        server.closeNextRequests(1);
+        assertThrows(java.io.IOException.class,()->SecureHttp.exchange(
+                trusted,"POST",url,"{}",Map.of(),5,5));
+        assertEquals("A failed write must never be repeated",3,server.receivedRequests().size());
+    }
+
+    @Test
     public void rejectsAValidChainWithTheWrongPinBeforeSendingAnything() throws Exception {
         CenterTrust trust = trust(wrongPin, pinBytes(5));
         SecurityException failure = assertThrows(SecurityException.class, () -> SecureHttp.exchange(

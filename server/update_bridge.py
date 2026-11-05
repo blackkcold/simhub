@@ -16,7 +16,9 @@ from pathlib import Path
 
 REPO = "blackkcold/simhub"
 API = "https://api.github.com/repos/" + REPO + "/releases/latest"
-DEV_API = "https://api.github.com/repos/" + REPO + "/releases?per_page=100"
+DEV_API = "https://api.github.com/repos/" + REPO + "/releases?per_page=20&page="
+DEV_PAGE_SIZE = 20
+DEV_MAX_PAGES = 5  # Preserve the existing newest-100-release selection window.
 CHANNEL = os.environ.get("SIMHUB_CHANNEL", "stable").strip()
 if CHANNEL not in ("stable", "dev"):
     raise ValueError("Unknown release channel")
@@ -46,17 +48,24 @@ def release(force: bool = False):
         age = time.monotonic() - _cache[0]
         if _cache[1] is not None and age < (5 if force else 900):
             return {**_cache[1], "fromCache": True, "cacheAgeSeconds": max(0, int(age))}
-        request = urllib.request.Request(DEV_API if CHANNEL == "dev" else API, headers={
-            "Accept": "application/vnd.github+json", "User-Agent": "simhub-updater/0.16"
-        })
-        with urllib.request.urlopen(request, timeout=8) as response:
-            raw = response.read(1048577 if CHANNEL == "dev" else 262145)
-        if len(raw) > (1048576 if CHANNEL == "dev" else 262144):
-            raise ValueError("Release metadata exceeds size limit")
-        document = json.loads(raw)
+        def fetch(url, limit):
+            request = urllib.request.Request(url, headers={
+                "Accept": "application/vnd.github+json", "User-Agent": "simhub-updater/0.16"
+            })
+            with urllib.request.urlopen(request, timeout=8) as response:
+                raw = response.read(limit + 1)
+            if len(raw) > limit:
+                raise ValueError("Release metadata exceeds size limit")
+            return json.loads(raw)
         if CHANNEL == "dev":
-            if not isinstance(document, list):
-                raise ValueError("Invalid Dev release feed")
+            document = []
+            for page_number in range(1, DEV_MAX_PAGES + 1):
+                page = fetch(DEV_API + str(page_number), 1048576)
+                if not isinstance(page, list) or len(page) > DEV_PAGE_SIZE:
+                    raise ValueError("Invalid Dev release feed")
+                document.extend(page)
+                if len(page) < DEV_PAGE_SIZE:
+                    break
             matches = [entry for entry in document if isinstance(entry, dict)
                        and DEV_VERSION.fullmatch(str(entry.get("tag_name", "")))
                        and entry.get("draft") is False
@@ -67,7 +76,7 @@ def release(force: bool = False):
                 raise ValueError("No verified Dev prerelease")
             result = matches[0]
         else:
-            result = document
+            result = fetch(API, 262144)
         if not isinstance(result, dict):
             raise ValueError("Invalid release metadata")
         tag = result.get("tag_name", "")

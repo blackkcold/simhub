@@ -19,8 +19,9 @@ permissions:
   contents: read
 
 jobs:
+  # Playwright 1.56 supports Ubuntu 24.04; ubuntu-latest can move to an unsupported release.
   server-web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -36,6 +37,7 @@ jobs:
       - run: python3 scripts/test_center_config_leak.py
       - run: PYTHONPATH=server python3 server/test_auth_stages.py
       - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
+      - run: PYTHONPATH=server python3 -m unittest -v server.test_command_expiry server.test_schema_rollback
       - run: python3 scripts/test_updater.py
       - run: python3 scripts/test_docs.py
       - run: python3 scripts/test_release_notes.py
@@ -46,6 +48,7 @@ jobs:
       - run: python3 scripts/test_release_pipeline.py
       - run: python3 scripts/test_deployment_bundle.py
       - run: python3 -m unittest -v scripts.test_release_checks
+      - run: python3 -m unittest -v scripts.test_apk_release_metadata
       - run: python3 scripts/test_controller_same_phone.py
       - run: PYTHONPATH=server python3 scripts/test_channel_branding.py
       - run: python3 scripts/test_icons.py
@@ -55,6 +58,7 @@ jobs:
       - run: PYTHONPATH=server python3 server/test_migration.py
       - run: PYTHONPATH=server python3 server/test_maintenance.py
       - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
+      - run: PYTHONPATH=modem_agent python3 -m unittest -v modem_agent.test_recovery
       - run: node --check web/app.js && node --check web/device-dashboard.js && node --check web/device-location.js && node --check web/i18n.js && node --check web/sw.js
       - run: node web/test_node_dashboard.mjs
       - run: node web/test_device_location.mjs
@@ -94,7 +98,92 @@ jobs:
         with:
           gradle-version: '9.6.0'
       - run: gradle -p android -PcenterConfigFake=true :peer-core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDevRelease -PsimhubDevSequence=1 --stacktrace
+      - name: Verify actual APK package and version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable_apk="$(find android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          dev_apk="$(find android/app/build/outputs/apk/devRelease -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$stable_apk" && test -n "$dev_apk"
+          version="$(sed -n 's/.*versionName = "\([0-9.]*\)".*/\1/p' android/app/build.gradle.kts | head -1)"
+          test -n "$version"
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
+          python3 scripts/apk_release_metadata.py inspect --aapt "$aapt" --apk "$stable_apk" \
+            --metadata "$RUNNER_TEMP/stable-apk.json" --channel stable --version "$version"
+          python3 scripts/apk_release_metadata.py inspect --aapt "$aapt" --apk "$dev_apk" \
+            --metadata "$RUNNER_TEMP/dev-apk.json" --channel dev --version "${version}-dev.1"
+          python3 - <<'PYCODE'
+          import json, os, pathlib, re
+          text=pathlib.Path("android/app/build.gradle.kts").read_text()
+          base=int(re.search(r"versionCode\s*=\s*([0-9]+)",text).group(1))
+          temp=pathlib.Path(os.environ["RUNNER_TEMP"])
+          stable=json.loads((temp/"stable-apk.json").read_text())
+          dev=json.loads((temp/"dev-apk.json").read_text())
+          if stable["versionCode"]!=base or dev["versionCode"]!=base*100000+1:
+              raise SystemExit("Actual APK version codes do not match the channel contract")
+          PYCODE
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: simhub-agent-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  android-cloud-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SIMHUB_ADMIN_TOKEN: simhub-ci-synthetic-administrator-token-not-for-production
+      SIMHUB_REQUIRE_TOTP: 'false'
+      SIMHUB_BIND: 127.0.0.1
+      SIMHUB_PORT: '18443'
+      SIMHUB_TRUST_DOCKER_GATEWAY: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with: {python-version: '3.13'}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        with: {packages: 'platform-tools'}
+      - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with: {gradle-version: '9.6.0'}
+      - run: python3 -m pip install -r server/requirements.txt
+      - name: Create ephemeral test-only HTTPS identity
+        run: |
+          set -eu
+          d="$RUNNER_TEMP/simhub-ci"
+          mkdir -m 700 "$d"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=SIM Hub CI CA' \
+            -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+            -keyout "$d/ca.key" -out "$d/ca.pem" 2>/dev/null
+          openssl req -newkey rsa:2048 -nodes -subj '/CN=127.0.0.1' \
+            -keyout "$d/relay.key" -out "$d/relay.csr" 2>/dev/null
+          printf '%s\n' 'subjectAltName=IP:127.0.0.1' 'basicConstraints=critical,CA:FALSE' \
+            'keyUsage=critical,digitalSignature,keyEncipherment' 'extendedKeyUsage=serverAuth' > "$d/leaf.ext"
+          openssl x509 -req -in "$d/relay.csr" -CA "$d/ca.pem" -CAkey "$d/ca.key" \
+            -CAcreateserial -days 1 -extfile "$d/leaf.ext" -out "$d/relay.pem" 2>/dev/null
+          mkdir -p android/app/src/cloudAcceptance/res/raw
+          cp "$d/ca.pem" android/app/src/cloudAcceptance/res/raw/simhub_ci_ca.pem
+      - name: Build isolated emulator app
+        run: gradle -p android -PcloudAndroidSandbox=true :app:assembleCloudAcceptance :app:assembleCloudAcceptanceAndroidTest --stacktrace
+      - name: Start isolated Relay and enroll synthetic device
+        run: |
+          export SIMHUB_DB="$RUNNER_TEMP/simhub-ci/relay.db"
+          python3 scripts/cloud_android_relay.py serve --cert "$RUNNER_TEMP/simhub-ci/relay.pem" \
+            --key "$RUNNER_TEMP/simhub-ci/relay.key" > "$RUNNER_TEMP/simhub-ci/relay.log" 2>&1 &
+          python3 scripts/cloud_android_relay.py enroll --ca "$RUNNER_TEMP/simhub-ci/ca.pem" \
+            --output "$RUNNER_TEMP/simhub-ci/enrollment.json"
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: bash scripts/run_cloud_android_acceptance.sh
+      - name: Show isolated Relay diagnostics on failure
+        if: failure()
+        run: tail -n 160 "$RUNNER_TEMP/simhub-ci/relay.log" || true

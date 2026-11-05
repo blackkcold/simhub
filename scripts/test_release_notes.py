@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-from release_notes import section_for_version, render_notes, summary_for_version
+from release_notes import section_for_version, render_notes, render_dev_notes, summary_for_version
 
 
 class ReleaseNotesTests(unittest.TestCase):
@@ -14,6 +14,16 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertNotIn("Shizuku gains an on-device",notes)
         self.assertIn("0.16.3",notes)
         self.assertIn("Categorized",summary_for_version(source,"0.16.3"))
+
+    def test_dev_notes_use_exact_base_changelog_and_mark_preview(self):
+        sample="## v1.2.3 — Preview\n\n- Correct change\n\n## v1.2.2 — Prior\n\n- Old change\n"
+        notes=render_dev_notes(sample,"1.2.3-dev.9")
+        self.assertIn("SIM Hub Dev v1.2.3-dev.9",notes)
+        self.assertIn("Correct change",notes)
+        self.assertIn("Experimental",notes)
+        self.assertNotIn("Old change",notes)
+        for bad in ("1.2.3","1.2.3-dev.0","1.2.4-dev.1"):
+            with self.assertRaises(ValueError):render_dev_notes(sample,bad)
 
     def test_missing_or_invalid_version_fails_closed(self):
         sample="## v1.2.3 — Example\n\n- Changed A\n\n## v1.2.2 — Prior\n\n- Changed B\n"

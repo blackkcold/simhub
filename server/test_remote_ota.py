@@ -10,6 +10,9 @@ class RemoteOtaTests(unittest.TestCase):
                "remoteOtaAuthorized":True,"remoteOtaInstallPermission":True}
         self.assertTrue(remote_ota_capable("0.13.3",state))
         self.assertTrue(remote_ota_capable("0.14.0",{**state,"sdk":37}))
+        self.assertTrue(remote_ota_capable("0.17.4-dev.8",state))
+        self.assertFalse(remote_ota_capable("0.17.4-dev.0",state))
+        self.assertFalse(remote_ota_capable("0.17.4-unknown.1",state))
         self.assertFalse(remote_ota_capable("0.13.2",state))
         self.assertFalse(remote_ota_capable("0.13.3",{**state,"sdk":35}))
         self.assertTrue(remote_ota_capable("0.13.3",{**state,"sdk":35,

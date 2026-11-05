@@ -67,6 +67,19 @@ public final class LocalStore extends SQLiteOpenHelper {
         try(Cursor c=getReadableDatabase().query("events",new String[]{"id"},"id=?",new String[]{id},null,null,null)){return c.moveToFirst();}
     }
 
+    /** Withdrawing optional location consent must discard unsent local ciphertext too. */
+    public synchronized boolean isEventPending(String id){
+        try(Cursor row=getReadableDatabase().query("events",new String[]{"id"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst();}
+    }
+    public synchronized boolean hasUploadedReceipt(String id){
+        try(Cursor row=getReadableDatabase().query("uploaded_event_ids",new String[]{"id"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst();}
+    }
+    public synchronized void clearPendingLocation(){
+        getWritableDatabase().delete("events","kind=?",new String[]{"device.location"});
+    }
+
     public synchronized List<JSONObject> pendingEvents(int limit)throws Exception{
         List<JSONObject> out=new ArrayList<>();
         try(Cursor c=getReadableDatabase().query("events",null,null,null,null,null,"CASE WHEN kind='sms.received' THEN 0 WHEN kind='sms.history' THEN 2 ELSE 1 END ASC, created_at ASC",String.valueOf(limit))){
@@ -130,13 +143,33 @@ public final class LocalStore extends SQLiteOpenHelper {
         try(Cursor c=getReadableDatabase().query("processed_commands",new String[]{"state"},"id=?",new String[]{id},null,null,null)){return c.moveToFirst()?c.getString(0):null;}
     }
     public synchronized void finishCommand(String id,String state){
+        if(!CommandStatePolicy.accepts(commandState(id),state))return;
         ContentValues v=new ContentValues();v.put("state",state);v.put("processed_at",System.currentTimeMillis()/1000);
         getWritableDatabase().update("processed_commands",v,"id=?",new String[]{id});
         getWritableDatabase().execSQL("DELETE FROM processed_commands WHERE processed_at < ?",new Object[]{System.currentTimeMillis()/1000-30L*86400});
     }
     public synchronized void queueCommandAck(String id,String state,JSONObject result){
+        if(!state.equals(commandState(id)))return;
+        try(Cursor c=getReadableDatabase().query("command_acks",new String[]{"state"},"command_id=?",new String[]{id},null,null,null)){
+            if(c.moveToFirst()){
+                String pending=c.getString(0);
+                // Keep existing details for duplicate ACKs; never replace a later result.
+                if(pending.equals(state)||!CommandStatePolicy.accepts(pending,state))return;
+            }
+        }
         ContentValues v=new ContentValues();v.put("command_id",id);v.put("state",state);v.put("result_json",result==null?"{}":result.toString());v.put("updated_at",System.currentTimeMillis()/1000);
         getWritableDatabase().insertWithOnConflict("command_acks",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+    }
+    /** State and durable ACK advance together, even when callbacks race or the process dies. */
+    public synchronized void finishCommandAndQueueAck(String id,String state,JSONObject result){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{
+            if(CommandStatePolicy.accepts(commandState(id),state)){
+                finishCommand(id,state);
+                queueCommandAck(id,state,result);
+            }
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
     }
     public synchronized List<JSONObject> pendingCommandAcks(int limit)throws Exception{
         List<JSONObject> out=new ArrayList<>();
@@ -244,10 +277,9 @@ public final class LocalStore extends SQLiteOpenHelper {
         for(String id:uncertain){
             // The process may have died after dispatching a radio side effect.
             // Never retry this SMS automatically; report the outcome as unknown.
-            finishCommand(id,"submitted");
             JSONObject reason=new JSONObject();
             try{reason.put("reason","interrupted_send_unknown");}catch(Exception ignored){}
-            queueCommandAck(id,"submitted",reason);
+            finishCommandAndQueueAck(id,"submitted",reason);
         }
         db.execSQL("DELETE FROM processed_commands WHERE state='claimed' AND command_type!='sms.send' AND processed_at<? AND id NOT IN (SELECT command_id FROM pending_sms)",new Object[]{cutoff});
     }

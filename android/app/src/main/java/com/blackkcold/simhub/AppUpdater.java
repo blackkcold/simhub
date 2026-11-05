@@ -53,6 +53,12 @@ public final class AppUpdater {
     }
     public static int ignored(Context c){return prefs(c).getInt("ignored",-1);}
 
+    private static int installedVersion(Context c){
+        int code=RemoteOta.installedVersionCode(c);
+        if(code<=0)throw new SecurityException("Installed package version unavailable");
+        return code;
+    }
+
     public static void check(Context c,boolean manual,Callback callback){
         Context app=c.getApplicationContext();
         IO.execute(()->{
@@ -60,7 +66,7 @@ public final class AppUpdater {
                 JSONObject info=ReleaseUpdateSource.latest();
                 int version=info.optInt("versionCode",0);
                 boolean available=info.optBoolean("available") &&
-                    version>BuildConfig.VERSION_CODE && version>0;
+                    version>installedVersion(app) && version>0;
                 if(!manual && version==ignored(app))available=false;
                 info.put("available",available);
                 prefs(app).edit().putLong("lastCheck",System.currentTimeMillis()).apply();
@@ -103,7 +109,7 @@ public final class AppUpdater {
             JSONObject info=ReleaseUpdateSource.latest();
             prefs(c).edit().putLong("lastCheck",System.currentTimeMillis()).apply();
             int code=info.optInt("versionCode",0);
-            if(!info.optBoolean("available")||code<=BuildConfig.VERSION_CODE||code==ignored(c))return;
+            if(!info.optBoolean("available")||code<=installedVersion(c)||code==ignored(c))return;
             if(prefs(c).getBoolean("autoDownload",false))
                 downloadInternal(c,info,msg->AppLogger.i(c,"AppUpdater",msg),false);
         }catch(Exception error){
@@ -122,7 +128,7 @@ public final class AppUpdater {
             File file=null;
             try{
                 int code=metadata.getInt("versionCode");
-                if(code<=BuildConfig.VERSION_CODE)throw new SecurityException("Version is not newer");
+                if(code<=installedVersion(app))throw new SecurityException("Version is not newer");
                 String sha=metadata.getString("sha256");
                 String url=metadata.getString("url");
                 String version=metadata.getString("versionName");

@@ -71,6 +71,18 @@ class UpdaterTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 updater.require_rootless()
 
+    def test_dev_discovery_handles_multiple_bounded_pages(self):
+        def entry(number):
+            return {"tag_name":f"v0.17.4-dev.{number}","draft":False,"prerelease":True,
+                    "published_at":"2026-10-20T00:00:00Z","assets":[]}
+        pages=[[entry(i) for i in range(1,21)],[entry(22),entry(21)]]
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/".env"
+            path.write_text("SIMHUB_CHANNEL=dev\n",encoding="utf-8")
+            with patch.object(updater,"ENV_FILE",path), patch.object(updater,"fetch_json",side_effect=pages) as fetch:
+                self.assertEqual(updater.latest()["version"],"0.17.4-dev.22")
+                self.assertEqual(fetch.call_count,2)
+                self.assertTrue(fetch.call_args_list[1].args[0].endswith("page=2"))
     def test_reject_legacy_release_without_signed_digest(self):
         info = {"version": "0.11.0", "assets": {"update-manifest.json": "https://example.test"}}
         bad = {"schemaVersion": 1, "release": "0.11.0", "channel": "stable",

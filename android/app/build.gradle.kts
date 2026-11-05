@@ -13,11 +13,13 @@ android {
         applicationId = "com.blackkcold.simhub"
         minSdk = 29
         targetSdk = 37
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 54
         versionName = "0.17.4"
         buildConfigField("String", "RELEASE_CHANNEL", "\"stable\"")
     }
     buildFeatures { buildConfig = true; compose = true; aidl = true; resValues = true }
+    if (providers.gradleProperty("cloudAndroidSandbox").orNull == "true") testBuildType = "cloudAcceptance"
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -29,6 +31,14 @@ android {
         }
     }
     buildTypes {
+        // Test-only CA is packaged exclusively into this isolated variant.
+        create("cloudAcceptance") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".cloudtest"
+            versionNameSuffix = "-cloud-test"
+            resValue("string", "app_name", "SIM Hub Cloud Test")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = true
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
@@ -53,7 +63,9 @@ androidComponents {
     onVariants(selector().withBuildType("devRelease")) { variant ->
         val sequence = providers.gradleProperty("simhubDevSequence").orNull?.toIntOrNull() ?: 1
         require(sequence in 1..99999) { "Invalid Dev release sequence" }
-        variant.outputs.forEach { output -> output.versionCode.set(52 * 100000 + sequence) }
+        val baseVersionCode = android.defaultConfig.versionCode ?: error("Missing Android versionCode")
+        require(baseVersionCode in 1..20999) { "Dev versionCode exceeds Android limits" }
+        variant.outputs.forEach { output -> output.versionCode.set(baseVersionCode * 100000 + sequence) }
     }
 }
 
@@ -79,6 +91,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

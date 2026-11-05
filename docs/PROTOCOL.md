@@ -186,4 +186,9 @@ Code lookup is not authorization. Short codes never unlock the Vault, approve a 
 
 User-enabled Android foreground mode waits on authenticated `GET /api/v1/devices/{id}/commands/pending?wait=15`. The Relay only blocks while no command is pending and wakes on a server change signal. Periodic sync and JobScheduler remain recovery paths. Command ACK and fetch precede bulk SMS history work. `queued`, `dispatched` and terminal states are distinct; `dispatched` means selected for HTTP delivery, **not** proof of execution.
 
+An expired `queued` command becomes `expired` and is never delivered. An expired
+`dispatched` command becomes `outcome_unknown`, is not redelivered, and must not
+be automatically resent. An authenticated delayed node ACK can resolve that
+uncertainty; it can also correct legacy records previously marked `expired`.
+
 Android SMS Provider failures are surfaced in `smsProviderError` independently of transport `lastSyncError`. Historical provider rows gain a stable Channel ID only after the same SIM identity/revision was observed by the Agent; earlier history remains unverified.

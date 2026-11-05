@@ -72,6 +72,23 @@ class UpdateBridgeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.manifest()
 
+    def test_large_dev_feed_is_paged_and_semver_selection_spans_pages(self):
+        def entry(number):
+            return {"tag_name":f"v0.17.4-dev.{number}","draft":False,"prerelease":True,
+                    "published_at":"2026-10-20T00:00:00Z","assets":[],"body":"x"*35000}
+        pages = [[entry(i) for i in range(1, 21)], [entry(22), entry(21)]]
+        old = bridge._cache
+        try:
+            bridge._cache = (0, None)
+            responses = [io.BytesIO(json.dumps(page).encode()) for page in pages]
+            with patch.object(bridge,"CHANNEL","dev"), patch.object(bridge,"CHANNEL_VERSION",bridge.DEV_VERSION), \
+                    patch.object(bridge.urllib.request,"urlopen",side_effect=responses) as fetch:
+                self.assertEqual(bridge.release(force=True)["version"],"0.17.4-dev.22")
+                self.assertEqual(fetch.call_count,2)
+                self.assertTrue(fetch.call_args_list[1].args[0].full_url.endswith("page=2"))
+        finally:
+            bridge._cache = old
+
     def test_release_manual_refresh_bypasses_background_cache(self):
         """A fresh manual request must not remain on a 15-minute-old release."""
         def payload(version):

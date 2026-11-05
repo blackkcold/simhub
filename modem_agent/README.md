@@ -73,7 +73,10 @@ Dongle 2 is not assumed to expose the same AT/SMS interface as DJI Gen1. Use `au
 For DJI/Quectel direct-AT nodes, concatenated SMS UDH is detected from the PDU representation. Each fragment is encrypted with the node key and durably staged in the Agent SQLite database before the modem copy is deleted.
 
 - complete groups are reassembled into one `sms.received` event;
-- process restarts do not lose staged fragments;
+- process restarts immediately reassemble any complete staged group;
+- the captured SIM Channel ID and revision travel encrypted with each fragment;
+  older fragments without that identity are marked unverified rather than assigned
+  to the currently inserted SIM;
 - duplicate fragments are idempotent by group/part number;
 - groups still incomplete after 24 hours are emitted once with `multipartIncomplete=true`, `partsReceived` and `partsExpected` inside the encrypted payload.
 
@@ -106,3 +109,32 @@ Use a distinct alias and serial port for each modem. For ModemManager, use an in
 ## Two-way enrollment reset
 
 Run `simhub_modem_agent.py --config /var/lib/simhub-modem/config.json reset` to queue an authenticated Relay unpair. Offline requests are retried during regular polling. Once confirmed, the agent removes its local config/event queue and exits; systemd does not restart it after a clean reset. SMS stored in modem hardware is unaffected. Server-initiated unpairing requires Modem Agent v0.3.2 or later.
+
+Before completing a reset, the Agent checks for pending encrypted events,
+multipart fragments, acknowledgements and interrupted command claims. If any exist, it first writes a
+verified SQLite snapshot and the old Node Key to a unique `recovery/` directory
+beside the configuration. The directory is mode `0700` and its files are mode
+`0600`; no device bearer token is copied. Reset fails closed if a snapshot cannot
+be written or verified. **The retained Node Key is sensitive** and remains on
+disk until an operator securely removes the recovery directory.
+
+After enrolling a new node, explicitly import an archive on the same host:
+
+```bash
+simhub_modem_agent.py --config /var/lib/simhub-modem/config.json \
+  --db /var/lib/simhub-modem/agent.db recover \
+  --archive /var/lib/simhub-modem/recovery/recovery-YYYYMMDDTHHMMSSZ-IDENTIFIER
+```
+
+Import verifies the snapshot and re-encrypts pending events/fragments for the
+new node, without modifying or deleting the archive. Repeated imports are
+idempotent. The next normal sync uploads the recovered events; an original SIM
+identity that cannot be proven remains unverified. Old command acknowledgements
+belong to the revoked enrollment and stay in the archive rather than being sent
+as new commands. Interrupted command claims are likewise kept for inspection;
+their result may be unknown, so do not automatically repeat them. Keep the archive until recovery is verified, then dispose of it
+under your normal key-retention policy.
+
+During a transient Relay outage, the Agent continues collecting and encrypting
+SMS locally before retrying the network. Authentication failures and confirmed
+reset requests still stop normal collection.

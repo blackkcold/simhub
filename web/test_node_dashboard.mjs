@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {nodeDashboardModel,renderNodeDashboard} from './device-dashboard.js';
+import {nodeDashboardModel,renderNodeDashboard,signalBars,wifiArcs,batteryLevel} from './device-dashboard.js';
 const base={id:'node-1',name:'fold5',model:'vivo',appVersion:'0.16.2',online:true,smsCount:321,
   state:{batteryPct:100,network:'WiFi',smsMode:'companion',smsReadPermission:true,
     smsReceivePermission:true,smsSendPermission:true,pendingEvents:0,pendingCommandAcks:0,
@@ -31,4 +31,18 @@ const dev=nodeDashboardModel({...base,state:{...base.state,
   smsDeveloperOverride:true,smsSendAllowed:true}});
 assert.equal(dev.send,false);
 assert.equal(dev.developerSend,true,'explicit developer override is separately reported');
+
+assert.match(batteryLevel(76,true),/width="35\.0"/);
+assert.match(batteryLevel(76,true),/node-charge-icon/);
+assert.doesNotMatch(batteryLevel(999,false),/node-battery-fill/,'invalid battery is not clamped');
+assert.equal((signalBars(2).match(/class="node-lit"/g)||[]).length,2);
+assert.equal((signalBars(null).match(/class="node-lit"/g)||[]).length,0);
+assert.equal((wifiArcs(true,3).match(/class="node-lit"/g)||[]).length,3);
+assert.equal((wifiArcs(true,null).match(/class="node-lit"/g)||[]).length,0);
+const visual=render({...base,state:{...base.state,batteryPct:76,charging:true,
+  wifiConnected:true,wifiSignalLevel:3,sampledAt:Math.floor(Date.now()/1000)}});
+assert.match(visual,/node-battery-level/);
+assert.match(visual,/node-wifi-arcs/);
+assert.match(visual,/最近采样/);
+assert.match(render({...base,state:{...base.state,sampledAt:1}}),/状态已过期/);
 console.log('SIM node health dashboard model and escaping: OK');

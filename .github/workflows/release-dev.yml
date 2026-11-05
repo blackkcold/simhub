@@ -330,7 +330,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf "SIM Hub Dev %s\n\nExperimental development prerelease. Test on isolated devices and data volumes; do not deploy over Stable.\n" "$VERSION" > release/RELEASE_NOTES.md
+          python3 scripts/release_notes.py --dev --version "$VERSION" --output release/RELEASE_NOTES.md
           ASSETS=(
             "release/simhub-agent-v${VERSION}-release.apk"
             "release/simhub-agent-v${VERSION}-release.apk.sha256"

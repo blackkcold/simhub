@@ -61,7 +61,8 @@ class ModemRecoveryTests(unittest.TestCase):
         part=self.sms("dji-at-part",1,2);group=self.old._multipart_group_id(part)
         self.old.store.queue_multipart_part(group,1,2,self.old._encrypt_multipart_part(group,part))
         self.old.store.mark_seen(part.local_id)
-        self.old.store.queue_ack("old-command","submitted",{"reason":"synthetic"})
+        self.old.store.claim_command("old-command")
+        self.old.store.finish_command_and_queue_ack("old-command","submitted",{"reason":"synthetic"})
 
     def archive_reset(self):
         self.stage_pending()
@@ -125,6 +126,33 @@ class ModemRecoveryTests(unittest.TestCase):
             self.assertEqual(manifest["counts"]["claims"],1)
             self.assertEqual(db.execute("SELECT state FROM processed_commands").fetchone()[0],"claimed")
         finally:db.close()
+
+    def test_duplicate_command_restores_missing_ack_without_resending(self):
+        self.old.store.claim_command("old-command")
+        self.old.store.finish_command_and_queue_ack("old-command","sent",{})
+        self.old.store.mark_ack_sent("old-command","sent")
+        class DuplicateRelay:
+            def request(self,*args,**kwargs):return {"commands":[{"commandId":"old-command"}]}
+        self.old.relay=DuplicateRelay()
+        self.old.process_commands()
+        self.assertEqual(self.old.store.pending_acks()[0]["state"],"sent")
+
+    def test_modem_send_stages_event_and_ack_without_duplicate_radio_send(self):
+        sent=[]
+        self.old.adapter.send_sms=lambda to,body:sent.append((to,body)) or {"messageRef":"synthetic"}
+        created=modem.now();expires=created+300;command="synthetic-send"
+        payload={"action":"sms.send","commandId":command,"channelId":"old-channel",
+                 "channelRevision":1,"to":"+10000000000","body":"synthetic"}
+        aad=modem.command_aad("old-node",command,"sms.send",created,expires,command)
+        envelope={"commandId":command,"type":"sms.send","createdAt":created,"expiresAt":expires,
+                  "idempotencyKey":command,"ciphertext":modem.encrypt_payload(self.old.node_key,self.old.kid,payload,aad)}
+        class SendRelay:
+            def request(self,*args,**kwargs):return {"commands":[envelope]}
+        self.old.relay=SendRelay()
+        self.old.process_commands();self.old.process_commands()
+        self.assertEqual(len(sent),1)
+        self.assertEqual(self.old.store.pending_acks()[0]["state"],"sent")
+        self.assertEqual(self.old.store.pending_events()[0]["eventId"],"modem-send-"+command)
 
     def test_snapshot_failure_blocks_reset_and_keeps_originals(self):
         self.stage_pending()

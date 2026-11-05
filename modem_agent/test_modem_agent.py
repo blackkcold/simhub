@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import tempfile, unittest
+import sqlite3, tempfile, unittest
 from pathlib import Path
 
 from simhub_modem_agent import (
@@ -87,6 +87,35 @@ class ModemAgentTest(unittest.TestCase):
             self.assertEqual(len(store.pending_events()),1)
             self.assertTrue(store.claim_command('cmd'))
             self.assertFalse(store.claim_command('cmd'))
+
+    def test_command_outcome_and_ack_commit_together(self):
+        with tempfile.TemporaryDirectory() as td:
+            store=Store(Path(td)/'agent.db')
+            try:
+                self.assertTrue(store.claim_command('cmd'))
+                store.db.execute("CREATE TEMP TRIGGER fail_ack BEFORE INSERT ON command_acks BEGIN SELECT RAISE(ABORT,'synthetic'); END")
+                with self.assertRaises(sqlite3.IntegrityError):
+                    store.finish_command_and_queue_ack('cmd','sent',{})
+                self.assertEqual(store.db.execute("SELECT state FROM processed_commands WHERE id='cmd'").fetchone()[0],'claimed')
+                self.assertEqual(store.pending_acks(),[])
+                store.db.execute("DROP TRIGGER fail_ack")
+                store.finish_command_and_queue_ack('cmd','submitted',{})
+                store.finish_command_and_queue_ack('cmd','sent',{})
+                store.mark_ack_sent('cmd','submitted')
+                self.assertEqual(store.pending_acks()[0]['state'],'sent')
+            finally:store.db.close()
+
+    def test_sent_event_recovers_ack_after_interrupted_update(self):
+        with tempfile.TemporaryDirectory() as td:
+            store=Store(Path(td)/'agent.db')
+            try:
+                store.claim_command('cmd')
+                store.finish_command_and_queue_ack('cmd','submitted',{})
+                store.queue_event('modem-send-cmd','sms.sent',1,'ch',False,{}, {})
+                store.recover_completed_sends()
+                self.assertEqual(store.db.execute("SELECT state FROM processed_commands WHERE id='cmd'").fetchone()[0],'sent')
+                self.assertEqual(store.pending_acks()[0]['state'],'sent')
+            finally:store.db.close()
 
     def test_modem_otp_is_content_only(self):
         self.assertEqual(parse_otp("【服务】您的验证码为 638271，请勿告知他人")["value"],"638271")

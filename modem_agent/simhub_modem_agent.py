@@ -437,23 +437,39 @@ class Store:
         self.db.commit()
         return cur.rowcount > 0
 
-    def finish_command(self, command_id: str, state: str) -> None:
-        self.db.execute("UPDATE processed_commands SET state=?,processed_at=? WHERE id=?", (state, now(), command_id))
-        self.db.execute("DELETE FROM processed_commands WHERE processed_at<?", (now() - 30 * 86400,))
-        self.db.commit()
+    def finish_command_and_queue_ack(self, command_id: str, state: str, result: dict[str, Any]) -> None:
+        """Persist the command outcome and its upload receipt as one transaction."""
+        encoded=json.dumps(result,separators=(",",":"));ts=now()
+        with self.db:
+            updated=self.db.execute("UPDATE processed_commands SET state=?,processed_at=? WHERE id=?",(state,ts,command_id))
+            if updated.rowcount!=1:
+                raise ValueError("Cannot acknowledge an unclaimed command")
+            self.db.execute(
+                "INSERT INTO command_acks(command_id,state,result_json,updated_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(command_id) DO UPDATE SET state=excluded.state,result_json=excluded.result_json,updated_at=excluded.updated_at",
+                (command_id,state,encoded,ts))
+            self.db.execute("DELETE FROM processed_commands WHERE processed_at<? AND state!='claimed'",(ts-30*86400,))
 
-    def queue_ack(self, command_id: str, state: str, result: dict[str, Any]) -> None:
-        self.db.execute(
-            "INSERT INTO command_acks(command_id,state,result_json,updated_at) VALUES(?,?,?,?) ON CONFLICT(command_id) DO UPDATE SET state=excluded.state,result_json=excluded.result_json,updated_at=excluded.updated_at",
-            (command_id, state, json.dumps(result, separators=(",", ":")), now()),
-        )
-        self.db.commit()
+    def requeue_recorded_ack(self, command_id: str) -> None:
+        """Repair a legacy lost ACK without executing a duplicate command."""
+        with self.db:
+            row=self.db.execute("SELECT state FROM processed_commands WHERE id=?",(command_id,)).fetchone()
+            if row and row["state"] in {"submitted","sent","delivered","succeeded","failed","rejected","expired","outcome_unknown"}:
+                self.db.execute("INSERT OR IGNORE INTO command_acks(command_id,state,result_json,updated_at) VALUES(?,?,?,?)",
+                    (command_id,row["state"],json.dumps({"reason":"recovered_local_state"}),now()))
+
+    def recover_completed_sends(self) -> None:
+        """A durable sent event proves modem acceptance after a crash before its ACK."""
+        rows=self.db.execute("SELECT p.id FROM processed_commands p JOIN events e ON e.id='modem-send-'||p.id "
+            "WHERE p.state IN ('claimed','submitted','outcome_unknown') AND e.kind='sms.sent'").fetchall()
+        for row in rows:
+            self.finish_command_and_queue_ack(row["id"],"sent",{"reason":"recovered_sent_event"})
 
     def pending_acks(self) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM command_acks ORDER BY updated_at ASC LIMIT 200").fetchall()
 
-    def mark_ack_sent(self, command_id: str) -> None:
-        self.db.execute("DELETE FROM command_acks WHERE command_id=?", (command_id,))
+    def mark_ack_sent(self, command_id: str, state: str) -> None:
+        self.db.execute("DELETE FROM command_acks WHERE command_id=? AND state=?", (command_id,state))
         self.db.commit()
 
     def prune(self) -> None:
@@ -1347,21 +1363,23 @@ class Agent:
                 f"/api/v1/devices/{self.config['deviceId']}/commands/{row['command_id']}/ack",
                 {"state": row["state"], "result": json.loads(row["result_json"])},
             )
-            self.store.mark_ack_sent(str(row["command_id"]))
+            self.store.mark_ack_sent(str(row["command_id"]),str(row["state"]))
 
     def process_commands(self) -> None:
         data = self.relay.request("GET", f"/api/v1/devices/{self.config['deviceId']}/commands/pending?limit=50")
         for env in data.get("commands", []):
             command_id = str(env.get("commandId", ""))
-            if not command_id or not self.store.claim_command(command_id):
+            if not command_id:
+                continue
+            if not self.store.claim_command(command_id):
+                self.store.requeue_recorded_ack(command_id)
                 continue
             ctype = str(env.get("type", ""))
             created = int(env.get("createdAt", 0))
             expires = int(env.get("expiresAt", 0))
             idem = str(env.get("idempotencyKey", command_id))
             if expires and expires < now():
-                self.store.finish_command(command_id, "expired")
-                self.store.queue_ack(command_id, "expired", {})
+                self.store.finish_command_and_queue_ack(command_id,"expired",{})
                 continue
             send_invoked=False
             try:
@@ -1386,8 +1404,7 @@ class Agent:
                         raise RuntimeError("sms_hourly_limit")
                     # Persist uncertainty before invoking the non-transactional modem.
                     # On crash/restart, do not automatically resend a possibly sent SMS.
-                    self.store.finish_command(command_id,"submitted")
-                    self.store.queue_ack(command_id,"submitted",{"reason":"delivery_unconfirmed"})
+                    self.store.finish_command_and_queue_ack(command_id,"submitted",{"reason":"delivery_unconfirmed"})
                     send_invoked=True
                     result = self.adapter.send_sms(to, body)
                     ts = now()
@@ -1403,32 +1420,26 @@ class Agent:
                     }
                     cipher = self.encrypt_event("modem-send-" + command_id, "sms.sent", ts, False, event_payload)
                     self.store.queue_event("modem-send-" + command_id, "sms.sent", ts, self.channel_id, False, {"stage": "modem_sent"}, cipher)
-                    self.store.finish_command(command_id, "sent")
-                    self.store.queue_ack(command_id, "sent", {"adapter": self.adapter.name})
+                    self.store.finish_command_and_queue_ack(command_id,"sent",{"adapter":self.adapter.name})
                 elif ctype in {"device.refresh_state", "subscription.refresh"}:
                     self.put_state()
-                    self.store.finish_command(command_id, "succeeded")
-                    self.store.queue_ack(command_id, "succeeded", {"refreshed": True})
+                    self.store.finish_command_and_queue_ack(command_id,"succeeded",{"refreshed":True})
                 elif ctype == "diagnostics.request":
-                    self.store.finish_command(command_id, "succeeded")
                     stamp=now(); event_id="diag-"+command_id
                     data={"requestId":command_id,"diagnosticAt":stamp,"nodeType":"modem","adapter":self.adapter.name,"pendingEvents":len(self.store.pending_events(1000))}
                     cipher=self.encrypt_event(event_id,"device.diagnostics",stamp,False,data)
                     self.store.queue_event(event_id,"device.diagnostics",stamp,self.channel_id,False,{},cipher)
-                    self.store.queue_ack(command_id, "succeeded", {"adapter": self.adapter.name})
+                    self.store.finish_command_and_queue_ack(command_id,"succeeded",{"adapter":self.adapter.name})
                 else:
-                    self.store.finish_command(command_id, "rejected")
-                    self.store.queue_ack(command_id, "rejected", {"reason": "unsupported_on_modem"})
+                    self.store.finish_command_and_queue_ack(command_id,"rejected",{"reason":"unsupported_on_modem"})
             except Exception as exc:
                 if send_invoked:
                     # A modem timeout is NOT proof that the carrier did not send it.
                     # Preserve nonterminal submitted status until an operator verifies.
-                    self.store.finish_command(command_id,"submitted")
-                    self.store.queue_ack(command_id,"submitted",{"reason":"send_result_unknown"})
+                    self.store.finish_command_and_queue_ack(command_id,"submitted",{"reason":"send_result_unknown"})
                 else:
                     reason = "channel_changed" if "channel_changed" in str(exc) else exc.__class__.__name__
-                    self.store.finish_command(command_id, "failed")
-                    self.store.queue_ack(command_id, "failed", {"reason": reason})
+                    self.store.finish_command_and_queue_ack(command_id,"failed",{"reason":reason})
 
     def put_state(self) -> None:
         state = self.adapter.state()
@@ -1621,6 +1632,7 @@ class Agent:
             self.receive()
             raise
         self.store.prune()
+        self.store.recover_completed_sends()
         self.store.recover_interrupted_claims()
         self._sync_channel_identity()
         self.receive()

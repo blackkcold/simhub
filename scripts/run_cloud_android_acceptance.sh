@@ -12,6 +12,7 @@ adb shell pm grant "$package" android.permission.ACCESS_FINE_LOCATION
 adb shell pm grant "$package" android.permission.READ_PHONE_STATE
 adb shell cmd location set-location-enabled true
 adb emu power capacity 65
+adb emu gsm signal 16 99
 (
   while true; do
     adb emu geo fix 114.057865 22.543096 >/dev/null

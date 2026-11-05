@@ -124,6 +124,16 @@ public class CloudAcceptanceInstrumentedTest {
         assertEquals("Emulator battery sample did not propagate",65,telemetry.optInt("batteryPct",-1));
         assertTrue(telemetry.optLong("sampledAt",0)>0);
         if(telemetry.has("wifiSignalLevel"))assertTrue(telemetry.getInt("wifiSignalLevel")>=0&&telemetry.getInt("wifiSignalLevel")<=4);
+        JSONArray signals=telemetry.optJSONArray("signals");int knownSignals=0;
+        if(signals!=null)for(int i=0;i<signals.length();i++){
+            JSONObject signal=signals.getJSONObject(i);
+            if(signal.has("signalLevel")&&!signal.isNull("signalLevel")){
+                int level=signal.getInt("signalLevel");assertTrue(level>=0&&level<=4);knownSignals++;
+            }
+        }
+        System.out.println("SIMHUB_CI_TELEMETRY wifiConnected="+telemetry.optBoolean("wifiConnected",false)
+            +" wifiSignalAvailable="+telemetry.has("wifiSignalLevel")
+            +" activeSimSamples="+(signals==null?0:signals.length())+" knownSimSignals="+knownSignals);
         JSONObject posted=new ApiClient(context).putState("cloud-telemetry");
         JSONObject state=adminGet("/api/v1/devices/"+deviceId+"/state").getJSONObject("state");
         assertEquals(65,state.getInt("batteryPct"));

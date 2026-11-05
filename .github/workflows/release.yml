@@ -113,8 +113,24 @@ jobs:
       - run: python3 -m py_compile server/simhub_server.py server/passkeys.py scripts/setup.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
       - run: bash -n modem_agent/install.sh scripts/install-updater.sh scripts/deploy-verified.sh
 
-  build-image:
+  # Do not publish an OCI tag until independent checks on this exact commit pass.
+  release-gates:
     needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require green current-head CI, security and CodeQL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify_release_checks.py
+
+  build-image:
+    needs: [validate, release-gates]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -155,7 +171,7 @@ jobs:
             "$IMAGE"
 
   sign:
-    needs: validate
+    needs: [validate, release-gates]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -70,7 +70,7 @@ def fetch(endpoint: str, token: str) -> dict:
 
 
 def verify(repo: str, sha: str, branch: str, token: str, *,
-           attempts: int = 60, delay: int = 20) -> None:
+           attempts: int = 150, delay: int = 20) -> None:
     if not (repo == "blackkcold/simhub" and branch in {"main", "develop"}
             and len(sha) == 40 and all(c in "0123456789abcdef" for c in sha)
             and token):

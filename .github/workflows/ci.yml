@@ -98,6 +98,30 @@ jobs:
         with:
           gradle-version: '9.6.0'
       - run: gradle -p android -PcenterConfigFake=true :peer-core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDevRelease -PsimhubDevSequence=1 --stacktrace
+      - name: Verify actual APK package and version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable_apk="$(find android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          dev_apk="$(find android/app/build/outputs/apk/devRelease -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$stable_apk" && test -n "$dev_apk"
+          version="$(sed -n 's/.*versionName = "\([0-9.]*\)".*/\1/p' android/app/build.gradle.kts | head -1)"
+          test -n "$version"
+          aapt="$ANDROID_HOME/build-tools/37.0.0/aapt"
+          python3 scripts/apk_release_metadata.py inspect --aapt "$aapt" --apk "$stable_apk" \
+            --metadata "$RUNNER_TEMP/stable-apk.json" --channel stable --version "$version"
+          python3 scripts/apk_release_metadata.py inspect --aapt "$aapt" --apk "$dev_apk" \
+            --metadata "$RUNNER_TEMP/dev-apk.json" --channel dev --version "${version}-dev.1"
+          python3 - <<'PYCODE'
+          import json, os, pathlib, re
+          text=pathlib.Path("android/app/build.gradle.kts").read_text()
+          base=int(re.search(r"versionCode\s*=\s*([0-9]+)",text).group(1))
+          temp=pathlib.Path(os.environ["RUNNER_TEMP"])
+          stable=json.loads((temp/"stable-apk.json").read_text())
+          dev=json.loads((temp/"dev-apk.json").read_text())
+          if stable["versionCode"]!=base or dev["versionCode"]!=base*100000+1:
+              raise SystemExit("Actual APK version codes do not match the channel contract")
+          PYCODE
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: simhub-agent-debug

@@ -37,10 +37,11 @@ code, and is not intended to replace a production SIM node.
    Promoting a feature to Stable requires explicit review, physical-device
    acceptance, new release tests and a deliberate PR; never merge the entire
    experimental `develop` branch into `main` automatically.
-5. Before either release workflow creates an immutable tag, its publish job
-   **independently waits** for push-triggered `CI` and `Security scan`, plus
-   all six CodeQL analysis/compatibility jobs, to report `success` on the
-   exact release SHA. Missing or failed jobs block publication. GitHub's
+5. Before either release workflow signs an APK or pushes an OCI image, an
+   independent gate waits for push-triggered `CI` and `Security scan`, plus
+   all six CodeQL analysis/compatibility jobs, to report `success` on the exact
+   release SHA. Dev also requires its P2P preview workflow. The publish job
+   checks again before creating a tag. Missing or failed checks block publication. GitHub's
    separate native `CodeQL` PR aggregate compares against a PR base branch;
    it is not a release-commit scan and may show `neutral` when a Stable-to-Dev
    sync PR compares intentionally different P2P scan configurations. That

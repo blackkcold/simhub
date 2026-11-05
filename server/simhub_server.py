@@ -941,6 +941,10 @@ class SimHubHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type","application/json; charset=utf-8")
         self.send_header("Content-Length",str(len(data)))
+        # This handler uses HTTP/1.0 and closes after each response. Make that
+        # explicit so clients never reuse an already-closing TLS connection.
+        self.send_header("Connection","close")
+        self.close_connection=True
         if extra_headers:
             for k,v in extra_headers.items():
                 self.send_header(k,v)

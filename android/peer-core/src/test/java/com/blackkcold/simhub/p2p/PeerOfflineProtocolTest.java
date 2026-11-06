@@ -27,4 +27,13 @@ public final class PeerOfflineProtocolTest {
         assertThrows(SecurityException.class,()->PeerOfflineProtocol.seal(key,A,B,"message012345678901",now,now+PeerOfflineProtocol.MAX_TTL_SECONDS+1,new JSONObject()));
         Arrays.fill(key,(byte)0);
     }
+    @Test public void malformedCipherIsAPermanentEnvelopeError()throws Exception{
+        byte[] key=PeerCrypto.random(32);long now=1800000000L;
+        JSONObject envelope=PeerOfflineProtocol.seal(key,A,B,"message012345678901",now,now+300,new JSONObject().put("action","device.state"));
+        JSONObject shortNonce=new JSONObject(envelope.toString()).put("iv",PeerCrypto.b64(new byte[8]));
+        assertThrows(SecurityException.class,()->PeerOfflineProtocol.open(key,A,B,shortNonce,now));
+        JSONObject shortTag=new JSONObject(envelope.toString()).put("ct",PeerCrypto.b64(new byte[15]));
+        assertThrows(SecurityException.class,()->PeerOfflineProtocol.open(key,A,B,shortTag,now));
+        Arrays.fill(key,(byte)0);
+    }
 }

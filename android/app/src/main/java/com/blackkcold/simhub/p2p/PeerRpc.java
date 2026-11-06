@@ -60,6 +60,11 @@ public final class PeerRpc {
                         request.getString("source"),request.getString("messageId"));
                     yield new JSONObject().put("state","acknowledged").put("removed",removed);
                 }
+                case "relay.reject" -> {
+                    boolean removed=RelayLiteMailbox.get(c).reject(peerId,request.getString("source"),
+                        request.getString("messageId"),request.getString("reason"));
+                    yield new JSONObject().put("state","rejected").put("removed",removed);
+                }
                 case "peer.revoke" -> {store.revoke(peerId);yield new JSONObject().put("state","revoked");}
                 default -> throw new SecurityException("unsupported_peer_action");
             };

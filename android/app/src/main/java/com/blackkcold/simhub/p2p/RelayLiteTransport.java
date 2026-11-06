@@ -62,6 +62,9 @@ public final class RelayLiteTransport implements HubTransport {
         JSONObject packet=new JSONObject().put("action","relay.put")
             .put("target",targetId).put("frame",encrypted);
         JSONObject result=requestRelay(context,store,relayId,UUID.randomUUID().toString(),packet);
+        if("rejected".equals(result.optString("state")))
+            return new JSONObject().put("state","indeterminate").put("route","RELAY_LITE")
+                .put("requestId",id).put("relayRejected",true).put("reason",result.optString("reason","relay_lite_rejected"));
         if(!"accepted".equals(result.optString("state")))
             throw new IllegalStateException("relay_lite_enqueue_unconfirmed");
         return new JSONObject().put("state","queued").put("route","RELAY_LITE")

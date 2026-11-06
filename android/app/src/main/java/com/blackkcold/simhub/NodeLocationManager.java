@@ -83,6 +83,9 @@ public final class NodeLocationManager {
     /** An explicit one-shot may try two providers, with a hard total wait budget. */
     private static Location providerOnce(Context c,LocationManager manager,
                                          String provider,long timeoutMs)throws Exception{
+        if(c.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED
+                &&c.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)
+            throw new SecurityException("permission_required");
         Location cached=manager.getLastKnownLocation(provider);
         if(cached!=null && cached.hasAccuracy() && cached.getAccuracy()<=2000f
                 && SystemClock.elapsedRealtimeNanos()-cached.getElapsedRealtimeNanos()

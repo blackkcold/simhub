@@ -15,7 +15,7 @@ public final class ShizukuShellService extends IShizukuShell.Stub {
             while((n=input.read(buffer))!=-1){
                 if(data.size()<MAX_OUTPUT)data.write(buffer,0,Math.min(n,MAX_OUTPUT-data.size()));
             }
-            return data.toString(java.nio.charset.StandardCharsets.UTF_8);
+            return new String(data.toByteArray(),java.nio.charset.StandardCharsets.UTF_8);
         }
     }
     @Override public String run(String command) {

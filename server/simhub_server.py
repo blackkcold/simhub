@@ -35,7 +35,7 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.18.0"
+APP_VERSION = "0.19.0"
 # The image version is immutable in source; a signed Dev manifest may provide its exact pre-release identity.
 APP_VERSION = os.getenv("SIMHUB_RELEASE_VERSION", "").strip() or APP_VERSION
 RELEASE_CHANNEL = os.getenv("SIMHUB_CHANNEL", "stable").strip()

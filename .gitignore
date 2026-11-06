@@ -19,3 +19,5 @@ release/
 # Generated provisioning config (contains domain-specific policy)
 /Caddyfile
 .simhub-backup.lock
+node_modules/
+ui-snapshots/

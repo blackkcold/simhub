@@ -24,12 +24,23 @@ or native-controller session authentication as `/api/v1/commands/recent`.
 ```
 
 The response excludes ciphertext. A missing record returns HTTP 404 with
-`error: "command_not_found"`. Retention and explicit deletion can remove records;
-404 is not proof that an old or expired SMS was never executed. Persist the
+`error: "command_not_found"`. Expired retention or complete device deletion can
+remove records; 404 is not proof that an old or expired SMS was never executed. Persist the
 original command ID, idempotency key, envelope, target device/channel/revision and
 timestamps before POST. Reconcile that ID after an ambiguous response. Only a
 still-valid original envelope may be retried; uncertain execution never creates
 a replacement SMS command automatically.
+
+An SMS-history purge retains metadata-only command tombstones through the later
+of the original expiry or purge time, plus the configured command retention
+period (at least one day). Exact-ID reads return `purged: true`; matching enqueue
+retries return the original disposition with `duplicate: true` and
+`enqueued: false`. No ciphertext, recipient, message or result payload survives
+in a tombstone. A late authenticated ACK may advance its state without restoring
+content. Queued work is rejected; already dispatched/submitted work remains
+`outcome_unknown` unless an actual receipt establishes the result. The additive
+SQLite insertion fence also prevents older Relay binaries from silently reusing
+these identities during a code-only rollback.
 
 ACK transitions serialize with the current state and return
 `{ok: true, currentState, ackAt}` after commit. Duplicate or stale transitions add

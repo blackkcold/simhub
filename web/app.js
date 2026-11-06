@@ -1272,7 +1272,9 @@ function collapseMessageEvents(source){
   for(const e of source){
     const p=e.payload||{},providerId=p.providerId;
     if(p.direction==='out'&&providerId!=null){
-      const key=e.deviceId+':'+providerId,old=byProvider.get(key);
+      // Provider IDs may repeat across SIM revisions or correspondents. Fold
+      // sent/delivered updates only within the same stable physical source.
+      const key=JSON.stringify([eventSimKey(e),canonicalAddress(messageAddress(e)),String(providerId)]),old=byProvider.get(key);
       if(!old||(rank[e.kind]||0)>=(rank[old.kind]||0))byProvider.set(key,e);
     }else rest.push(e);
   }

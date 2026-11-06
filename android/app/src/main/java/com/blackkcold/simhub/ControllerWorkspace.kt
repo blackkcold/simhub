@@ -126,6 +126,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var selected by remember(revision){mutableStateOf(ControllerProfiles.selected(context))}
     val client=remember(selected){selected?.let{ControllerSecureClient(context.applicationContext,it)}}
     val inbox=remember(selected){ControllerInboxState()}
+    val inboxPrivacy=remember(inbox){ControllerInboxPrivacy(inbox)}
     var add by remember{mutableStateOf(false)}
     var addUrl by remember{mutableStateOf("")}
     var pairing by remember(selected){mutableStateOf(client?.pendingPairing())}
@@ -214,7 +215,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             }
             if(event==Lifecycle.Event.ON_STOP && requireLocalUnlock){
                 selected?.let{ControllerAccessGate.clear(it)}
-                localUnlocked=false;inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""
+                localUnlocked=false;inboxPrivacy.clear();lastEventSeq=0L;page=0;cursors=emptyList();pendingLoad=""
                 loadedLocationDevice="";locationSample=null;locationState=nativeLabel("已锁定","Locked")
             }
         }
@@ -348,10 +349,22 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             if(!delta || rows.length()<50)break
                         }
                     }finally{vault.fill(0)}
+                    // A purge/reset may race the page request itself. Verify the
+                    // metadata again before publishing any decrypted batch.
+                    val verified=api.api("/api/v1/devices").getJSONArray("devices")
+                    val verifiedNodes=(0 until verified.length()).map{verified.getJSONObject(it)}
+                    if(ControllerHistoryScope.fingerprint(nodes)!=ControllerHistoryScope.fingerprint(verifiedNodes))
+                        throw ControllerSearchScopeChanged()
                     ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater,settingsError)
                 }
-                if(requireLocalUnlock && !localUnlocked)return@launch
-                if(peerBackupActive){inbox.clear();peerBackupActive=false;peerBackupCursors.clear()}
+                if(!api.hasGrant()||(requireLocalUnlock && !localUnlocked))return@launch
+                if(peerBackupActive){inboxPrivacy.clear();peerBackupActive=false;peerBackupCursors.clear()}
+                if(inboxPrivacy.observe(data.devices)){
+                    lastEventSeq=0L;page=0;cursors=emptyList();unreadable=0;historySearch=null
+                    devices=data.devices;pendingLoad="latest"
+                    error=nativeLabel("短信范围已变化，正在重新读取最新历史","SMS scope changed; reloading current history")
+                    return@launch
+                }
                 // Main-thread ACK: only successfully accepted decrypted content
                 // allows an event cursor or historical-page index to move.
                 for(batch in data.batches){
@@ -418,8 +431,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             if(accepted==0)throw java.io.IOException("已授权 P2P 节点也不可达")
                             JSONObject().put("type","snapshot").put("v",1).put("messages",messages).put("hasMore",more).toString() to reachable
                         }
-                        if(requireLocalUnlock&&!localUnlocked)return@launch
-                        if(!peerBackupActive||mode!="older")inbox.clear()
+                        if(!api.hasGrant()||(requireLocalUnlock&&!localUnlocked))return@launch
+                        if(!peerBackupActive||mode!="older")inboxPrivacy.clear()
                         if(!inbox.accept(fallback.first,append=peerBackupActive&&mode=="older",preferOlder=mode=="older"))throw java.io.IOException("P2P 短信批次未接收")
                         devices=fallback.second
                         if(!peerBackupActive){page=0;cursors=emptyList();lastEventSeq=0}
@@ -428,8 +441,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         error="Relay 暂不可达，已切换到独立授权的 P2P；云端管理待 Relay 恢复"
                     }catch(backup:Exception){error=backup.message?:error}
                 }
-                if(e is SecurityException){
-                    authorized=false;inbox.clear();devices=emptyList()
+                if(e is ControllerSearchScopeChanged){
+                    inboxPrivacy.clear();historySearch=null;lastEventSeq=0L;page=0;cursors=emptyList();unreadable=0
+                    pendingLoad="latest"
+                    error=nativeLabel("设备或短信清除状态已变化，旧结果已清除","Device or SMS purge state changed; previous results were cleared")
+                }else if(e is SecurityException){
+                    authorized=false;inboxPrivacy.clear();devices=emptyList();historySearch=null
                     lastCommandId="";lastCommandState="";lastEventSeq=0
                 }
             }finally{busy=false}
@@ -570,7 +587,30 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     LaunchedEffect(selected,visible,authorized,localUnlocked,requireLocalUnlock){
         if(visible && authorized && (!requireLocalUnlock || localUnlocked))while(true){
             delay(60000)
-            if(!busy)refreshDelta()
+            if(!busy){
+                if(peerBackupActive){if(page==0)refreshDelta()}
+                else if(page==0)refreshDelta()
+                else try{
+                    // Deep history keeps its cursor, but must still observe remote
+                    // privacy changes instead of retaining erased rows indefinitely.
+                    val latest=withContext(Dispatchers.IO){
+                        val rows=client!!.api("/api/v1/devices").getJSONArray("devices")
+                        (0 until rows.length()).map{rows.getJSONObject(it)}
+                    }
+                    if(inboxPrivacy.observe(latest)){
+                        lastEventSeq=0L;page=0;cursors=emptyList();unreadable=0;historySearch=null
+                        devices=latest;pendingLoad="latest"
+                        error=nativeLabel("短信范围已变化，正在重新读取最新历史","SMS scope changed; reloading current history")
+                    }
+                }catch(failure:Exception){
+                    if(failure is kotlinx.coroutines.CancellationException)throw failure
+                    error=nativeLabel("历史隐私状态暂未确认，请刷新重试","History privacy status could not be refreshed; please retry")
+                    if(failure is SecurityException||failure is ControllerSecureClient.ApiFailure&&failure.status in listOf(401,403)){
+                        authorized=false;inboxPrivacy.clear();devices=emptyList();historySearch=null
+                        lastEventSeq=0L;page=0;cursors=emptyList()
+                    }
+                }
+            }
         }
     }
     LaunchedEffect(selected,visible,authorized,tab,localUnlocked){
@@ -1076,7 +1116,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             api.api("/api/v1/controllers/revoke","POST",
                                 JSONObject().put("controllerId",api.controllerId()))
                         }
-                        api.localReset();authorized=false;inbox.clear();devices=emptyList()
+                        api.localReset();authorized=false;inboxPrivacy.clear();devices=emptyList();historySearch=null
                         lastCommandId="";showReset=false;resetCredential="";error=""
                     }catch(e:Exception){error="无法撤销云端授权："+(e.message?:"请检查网络或二次验证")}
                     finally{busy=false}
@@ -1086,7 +1126,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
         dismissButton={
             TextButton(onClick={
                 // Explicit offline-only fallback; this does not revoke Relay access.
-                client?.localReset();authorized=false;inbox.clear();devices=emptyList()
+                client?.localReset();authorized=false;inboxPrivacy.clear();devices=emptyList();historySearch=null
                 lastCommandId="";resetCredential="";showReset=false
             }){Text(hubLabel("仅清除此手机","Remove only from this phone"))}
         })
@@ -1238,7 +1278,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     }else if(destructive){
                                         // A removed or revoked source must disappear from
                                         // the decrypted inbox immediately, not on next restart.
-                                        inbox.clear();lastEventSeq=0L;page=0;cursors=emptyList()
+                                        inboxPrivacy.clear();historySearch=null;lastEventSeq=0L;page=0;cursors=emptyList()
                                         if(action!="purge")selectedDevice=null
                                         load("latest")
                                     }else refreshDelta()

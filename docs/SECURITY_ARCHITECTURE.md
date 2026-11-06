@@ -83,6 +83,16 @@ Device enrollment credentials are short-lived single-use packages. New Web guida
 
 Device command status exposes only whitelisted operational metadata. Auth/API/static rate budgets are separated; Android respects Retry-After and applies exponential network backoff.
 
+### SMS deletion and command replay protection
+
+Deleting a device's SMS history removes its SMS event ciphertext, shared-pool message ciphertext, command ciphertext and command results in one SQLite transaction. It retains a small command tombstone containing only opaque command/idempotency identifiers, device, command type, sequence, lifecycle timestamps and state. It never retains the SMS body, phone number, ciphertext or old result fields. Recent-command lists omit these deleted records; authenticated exact-ID status reads remain available to reconcile an interrupted send.
+
+Deletion marks a command still queued as `rejected`. A command already dispatched or submitted becomes `outcome_unknown`: the Relay cannot recall ciphertext already obtained by a node or determine whether the carrier accepted a message. Confirmed `sent`, `delivered`, `succeeded`, `failed`, `rejected` and `expired` states survive deletion. An authenticated late ACK may advance the retained disposition without restoring any content; duplicate or stale ACKs receive a successful retirement response with the current state.
+
+A retry matching either retained command ID or device-scoped idempotency key returns the existing disposition with `duplicate: true`, `purged: true` and `enqueued: false`. Its `accepted: true` acknowledges the original acceptance only. Purge, enqueue, dispatch and ACK transactions serialize before inspecting lifecycle state. A SQLite insert trigger also blocks reuse by an older Relay binary after a code-only rollback.
+
+Tombstones expire after the later of the original command expiry or deletion time, plus `SIMHUB_COMMAND_RETENTION_DAYS` (30 days by default, at least one day). Repeated deletion or late ACKs do not extend that deadline. Maintenance removes expired tombstones; by then the original envelope has expired and fails normal command validation. Full device deletion removes these command tombstones together with the device's other business metadata. Recovery from an older backup can restore older data and identity history; a backup must not be used to undo an intentional purge or to retry an uncertain SMS.
+
 ## Dual-role Android and staged login (v0.14)
 
 The Android Controller uses a dedicated WebView with JavaScript limited to a selected HTTPS management Origin. No JavaScript bridge exposes Node credentials, SMS Provider access, or Keystore operations. The Node service operates independently of Controller login. Different Controller Profiles isolate browser storage by HTTPS Origin. Origin-based storage isolation is not a substitute for per-pool access controls.

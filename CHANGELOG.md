@@ -9,6 +9,7 @@
 - Correct CDM capability reporting and remove the unavailable privileged association-creation flow from ordinary APKs; retain existing app-owned association inspection/removal and normal SMS Companion mode.
 - Repair standalone deployment-ZIP updater preflight and selected proxy ports; add private, serialized SQLite backups and an isolated restore verifier. Display backup integrity and restore-rehearsal status separately.
 - Pin workflow actions, container bases and Python dependency hashes; publish OCI SBOM/provenance; discover regression entry points and require current-commit security, API29/30 compatibility and API35 isolated acceptance before release.
+- Harden static asset selection and request logging, eliminate pathological OTP-redaction backtracking, and run full-scope CodeQL checks on pull requests as well as merged release commits.
 - Dev only: preserve independently authorized peer routes in encrypted send journals, reconcile authenticated cached receipts, and keep uncertain results without automatically repeating SMS.
 - Dev only: add fair RelayLite source scheduling, recipient-scoped negative receipts, bounded encrypted SQLite response caches and pair-generation/revocation fences; protected mutation identities survive payload eviction.
 - Stable continues to exclude experimental P2P/WebRTC. Dev retains separate package, signing-workflow and release-channel identities; Dev transport changes are documented in its channel notes.

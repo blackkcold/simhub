@@ -18,6 +18,11 @@ const server=spawn("python3",["server/simhub_server.py"],{
     SIMHUB_WEB_ROOT:join(root,"web"),
     SIMHUB_MANAGEMENT_ORIGIN:"http://127.0.0.1:"+port,
     SIMHUB_PUBLIC_BASE_URL:"http://127.0.0.1:"+port},stdio:"pipe"});
+// Drain child pipes: a long browser suite must not block the Relay's request
+// logger once its OS pipe buffer fills. Retain only a bounded failure tail.
+let serverOutput='';
+const drain=chunk=>{serverOutput=(serverOutput+String(chunk)).slice(-16000);};
+server.stdout.on('data',drain);server.stderr.on('data',drain);
 let browser;
 try {
   let ready=false;
@@ -27,10 +32,14 @@ try {
   }
   assert.ok(ready,"Server did not start for UI test");
   browser=await chromium.launch({headless:true,args:["--no-sandbox"]});
+  // Geometry/theme fixtures need fresh pages, not ten cold service-worker
+  // caches that can exhaust the production IP asset budget in under a minute.
+  const visualContext=await browser.newContext();
   for(const width of [360,375,768,1024,1440]){
     for(const theme of ["light","dark"]){
-      const context=await browser.newContext({viewport:{width,height:900},colorScheme:theme});
+      const context=visualContext;
       const page=await context.newPage(),errors=[],consoleErrors=[],httpErrors=[];
+      await page.setViewportSize({width,height:900});await page.emulateMedia({colorScheme:theme});
       page.on("console",m=>{if(m.type()==="error")consoleErrors.push(m.text());});
       page.on("response",r=>{if(r.status()>=400)httpErrors.push(r.status()+" "+r.url());});
       page.on("requestfailed",r=>httpErrors.push(r.failure()?.errorText+" "+r.url()));
@@ -159,9 +168,10 @@ try {
       assert.ok(composer&&composer.width<=width+1,"Composer overflows screen");
       await page.screenshot({path:"ui-snapshots/simhub-"+width+"-"+theme+".png",fullPage:true});
       assert.deepEqual(errors,[],"Browser errors at "+width+" / "+theme);
-      await context.close();
+      await page.close();
     }
   }
+  await visualContext.close();
   // Regression: arbitrary-length phone numbers / message previews must never
   // enlarge a thread beyond its column, and the floating dock must not scroll.
   // Reuse one page and resize it. Creating 13 sessions would incorrectly trip
@@ -369,11 +379,21 @@ try {
   // unlock the one Relay-registered root using the existing password.
   const fresh=await browser.newContext({viewport:{width:1100,height:800}});
   const freshPage=await fresh.newPage();
+  const freshProblems=[];
+  freshPage.on('pageerror',e=>freshProblems.push({error:e.message}));
+  freshPage.on('response',r=>{if(r.url().includes('/api/')&&r.status()>=400)freshProblems.push({status:r.status,path:new URL(r.url()).pathname});});
   await freshPage.goto("http://127.0.0.1:"+port+"/?view=devices",{waitUntil:"domcontentloaded"});
   await freshPage.locator("#username").fill("admin");
   await freshPage.locator("#adminToken").fill("A".repeat(48));
   await freshPage.locator("#unlockBtn").click();
-  await freshPage.locator("#vaultUnlockBtn").waitFor({state:"visible"});
+  try{await freshPage.locator("#vaultUnlockBtn").waitFor({state:"visible"});}
+  catch(error){
+    const state=await freshPage.evaluate(()=>({toast:document.getElementById('toast')?.textContent,
+      gate:document.getElementById('gateHint')?.textContent,authHidden:document.getElementById('authStage')?.hidden,
+      vaultHidden:document.getElementById('vaultStage')?.hidden,appHidden:document.getElementById('appContent')?.hidden,
+      hasShell:!!document.getElementById('loginForm'),body:document.body?.textContent.slice(0,300)}));
+    console.error('FRESH-PROFILE-LOGIN-FAILED',JSON.stringify({state,freshProblems}));throw error;
+  }
   assert.equal(await freshPage.locator("#createVaultBtn").isVisible(),false);
   assert.equal(await freshPage.evaluate(()=>localStorage.getItem("simhub_vault_v1")),null);
   await freshPage.locator("#passphrase").fill("session-resume-test-passphrase");
@@ -383,6 +403,81 @@ try {
     'Cold notification deep link must survive login and Vault unlock');
   assert.equal(new URL(freshPage.url()).searchParams.has('view'),false);
   await fresh.close();
+  // Full-history controls operate through actual encrypted Relay responses.
+  // The only plaintext here is synthetic test data; the app still decrypts it.
+  {
+    const ciphertexts=await p.evaluate(async()=>{
+      const utf8=new TextEncoder(),decode=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+      const encode=b=>btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+      const envelope=(await (await fetch('/api/v1/vault')).json()).envelope;
+      const base=await crypto.subtle.importKey('raw',utf8.encode('session-resume-test-passphrase'),'PBKDF2',false,['deriveKey']);
+      const wrapping=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt:decode(envelope.salt),iterations:envelope.iterations},base,{name:'AES-GCM',length:256},false,['decrypt']);
+      const raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:decode(envelope.iv),additionalData:utf8.encode('simhub-vault-wrap-v1')},wrapping,decode(envelope.ct)));
+      const key=await crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt']);raw.fill(0);
+      const encrypt=async body=>{
+        const iv=crypto.getRandomValues(new Uint8Array(12));
+        const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:utf8.encode('simhub-event-v1')},key,
+          utf8.encode(JSON.stringify({body,sender:'+12025550123',direction:'in',channelId:'history-sim',channelRevision:1})));
+        return {v:1,alg:'A256GCM',iv:encode(iv),ct:encode(new Uint8Array(ct))};
+      };
+      return {common:await encrypt('Synthetic history record'),needle:await encrypt('PRIVATE_HISTORY_NEEDLE_1205')};
+    });
+    const historyRows=Array.from({length:1205},(_,i)=>({seq:1205-i,occurredAt:1700000000+1205-i,
+      deviceId:'history-node',eventId:'history-'+(1205-i),kind:'sms.received',subscriptionId:'-1',hasOtp:false,
+      ciphertext:i===1204?ciphertexts.needle:ciphertexts.common}));
+    const historyRequests=[];let hold=true,releaseHeld,enteredHeld;
+    const held=new Promise(resolve=>enteredHeld=resolve);
+    await p.route('**/api/v1/devices',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({devices:[{
+      id:'history-node',name:'Synthetic history node',nodeType:'android',online:false,revoked:false,appVersion:'0.1.0',
+      smsCount:1205,smsEpoch:0,state:{pendingEvents:7},capabilities:[]}]})}));
+    await p.route('**/api/v1/events?*',async route=>{
+      const query=new URL(route.request().url()).searchParams,limit=Number(query.get('limit')||100);
+      let result;
+      if(query.get('order')==='occurred'){
+        const before=Number(query.get('beforeSeq')||0),available=historyRows.filter(e=>!before||e.seq<before),events=available.slice(0,limit);
+        historyRequests.push({before,limit});
+        result={events,hasMore:available.length>events.length,nextBeforeTime:events.at(-1)?.occurredAt??null,nextBeforeSeq:events.at(-1)?.seq??null};
+        if(before&&hold){hold=false;enteredHeld();await new Promise(resolve=>releaseHeld=resolve);}
+      }else result={events:query.get('latest')==='1'?historyRows.slice(0,limit).reverse():[]};
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(result)}).catch(()=>{});
+    });
+    await p.reload({waitUntil:'domcontentloaded'});
+    await p.waitForFunction(()=>!document.getElementById('historyLoadAll').disabled,null,{timeout:12000});
+    await p.locator('.nav[data-view="inbox"]').click();
+    await p.locator('#search').fill('PRIVATE_HISTORY_NEEDLE_1205');
+    assert.equal(await p.locator('#inboxItems .message').count(),0,'Unloaded old text is not advertised as searched');
+    await p.locator('#historyLoadAll').click();await held;
+    await p.locator('#historyStop').click();
+    await p.waitForFunction(()=>document.getElementById('historyLoadAll').textContent.includes('继续'),null,{timeout:5000});
+    releaseHeld();
+    assert.equal(historyRequests.filter(x=>x.before).length,1,'Stop does not fetch further pages');
+    await p.locator('#historyLoadAll').click();
+    await p.waitForFunction(()=>document.getElementById('historyCoverage').textContent.includes('已加载 1,205'),null,{timeout:15000});
+    assert.equal(historyRequests[1].before,historyRequests[2].before,'Resume repeats only the uncommitted page');
+    assert.ok(historyRequests.every(x=>x.limit<=500),'Every history request stays below the Relay limit');
+    assert.equal(await p.locator('#historyLoadAll').isDisabled(),true);
+    assert.equal(await p.locator('#inboxItems .message').count(),1,'The oldest encrypted record becomes searchable');
+    await p.locator('#inboxItems .message').click();
+    assert.match(await p.locator('#conversationMessages').textContent(),/PRIVATE_HISTORY_NEEDLE_1205/);
+    const persisted=await p.evaluate(()=>Object.values(localStorage).concat(Object.values(sessionStorage)).join('\n'));
+    assert.ok(!persisted.includes('PRIVATE_HISTORY_NEEDLE_1205'),'Search and SMS plaintext never enter browser storage');
+    await p.locator('.history-details summary').click();
+    assert.match(await p.locator('#historyNodeCoverage').textContent(),/尚未上传或尚未扫描/);
+    await p.locator('.history-details summary').click();
+    await p.setViewportSize({width:375,height:844});await p.locator('#backConversation').click();
+    const historyLayout=await p.evaluate(()=>({width:document.documentElement.scrollWidth,
+      actions:document.querySelector('.history-actions').getBoundingClientRect().right,
+      list:document.querySelector('.sms-sidebar').getBoundingClientRect().height}));
+    assert.ok(historyLayout.width<=376&&historyLayout.actions<=376,'History controls must fit a phone viewport');
+    assert.ok(historyLayout.list>=200,'History controls leave a useful inbox on mobile');
+    await p.screenshot({path:'ui-snapshots/simhub-history-mobile.png',fullPage:true});
+    await p.setViewportSize({width:1120,height:800});
+    await p.unroute('**/api/v1/events?*');await p.unroute('**/api/v1/devices');
+    await p.reload({waitUntil:'domcontentloaded'});
+    await p.waitForFunction(()=>!document.getElementById('appContent').hidden,null,{timeout:12000});
+    assert.equal(await p.locator('#search').inputValue(),'','Reload does not persist the plaintext search query');
+    assert.equal(await p.locator('#inboxItems .message').count(),0,'History cache does not persist between page loads');
+  }
   // Exercise the real ES-module application through a synthetic Relay API
   // response, not inaccessible module-local browser variables. The final item
   // has an old provider timestamp but a newer Relay sequence.
@@ -422,7 +517,7 @@ try {
   // a pointer click cannot reach controls behind an active <dialog>.
   await p.evaluate(()=>document.getElementById("lockBtn").click());
   const leak=await p.evaluate(()=>{
-    const ids=['inboxList','deviceList','conversationMessages','diagnosticsOutput','enrollLink','sendBody','replyBody','recoveryKey'];
+    const ids=['inboxList','deviceList','conversationMessages','diagnosticsOutput','enrollLink','sendBody','replyBody','recoveryKey','historyCoverage','historyExplanation','historyNodeCoverage'];
     return {fields:ids.map(id=>{const el=document.getElementById(id);return {id,content:el.value??el.textContent??'',html:el.innerHTML}}),
       link:document.getElementById("openEnroll").getAttribute('href'),
       dialog:document.getElementById("diagnosticsDialog").open,
@@ -440,6 +535,8 @@ try {
   await sibling.close();
   await c.close();
   console.log("PASS: UI breakpoints, light/dark, dialog spacing and SMS new-compose");
+} catch(error){
+  console.error('UI-RELAY-TAIL',serverOutput.slice(-4000));throw error;
 } finally {
   if(browser)await browser.close();
   server.kill("SIGTERM");

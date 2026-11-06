@@ -1,4 +1,8 @@
 <resources>
+    <string name="sms_notification_channel">新短信</string>
+    <string name="sms_notification_description">SIM Hub 作为默认短信应用时显示隐私通知</string>
+    <string name="sms_notification_title">收到新短信</string>
+    <string name="sms_notification_body">打开 SIM Hub 查看短信</string>
     <string name="app_name">SIM Hub</string>
     <string name="dashboard_title">SIM Hub</string>
     <string name="dashboard_subtitle">私有 SIM 节点与加密短信中继</string>

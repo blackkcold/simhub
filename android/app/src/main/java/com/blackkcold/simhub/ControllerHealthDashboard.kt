@@ -202,6 +202,7 @@ internal fun ControllerHealthDiagnostics(device:JSONObject){
         }
         InfoRow(hubLabel("待上传事件","Queued events"),ControllerHealthFacts.knownNumber(s,"pendingEvents"))
         InfoRow(hubLabel("待确认 ACK","Queued ACKs"),ControllerHealthFacts.knownNumber(s,"pendingCommandAcks"))
+        NodeRecoveryDetails(device)
         if(tasks!=null && tasks.length()>0){
             Text(hubLabel("待执行事件","Pending event tasks"),fontWeight=FontWeight.SemiBold)
             for(i in 0 until minOf(tasks.length(),5)){
@@ -211,7 +212,7 @@ internal fun ControllerHealthDiagnostics(device:JSONObject){
         }
         if(errors.isEmpty()){
             Text(hubLabel("未报告同步或采集异常","No reported sync or collection errors"),
-                color=MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.bodySmall)
+                color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
         }else{
             errors.forEach{key->
                 Text(key+" · "+s.optString(key),color=MaterialTheme.colorScheme.error,

@@ -396,11 +396,15 @@ public final class ApiClient {
     }
     public void flushEvents()throws Exception{
         LocalStore store=LocalStore.get(c);int sent=0;
-        if(store.pendingEventCount()==0)return;
+        // Read one owned snapshot instead of checking a count that another
+        // writer may invalidate before the first page is read.
+        List<JSONObject> pending=store.pendingEvents(BATCH_SIZE);
+        if(pending.isEmpty())return;
         cfg.recordUploadAttempt();
         try{
         for(int page=0;page<5;page++){
-            List<JSONObject> pending=store.pendingEvents(BATCH_SIZE);if(pending.isEmpty())break;
+            if(page>0)pending=store.pendingEvents(BATCH_SIZE);
+            if(pending.isEmpty())break;
             if(BATCH_SUPPORTED){
                 try{
                     JSONArray items=new JSONArray();for(JSONObject e:pending)items.put(e);

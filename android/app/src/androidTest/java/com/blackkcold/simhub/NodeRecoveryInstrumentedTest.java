@@ -143,6 +143,23 @@ public class NodeRecoveryInstrumentedTest {
             }
         }finally{db.close();}
     }
+    @Test public void historyRestoreAtomicallyAdmitsQueueLimitAndPreservesOtherReceipts()throws Exception{
+        try(LocalStore store=new LocalStore(isolatedContext())){
+            String provider="sms-provider-restore-test",other="other-restore-test";
+            store.markEventSent(provider);store.markEventSent(other);
+            for(int i=0;i<101;i++)assertTrue(store.queueEvent("restore-queue-"+i,"sms.history",123,
+                "",false,new JSONObject(),new JSONObject()));
+            assertEquals(-1,store.resetProviderUploadReceiptsForRestore(100));
+            assertTrue(store.hasUploadedReceipt(provider));
+            assertTrue(store.hasUploadedReceipt(other));
+            assertEquals(101,store.pendingEventCount());
+            store.getWritableDatabase().delete("events","id=?",new String[]{"restore-queue-100"});
+            assertEquals(1,store.resetProviderUploadReceiptsForRestore(100));
+            assertFalse(store.hasUploadedReceipt(provider));
+            assertTrue(store.hasUploadedReceipt(other));
+            assertEquals(100,store.pendingEventCount());
+        }
+    }
     @Test public void alreadyUploadedSmsCanEnterNewlyEnabledSharedPoolOnce()throws Exception{
         Context c=isolatedContext();rotationPending(c);
         SharedPoolClient pool=new SharedPoolClient(c);

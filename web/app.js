@@ -677,7 +677,6 @@ async function ingestEvents(batch,notify=true){
   let changed=false;
   for(const e of batch){
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return false;
-    lastSeq=Math.max(lastSeq,e.seq||0);
     // The location endpoint is opt-in: general SMS/event refresh never decrypts coordinates.
     if(e.kind==='device.location')continue;
     const id=e.deviceId+':'+e.eventId;
@@ -696,6 +695,7 @@ async function ingestEvents(batch,notify=true){
 async function loadEvents(){
   if(!vaultKey)return;
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
+  const bootstrapping=!initialEventsLoaded;
   if(!initialEventsLoaded){
     const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
@@ -705,21 +705,24 @@ async function loadEvents(){
     await ingestEvents(first.events||[],false);
     if(epoch!==securityEpoch||!vaultKey)return;
     // Recent uploads can contain old-dated messages excluded by occurredAt paging.
-    // Fetch the latest Relay sequence page too, without losing the original head.
+    // Historical/overlapping pages must never advance the incremental cursor.
+    // Catch up from the head captured BEFORE either initial page was requested.
     // Keep the newest unfiltered page: SIM profile and device events still
     // supply historical source labels and operational notifications.
     const newest=await api('/api/v1/events?latest=1&limit=100');
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     await ingestEvents(newest.events||[],false);
     if(epoch!==securityEpoch||!vaultKey)return;
-    initialEventsLoaded=true;renderInbox();return;
+    initialEventsLoaded=true;renderInbox();
   }
   let changed=false,loops=0;
   while(loops++<3){
     const r=await api('/api/v1/events?since='+lastSeq+'&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     const batch=r.events||[];
     if(!batch.length)break;
-    changed=await ingestEvents(batch)||changed;
+    changed=await ingestEvents(batch,!bootstrapping)||changed;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    lastSeq=Math.max(lastSeq,...batch.map(e=>Number(e.seq)||0));
     if(batch.length<100)break;
   }
   if(changed&&epoch===securityEpoch&&vaultKey)renderInbox();

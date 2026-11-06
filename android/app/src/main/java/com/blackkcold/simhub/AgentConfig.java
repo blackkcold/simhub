@@ -44,6 +44,7 @@ public final class AgentConfig {
     public void markResetPending(){prefs.edit().putBoolean("reset_pending",true).remove("reset_recovery_required").apply();resetSyncBackoff();}
     public String server(){return prefs.getString("server","");}
     public String deviceId(){return prefs.getString("device_id","");}
+    public String enrollmentGeneration(){return prefs.getString("enrollment_generation","legacy");}
     public String deviceName(){return prefs.getString("device_name","Android SIM Node");}
     public boolean alwaysOn(){return prefs.getBoolean("always_on",false);}
     public void setAlwaysOn(boolean v){prefs.edit().putBoolean("always_on",v).apply();}
@@ -205,6 +206,8 @@ public final class AgentConfig {
             throw new IllegalStateException("Unable to clear stale enrollment diagnostics");
         prefs.edit().remove("remote_reset_notified").putString("server",server.replaceAll("/+$","")).putString("device_id",deviceId).putString("device_name",deviceName).putLong("token_issued_at",System.currentTimeMillis()/1000).putBoolean("token_rotation_pending",false).remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id").remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id").remove("next_sync_allowed_at").remove("reconcile_cursor_date").remove("reconcile_cursor_id").apply();
         secrets.putString(SECRET_DEVICE_TOKEN,token);
+        if(!prefs.edit().putString("enrollment_generation",java.util.UUID.randomUUID().toString()).commit())
+            throw new IllegalStateException("Unable to persist enrollment generation");
         localQueueKey();
     }
 
@@ -247,6 +250,7 @@ public final class AgentConfig {
                 SECRET_NODE_KEY,SECRET_LOCAL_QUEUE_KEY,"pending_pair_token","pending_pair_proof"})
             secrets.remove(name);
         if(!clearEnrollmentTelemetry(prefs.edit()).remove("server").remove("device_id").remove("device_name")
+                .remove("enrollment_generation")
                 .remove("last_history_sync").remove("history_cursor_date").remove("history_cursor_id")
                 .remove("history_initialized_v2").remove("history_backfill_date").remove("history_backfill_id")
                 .remove("reconcile_cursor_date").remove("reconcile_cursor_id")

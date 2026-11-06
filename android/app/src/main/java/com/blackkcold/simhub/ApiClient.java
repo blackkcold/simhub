@@ -409,12 +409,17 @@ public final class ApiClient {
                     if(results==null)throw new IOException("Batch response missing acknowledgements");
                     java.util.Set<String> expected=new java.util.HashSet<>();
                     for(JSONObject e:pending)expected.add(e.getString("eventId"));
+                    java.util.Map<String,String> dispositions=new java.util.LinkedHashMap<>();
                     for(int i=0;i<results.length();i++){
                         JSONObject result=results.getJSONObject(i);String id=result.optString("eventId","");
-                        if(!expected.remove(id)||!result.optBoolean("accepted"))throw new IOException("Invalid batch acknowledgement");
-                        store.markEventSent(id);sent++;
+                        if(!expected.remove(id))throw new IOException("Invalid batch acknowledgement");
+                        dispositions.put(id,EventUploadReceipt.disposition(result));
                     }
                     if(!expected.isEmpty())throw new IOException("Incomplete batch acknowledgement");
+                    for(java.util.Map.Entry<String,String> receipt:dispositions.entrySet()){
+                        store.markEventAccepted(receipt.getKey(),receipt.getValue());
+                        if(EventUploadReceipt.published(receipt.getValue()))sent++;
+                    }
                     continue;
                 }catch(ApiFailure e){
                     if(e.status!=404)throw e;
@@ -423,7 +428,11 @@ public final class ApiClient {
             }
             for(JSONObject e:pending){
                 JSONObject response=request("POST","/api/v1/devices/"+cfg.deviceId()+"/events",e);
-                if(response.optBoolean("accepted")){store.markEventSent(e.getString("eventId"));sent++;}
+                String id=e.getString("eventId");
+                if(!id.equals(response.optString("eventId")))throw new IOException("Event acknowledgement identity mismatch");
+                String disposition=EventUploadReceipt.disposition(response);
+                store.markEventAccepted(id,disposition);
+                if(EventUploadReceipt.published(disposition))sent++;
             }
         }
         cfg.clearUploadError();

@@ -14,7 +14,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     private static LocalStore INSTANCE;
     private static long lastReceiptPruneAt=0L;
     public static synchronized LocalStore get(Context c){if(INSTANCE==null)INSTANCE=new LocalStore(c.getApplicationContext());return INSTANCE;}
-    private LocalStore(Context c){super(c,"simhub-agent.db",null,5);}
+    private LocalStore(Context c){super(c,"simhub-agent.db",null,6);}
 
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,occurred_at INTEGER NOT NULL,subscription_id TEXT NOT NULL,has_otp INTEGER NOT NULL,metadata_json TEXT NOT NULL,ciphertext_json TEXT NOT NULL,created_at INTEGER NOT NULL)");
@@ -26,7 +26,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     private static void createUploadIndex(SQLiteDatabase db){
-        db.execSQL("CREATE TABLE IF NOT EXISTS uploaded_event_ids(id TEXT PRIMARY KEY,uploaded_at INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS uploaded_event_ids(id TEXT PRIMARY KEY,uploaded_at INTEGER NOT NULL,disposition TEXT NOT NULL DEFAULT 'stored')");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_uploaded_event_age ON uploaded_event_ids(uploaded_at)");
     }
 
@@ -43,6 +43,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         if(oldV<3)createPartTable(db);
         if(oldV<4)db.execSQL("ALTER TABLE processed_commands ADD COLUMN command_type TEXT NOT NULL DEFAULT ''");
         if(oldV<5)createUploadIndex(db);
+        if(oldV==5)db.execSQL("ALTER TABLE uploaded_event_ids ADD COLUMN disposition TEXT NOT NULL DEFAULT 'stored'");
     }
 
     /** Fast path for repeated window rescans; avoids redundant encryption and staging. */
@@ -73,8 +74,11 @@ public final class LocalStore extends SQLiteOpenHelper {
                 new String[]{id},null,null,null)) {return row.moveToFirst();}
     }
     public synchronized boolean hasUploadedReceipt(String id){
-        try(Cursor row=getReadableDatabase().query("uploaded_event_ids",new String[]{"id"},"id=?",
-                new String[]{id},null,null,null)) {return row.moveToFirst();}
+        return EventUploadReceipt.published(eventReceiptDisposition(id));
+    }
+    public synchronized String eventReceiptDisposition(String id){
+        try(Cursor row=getReadableDatabase().query("uploaded_event_ids",new String[]{"disposition"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst()?row.getString(0):"";}
     }
     public synchronized void clearPendingLocation(){
         getWritableDatabase().delete("events","kind=?",new String[]{"device.location"});
@@ -89,9 +93,15 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     public synchronized void markEventSent(String id){
+        markEventAccepted(id,"stored");
+    }
+    public synchronized void markEventAccepted(String id,String disposition){
+        if(!EventUploadReceipt.published(disposition)&&!"suppressed".equals(disposition))
+            throw new IllegalArgumentException("Unknown upload disposition");
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try{
             ContentValues v=new ContentValues();v.put("id",id);v.put("uploaded_at",System.currentTimeMillis()/1000);
+            v.put("disposition",disposition);
             db.insertWithOnConflict("uploaded_event_ids",null,v,SQLiteDatabase.CONFLICT_IGNORE);
             // Provider receipts are useful for months, not indefinitely. The
             // indexed prune bounds offline journal growth on long-running nodes.

@@ -88,4 +88,40 @@ public class NodeRecoveryInstrumentedTest {
         assertEquals("candidate-token",config.pendingDeviceToken());
         assertEquals("old-token",config.deviceToken());
     }
+    @Test public void locationConsentCannotCrossEnrollmentEvenForSameDeviceId()throws Exception{
+        Context c=isolatedContext();AgentConfig config=rotationPending(c);
+        NodeLocationManager.setEnabled(c,true);
+        NodeLocationManager.setRemoteAllowed(c,true);
+        assertTrue(NodeLocationManager.enabled(c));
+        assertTrue(NodeLocationManager.remoteAllowed(c));
+        String firstGeneration=config.enrollmentGeneration();
+        byte[] key=new byte[32];key[0]=19;
+        config.setNodeEnrollment("https://relay.example.invalid","synthetic-device","synthetic","different-token",CryptoBox.keyId(key),key);
+        assertNotEquals(firstGeneration,config.enrollmentGeneration());
+        assertFalse(NodeLocationManager.enabled(c));
+        assertFalse(NodeLocationManager.remoteAllowed(c));
+        assertFalse(c.getSharedPreferences("simhub_location_privacy_v1",Context.MODE_PRIVATE).contains("registeredEpoch"));
+    }
+    @Test public void suppressedReceiptDeduplicatesWithoutReportingPublished(){
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        LocalStore store=LocalStore.get(c);String id="suppressed-test-"+UUID.randomUUID();
+        try{
+            store.markEventAccepted(id,"suppressed");
+            assertTrue(store.hasSeenEvent(id));
+            assertFalse(store.hasUploadedReceipt(id));
+            assertEquals("suppressed",store.eventReceiptDisposition(id));
+        }finally{store.getWritableDatabase().delete("uploaded_event_ids","id=?",new String[]{id});}
+    }
+    @Test public void existingReceiptSchemaUpgradesWithoutLosingAcknowledgements(){
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        android.database.sqlite.SQLiteDatabase db=android.database.sqlite.SQLiteDatabase.create(null);
+        try{
+            db.execSQL("CREATE TABLE uploaded_event_ids(id TEXT PRIMARY KEY,uploaded_at INTEGER NOT NULL)");
+            db.execSQL("INSERT INTO uploaded_event_ids VALUES('old-receipt',123)");
+            LocalStore.get(c).onUpgrade(db,5,6);
+            try(android.database.Cursor row=db.rawQuery("SELECT disposition FROM uploaded_event_ids WHERE id='old-receipt'",null)){
+                assertTrue(row.moveToFirst());assertEquals("stored",row.getString(0));
+            }
+        }finally{db.close();}
+    }
 }

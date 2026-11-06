@@ -27,7 +27,7 @@ function context(extra={}){
     decryptEvent:async e=>({body:'private-'+e.seq,sender:'sender-'+e.seq}),maybeNotify:()=>{},decryptFailureCategory:()=>'',
     normalizeSearch,eventSearchId,summarizeHistoryCoverage,devices:[{id:'node-A',name:'Node Alpha',smsCount:100,state:{pendingEvents:2}}],
     deviceName:id=>'Node Alpha',getLocale:()=>'en',...extra});
-  for(const name of ['ingestEvents','fetchHistoryPage','clearHistoryState','resetEventCache','filteredEvents','collapseMessageEvents','eventSimKey'])
+  for(const name of ['ingestEvents','fetchHistoryPage','clearHistoryState','resetEventCache','filteredEvents','collapseMessageEvents','eventSimKey','messageAddress','eventIsInbound','canonicalAddress'])
     runInContext(implementation(name),ctx);
   return ctx;
 }

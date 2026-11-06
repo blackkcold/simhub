@@ -703,6 +703,13 @@ def device_for_token(device_id: str, token: str, allow_pending: bool=False) -> s
     return None
 
 
+def device_credential_matches(row: sqlite3.Row | None, digest: str, allow_pending: bool = False) -> bool:
+    """Credential identity only; callers enforce the endpoint's lifecycle rights."""
+    return bool(row and (hmac.compare_digest(row["token_hash"], digest) or
+        (allow_pending and row["pending_token_hash"] and row["pending_token_expires_at"] >= now()
+         and hmac.compare_digest(row["pending_token_hash"], digest))))
+
+
 def validate_cipher(obj: Any) -> bool:
     if not isinstance(obj, dict) or obj.get("alg") != "A256GCM":
         return False
@@ -1149,7 +1156,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
         path,p,q=self.route()
         if not self.preflight("GET", path): return
         if path=="/healthz":
-            self.send_json(200,{"ok":True,"version":APP_VERSION,"time":now()}); return
+            self.send_json(200,{"ok":True,"version":APP_VERSION,"channel":RELEASE_CHANNEL,"time":now()}); return
         if path=="/readyz":
             try:
                 with open_db() as con:
@@ -1157,7 +1164,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     con.execute("SELECT 1").fetchone()
                 if version<13:
                     self.send_error_json(503,"schema_not_ready","Database schema is not current"); return
-                self.send_json(200,{"ok":True,"version":APP_VERSION,"schemaVersion":version,"time":now()}); return
+                self.send_json(200,{"ok":True,"version":APP_VERSION,"channel":RELEASE_CHANNEL,"schemaVersion":version,"time":now()}); return
             except Exception:
                 self.send_error_json(503,"database_not_ready","Database is not ready"); return
         if path=="/.well-known/assetlinks.json":
@@ -1299,6 +1306,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["commands","pending"]:
             if not self.require_device(p[3]): return
             self.get_pending_commands(p[3],q); return
+        if len(p)==6 and p[:3]==["api","v1","devices"] and p[4]=="commands":
+            if not self.require_admin(): return
+            self.get_command_status(p[3],p[5]); return
         if path.startswith("/api/"):
             self.send_error_json(404,"not_found","API endpoint not found"); return
         self.serve_static(path)
@@ -1452,7 +1462,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_stepup(): return
             self.admin_request_reset(p[3]); return
         if len(p)==5 and p[:3]==["api","v1","devices"] and p[4]=="reset":
-            if not self.require_device(p[3]): return
+            # Cleanup has its own credential/lifecycle gate inside the write
+            # transaction. Revocation must not restore ordinary device rights.
             self.complete_device_reset(p[3]); return
         if path in {"/api/v1/pool/authorize","/api/v1/pool/revoke","/api/v1/pool/rotate"}:
             if not self.require_stepup():return
@@ -1533,7 +1544,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.prepare_device_token(p[3]); return
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["token","commit"]:
             auth=self.headers.get("Authorization","")
-            if not auth.startswith("Device ") or not device_for_token(p[3],auth[7:],allow_pending=True):
+            if not rate_allowed("device", p[3]+":"+self.ip, 180):
+                self.send_error_json(429,"rate_limited","Device request rate exceeded");return
+            if not auth.startswith("Device ") or not TOKEN_RE.fullmatch(auth[7:]):
                 self.send_error_json(401,"unauthorized","Current or pending device token required"); return
             self.commit_device_token(p[3],auth[7:]); return
         # HttpURLConnection does not support PATCH. Restrict this Android POST
@@ -2013,9 +2026,16 @@ class SimHubHandler(BaseHTTPRequestHandler):
             self.send_error_json(400,"no_changes","No supported fields supplied"); return
         vals.append(device_id)
         with open_db() as con:
+            con.execute("BEGIN IMMEDIATE")
             cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
             if cur.rowcount and body.get("revoke") is True:
                 shared_pool.member_departure(con,device_id)
+                # A command already handed out may have reached the radio.
+                # Only commands never dispatched can be called rejected.
+                con.execute("UPDATE commands SET state='rejected',ack_at=?,result_json=? WHERE device_id=? AND state='queued'",
+                    (now(),json.dumps({"reason":"device_revoked"}),device_id))
+                con.execute("UPDATE commands SET state='outcome_unknown',ack_at=?,result_json=? WHERE device_id=? AND state='dispatched'",
+                    (now(),json.dumps({"reason":"device_revoked_after_dispatch"}),device_id))
         if not cur.rowcount:
             self.send_error_json(404,"device_not_found","Device not found"); return
         audit("device.patch",device_id,"ok",self.ip); signal_stream()
@@ -2039,13 +2059,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def admin_request_reset(self, device_id: str) -> None:
         ts=now()
         with open_db() as con:
+            con.execute("BEGIN IMMEDIATE")
             d=con.execute("SELECT reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
             if not d:
                 self.send_error_json(404,"device_not_found","Device not found");return
             if not d["reset_requested_at"]:
                 shared_pool.member_departure(con,device_id)
                 con.execute("UPDATE devices SET reset_requested_at=?,reset_source='admin' WHERE id=?",(ts,device_id))
-                con.execute("UPDATE commands SET state='rejected',ack_at=? WHERE device_id=? AND state IN ('queued','dispatched')",(ts,device_id))
+                con.execute("UPDATE commands SET state=CASE WHEN state='queued' THEN 'rejected' ELSE 'outcome_unknown' END,ack_at=? WHERE device_id=? AND state IN ('queued','dispatched')",(ts,device_id))
         audit("device.reset.request",device_id,"ok",self.ip);signal_stream()
         push_tickle_async(device_id,"reset_requested")
         self.send_json(202,{"ok":True,"status":"reset_pending"})
@@ -2062,18 +2083,37 @@ class SimHubHandler(BaseHTTPRequestHandler):
             dead=con.execute("SELECT 1 FROM device_reset_tombstones WHERE device_id=? AND token_hash=? AND expires_at>?",(device_id,digest,now())).fetchone()
         if dead:
             self.send_json(410,{"resetRequired":True,"status":"deleted"});return
-        if row and (hmac.compare_digest(row["token_hash"],digest) or
-                    (row["pending_token_hash"] and row["pending_token_expires_at"]>=now() and hmac.compare_digest(row["pending_token_hash"],digest))):
+        if device_credential_matches(row,digest,allow_pending=True):
             pending=bool(row["reset_requested_at"] or row["revoked_at"])
-            self.send_json(200,{"resetRequired":pending,"status":"reset_pending" if pending else "active"});return
+            status="reset_pending" if row["reset_requested_at"] else ("revoked" if row["revoked_at"] else "active")
+            self.send_json(200,{"resetRequired":pending,"status":status});return
         self.send_error_json(401,"unauthorized","Device credentials not recognized")
 
     def complete_device_reset(self, device_id: str) -> None:
+        if not rate_allowed("device", device_id+":"+self.ip, 180):
+            self.send_error_json(429,"rate_limited","Device request rate exceeded");return
+        bearer=self.headers.get("Authorization","")
+        if not bearer.startswith("Device ") or not TOKEN_RE.fullmatch(bearer[7:]):
+            self.send_error_json(401,"unauthorized","Device token required");return
+        digest=sha256_text(bearer[7:])
         ts=now()
         with open_db() as con:
-            old=con.execute("SELECT reset_source FROM devices WHERE id=?",(device_id,)).fetchone()
-            if not purge_device_record(con,device_id,ts):
-                self.send_error_json(404,"device_not_found","Device not found");return
+            con.execute("BEGIN IMMEDIATE")
+            old=con.execute("SELECT token_hash,pending_token_hash,pending_token_expires_at,revoked_at,reset_requested_at,reset_source FROM devices WHERE id=?",(device_id,)).fetchone()
+            dead=con.execute("SELECT 1 FROM device_reset_tombstones WHERE device_id=? AND token_hash=? AND expires_at>?",(device_id,digest,ts)).fetchone()
+            if dead:
+                self.send_json(410,{"resetRequired":True,"status":"deleted"});return
+            cleanup_requested=bool(old and (old["revoked_at"] or old["reset_requested_at"]))
+            if not device_credential_matches(old,digest,allow_pending=cleanup_requested):
+                self.send_error_json(401,"unauthorized","Device credentials not recognized");return
+            revoked_only=bool(old["revoked_at"] and not old["reset_requested_at"])
+            # Revocation's local cleanup receipt does not authorize deleting
+            # retained administrator history. Explicit reset/delete still does.
+            if not revoked_only:
+                purge_device_record(con,device_id,ts)
+        if revoked_only:
+            audit("device.revoke.cleanup",device_id,"ok",self.ip)
+            self.send_json(200,{"ok":True,"status":"revoked","resetRequired":True});return
         origin="admin" if old and old["reset_source"]=="admin" else "device"
         audit("device.reset.complete."+origin,device_id,"ok",self.ip);signal_stream()
         self.send_json(200,{"ok":True,"status":"deleted"})
@@ -2081,6 +2121,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def force_delete_device(self, device_id: str) -> None:
         ts=now()
         with open_db() as con:
+            con.execute("BEGIN IMMEDIATE")
             if not purge_device_record(con,device_id,ts):
                 self.send_error_json(404,"device_not_found","Device not found");return
         audit("device.reset.force",device_id,"ok",self.ip);signal_stream()
@@ -2089,7 +2130,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def prepare_device_token(self,device_id:str) -> None:
         token=new_token(48);ts=now();expires=ts+3600
         with open_db() as con:
-            cur=con.execute("UPDATE devices SET pending_token_hash=?,pending_token_expires_at=? WHERE id=? AND revoked_at IS NULL",(sha256_text(token),expires,device_id))
+            cur=con.execute("UPDATE devices SET pending_token_hash=?,pending_token_expires_at=? WHERE id=? AND revoked_at IS NULL AND reset_requested_at=0 AND token_hash=?",
+                (sha256_text(token),expires,device_id,sha256_text(self.headers.get("Authorization","")[7:])))
         if not cur.rowcount:
             self.send_error_json(404,"device_not_found","Active device not found"); return
         audit("device.token.prepare",device_id,"ok",self.ip)
@@ -2098,13 +2140,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def commit_device_token(self,device_id:str,token:str) -> None:
         digest=sha256_text(token);ts=now()
         with open_db() as con:
-            row=con.execute("SELECT token_hash,pending_token_hash,pending_token_expires_at FROM devices WHERE id=? AND revoked_at IS NULL",(device_id,)).fetchone()
-            if not row:
-                self.send_error_json(404,"device_not_found","Active device not found"); return
-            if hmac.compare_digest(row["token_hash"],digest):
-                self.send_json(200,{"ok":True,"alreadyCommitted":True,"tokenIssuedAt":ts}); return
-            if not row["pending_token_hash"] or row["pending_token_expires_at"]<ts or not hmac.compare_digest(row["pending_token_hash"],digest):
+            con.execute("BEGIN IMMEDIATE")
+            row=con.execute("SELECT token_hash,token_issued_at,pending_token_hash,pending_token_expires_at,revoked_at,reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
+            if not device_credential_matches(row,digest,allow_pending=True):
                 self.send_error_json(401,"invalid_pending_token","Pending token is invalid or expired"); return
+            if row["revoked_at"] or row["reset_requested_at"]:
+                self.send_error_json(409,"device_reset_pending","Only a reset acknowledgement is allowed"); return
+            if hmac.compare_digest(row["token_hash"],digest):
+                self.send_json(200,{"ok":True,"alreadyCommitted":True,"tokenIssuedAt":row["token_issued_at"]}); return
             con.execute("UPDATE devices SET token_hash=?,token_issued_at=?,pending_token_hash='',pending_token_expires_at=0 WHERE id=?",(digest,ts,device_id))
         audit("device.token.commit",device_id,"ok",self.ip);signal_stream()
         self.send_json(200,{"ok":True,"tokenIssuedAt":ts})
@@ -2459,17 +2502,20 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not pending:
                 with _stream_condition:
                     _stream_condition.wait_for(lambda:_stream_epoch!=initial,timeout=wait)
-        # A reset can arrive while an existing long-poll request is asleep.
-        # Re-check after wakeup so the Android client sees the lifecycle signal
-        # immediately instead of waiting for the next command request.
-        with open_db() as con:
-            lifecycle=con.execute("SELECT reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
-        if lifecycle is None or lifecycle["reset_requested_at"]:
-            self.send_error_json(409,"device_reset_pending","Only a reset acknowledgement is allowed"); return
         ts=now()
         try: limit=max(1,min(int(q.get("limit",["50"])[0]),200))
         except ValueError: limit=50
         with open_db() as con:
+            # Linearize credential/lifecycle validation with dequeue. A revoke,
+            # reset or token commit during the wait cannot leak a new command.
+            con.execute("BEGIN IMMEDIATE")
+            lifecycle=con.execute("SELECT token_hash,reset_requested_at,revoked_at FROM devices WHERE id=?",(device_id,)).fetchone()
+            auth=self.headers.get("Authorization","")
+            if (not auth.startswith("Device ") or not TOKEN_RE.fullmatch(auth[7:]) or
+                    not device_credential_matches(lifecycle,sha256_text(auth[7:]))):
+                self.send_error_json(401,"unauthorized","Device credentials not recognized");return
+            if lifecycle["reset_requested_at"] or lifecycle["revoked_at"]:
+                self.send_error_json(409,"device_reset_pending","Only a reset acknowledgement is allowed");return
             expire_commands(con,ts,device_id)
             rows=con.execute("SELECT * FROM commands WHERE device_id=? AND state IN ('queued','dispatched') AND expires_at>? ORDER BY seq ASC LIMIT ?",(device_id,ts,limit)).fetchall()
             ids=[r["id"] for r in rows]
@@ -2502,19 +2548,41 @@ class SimHubHandler(BaseHTTPRequestHandler):
             "sent":{"delivered","failed"},
         }
         with open_db() as con:
-            row=con.execute("SELECT state FROM commands WHERE id=? AND device_id=?",(command_id,device_id)).fetchone()
+            # Acquire the SQLite write lock before reading the predecessor. A
+            # concurrent later ACK can then advance the committed state instead
+            # of losing its CAS while still being reported as successful.
+            con.execute("BEGIN IMMEDIATE")
+            row=con.execute("SELECT state,ack_at FROM commands WHERE id=? AND device_id=?",(command_id,device_id)).fetchone()
             if not row:
                 self.send_error_json(404,"command_not_found","Command not found"); return
             current=row["state"]
             if state==current:
-                self.send_json(200,{"ok":True,"duplicate":True});return
-            if state not in successors.get(current,set()):
-                self.send_json(200,{"ok":True,"ignored":True,"currentState":current});return
-            updated=con.execute(
-                "UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=? AND state=?",
-                (state,now(),json.dumps(result,separators=(",",":")),command_id,device_id,current)).rowcount
+                receipt={"ok":True,"duplicate":True,"currentState":current,"ackAt":row["ack_at"]}
+                updated=0
+            elif state not in successors.get(current,set()):
+                receipt={"ok":True,"ignored":True,"currentState":current,"ackAt":row["ack_at"]}
+                updated=0
+            else:
+                stamp=now()
+                updated=con.execute(
+                    "UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=? AND state=?",
+                    (state,stamp,json.dumps(result,separators=(",",":")),command_id,device_id,current)).rowcount
+                if updated!=1:
+                    raise RuntimeError("Command acknowledgement was not persisted")
+                receipt={"ok":True,"currentState":state,"ackAt":stamp}
         if updated:signal_stream()
-        self.send_json(200,{"ok":True})
+        self.send_json(200,receipt)
+
+    def get_command_status(self,device_id:str,command_id:str) -> None:
+        """Exact-ID reconciliation; never return ciphertext or require an active node."""
+        with open_db() as con:
+            expire_commands(con,now(),device_id)
+            row=con.execute("SELECT id,device_id,type,created_at,expires_at,ack_at,state,result_json FROM commands WHERE device_id=? AND id=?",(device_id,command_id)).fetchone()
+        if row is None:
+            self.send_error_json(404,"command_not_found","Command not found");return
+        self.send_json(200,{"command":{"commandId":row["id"],"deviceId":row["device_id"],"type":row["type"],
+            "createdAt":row["created_at"],"expiresAt":row["expires_at"],"ackAt":row["ack_at"],
+            "state":row["state"],"result":safe_json_loads(row["result_json"],{})}})
 
     def get_recent_commands(self,q:dict[str,list[str]]) -> None:
         """Safe controller progress read: state/result metadata, never ciphertext."""

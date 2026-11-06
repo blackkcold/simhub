@@ -65,7 +65,7 @@ private data class ControllerLoadBatch(
 )
 private data class ControllerLoadResult(
     val devices:List<JSONObject>,val totpRequired:Boolean,
-    val batches:List<ControllerLoadBatch>,val highWater:Long
+    val batches:List<ControllerLoadBatch>,val highWater:Long,val settingsError:String
 )
 /** First history request must initialize both cursors before incremental requests. */
 internal object ControllerPagingPolicy {
@@ -102,7 +102,7 @@ internal object ControllerSourceLabel {
             if(id!=channelId || rev!=revision)continue
             for(key in listOf("alias","displayName","carrierName")){
                 val value=item.optString(key).trim()
-                if(value.isNotBlank() && value!=channelId && value.length<=48 &&
+                if(value.isNotBlank() && value!=channelId && value.length<=80 &&
                     !value.matches(Regex("[0-9a-fA-F-]{20,}")))return value
             }
             val slot=item.optInt("slotIndex",item.optInt("slot",-1))
@@ -141,6 +141,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var composeReply by remember(selected){mutableStateOf<ControllerSendDraft?>(null)}
     var resumeSendId by remember(selected){mutableStateOf<String?>(null)}
     var sendJournalTick by remember(selected){mutableIntStateOf(0)}
+    var privateSettingsError by remember(selected){mutableStateOf("")}
+    var pendingSimSettings by remember(selected){mutableStateOf<Pair<JSONObject,JSONObject>?>(null)}
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
@@ -246,7 +248,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     val d=api.api("/api/v1/devices")
                     val auth=api.api("/api/v1/auth/check")
                     val all=d.optJSONArray("devices")?:JSONArray()
-                    val nodes=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
+                    val rawNodes=(0 until all.length()).mapNotNull{all.optJSONObject(it)}
+                    var settingsError=""
+                    val privateSettings=try{ControllerVaultSettings(api).load().settings}
+                        catch(_:Exception){settingsError="私密 SIM 标签未完成同步，请刷新或升级中继；发送仍按固定 SIM 身份校验";null}
+                    val nodes=if(privateSettings==null)rawNodes else rawNodes.map{ControllerVaultSettingsCrypto.decorate(it,privateSettings)}
                     val byId=nodes.associateBy{it.optString("id")}
                     val delta=mode=="delta" && !initialPage
                     // Read the sequence watermark *before* the latest-time page.
@@ -346,7 +352,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             if(!delta || rows.length()<50)break
                         }
                     }finally{vault.fill(0)}
-                    ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater)
+                    ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater,settingsError)
                 }
                 if(requireLocalUnlock && !localUnlocked)return@launch
                 // Main-thread ACK: only successfully accepted decrypted content
@@ -371,6 +377,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                     else unreadable+=batch.unreadable
                 }
                 devices=data.devices
+                privateSettingsError=data.settingsError
+                inbox.relabel(devices)
+                selectedDevice=selectedDevice?.let{old->devices.firstOrNull{it.optString("id")==old.optString("id")}}
                 secondFactorTotp=data.totpRequired
                 authorized=true;error=""
             }catch(e:Exception){
@@ -795,6 +804,9 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             }
                         }
                     }
+                    if(privateSettingsError.isNotBlank())item(span={GridItemSpan(maxLineSpan)}){
+                        Text(privateSettingsError,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+                    }
                     item(span={GridItemSpan(maxLineSpan)}){
                         OutlinedButton(onClick={
                             context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
@@ -1057,9 +1069,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             context.startActivity(android.content.Intent(
                                 android.content.Intent.ACTION_VIEW,Uri.parse(sample.openStreetMapUrl())))
                         }
-                    })
+                    },onSimEdit={channel->pendingSimSettings=device to channel})
             }
         }
+    }
+    pendingSimSettings?.let{(device,channel)->
+        if(client!=null)ControllerSimSettingsDialog(client,device,channel,
+            onClose={pendingSimSettings=null},onSaved={snapshot->
+                devices=devices.map{ControllerVaultSettingsCrypto.decorate(it,snapshot.settings)}
+                selectedDevice=selectedDevice?.let{old->devices.firstOrNull{it.optString("id")==old.optString("id")}}
+                inbox.relabel(devices);privateSettingsError="";pendingSimSettings=null
+            })
     }
     pendingManageAction?.let{(device,action)->
         val destructive=action in listOf("purge","revoke","delete","location-purge")

@@ -1164,8 +1164,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 }
                 if(destructive){
                     Text(when(action){
-                        "purge"->hubLabel("删除该设备在中继服务器保存的短信及共享池副本，不能撤销。设备本地原始短信不受此操作影响。",
-                            "Deletes relay SMS and shared-pool copies; local node SMS remain.")
+                        "purge"->hubLabel("删除该设备在中继服务器保存的短信内容及共享池副本，不能撤销。保留必要发送状态以防止重复发送；设备本地原始短信不受影响。",
+                            "Permanently delete this node's relay SMS content and shared copies. Minimal send receipts remain to prevent duplicate sending; local phone SMS is preserved.")
                         "location-purge"->hubLabel("只删除服务器保存的位置密文，不会改变手机本机权限。",
                             "Delete only Relay location ciphertext; local permission is unchanged.")
                         "revoke"->hubLabel("撤销云端设备授权，设备需要重新配对。","Re-enrollment is required after revoke.")

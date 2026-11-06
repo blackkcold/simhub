@@ -7,6 +7,14 @@ Each analysis also checks its SARIF locally: security severity 7.0 or higher,
 error-level findings, missing reports, and unsuccessful analysis block release.
 No baseline or unchanged-result exemption hides current high-severity findings.
 
+PR and push analyses both use full repository scope. The workflow sets
+`CODEQL_ACTION_DIFF_INFORMED_QUERIES=false` before initialization, so the local
+SARIF gate also sees findings outside the PR's changed lines. This environment
+override is supported by the pinned Action v4.39.3
+[implementation](https://github.com/github/codeql-action/blob/33d7b85da1a04171e211befe2c739303b9a4c066/src/feature-flags.ts);
+it is not a documented stable Action input and must be rechecked when updating
+that pinned SHA.
+
 `python3 scripts/run_regressions.py` discovers every `test_*.py` under `server`,
 `modem_agent`, and `scripts`, plus `web/test_*.mjs`. Each Python module runs in a
 fresh process so fixture environment variables do not leak between suites.

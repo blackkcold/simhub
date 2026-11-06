@@ -38,6 +38,18 @@ public class NodeRecoveryInstrumentedTest {
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
         assertNotNull(SmsSender.managerForSubscription(c,SubscriptionManager.INVALID_SUBSCRIPTION_ID));
     }
+    @Test public void incomingSmsNotificationHasNoMessageOrSenderData(){
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        android.app.Notification notification=NotificationHelper.incomingSmsNotification(c);
+        assertEquals(android.app.Notification.VISIBILITY_PRIVATE,notification.visibility);
+        assertEquals(android.app.Notification.CATEGORY_MESSAGE,notification.category);
+        assertEquals(c.getString(R.string.sms_notification_title),notification.extras.getString(android.app.Notification.EXTRA_TITLE));
+        assertEquals(c.getString(R.string.sms_notification_body),notification.extras.getString(android.app.Notification.EXTRA_TEXT));
+        assertFalse(notification.extras.containsKey(android.app.Notification.EXTRA_MESSAGES));
+        assertFalse(notification.extras.containsKey(android.app.Notification.EXTRA_PEOPLE_LIST));
+        assertNotNull(notification.contentIntent);
+        assertEquals(c.getPackageName(),notification.contentIntent.getCreatorPackage());
+    }
     @Test public void localSmsEnvelopeSurvivesUnpairedAndResetState()throws Exception{
         Context c=isolatedContext();
         AgentConfig config=new AgentConfig(c);

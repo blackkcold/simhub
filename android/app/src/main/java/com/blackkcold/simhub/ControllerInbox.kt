@@ -38,7 +38,8 @@ import kotlinx.coroutines.flow.collect
 data class ControllerSms(
     val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,
     val inbound:Boolean,val device:String,val sim:String,val sourceId:String,val otp:String,val failed:Boolean,
-    val address:String,val deviceId:String="",val channelId:String="",val channelRevision:Long=0
+    val address:String,val deviceId:String="",val channelId:String="",val channelRevision:Long=0,
+    val bodyTruncated:Boolean=false
 )
 class ControllerInboxState {
     val messages=mutableStateListOf<ControllerSms>()
@@ -118,7 +119,8 @@ class ControllerInboxState {
 @Composable
 fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                           onOlder:()->Unit,onNewer:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit,
-                           onReply:(ControllerSms)->Unit,canCompose:Boolean,isLoading:Boolean=false) {
+                           onReply:(ControllerSms)->Unit,canCompose:Boolean,isLoading:Boolean=false,
+                           onSearchAll:((ControllerSearchFilter)->Unit)?=null) {
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var filtersExpanded by remember { mutableStateOf(false) }
@@ -206,6 +208,14 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
         if(activeThread==null && filtersExpanded) {
             OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
                 label={Text(hubLabel("搜索已加载短信、号码与来源","Search loaded SMS, numbers and sources"))},singleLine=true)
+            Text(hubLabel("当前只搜索已加载的 ${state.messages.size} 条，未覆盖全部历史。",
+                "Only the ${state.messages.size} loaded messages are searched here; history coverage is partial."),
+                modifier=Modifier.padding(horizontal=16.dp,vertical=4.dp),
+                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(onSearchAll!=null)OutlinedButton(onClick={onSearchAll(ControllerSearchFilter(query.take(200),otpOnly,sourceFilter))},
+                modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp)){
+                Text(hubLabel("搜索所有可用历史","Search all available history"))
+            }
             Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text(hubLabel("全部短信","All messages"))})

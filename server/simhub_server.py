@@ -38,7 +38,8 @@ import shared_pool
 import update_bridge
 from typing import Any
 
-APP_VERSION = "0.18.0"
+APP_VERSION = "0.19.0"
+# The image version is immutable in source; a signed Dev manifest may provide its exact pre-release identity.
 APP_VERSION = os.getenv("SIMHUB_RELEASE_VERSION", "").strip() or APP_VERSION
 RELEASE_CHANNEL = os.getenv("SIMHUB_CHANNEL", "stable").strip()
 if RELEASE_CHANNEL not in ("stable", "dev"):
@@ -525,7 +526,7 @@ def purge_device_record(con: sqlite3.Connection, device_id: str, ts: int) -> boo
             )
     shared_pool.member_departure(con,device_id)
     peer_signaling.forget_device(con,device_id)
-    for table in ("events", "commands", "device_state", "subscriptions", "channels", "device_key_history", "location_purge"):
+    for table in ("events", "commands", "command_tombstones", "device_state", "subscriptions", "channels", "device_key_history", "location_purge"):
         con.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
     con.execute("DELETE FROM devices WHERE id=?", (device_id,))
     return True
@@ -555,7 +556,7 @@ def init_db() -> None:
 
 
 def run_maintenance() -> dict[str,int]:
-    ts=now(); result={"events":0,"audit":0,"commands":0,"sessions":0,"enrollments":0,"pendingTokens":0,"resetTombstones":0}
+    ts=now(); result={"events":0,"audit":0,"commands":0,"commandTombstones":0,"sessions":0,"enrollments":0,"pendingTokens":0,"resetTombstones":0}
     with open_db() as con:
         if EVENT_RETENTION_DAYS>0:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
@@ -563,6 +564,7 @@ def run_maintenance() -> dict[str,int]:
             result["audit"]=con.execute("DELETE FROM audit WHERE occurred_at<?",(ts-AUDIT_RETENTION_DAYS*86400,)).rowcount
         con.execute("DELETE FROM peer_rpc_responses WHERE expires_at<?",(ts,))
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
+        result["commandTombstones"]=con.execute("DELETE FROM command_tombstones WHERE retain_until<=?",(ts,)).rowcount
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         con.execute("DELETE FROM admin_login_challenges WHERE expires_at<=?",(ts,))
         controller_auth.maintenance(con,ts)
@@ -2277,6 +2279,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def purge_device_sms(self, device_id: str) -> None:
         ts=now()
         with open_db() as con:
+            # Linearize deletion with enqueue, dispatch and acknowledgement.
+            # The content deletion and replay fence must commit together.
+            con.execute("BEGIN IMMEDIATE")
             row=con.execute("SELECT reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
             if not row:
                 self.send_error_json(404,"device_not_found","Device not found"); return
@@ -2284,6 +2289,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(409,"device_reset_pending","Device reset in progress"); return
             deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind LIKE 'sms.%'",(device_id,)).rowcount
             shared_deleted=con.execute("DELETE FROM sms_pool_messages WHERE device_id=?",(device_id,)).rowcount
+            con.execute("""INSERT INTO command_tombstones
+                (id,device_id,command_seq,type,created_at,expires_at,idempotency_key,state,ack_at,purged_at,retain_until)
+                SELECT id,device_id,seq,type,created_at,expires_at,idempotency_key,
+                    CASE WHEN state='queued' THEN 'rejected'
+                         WHEN state IN ('dispatched','submitted') THEN 'outcome_unknown'
+                         ELSE state END,
+                    ack_at,?,MAX(expires_at,?)+?
+                FROM commands WHERE device_id=? AND type LIKE 'sms.%'""",
+                (ts,ts,max(1,COMMAND_RETENTION_DAYS)*86400,device_id))
             cancelled=con.execute("DELETE FROM commands WHERE device_id=? AND type LIKE 'sms.%'",(device_id,)).rowcount
             con.execute("UPDATE devices SET sms_purged_before=MAX(sms_purged_before,?),sms_epoch=sms_epoch+1 WHERE id=?",(ts,device_id))
         audit("device.sms.purge",device_id,"ok",self.ip);signal_stream()
@@ -2724,9 +2738,22 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if exp<=ts or exp>ts+86400:
             self.send_error_json(400,"invalid_expiry","Command expiry must be in the next 24h"); return
         with open_db() as con:
+            con.execute("BEGIN IMMEDIATE")
             d=con.execute("SELECT id,revoked_at,reset_requested_at FROM devices WHERE id=?",(device_id,)).fetchone()
             if not d or d["revoked_at"] or d["reset_requested_at"]:
                 self.send_error_json(404,"device_not_found","Active device not found"); return
+            erased=con.execute("""SELECT id,device_id,command_seq,state,purged_at
+                FROM command_tombstones WHERE id=? OR (device_id=? AND idempotency_key=?)""",
+                (cid,device_id,idem)).fetchall()
+            if erased:
+                if len(erased)!=1 or erased[0]["device_id"]!=device_id:
+                    self.send_error_json(409,"command_conflict","Command identity conflict");return
+                r=erased[0]
+                # accepted refers to the original acceptance, as for any
+                # duplicate. No new command or content is written here.
+                self.send_json(200,{"accepted":True,"duplicate":True,"purged":True,"enqueued":False,
+                    "commandId":r["id"],"serverSequence":r["command_seq"],"state":r["state"],
+                    "purgedAt":r["purged_at"]});return
             try:
                 cur=con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json) VALUES(?,?,?,?,?,?,?)",(cid,device_id,ctype,created,exp,idem,json.dumps(cipher,separators=(",",":"))))
                 seq=cur.lastrowid
@@ -2805,23 +2832,39 @@ class SimHubHandler(BaseHTTPRequestHandler):
             # of losing its CAS while still being reported as successful.
             con.execute("BEGIN IMMEDIATE")
             row=con.execute("SELECT state,ack_at FROM commands WHERE id=? AND device_id=?",(command_id,device_id)).fetchone()
+            purged=False
+            if not row:
+                row=con.execute("SELECT state,ack_at FROM command_tombstones WHERE id=? AND device_id=?",(command_id,device_id)).fetchone()
+                purged=row is not None
             if not row:
                 self.send_error_json(404,"command_not_found","Command not found"); return
             current=row["state"]
+            next_states=successors.get(current,set())
+            if purged and current=="expired":
+                # Preserve an already final purged disposition. Unlike live
+                # legacy records, no deleted history can establish otherwise.
+                next_states=set()
             if state==current:
                 receipt={"ok":True,"duplicate":True,"currentState":current,"ackAt":row["ack_at"]}
                 updated=0
-            elif state not in successors.get(current,set()):
+            elif state not in next_states:
                 receipt={"ok":True,"ignored":True,"currentState":current,"ackAt":row["ack_at"]}
                 updated=0
             else:
                 stamp=now()
-                updated=con.execute(
-                    "UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=? AND state=?",
-                    (state,stamp,json.dumps(result,separators=(",",":")),command_id,device_id,current)).rowcount
+                if purged:
+                    # Retire an authenticated late receipt without recreating
+                    # SMS history or persisting even allowlisted result text.
+                    updated=con.execute("UPDATE command_tombstones SET state=?,ack_at=? WHERE id=? AND device_id=? AND state=?",
+                        (state,stamp,command_id,device_id,current)).rowcount
+                else:
+                    updated=con.execute(
+                        "UPDATE commands SET state=?,ack_at=?,result_json=? WHERE id=? AND device_id=? AND state=?",
+                        (state,stamp,json.dumps(result,separators=(",",":")),command_id,device_id,current)).rowcount
                 if updated!=1:
                     raise RuntimeError("Command acknowledgement was not persisted")
                 receipt={"ok":True,"currentState":state,"ackAt":stamp}
+            if purged:receipt["purged"]=True
         if updated:signal_stream()
         self.send_json(200,receipt)
 
@@ -2830,11 +2873,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
         with open_db() as con:
             expire_commands(con,now(),device_id)
             row=con.execute("SELECT id,device_id,type,created_at,expires_at,ack_at,state,result_json FROM commands WHERE device_id=? AND id=?",(device_id,command_id)).fetchone()
+            purged=False
+            if row is None:
+                row=con.execute("SELECT id,device_id,type,created_at,expires_at,ack_at,state,purged_at FROM command_tombstones WHERE device_id=? AND id=?",(device_id,command_id)).fetchone()
+                purged=row is not None
         if row is None:
             self.send_error_json(404,"command_not_found","Command not found");return
-        self.send_json(200,{"command":{"commandId":row["id"],"deviceId":row["device_id"],"type":row["type"],
+        command={"commandId":row["id"],"deviceId":row["device_id"],"type":row["type"],
             "createdAt":row["created_at"],"expiresAt":row["expires_at"],"ackAt":row["ack_at"],
-            "state":row["state"],"result":safe_json_loads(row["result_json"],{})}})
+            "state":row["state"],"result":{"reason":"sms_history_purged","purged":True} if purged else safe_json_loads(row["result_json"],{})}
+        if purged:command.update({"purged":True,"purgedAt":row["purged_at"]})
+        self.send_json(200,{"command":command})
 
     def get_recent_commands(self,q:dict[str,list[str]]) -> None:
         """Safe controller progress read: state/result metadata, never ciphertext."""

@@ -138,6 +138,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var unreadable by remember(selected){mutableIntStateOf(0)}
     var lastEventSeq by remember(selected){mutableLongStateOf(0L)}
     var showWrite by remember(selected){mutableStateOf(false)}
+    var historySearch by remember(selected){mutableStateOf<ControllerSearchFilter?>(null)}
     var composeReply by remember(selected){mutableStateOf<ControllerSendDraft?>(null)}
     var resumeSendId by remember(selected){mutableStateOf<String?>(null)}
     var sendJournalTick by remember(selected){mutableIntStateOf(0)}
@@ -207,6 +208,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     DisposableEffect(activity,selected,requireLocalUnlock){
         val observer=LifecycleEventObserver{_,event->
             if(event==Lifecycle.Event.ON_STOP){
+                historySearch=null
                 locationSample=null;loadedLocationDevice=""
                 locationState=nativeLabel("尚未读取","Not loaded")
             }
@@ -831,7 +833,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                              resumeSendId=null;showWrite=true
                          },
                          canCompose=devices.any{ControllerNodePolicy.canSend(it)},
-                         isLoading=busy)
+                         isLoading=busy,onSearchAll={historySearch=it})
                 }
             }else if(tab==2){
                 LazyVerticalGrid(columns=GridCells.Adaptive(300.dp),modifier=Modifier.weight(1f),
@@ -1284,6 +1286,13 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             dismissButton={TextButton(onClick={pendingSensitiveTask=null;sensitiveCredential=""}){
                 Text(hubLabel("取消","Cancel"))
             }})
+    }
+    if(historySearch!=null&&client!=null&&authorized&&(!requireLocalUnlock||localUnlocked)){
+        ControllerHistorySearchDialog(client,historySearch!!,onDismiss={historySearch=null},
+            onReply={sms->
+                composeReply=ControllerSendDraft(sms.deviceId,sms.channelId,sms.channelRevision,sms.address,"")
+                resumeSendId=null;showWrite=true
+            },canCompose=devices.any{ControllerNodePolicy.canSend(it)})
     }
     if(showWrite&&client!=null){
         ControllerSendDialog(client,devices.filter{!peerBackupActive||it.optBoolean("peerSendGranted")},secondFactorTotp,resumeSendId,composeReply,sendJournalTick,

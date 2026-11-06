@@ -95,7 +95,7 @@ private fun navTitle(node:Boolean,index:Int):String =
 @Composable
 fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:FoldingFeature?,
            controller:HubController,tools:HubToolsState,incomingId:Int=0,incomingRecipient:String="",incomingBody:String="",
-           controllerRevision:Int=0){
+           controllerRevision:Int=0,incomingInboxId:Int=0){
     val ui:HubViewModel=viewModel()
     val context=LocalContext.current
     var configured by remember { mutableStateOf(HubModes.configured(context)) }
@@ -142,6 +142,12 @@ fun HubApp(snapshot:HubSnapshot?,loading:Boolean,pairing:PairingDisplay?,fold:Fo
             ui.tab=1;ui.thread="__new__";ui.newRecipient=incomingRecipient
             ui.drafts["__new__"]=incomingBody
         }
+    }
+    LaunchedEffect(incomingInboxId){
+        if(incomingInboxId>0){chooseSurface("node");ui.tab=1;ui.thread=null}
+    }
+    LaunchedEffect(surface,ui.tab){
+        if(surface=="node"&&ui.tab==1)NotificationHelper.clearIncomingSms(context)
     }
     BackHandler(enabled=(surface=="controller" && ui.controllerTab!=0) || (surface=="node" && (tools.compatibilityOpen || (ui.tab==3 && ui.nodeSettingsPage!=0) || ui.tab!=0 || ui.thread!=null || ui.simDetail>=0))){
         if(surface=="controller"){ui.controllerTab=0;return@BackHandler}

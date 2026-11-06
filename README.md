@@ -60,14 +60,16 @@ Use SIM Hub as a **SIM Node**, **Management Center**, or both. A native Material
 
 **SIM Node settings:** Five compact native categories, adaptive foldable layout and on-demand diagnostics.
 
-**Same-phone controller approval:** Scan the management QR or import a trusted HTTPS address; authenticate in the phone's **system browser** with registered Passkey or password/TOTP, unlock the existing Global Vault, confirm the device fingerprint and return to SIM Hub. Native access uses a Keystore signing identity. Browser WebAuthn is not native Credential Manager; optional biometric app locking is not hardware-authenticated Vault decryption.
+**Same-phone approval:** Scan the QR or import a trusted HTTPS address, authenticate in the **system browser**, unlock the existing Vault and verify the fingerprint. Native access uses a Keystore signing identity. Browser WebAuthn and optional biometric app locking do not provide hardware-authenticated Vault decryption.
 
 ## Features
 
 | Capability | What it does |
 |---|---|
 | **SMS and OTP** | Local/remote conversations, OTP extraction for accessible texts, SIM tags, filters and paging; read-only companion mode versus permission-gated full SMS-handler sending |
-| **Native Android UI** | Material 3 dual roles, distinct themes, four-tab navigation, foldable layouts, quick actions and native device detail |
+| **Send center** | Encrypted drafts, fixed device/SIM routes and original-command reconciliation; uncertain delivery stays explicit |
+| **History search** | Cancellable client-side search of retained history, with coverage; queries stay local |
+| **SIM labels** | Encrypted aliases/phone labels sync across controllers; source identity stays fixed |
 | **Devices and SIMs** | Android / Linux modem nodes, SIM channel identity, signal, battery, Wi-Fi, installed app version and task states |
 | **Private telemetry & one-shot location (Dev)** | Battery/Wi-Fi/SIM gauges; opt-in Node Key–encrypted location, separately authorized remote requests and user-triggered OpenStreetMap viewing. [Details](docs/DEVICE_TELEMETRY_LOCATION.md) |
 | **Shared SMS (opt-in)** | Authorized members decrypt an encrypted common pool with source attribution, history pagination, revocation and key rotation |

@@ -24,6 +24,7 @@ class CommandExpiryTests(unittest.TestCase):
               expires_at INTEGER,ack_at INTEGER,state TEXT,result_json TEXT,
               idempotency_key TEXT,ciphertext_json TEXT
             );
+            CREATE TABLE command_tombstones(id TEXT,device_id TEXT,state TEXT,ack_at INTEGER);
             INSERT INTO commands VALUES
               (1,'queued','node','sms.send',1,10,NULL,'queued','{}','queued','{}'),
               (2,'dispatched','node','sms.send',1,10,NULL,'dispatched','{}','dispatched','{}'),

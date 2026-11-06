@@ -99,6 +99,39 @@ CREATE TABLE IF NOT EXISTS commands(
 );
 CREATE INDEX IF NOT EXISTS idx_commands_device_state ON commands(device_id,state,seq);
 
+-- Explicit SMS deletion removes content, but must not make a previously
+-- accepted command dispatchable again after a lost Controller response.
+-- No ciphertext, result JSON, phone number or message text belongs here.
+CREATE TABLE IF NOT EXISTS command_tombstones(
+  id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL,
+  command_seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  state TEXT NOT NULL,
+  ack_at INTEGER,
+  purged_at INTEGER NOT NULL,
+  retain_until INTEGER NOT NULL,
+  FOREIGN KEY(device_id) REFERENCES devices(id),
+  UNIQUE(device_id,idempotency_key),
+  CHECK(retain_until>expires_at)
+);
+CREATE INDEX IF NOT EXISTS idx_command_tombstones_retention ON command_tombstones(retain_until);
+-- Also fence inserts by earlier Relay binaries during a code-only rollback.
+CREATE TRIGGER IF NOT EXISTS reject_purged_command_insert
+BEFORE INSERT ON commands
+WHEN EXISTS(SELECT 1 FROM command_tombstones WHERE id=NEW.id
+  OR (device_id=NEW.device_id AND idempotency_key=NEW.idempotency_key))
+BEGIN
+  SELECT RAISE(ABORT,'command_purged');
+END;
+CREATE TRIGGER IF NOT EXISTS delete_device_command_tombstones
+BEFORE DELETE ON devices BEGIN
+  DELETE FROM command_tombstones WHERE device_id=OLD.id;
+END;
+
 CREATE TABLE IF NOT EXISTS device_state(
   device_id TEXT PRIMARY KEY,
   state_json TEXT NOT NULL,

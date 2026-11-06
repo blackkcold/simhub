@@ -133,6 +133,8 @@ public final class LocalStore extends SQLiteOpenHelper {
     public synchronized int uploadedEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM uploaded_event_ids",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingCommandAckCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM command_acks",null)){return c.moveToFirst()?c.getInt(0):0;}}
+    public synchronized long oldestPendingEventAt(){try(Cursor c=getReadableDatabase().rawQuery("SELECT MIN(created_at) FROM events",null)){return c.moveToFirst()&&!c.isNull(0)?c.getLong(0):0;}}
+    public synchronized long oldestPendingAckAt(){try(Cursor c=getReadableDatabase().rawQuery("SELECT MIN(updated_at) FROM command_acks",null)){return c.moveToFirst()&&!c.isNull(0)?c.getLong(0):0;}}
     /** Metadata-only task preview: do not export event IDs, ciphertext, SMS body or addresses. */
     public synchronized JSONArray pendingEventTaskPreview(int max){
         JSONArray items=new JSONArray();

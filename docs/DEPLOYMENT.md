@@ -130,6 +130,29 @@ The default Compose file stores relay state in the Docker named volume `simhub-d
 
 The relay backup does **not** contain the Vault Key. A database backup alone therefore cannot decrypt SMS bodies.
 
+Manual and updater backups share one nonblocking deployment lock, use unique
+snapshot names, and remove temporary container files on success or failure. New
+backup directories use mode 0700; backup databases and checksum files use 0600.
+Only an integrity-checked snapshot is reported as complete. The verified
+deployment ZIP includes these tools, so a source checkout is unnecessary.
+
+Verify a selected backup and rehearse the SQLite restore before relying on it:
+
+```bash
+python3 scripts/verify_backup.py backups/<backup-file>.db --restore-check
+```
+
+The command requires the adjacent `.sha256` file, checks SQLite integrity and
+foreign keys, then restores into a disposable private database and compares its
+schema and row counts. It does not start a Relay, contact devices, change the
+running volume, or decrypt SMS. Keep an offline copy of the backup, its checksum,
+the original `.env`, and separately protected Vault recovery material. A disaster
+recovery rehearsal should additionally use an isolated matching-version Relay
+and owner-supplied Vault key to confirm actual decryption; do not reconnect real
+nodes until its state and channel have been verified. Stop the affected instance
+and preserve its volume before a supervised restore. Do not replace a live WAL
+database or downgrade across an incompatible schema.
+
 ## 4. Metadata-only push bridge
 
 Set:

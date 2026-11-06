@@ -2,7 +2,6 @@
 """Validate signed-image deployment bundle contents and channel isolation."""
 import json
 import importlib.util
-import io
 import sqlite3
 import tempfile
 import unittest
@@ -29,6 +28,8 @@ class DeploymentBundleTests(unittest.TestCase):
                     names = set(arc.namelist())
                     self.assertIn("scripts/deploy-verified.sh", names)
                     self.assertIn("scripts/install-updater.sh", names)
+                    self.assertIn("scripts/backup_tools.py", names)
+                    self.assertIn("scripts/verify_backup.py", names)
                     self.assertIn("docker-compose.yml", names)
                     self.assertIn("DEPLOY-README.txt", names)
                     self.assertNotIn(".env", names)
@@ -132,7 +133,8 @@ class DeploymentBundleTests(unittest.TestCase):
                         # Execute the backup's SQLite work on a disposable live DB.
                         import ast
                         program = ast.parse(args[5])
-                        remote = program.body[2].value.args[0].value
+                        remote = next(statement.value.args[0].value for statement in program.body
+                                      if isinstance(statement, ast.Assign) and statement.targets[0].id == "d")
                         target = Path(tmp) / Path(remote).name
                         remote_files[remote] = target
                         with sqlite3.connect(Path(tmp) / "live.db") as source, sqlite3.connect(target) as dest:

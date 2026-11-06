@@ -18,6 +18,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from backup_tools import backup_lock, verify_database, write_checksum
 
 REPO = "blackkcold/simhub"
 API = "https://api.github.com/repos/" + REPO + "/releases/latest"
@@ -293,19 +294,31 @@ def backup_database():
     save("backup")
     backups = STATE_DIR / "backups"
     backups.mkdir(mode=0o700, exist_ok=True)
-    stamp = str(time.time_ns())
-    remote = "/data/simhub-updater-" + stamp + ".db"
-    # sqlite3.backup gives a consistent snapshot even if WAL has uncheckpointed writes.
-    code = ("import sqlite3; s=sqlite3.connect('/data/simhub.db');"
-            "d=sqlite3.connect(" + repr(remote) + ");s.backup(d);d.close();s.close()")
-    compose("exec", "-T", "simhub", "python3", "-c", code)
-    target = backups / ("simhub-" + stamp + ".db")
-    try:
-        compose("cp", "simhub:" + remote, str(target))
-        os.chmod(target, 0o600)
-    finally:
-        compose("exec", "-T", "simhub", "rm", "-f", remote)
-    return str(target)
+    os.chmod(backups, 0o700)
+    with backup_lock(ROOT):
+        descriptor, filename = tempfile.mkstemp(dir=backups, prefix="simhub-" + str(time.time_ns()) + "-", suffix=".db")
+        os.close(descriptor)
+        target = Path(filename)
+        remote = "/data/" + target.name
+        # Exclusive owner-only snapshot; SQLite online backup includes WAL writes.
+        code = ("import os,sqlite3;"
+                "s=sqlite3.connect('file:/data/simhub.db?mode=ro',uri=True);"
+                "os.close(os.open(" + repr(remote) + ",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600));"
+                "d=sqlite3.connect(" + repr(remote) + ");s.backup(d);d.close();s.close()")
+        try:
+            compose("exec", "-T", "simhub", "python3", "-c", code)
+            compose("cp", "simhub:" + remote, str(target))
+            os.chmod(target, 0o600)
+            verified = verify_database(target)
+            write_checksum(target)
+            save("backup", backupVerified=True, backupSchemaVersion=verified["schemaVersion"])
+            return str(target)
+        except BaseException:
+            target.unlink(missing_ok=True)
+            target.with_name(target.name + ".sha256").unlink(missing_ok=True)
+            raise
+        finally:
+            compose("exec", "-T", "simhub", "rm", "-f", remote)
 
 
 def verify_image(image):

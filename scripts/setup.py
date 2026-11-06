@@ -8,6 +8,7 @@ compatible managed installation. External reverse proxy is supported.
 from __future__ import annotations
 
 import argparse
+import errno
 import ipaddress
 import os
 from pathlib import Path
@@ -61,14 +62,62 @@ def public_ipv4() -> str | None:
         return None
 
 
-def ensure_ports() -> None:
-    for port in (80, 443):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+def active_tcp_ports(proc_net: Path = Path("/proc/net")) -> set[int]:
+    """Read TCP ports on every interface in this Linux network namespace.
+
+    A loopback-only bind cannot detect a listener bound exclusively to another
+    local address. Read both kernel socket tables first, without opening any
+    public socket. TIME_WAIT is compatible with the SO_REUSEADDR probe below.
+    See https://www.kernel.org/doc/html/latest/networking/proc_net_tcp.html.
+    """
+    ports: set[int] = set()
+    for name, address_size in (("tcp", 8), ("tcp6", 32)):
+        path = proc_net / name
+        try:
+            with path.open(encoding="ascii") as stream:
+                header = stream.readline().split()
+                if len(header) < 4 or header[1] != "local_address":
+                    raise ValueError("Invalid TCP socket table header")
+                for line in stream:
+                    if not line.strip():
+                        continue
+                    columns = line.split()
+                    if len(columns) < 4 or not re.fullmatch(rf"[0-9A-Fa-f]{{{address_size}}}:[0-9A-Fa-f]{{4}}", columns[1]) or not re.fullmatch(r"[0-9A-Fa-f]{2}", columns[3]):
+                        raise ValueError("Invalid TCP socket table row")
+                    port = int(columns[1].rsplit(":", 1)[1], 16)
+                    if port and int(columns[3], 16) != 0x06:
+                        ports.add(port)
+        except FileNotFoundError as exc:
+            if name == "tcp6":  # IPv6 may be disabled in the host kernel.
+                continue
+            raise RuntimeError("Cannot inspect Linux TCP ports; mount readable /proc before managed setup") from exc
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise RuntimeError(f"Cannot inspect Linux TCP ports in {path}; managed setup stopped") from exc
+    return ports
+
+
+def ensure_ports(ports: tuple[int, ...] = (80, 443)) -> None:
+    if any(isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 for port in ports):
+        raise ValueError("Invalid public proxy port")
+    occupied = active_tcp_ports()
+    for port in ports:
+        message = f"Port {port} not available; stop existing reverse proxy or use --mode external"
+        if port in occupied:
+            raise RuntimeError(message)
+        probes = [(socket.AF_INET, "127.0.0.1")]
+        if socket.has_ipv6:
+            probes.append((socket.AF_INET6, "::1"))
+        for family, address in probes:
             try:
-                sock.bind(("0.0.0.0", port))
+                with socket.socket(family, socket.SOCK_STREAM) as sock:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    sock.bind((address, port))
+                    # No listen/connect and no public-interface bind. The final
+                    # Docker allocation remains authoritative after this check.
             except OSError as exc:
-                raise RuntimeError(f"Port {port} not available; stop existing reverse proxy or use --mode external") from exc
+                if family == socket.AF_INET6 and exc.errno in {errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL}:
+                    continue
+                raise RuntimeError(message) from exc
 
 
 def check_docker() -> None:

@@ -36,4 +36,26 @@ ctx.decryptEvent=async()=>{ctx.securityEpoch++;ctx.vaultKey=null;return {};};
 ctx.api=async()=>({events:[row(301)]});
 await runInContext('loadEvents()',ctx);
 assert.equal(ctx.lastSeq,300);
+// A purge/reset during decryption cannot repopulate the new cache, including
+// the decryption-error branch. The Vault can remain unlocked during a reset.
+for(const fails of [false,true]){
+  let enter,finish;
+  const entered=new Promise(r=>enter=r),barrier=new Promise((resolve,reject)=>finish=()=>fails?reject(Error('old key')):resolve({body:'old private body'}));
+  ctx.vaultKey={};ctx.initialEventsLoaded=true;ctx.lastSeq=300;
+  ctx.decryptEvent=async()=>{enter();return barrier;};
+  ctx.api=async()=>({events:[row(301)]});
+  const pending=runInContext('loadEvents()',ctx);await entered;
+  ctx.eventDataGeneration++;ctx.events=[];ctx.decryptedEvents=[];ctx.eventIds.clear();ctx.lastSeq=0;
+  finish();await pending;
+  assert.equal(ctx.decryptedEvents.length,0,'Reset invalidates successful and failed old decryption');
+  assert.equal(ctx.events.length,0);assert.equal(ctx.eventIds.size,0);assert.equal(ctx.lastSeq,0);
+}
+// Cancellation leaves the same event retryable; no premature dedup checkpoint.
+ctx.vaultKey={};ctx.decryptEvent=async()=>({body:'current'});
+const signal={aborted:true};ctx.signal=signal;
+await runInContext('ingestEvents([{seq:301,deviceId:"synthetic-node",eventId:"event-301",kind:"sms.received"}],false,signal)',ctx);
+assert.equal(ctx.eventIds.size,0);
+signal.aborted=false;
+await runInContext('ingestEvents([{seq:301,deviceId:"synthetic-node",eventId:"event-301",kind:"sms.received"}],false,signal)',ctx);
+assert.equal(ctx.eventIds.size,1);
 console.log('PASS: concurrent old uploads, independent cursors and interrupted ingestion');

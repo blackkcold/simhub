@@ -16,24 +16,24 @@ is part of publishing release assets. Tests use isolated, synthetic data.
 
 | ID | Acceptance criterion | Status |
 |---|---|---|
-| F1 | Lost POST response and manual retry retain one encrypted SMS intent and command ID | In progress |
-| F2 | Pending token rotation is recovered before authenticated lifecycle requests, including ambiguous expired commits | In progress |
-| F3 | A valid administrator session cannot reset the second-factor attempt budget | In progress |
-| F4 | Revocation terminates command delivery and permits only a scoped cleanup acknowledgement | In progress |
-| F5 | Lock invalidates pending Vault cache writes/restores and wipes sensitive UI | In progress |
-| F6 | SMS manager acquisition supports Android API 29 and 30 | In progress |
-| F7 | Default-handler local SMS works without Relay enrollment using independent local encryption | In progress |
-| F8 | Remote OTA reconciles interrupted stages and cancellation after process death | In progress |
-| F9 | The standalone deployment ZIP supports updater installation and lifecycle preflight | In progress |
-| F10 | Generated proxy configurations and instructions use the selected port/channel | In progress |
-| F11 | Native compose binds stable device/channel/revision identities and preserves encrypted drafts | In progress |
-| F12 | Historical paging cannot advance the contiguous incremental event cursor | In progress |
-| F13 | Location consent/registration is bound to enrollment and suppressed uploads are never reported published | In progress |
-| F14 | Shared history backfill has its own publication/deduplication progress | In progress |
-| F15 | Concurrent ACKs cannot return success without recording the acknowledged state | In progress |
-| F16 | Every static module dependency is available for offline PWA startup | In progress |
-| D1 | Invalid RelayLite queue heads cannot starve valid envelopes (Dev only) | In progress |
-| D2 | RelayLite encrypted reply caches have TTL/capacity and revocation cleanup (Dev only) | In progress |
+| F1 | Lost POST response and manual retry retain one encrypted SMS intent and command ID | Implemented |
+| F2 | Pending token rotation is recovered before authenticated lifecycle requests, including ambiguous expired commits | Implemented |
+| F3 | A valid administrator session cannot reset the second-factor attempt budget | Implemented |
+| F4 | Revocation terminates command delivery and permits only a scoped cleanup acknowledgement | Implemented |
+| F5 | Lock invalidates pending Vault cache writes/restores and wipes sensitive UI | Implemented |
+| F6 | SMS manager acquisition supports Android API 29 and 30 | Implemented |
+| F7 | Default-handler local SMS works without Relay enrollment using independent local encryption | Implemented |
+| F8 | Remote OTA reconciles interrupted stages and cancellation after process death | Implemented |
+| F9 | The standalone deployment ZIP supports updater installation and lifecycle preflight | Implemented |
+| F10 | Generated proxy configurations and instructions use the selected port/channel | Implemented |
+| F11 | Native compose binds stable device/channel/revision identities and preserves encrypted drafts | Implemented |
+| F12 | Historical paging cannot advance the contiguous incremental event cursor | Implemented |
+| F13 | Location consent/registration is bound to enrollment and suppressed uploads are never reported published | Implemented |
+| F14 | Shared history backfill has its own publication/deduplication progress | Implemented |
+| F15 | Concurrent ACKs cannot return success without recording the acknowledged state | Implemented |
+| F16 | Every static module dependency is available for offline PWA startup | Implemented |
+| D1 | Invalid RelayLite queue heads cannot starve valid envelopes (Dev only) | Implemented |
+| D2 | RelayLite encrypted reply caches have TTL/capacity and revocation cleanup (Dev only) | Implemented |
 
 ## Feature delivery
 
@@ -65,5 +65,54 @@ is part of publishing release assets. Tests use isolated, synthetic data.
 - A green emulator or synthetic test does not establish real-carrier delivery or
   OEM behavior. Report those verification boundaries accurately.
 
-The final update to this document records delivered commits, tests and remaining
-environmental verification limits before the release trigger is merged.
+## Integration and release record
+
+- Stable changes are checkpointed on `fix/audit-complete-20261106` and reviewed in
+  [PR #113](https://github.com/blackkcold/simhub/pull/113).
+- Dev uses `fix/audit-dev-integration-20261106` and
+  [PR #114](https://github.com/blackkcold/simhub/pull/114). Its merge retains
+  SecureHttp/CenterTrust, private CenterConfig inputs and independently approved
+  peer sending. Stable does not acquire experimental transport modules.
+- Release base version is `0.19.0`, Stable Android version code `56`. Dev keeps
+  its existing separately installable package and workflow-generated sequence.
+  The release triggers take effect only after protected-branch integration;
+  publishing independently waits for successful checks on that exact commit.
+
+## Verification coverage
+
+| Area | Evidence and failure cases |
+|---|---|
+| Relay and modem | Full discovered Python suites; lost responses, purge/enqueue/poll/ACK races, token recovery, second-factor/KDF bounds, revocation, privacy-suppressed receipts, schema rollback and bounded event batches |
+| Web | Full discovered JS suites and Playwright; actual AES-GCM history records, stop/resume, oldest-record query, source-safe folding, reload/lock cleanup, cross-tab send retries and encrypted settings conflicts |
+| Android | JVM tests, lint and actual APK metadata builds; API29/30 NodeRecovery instrumentation and API35 isolated HTTPS Relay acceptance, including durable controller journals |
+| Dev transport | Mandatory P2P preview and Android sandbox; fair mailbox pulls, negative receipts, bounded encrypted cache, protected mutation claims, frozen send routes and unknown-outcome normalization |
+| Deployment | Real standalone ZIP layout, updater success/rollback with mock Docker and real SQLite, private backups, independent restore rehearsal, correct ports, pinned dependency hashes and OCI attestations |
+| Security | All six genuine CodeQL jobs and fail-closed SARIF checks; no suppression or severity exception. Installer preflight inspects Linux socket tables and only probes loopback addresses |
+
+Additional review fixes preserve minimal command receipts through SMS deletion,
+prevent stale shared-pool results from reappearing after opt-out/reset, and clear
+native inbox/search snapshots when enrollment, revocation or SMS purge metadata
+changes. Device/SIM display labels never replace authenticated routing identities.
+
+## Operational boundaries
+
+- Web history backfill pauses at 50,000 loaded events or approximately 64 MiB of
+  estimated row/text data, with explicit partial coverage. This is not a total
+  browser heap cap. Native full-history search streams retained records and
+  counts every match while displaying only the newest 1,000 matches. See
+  [history/search](HISTORY_SEARCH.md).
+- A Relay receipt, queue acceptance or emulator success does not prove physical
+  carrier delivery. An uncertain radio outcome remains uncertain; the software
+  does not automatically create a replacement SMS.
+- Physical SIMs, modem models, OEM power management, real-device permission and
+  installation prompts, and sustained hardware operation are external acceptance
+  checks. No live phone SMS or production Relay deployment is used for this work.
+- Backups with a verified checksum/SQLite integrity result are not labelled as
+  restored. The standalone restore verifier performs its own isolated rehearsal;
+  the interface distinguishes these facts.
+- Remote privacy changes become visible when a client successfully refreshes the
+  relevant metadata. Revocation cannot erase plaintext already copied elsewhere.
+
+Final build, scan, emulator and asset evidence is attached to the PR/release
+workflow runs. A failed or incomplete required check blocks merging or release;
+these implementation statuses do not bypass that verification contract.

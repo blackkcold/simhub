@@ -8,6 +8,8 @@
 - Support local default-handler SMS on Android 10/11 without Relay enrollment, recover interrupted OTA stages, and add generic private SMS notifications plus actionable queue, credential, role and permission diagnostics.
 - Repair standalone deployment-ZIP updater preflight and selected proxy ports; add private, serialized SQLite backups and an isolated restore verifier. Display backup integrity and restore-rehearsal status separately.
 - Pin workflow actions, container bases and Python dependency hashes; publish OCI SBOM/provenance; discover regression entry points and require current-commit security, API29/30 compatibility and API35 isolated acceptance before release.
+- Dev only: preserve independently authorized peer routes in encrypted send journals, reconcile authenticated cached receipts, and keep uncertain results without automatically repeating SMS.
+- Dev only: add fair RelayLite source scheduling, recipient-scoped negative receipts, bounded encrypted SQLite response caches and pair-generation/revocation fences; protected mutation identities survive payload eviction.
 - Stable continues to exclude experimental P2P/WebRTC. Dev retains separate package, signing-workflow and release-channel identities; Dev transport changes are documented in its channel notes.
 - Existing Global Vault and Node Keys are preserved. New Relay tables are additive; back up before upgrading. Emulator and synthetic tests do not establish physical-carrier delivery, OEM background behavior or hardware-authenticated Vault decryption.
 

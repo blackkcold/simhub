@@ -639,7 +639,7 @@ public final class PeerCenterConnector implements HubTransport, AutoCloseable {
 
     static int status(Exception error) {
         if (error instanceof ApiClient.ApiFailure failure) return failure.status;
-        if (error instanceof ControllerSecureClient.ApiError failure) return failure.getStatus();
+        if (error instanceof ControllerSecureClient.ApiFailure failure) return failure.getStatus();
         return 0;
     }
 

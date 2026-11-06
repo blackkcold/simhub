@@ -127,7 +127,7 @@ public final class CenterTrustStore {
                 if (count > MAX_ASSET_BYTES - out.size()) throw new CenterTrust.Invalid("center_config_too_large");
                 out.write(buffer, 0, count);
             }
-            return CenterTrust.parse(new JSONObject(out.toString(StandardCharsets.UTF_8)));
+            return CenterTrust.parse(new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8)));
         } catch (java.io.FileNotFoundException absent) {
             return null;
         } catch (Exception error) {

@@ -341,6 +341,94 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=old,admin=False)[0],401)
         self.assertEqual(self.req('POST',f'/api/v1/devices/{did}/heartbeat',{},device_token=new,admin=False)[0],200)
 
+    def test_lost_token_commit_receipt_can_be_recovered_after_prepare_expiry(self):
+        node=self.enroll("Commit recovery");did=node["deviceId"]
+        st,prepared,_=self.req("POST",f"/api/v1/devices/{did}/token/prepare",{},device_token=node["deviceToken"],admin=False)
+        self.assertEqual(st,201)
+        new=prepared["deviceToken"]
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/token/commit",{},device_token=new,admin=False)[0],200)
+        with sqlite3.connect(self.db) as con:
+            con.execute("UPDATE devices SET token_issued_at=123456,pending_token_expires_at=0 WHERE id=?",(did,))
+        st,recovered,_=self.req("POST",f"/api/v1/devices/{did}/token/commit",{},device_token=new,admin=False)
+        self.assertEqual(st,200)
+        self.assertTrue(recovered["alreadyCommitted"])
+        self.assertEqual(recovered["tokenIssuedAt"],123456)
+
+    def test_reset_pending_token_can_only_acknowledge_cleanup(self):
+        node=self.enroll("Pending reset");did=node["deviceId"]
+        st,prepared,_=self.req("POST",f"/api/v1/devices/{did}/token/prepare",{},device_token=node["deviceToken"],admin=False)
+        self.assertEqual(st,201)
+        pending=prepared["deviceToken"]
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/reset-request",{})[0],202)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/token/commit",{},device_token=pending,admin=False)[0],409)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/heartbeat",{},device_token=pending,admin=False)[0],401)
+        st,lifecycle,_=self.req("GET",f"/api/v1/devices/{did}/lifecycle",device_token=pending,admin=False)
+        self.assertEqual(st,200);self.assertTrue(lifecycle["resetRequired"])
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/reset",{},device_token=pending,admin=False)[0],200)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/reset",{},device_token=pending,admin=False)[0],410)
+
+    def test_revoked_cleanup_preserves_reconcilable_command_history(self):
+        node=self.enroll("Revoked history");did=node["deviceId"];token=node["deviceToken"]
+        stamp=int(time.time())
+        for suffix in ("queued","dispatched"):
+            command=did+"-"+suffix
+            body={"commandId":command,"idempotencyKey":command,"type":"sms.sync_recent",
+                  "createdAt":stamp,"expiresAt":stamp+120,"ciphertext":self.cipher(2)}
+            self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/commands",body)[0],201)
+        with sqlite3.connect(self.db) as con:
+            con.execute("UPDATE commands SET state='dispatched' WHERE id=?",(did+"-dispatched",))
+        self.assertEqual(self.req("PATCH",f"/api/v1/devices/{did}",{"revoke":True})[0],200)
+        for suffix,expected in (("queued","rejected"),("dispatched","outcome_unknown")):
+            st,result,_=self.req("GET",f"/api/v1/devices/{did}/commands/{did}-{suffix}")
+            self.assertEqual(st,200)
+            self.assertEqual(result["command"]["state"],expected)
+            self.assertNotIn("ciphertext",result["command"])
+        self.assertEqual(self.req("GET",f"/api/v1/devices/wrong-node/commands/{did}-queued")[0],404)
+        self.assertEqual(self.req("GET",f"/api/v1/devices/{did}/commands/{did}-queued",admin=False)[0],401)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/heartbeat",{},device_token=token,admin=False)[0],401)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/token/commit",{},device_token=token,admin=False)[0],409)
+        st,lifecycle,_=self.req("GET",f"/api/v1/devices/{did}/lifecycle",device_token=token,admin=False)
+        self.assertEqual(st,200);self.assertEqual(lifecycle["status"],"revoked")
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/reset",{},device_token="Z"*48,admin=False)[0],401)
+        st,cleanup,_=self.req("POST",f"/api/v1/devices/{did}/reset",{},device_token=token,admin=False)
+        self.assertEqual(st,200);self.assertEqual(cleanup["status"],"revoked")
+        self.assertEqual(self.req("GET",f"/api/v1/devices/{did}/commands/{did}-dispatched")[0],200)
+        self.assertEqual(self.req("POST",f"/api/v1/devices/{did}/heartbeat",{},device_token=token,admin=False)[0],401)
+
+    def test_readiness_reports_deployed_channel(self):
+        for path in ("/readyz","/healthz"):
+            st,body,_=self.req("GET",path,admin=False)
+            self.assertEqual(st,200)
+            self.assertEqual(body["channel"],"stable")
+            self.assertIn("version",body)
+
+    def test_vault_settings_http_is_private_revisioned_and_csrf_protected(self):
+        from test_global_vault import payload, b64
+        vault=payload()
+        self.assertEqual(self.req("POST","/api/v1/vault/initialize",vault)[0],201)
+        path="/api/v1/vault/settings"
+        self.assertEqual(self.req("GET",path,admin=False)[0],401)
+        st,empty,_=self.req("GET",path)
+        self.assertEqual(st,200);self.assertEqual(empty["revision"],0)
+        self.assertIsNone(empty["ciphertext"])
+        request={"vaultId":vault["vaultId"],"keyId":vault["keyId"],"expectedRevision":0,
+                 "ciphertext":{"v":2,"alg":"A256GCM","kid":vault["keyId"],"iv":b64(12),"ct":b64(48)}}
+        st,login,headers=self.req("POST","/api/v1/auth/session",{"adminToken":TOKEN},admin=False)
+        self.assertEqual(st,201)
+        cookie=headers["Set-Cookie"].split(";",1)[0]
+        self.assertEqual(self.req("POST",path,request,admin=False,headers={"Cookie":cookie})[0],403)
+        session={"Cookie":cookie,"X-SimHub-CSRF":login["csrfToken"]}
+        st,created,_=self.req("POST",path,request,admin=False,headers=session)
+        self.assertEqual(st,200);self.assertEqual(created["revision"],1)
+        self.assertEqual(self.req("POST",path,request,admin=False,headers=session)[0],409)
+        self.assertEqual(self.req("POST",path,{**request,"expectedRevision":1,"phoneOverrides":{"phone":"secret"}},
+                                  admin=False,headers=session)[0],400)
+        st,read,_=self.req("GET",path,admin=False,headers=session)
+        self.assertEqual(st,200);self.assertEqual(read["ciphertext"],request["ciphertext"])
+        with sqlite3.connect(self.db) as con:
+            saved=con.execute("SELECT ciphertext_json FROM vault_settings").fetchone()[0]
+            self.assertNotIn("secret",saved)
+
     def test_expired_pending_token_keeps_current_token_valid(self):
         d=self.enroll('RotateExpiry');did=d['deviceId'];old=d['deviceToken']
         st,p,_=self.req('POST',f'/api/v1/devices/{did}/token/prepare',{},device_token=old,admin=False);self.assertEqual(st,201)

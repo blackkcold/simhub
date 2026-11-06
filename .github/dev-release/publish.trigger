@@ -1,4 +1,4 @@
-SIM Hub Dev prerelease trigger — 2026-11-05
-Release source: develop after reliability repair and cloud acceptance.
-Scope: private device telemetry, encrypted one-shot location, Modem recovery, reliable command outcomes and updater fixes; P2P and Relay Lite remain experimental.
-Validation: Android emulator and isolated Relay; real SIM, OEM and cross-network physical-device acceptance remain outstanding.
+SIM Hub Dev prerelease trigger — 2026-11-06
+Release base: 0.19.0; source: develop after required exact-commit CI, CodeQL, P2P preview and Android sandbox checks.
+Scope: complete reliability audit, persistent encrypted sends, private history/search, lifecycle recovery, bounded RelayLite queues and cache.
+Physical SIM, OEM and cross-network hardware acceptance remain separate from emulator and synthetic verification.

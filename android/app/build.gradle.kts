@@ -22,8 +22,8 @@ android {
         minSdk = 29
         targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 55
-        versionName = "0.18.0"
+        versionCode = 56
+        versionName = "0.19.0"
         buildConfigField("boolean", "P2P_PREVIEW", "false")
         buildConfigField("boolean", "STORE_CHANNEL", "false")
         buildConfigField("String", "RELEASE_CHANNEL", "\"stable\"")
@@ -135,6 +135,7 @@ dependencies {
 // Modes:
 //   -PcenterConfigFake=true         public CI: same generator/loader path, pins
 //                                   derived from the checked-in test certificate.
+//   + -PcloudAndroidSandbox=true    isolated loopback Relay: pin the per-run CI CA.
 //   -PcenterConfigPackaging=true    controlled packaging: real values arrive only
 //                                   through Environment variables. Any missing or
 //                                   invalid value fails the build with a fixed code
@@ -183,6 +184,7 @@ fun centerConfigJson(configId: String, nodeOrigin: String, nodePins: List<String
 val generateCenterConfig = tasks.register("generateCenterConfig") {
     val outDir = layout.buildDirectory.dir("generated/centerConfig")
     val fake = providers.gradleProperty("centerConfigFake").orNull == "true"
+    val cloudSandbox = providers.gradleProperty("cloudAndroidSandbox").orNull == "true"
     val packaging = providers.gradleProperty("centerConfigPackaging").orNull == "true"
     val nodeOrigin = providers.environmentVariable("P2P_NODE_ORIGIN").orNull
     val nodePinCurrent = providers.environmentVariable("P2P_NODE_PIN_CURRENT").orNull
@@ -192,6 +194,7 @@ val generateCenterConfig = tasks.register("generateCenterConfig") {
     val controllerPinBackup = providers.environmentVariable("P2P_CONTROLLER_PIN_BACKUP").orNull
     outputs.dir(outDir)
     inputs.property("fake", fake)
+    inputs.property("cloudSandbox", cloudSandbox)
     inputs.property("packaging", packaging)
     // Never put trusted origins or SPKI pins into Gradle input fingerprints, task
     // histories or shared build-cache metadata. A configuration may change in any
@@ -217,11 +220,20 @@ val generateCenterConfig = tasks.register("generateCenterConfig") {
             }
             fake -> {
                 val testDir = file("src/test/resources/center-test")
-                val pins = listOf("center-test-cert.pem", "center-test-backup-cert.pem")
-                    .map { centerConfigPin(File(testDir, it)) }
+                // The isolated API35 fixture creates a new CA for each run.
+                // Trust that exact CA through the normal descriptor/pinner path;
+                // the ordinary public fake origins cannot authorize loopback.
+                val certificates = if (cloudSandbox) {
+                    val ca = file("src/cloudAcceptance/res/raw/simhub_ci_ca.pem")
+                    if (!ca.isFile) throw GradleException("CENTER_CONFIG_CLOUD_CA_MISSING")
+                    listOf(ca, File(testDir, "center-test-backup-cert.pem"))
+                } else listOf("center-test-cert.pem", "center-test-backup-cert.pem")
+                    .map { File(testDir, it) }
+                val pins = certificates.map { centerConfigPin(it) }
                 if (pins[0] == pins[1]) throw GradleException("CENTER_CONFIG_PIN_DUPLICATE")
                 centerConfigJson("fakepublicci0000000000000000000000",
-                    "https://node.relay.invalid", pins, "https://admin.relay.invalid", pins)
+                    if (cloudSandbox) "https://127.0.0.1:18443" else "https://node.relay.invalid", pins,
+                    if (cloudSandbox) "https://127.0.0.1:18443" else "https://admin.relay.invalid", pins)
             }
             else -> null
         }

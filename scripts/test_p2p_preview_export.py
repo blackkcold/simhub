@@ -2,10 +2,11 @@
 """Contract tests for publishing only emulator-verified preview APKs."""
 import hashlib
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
-from export_p2p_preview import export_package
+from export_p2p_preview import EXPECTED_COUNT, export_package
 
 class ExportPreviewTests(unittest.TestCase):
     def setUp(self):
@@ -23,7 +24,7 @@ class ExportPreviewTests(unittest.TestCase):
         guide.parent.mkdir(parents=True)
         guide.write_text("test guide", encoding="utf-8")
         self.evidence = self.root / "android-sandbox-results.txt"
-        self.evidence.write_text("............\nTime: 33.327\n\nOK (15 tests)\n",
+        self.evidence.write_text(f"...................\nTime: 33.327\n\nOK ({EXPECTED_COUNT} tests)\n",
                                  encoding="utf-8")
 
     def test_verified_apk_and_digest(self):
@@ -36,13 +37,19 @@ class ExportPreviewTests(unittest.TestCase):
         self.assertEqual((self.root / "P2P-TEST-GUIDE.md").read_text(), "test guide")
 
     def test_bad_or_absent_test_evidence_never_exports(self):
-        for text in ("FAILURES!!!\nTests run: 15, Failures: 1\n",
-                     "OK (14 tests)\n", "OK (15 tests)\nFAILURES!!!\n"):
+        for text in (f"FAILURES!!!\nTests run: {EXPECTED_COUNT}, Failures: 1\n",
+                     f"OK ({EXPECTED_COUNT-1} tests)\n", f"OK ({EXPECTED_COUNT} tests)\nFAILURES!!!\n"):
             with self.subTest(text=text):
                 self.evidence.write_text(text)
                 with self.assertRaisesRegex(RuntimeError, "INSTRUMENTATION_NOT_PASSED"):
                     export_package(self.root)
                 self.assertFalse((self.root / "SIMHub-P2P-0.17.2-public-preview.apk").exists())
+
+    def test_acceptance_count_includes_every_peer_instrumentation_case(self):
+        root=Path(__file__).resolve().parents[1]
+        source=(root/"android/app/src/androidTest/java/com/blackkcold/simhub/p2p/PeerInstrumentedTest.java").read_text()
+        cases=re.findall(r"@Test\s+public\s+void\s+(test\w+)\s*\(",source)
+        self.assertEqual(len(set(cases)),EXPECTED_COUNT)
 
     def test_missing_apk_never_exports(self):
         self.apk.unlink()

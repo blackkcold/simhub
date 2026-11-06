@@ -12,6 +12,7 @@ object PeerInboxCache {
         var bytes=0
         for(m in inbox.messages.take(100)){
             val row=JSONObject().put("id",m.id).put("thread",m.thread).put("sender",m.sender).put("address",m.address).put("body",m.body).put("timestamp",m.timestamp).put("inbound",m.inbound).put("device",m.device).put("sim",m.sim).put("sourceId",m.sourceId).put("otp",m.otp).put("failed",m.failed)
+                .put("deviceId",m.deviceId).put("channelId",m.channelId).put("channelRevision",m.channelRevision)
             val size=row.toString().toByteArray(Charsets.UTF_8).size+1
             if(bytes+size>290000)break
             rows.put(row)

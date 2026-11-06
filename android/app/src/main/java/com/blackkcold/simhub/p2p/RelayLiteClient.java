@@ -1,7 +1,6 @@
 package com.blackkcold.simhub.p2p;
 
 import android.content.Context;
-import com.blackkcold.simhub.SecretStore;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.Arrays;
@@ -12,8 +11,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class RelayLiteClient {
     private static final AtomicBoolean RUNNING=new AtomicBoolean(false);
     private RelayLiteClient(){}
-    private static String responseKey(String from,String id){return "p2p.relayLite.response."+from+"."+id;}
-    private static String sentKey(String from,String id){return "p2p.relayLite.sent."+from+"."+id;}
+    static final class RejectedEnvelope extends Exception {
+        final String reason;
+        RejectedEnvelope(String reason){super(reason);this.reason=reason;}
+    }
 
     /** A manual sync never silently enables any network path or SMS permission. */
     public static int pollAll(Context context){
@@ -40,91 +41,142 @@ public final class RelayLiteClient {
             JSONArray items=response.optJSONArray("items");
             if(items==null||items.length()==0)break;
             for(int i=0;i<items.length();i++){
-                JSONObject row=items.getJSONObject(i);
-                String from=row.getString("source"),id=row.getString("id");
-                JSONObject frame=row.getJSONObject("frame");
+                JSONObject row=items.optJSONObject(i);
+                if(row==null)continue;
+                String from=row.optString("source"),id=row.optString("id");
                 try{
-                    process(c,store,relayId,from,localId,id,frame);
+                    process(c,store,relayId,from,localId,id,row.optJSONObject("frame"));
                     RelayLiteTransport.requestRelay(c,store,relayId,UUID.randomUUID().toString(),
                         new JSONObject().put("action","relay.ack").put("source",from).put("messageId",id));
                     processed++;
-                }catch(Exception invalidOrOffline){
-                    // A failure is not a positive delivery ACK. The bounded TTL
-                    // and queue limits prevent permanent resource exhaustion.
+                }catch(RejectedEnvelope rejected){
+                    try{RelayLiteTransport.requestRelay(c,store,relayId,UUID.randomUUID().toString(),
+                        new JSONObject().put("action","relay.reject").put("source",from)
+                            .put("messageId",id).put("reason",rejected.reason));}
+                    catch(Exception offlineOrOlderRelay){/* No positive delivery ACK; retry after the mailbox lease. */}
+                }catch(Exception transientFailure){
+                    // Network, storage and Keystore availability failures remain
+                    // retryable. The mailbox lease allows other sources to run.
                 }
             }
-            if(items.length()<2)break;
         }
         return processed;
     }
 
     private static void process(Context c,PeerStore store,String relayId,String from,
                                 String localId,String id,JSONObject frame)throws Exception{
-        JSONObject source=store.peer(from);
-        if(!"ACTIVE".equals(source.optString("pairState"))
-            &&!(source.optInt("protocolVersion",1)>=2&&"PENDING".equals(source.optString("pairState"))))
-            throw new SecurityException("relay_lite_source_revoked");
-        if(!id.equals(frame.getString("id")))throw new SecurityException("relay_lite_id_mismatch");
-        byte[] root=store.key(from);
-        final JSONObject decrypted;
-        try{decrypted=PeerOfflineProtocol.open(root,from,localId,frame,System.currentTimeMillis()/1000);}
-        finally{Arrays.fill(root,(byte)0);}
-        SecretStore secrets=new SecretStore(c);
-        if("relay.response".equals(decrypted.optString("action"))){
-            JSONObject result=decrypted.getJSONObject("result");
-            // Persist locally under the encrypted Android secret store before ACK.
-            secrets.putString(responseKey(from,id),result.toString());
-            store.clearLiteOutbound(from,id);
-            String state=result.optString("state");
-            if("submitted".equals(state)||"succeeded".equals(state)||"failed".equals(state)
-                ||"delivered".equals(state)||"expired".equals(state))store.clearOutbound(from,id);
-            return;
-        }
-        String stored=secrets.getString(sentKey(from,id));
-        JSONObject responseFrame;
-        if(stored!=null){
-            responseFrame=new JSONObject(stored);
-        }else{
-            JSONObject result;
-            try{
-                // Relay Lite envelopes are capped at 64 KiB, unlike live RPC.
-                // Bound offline SMS history pages before applying provider work.
-                if("sms.page".equals(decrypted.optString("action"))
-                    ||"events.page".equals(decrypted.optString("action"))){
-                    decrypted.put("limit",Math.min(10,decrypted.optInt("limit",100)));
-                    decrypted.put("maxBytes",32000);
-                }
-                result=new PeerRpc(store).dispatch(from,id,decrypted);
-            }
-            catch(SecurityException rejected){result=new JSONObject().put("state","failed").put("reason","relay_lite_peer_permission_denied");}
-            // A response may be larger than one bounded offline frame. Fail closed
-            // with a small explicit error rather than misrepresenting delivery.
-            long now=System.currentTimeMillis()/1000;
-            byte[] contentRoot=store.key(from);
-            try{
-                JSONObject responsePayload=new JSONObject().put("action","relay.response").put("result",result);
-                try{responseFrame=PeerOfflineProtocol.seal(contentRoot,localId,from,id,now,
-                    now+PeerOfflineProtocol.MAX_TTL_SECONDS,responsePayload);}
-                catch(SecurityException tooLarge){
-                    responseFrame=PeerOfflineProtocol.seal(contentRoot,localId,from,id,now,
-                        now+PeerOfflineProtocol.MAX_TTL_SECONDS,
-                        new JSONObject().put("action","relay.response").put("result",
-                            new JSONObject().put("state","failed").put("reason","relay_lite_response_too_large")));
-                }
-            }finally{Arrays.fill(contentRoot,(byte)0);}
-            secrets.putString(sentKey(from,id),responseFrame.toString());
-        }
-        JSONObject accepted=RelayLiteTransport.requestRelay(c,store,relayId,
+        PreparedResponse response=prepareResponse(c,store,from,localId,id,frame);
+        if(response==null)return;
+        publishResponse(store,response,responseFrame->RelayLiteTransport.requestRelay(c,store,relayId,
             UUID.randomUUID().toString(),new JSONObject().put("action","relay.put")
-                .put("target",from).put("frame",responseFrame));
-        if(!"accepted".equals(accepted.optString("state")))
-            throw new IllegalStateException("relay_lite_response_unconfirmed");
+                .put("target",from).put("frame",responseFrame)));
     }
-
+    @FunctionalInterface interface ResponsePublisher {JSONObject publish(JSONObject frame)throws Exception;}
+    static final class PreparedResponse {
+        final String peer,generation;final JSONObject frame;
+        PreparedResponse(String peer,String generation,JSONObject frame){this.peer=peer;this.generation=generation;this.frame=frame;}
+    }
+    static void publishResponse(PeerStore store,PreparedResponse response,ResponsePublisher publisher)throws Exception{
+        // Validate the source generation at publication, not only at decrypt.
+        // A completed revoke prevents acquisition; an existing lease drains
+        // before revoke reports completion, without holding the store lock.
+        try(PeerStore.Publication ignored=store.beginPublication(response.peer,response.generation)){
+            JSONObject accepted=publisher.publish(response.frame);
+            if(!"accepted".equals(accepted.optString("state")))
+                throw new IllegalStateException("relay_lite_response_unconfirmed");
+        }
+    }
+    static PreparedResponse prepareResponse(Context c,PeerStore store,String from,
+                                String localId,String id,JSONObject frame)throws Exception{
+        final JSONObject responseFrame;
+        final String generation;
+        synchronized(store){
+            JSONObject source;
+            try{source=store.peer(from);}
+            catch(SecurityException missing){throw new RejectedEnvelope("source_revoked");}
+            if(!"ACTIVE".equals(source.optString("pairState"))
+                &&!(source.optInt("protocolVersion",1)>=2&&"PENDING".equals(source.optString("pairState"))))
+                throw new RejectedEnvelope("source_revoked");
+            if(frame==null||!id.equals(frame.optString("id")))throw new RejectedEnvelope("invalid_envelope");
+            byte[] root=store.key(from);
+            try{
+                generation=PeerCrypto.digest(root);
+                long now=System.currentTimeMillis()/1000;
+                final JSONObject decrypted;
+                try{decrypted=PeerOfflineProtocol.open(root,from,localId,frame,now);}
+                catch(SecurityException|IllegalArgumentException|org.json.JSONException|javax.crypto.BadPaddingException invalid){
+                    throw new RejectedEnvelope("invalid_envelope");
+                }
+                String action=decrypted.optString("action");
+                if(action.isEmpty()||("relay.response".equals(action)&&decrypted.optJSONObject("result")==null))
+                    throw new RejectedEnvelope("invalid_envelope");
+                RelayLiteCache cache=RelayLiteCache.get(c);
+                String digest=PeerCrypto.digest(PeerCrypto.utf8(frame.toString()));
+                if("relay.response".equals(action)){
+                    JSONObject result=decrypted.getJSONObject("result");
+                    boolean protect=result.has("commandId")||store.outbound(from,id)!=null;
+                    cache.claim(from,root,id,"response",digest,frame.getLong("expires"),protect,now);
+                    // Persist pair-encrypted result before ACK or clearing intent.
+                    cache.complete(from,root,id,"response",result);
+                    store.clearLiteOutbound(from,id);
+                    String state=result.optString("state");
+                    if("submitted".equals(state)||"succeeded".equals(state)||"failed".equals(state)
+                        ||"delivered".equals(state)||"expired".equals(state))store.clearOutbound(from,id);
+                    return null;
+                }
+                boolean protect=!java.util.Arrays.asList("device.state","sms.page","events.page","command.status").contains(action);
+                RelayLiteCache.Entry previous=cache.claim(from,root,id,"sent",digest,frame.getLong("expires"),protect,now);
+                if(previous!=null){
+                    // The tombstone survives payload eviction or a crash after
+                    // claim. Never turn an uncertain prior dispatch into a resend.
+                    if(previous.value==null)throw new RejectedEnvelope("result_unavailable");
+                    responseFrame=previous.value;
+                }else{
+                    JSONObject legacy=cache.legacy(from,id,"sent",now);
+                    if(legacy!=null)responseFrame=legacy;
+                    else{
+                        JSONObject result;
+                        try{
+                            if("sms.page".equals(action)||"events.page".equals(action)){
+                                decrypted.put("limit",Math.min(10,decrypted.optInt("limit",100)));
+                                decrypted.put("maxBytes",32000);
+                            }
+                            result=new PeerRpc(store).dispatch(from,id,decrypted);
+                        }catch(SecurityException rejected){result=new JSONObject().put("state","failed").put("reason","relay_lite_peer_permission_denied");}
+                        responseFrame=sealResponse(root,localId,from,id,now,result);
+                    }
+                    cache.complete(from,root,id,"sent",responseFrame);
+                }
+            }finally{Arrays.fill(root,(byte)0);}
+        }
+        return new PreparedResponse(from,generation,responseFrame);
+    }
+    private static JSONObject sealResponse(byte[] root,String localId,String from,String id,long now,JSONObject result)throws Exception{
+        try{return PeerOfflineProtocol.seal(root,localId,from,id,now,now+PeerOfflineProtocol.MAX_TTL_SECONDS,
+            new JSONObject().put("action","relay.response").put("result",result));}
+        catch(SecurityException tooLarge){return PeerOfflineProtocol.seal(root,localId,from,id,now,
+            now+PeerOfflineProtocol.MAX_TTL_SECONDS,new JSONObject().put("action","relay.response")
+                .put("result",new JSONObject().put("state","failed").put("reason","relay_lite_response_too_large")));}
+    }
     public static JSONObject cachedResult(Context c,String peerId,String requestId){
         try{
-            String saved=new SecretStore(c).getString(responseKey(peerId,requestId));
-            return saved==null?null:new JSONObject(saved);
-        }catch(Exception unavailable){return null;}
+            PeerStore store=PeerStore.get(c);
+            synchronized(store){
+                byte[] root=store.key(peerId);
+                try{
+                    long now=System.currentTimeMillis()/1000;RelayLiteCache cache=RelayLiteCache.get(c);
+                    RelayLiteCache.Entry saved=cache.get(peerId,root,requestId,"response",now);
+                    if(saved!=null)return saved.value!=null?saved.value:unavailable();
+                    JSONObject legacy=cache.legacy(peerId,requestId,"response",now);
+                    if(legacy==null)return null;
+                    cache.claim(peerId,root,requestId,"response","",now+PeerOfflineProtocol.MAX_TTL_SECONDS,true,now);
+                    cache.complete(peerId,root,requestId,"response",legacy);
+                    return legacy;
+                }finally{Arrays.fill(root,(byte)0);}
+            }
+        }catch(Exception failure){try{return unavailable();}catch(Exception ignored){return null;}}
+    }
+    private static JSONObject unavailable()throws Exception{
+        return new JSONObject().put("state","indeterminate").put("reason","relay_lite_result_unavailable");
     }
 }

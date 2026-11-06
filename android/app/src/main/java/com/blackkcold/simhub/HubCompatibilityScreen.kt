@@ -205,21 +205,15 @@ fun HubCompatibilityScreen(
             Text(hubLabel("03 · Android 伴侣设备关联","03 · Android Companion Device association"),
                 style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
-            CompatibilityValue(hubLabel("CDM 系统支持","CDM availability"),
-                if(status?.optBoolean("associationSupported")==true)hubLabel("可申请","Available") else hubLabel("系统不支持","Unsupported"))
+            CompatibilityValue(hubLabel("CDM 创建能力","CDM creation"),
+                hubLabel("本安装包不提供","Not available in this build"))
             CompatibilityValue(hubLabel("SIM Hub 关联数","SIM Hub associations"),
                 (status?.optInt("associations",0)?:0).toString())
             Text(hubLabel(
-                "仅在已配对可信 Relay 后允许申请自管理关联，必须经 Android 系统确认。CDM 关联本身不证明获准实时读取任意第三方验证码。",
-                "Only offer self-managed association after trusted Relay enrollment. Android requires confirmation. An association alone does NOT prove unrestricted real-time OTP access."
+                "创建自管理 CDM 关联需要系统专属权限，本安装包不提供创建入口。已有的本应用关联仍可查看和解除。此能力与短信 Companion 模式独立，不授予第三方验证码访问权限。",
+                "Creating self-managed CDM associations requires a system-only permission. This build keeps inspection and removal of existing app associations. This is separate from SMS Companion mode and does not grant access to third-party OTPs."
             ),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(9.dp))
-            Button(onClick=controller::startCompanionAssociation,
-                enabled=state?.enrolled==true&&status?.optBoolean("associationSupported")==true,
-                modifier=Modifier.fillMaxWidth()){
-                Text(hubLabel("由系统确认创建伴侣关联","Request companion association"))
-            }
-            Spacer(Modifier.height(6.dp))
             OutlinedButton(onClick=controller::removeCompanionAssociations,
                 enabled=(status?.optInt("associations",0)?:0)>0,
                 modifier=Modifier.fillMaxWidth()){

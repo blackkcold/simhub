@@ -25,7 +25,7 @@ object PeerHubGateway {
         if(result.optString("state") in listOf("submitted","succeeded","failed","expired","delivered"))store.clearOutbound(peerId,id)
         return result
     }
-    fun request(c:Context,peerId:String,id:String,request:JSONObject,preferRelay:Boolean=true):JSONObject {
+    fun request(c:Context,peerId:String,id:String,request:JSONObject,preferRelay:Boolean=true,allowOffline:Boolean=true):JSONObject {
         val store=PeerStore.get(c);val p=store.peer(peerId);val coordinator=ConnectionCoordinator(store)
         if(preferRelay){
             // A P2P request must never silently associate an existing Relay enrollment.
@@ -41,7 +41,7 @@ object PeerHubGateway {
                 PeerCenterConnector.active(peerId)?.let{coordinator.internet(it)}
             }catch(_:Exception){}
         }
-        RelayLiteTransport.configured(c,store,p)?.let{coordinator.relayLite(it)}
+        if(allowOffline)RelayLiteTransport.configured(c,store,p)?.let{coordinator.relayLite(it)}
         return coordinator.request(peerId,id,request)
     }
     fun linked(c:Context,origin:String):List<JSONObject>{

@@ -60,6 +60,11 @@ public final class PeerRpc {
                         request.getString("source"),request.getString("messageId"));
                     yield new JSONObject().put("state","acknowledged").put("removed",removed);
                 }
+                case "relay.reject" -> {
+                    boolean removed=RelayLiteMailbox.get(c).reject(peerId,request.getString("source"),
+                        request.getString("messageId"),request.getString("reason"));
+                    yield new JSONObject().put("state","rejected").put("removed",removed);
+                }
                 case "peer.revoke" -> {store.revoke(peerId);yield new JSONObject().put("state","revoked");}
                 default -> throw new SecurityException("unsupported_peer_action");
             };
@@ -94,6 +99,7 @@ public final class PeerRpc {
                 if(ch!=null){JSONObject tags=SimTagStore.get(c,ch.channelId,ch.revision);sim=tags.optString("tag",sim);}
                 OtpParser.Result otp=type==Telephony.Sms.MESSAGE_TYPE_INBOX?OtpParser.parse(body):OtpParser.parse("");
                 JSONObject message=new JSONObject().put("id","peer-"+store.myId()+"-"+providerId).put("thread",PeerCrypto.digest(PeerCrypto.utf8(store.myId()+"|"+sub+"|"+address))).put("sender",address).put("address",address).put("body",body.substring(0,Math.min(4000,body.length()))).put("timestamp",date/1000).put("inbound",type==Telephony.Sms.MESSAGE_TYPE_INBOX).put("device",android.os.Build.MODEL).put("sim",sim).put("sourceId",store.myId()+"-"+sub).put("otp",otp.detected?otp.value:"").put("failed",type==Telephony.Sms.MESSAGE_TYPE_FAILED);
+                if(ch!=null)message.put("channelId",ch.channelId).put("channelRevision",ch.revision);
                 int size=message.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
                 if(bytes+size>maxBytes){more=true;break;}rows.put(message);bytes+=size;lastDate=date;lastId=providerId;
             }

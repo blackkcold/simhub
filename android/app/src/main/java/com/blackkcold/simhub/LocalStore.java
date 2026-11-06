@@ -14,7 +14,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     private static LocalStore INSTANCE;
     private static long lastReceiptPruneAt=0L;
     public static synchronized LocalStore get(Context c){if(INSTANCE==null)INSTANCE=new LocalStore(c.getApplicationContext());return INSTANCE;}
-    private LocalStore(Context c){super(c,"simhub-agent.db",null,5);}
+    LocalStore(Context c){super(c,"simhub-agent.db",null,6);}
 
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,occurred_at INTEGER NOT NULL,subscription_id TEXT NOT NULL,has_otp INTEGER NOT NULL,metadata_json TEXT NOT NULL,ciphertext_json TEXT NOT NULL,created_at INTEGER NOT NULL)");
@@ -26,7 +26,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     private static void createUploadIndex(SQLiteDatabase db){
-        db.execSQL("CREATE TABLE IF NOT EXISTS uploaded_event_ids(id TEXT PRIMARY KEY,uploaded_at INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS uploaded_event_ids(id TEXT PRIMARY KEY,uploaded_at INTEGER NOT NULL,disposition TEXT NOT NULL DEFAULT 'stored')");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_uploaded_event_age ON uploaded_event_ids(uploaded_at)");
     }
 
@@ -43,6 +43,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         if(oldV<3)createPartTable(db);
         if(oldV<4)db.execSQL("ALTER TABLE processed_commands ADD COLUMN command_type TEXT NOT NULL DEFAULT ''");
         if(oldV<5)createUploadIndex(db);
+        if(oldV==5)db.execSQL("ALTER TABLE uploaded_event_ids ADD COLUMN disposition TEXT NOT NULL DEFAULT 'stored'");
     }
 
     /** Fast path for repeated window rescans; avoids redundant encryption and staging. */
@@ -73,8 +74,11 @@ public final class LocalStore extends SQLiteOpenHelper {
                 new String[]{id},null,null,null)) {return row.moveToFirst();}
     }
     public synchronized boolean hasUploadedReceipt(String id){
-        try(Cursor row=getReadableDatabase().query("uploaded_event_ids",new String[]{"id"},"id=?",
-                new String[]{id},null,null,null)) {return row.moveToFirst();}
+        return EventUploadReceipt.published(eventReceiptDisposition(id));
+    }
+    public synchronized String eventReceiptDisposition(String id){
+        try(Cursor row=getReadableDatabase().query("uploaded_event_ids",new String[]{"disposition"},"id=?",
+                new String[]{id},null,null,null)) {return row.moveToFirst()?row.getString(0):"";}
     }
     public synchronized void clearPendingLocation(){
         getWritableDatabase().delete("events","kind=?",new String[]{"device.location"});
@@ -89,9 +93,15 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     public synchronized void markEventSent(String id){
+        markEventAccepted(id,"stored");
+    }
+    public synchronized void markEventAccepted(String id,String disposition){
+        if(!EventUploadReceipt.published(disposition)&&!"suppressed".equals(disposition))
+            throw new IllegalArgumentException("Unknown upload disposition");
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try{
             ContentValues v=new ContentValues();v.put("id",id);v.put("uploaded_at",System.currentTimeMillis()/1000);
+            v.put("disposition",disposition);
             db.insertWithOnConflict("uploaded_event_ids",null,v,SQLiteDatabase.CONFLICT_IGNORE);
             // Provider receipts are useful for months, not indefinitely. The
             // indexed prune bounds offline journal growth on long-running nodes.
@@ -109,10 +119,16 @@ public final class LocalStore extends SQLiteOpenHelper {
      * preserve receipts to remain idempotent across process and Relay retries.
      * Server-side purge tombstones still suppress intentionally erased SMS.
      */
-    public synchronized int resetProviderUploadReceiptsForRestore(){
+    public synchronized int resetProviderUploadReceiptsForRestore(int maxPendingEvents){
+        if(maxPendingEvents<0)throw new IllegalArgumentException("Negative pending-event limit");
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try {
+            // Admission and receipt deletion share the same database transaction
+            // and store monitor, so queue writers cannot invalidate the limit.
+            try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM events",null)){
+                if(count.moveToFirst()&&count.getInt(0)>maxPendingEvents)return -1;
+            }
             int deleted=db.delete("uploaded_event_ids","id LIKE ?",
                 new String[]{"sms-provider-%"});
             db.setTransactionSuccessful();
@@ -123,6 +139,8 @@ public final class LocalStore extends SQLiteOpenHelper {
     public synchronized int uploadedEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM uploaded_event_ids",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingEventCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM events",null)){return c.moveToFirst()?c.getInt(0):0;}}
     public synchronized int pendingCommandAckCount(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM command_acks",null)){return c.moveToFirst()?c.getInt(0):0;}}
+    public synchronized long oldestPendingEventAt(){try(Cursor c=getReadableDatabase().rawQuery("SELECT MIN(created_at) FROM events",null)){return c.moveToFirst()&&!c.isNull(0)?c.getLong(0):0;}}
+    public synchronized long oldestPendingAckAt(){try(Cursor c=getReadableDatabase().rawQuery("SELECT MIN(updated_at) FROM command_acks",null)){return c.moveToFirst()&&!c.isNull(0)?c.getLong(0):0;}}
     /** Metadata-only task preview: do not export event IDs, ciphertext, SMS body or addresses. */
     public synchronized JSONArray pendingEventTaskPreview(int max){
         JSONArray items=new JSONArray();
@@ -186,11 +204,12 @@ public final class LocalStore extends SQLiteOpenHelper {
         db.beginTransaction();
         try{
             ContentValues v=new ContentValues();v.put("command_id",commandId);v.put("provider_uri",providerUri);v.put("total_parts",Math.max(1,totalParts));v.put("event_cipher_json",eventCipher.toString());v.put("sub_id",subId);v.put("created_at",System.currentTimeMillis()/1000);
-            db.insertWithOnConflict("pending_sms",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+            if(db.insertWithOnConflict("pending_sms",null,v,SQLiteDatabase.CONFLICT_REPLACE)==-1)
+                throw new IllegalStateException("Pending SMS could not be durably stored");
             db.delete("sms_part_status","command_id=?",new String[]{commandId});
             for(int i=0;i<Math.max(1,totalParts);i++){
                 ContentValues p=new ContentValues();p.put("command_id",commandId);p.put("part_index",i);p.put("updated_at",System.currentTimeMillis()/1000);
-                db.insertWithOnConflict("sms_part_status",null,p,SQLiteDatabase.CONFLICT_IGNORE);
+                db.insertOrThrow("sms_part_status",null,p);
             }
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
@@ -289,7 +308,11 @@ public final class LocalStore extends SQLiteOpenHelper {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try{
-            db.delete("events",null,null);db.delete("uploaded_event_ids",null,null);db.delete("processed_commands","id NOT LIKE ?",new String[]{"p2p-%"});db.delete("command_acks",null,null);db.delete("sms_part_status","command_id NOT LIKE ?",new String[]{"p2p-%"});db.delete("pending_sms","command_id NOT LIKE ?",new String[]{"p2p-%"});
+            db.delete("events",null,null);db.delete("uploaded_event_ids",null,null);db.delete("processed_commands","id NOT LIKE ?",new String[]{"p2p-%"});db.delete("command_acks",null,null);
+            // Local Android sends outlive a Relay reset. Keep their radio callbacks
+            // and independent local envelope; remove only the old Relay's sends.
+            db.delete("pending_sms","command_id NOT LIKE 'local-%' AND command_id NOT LIKE 'respond-%' AND command_id NOT LIKE 'p2p-%'",null);
+            db.delete("sms_part_status","command_id NOT IN (SELECT command_id FROM pending_sms)",null);
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }

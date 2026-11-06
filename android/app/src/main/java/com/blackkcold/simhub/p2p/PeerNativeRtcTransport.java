@@ -132,22 +132,30 @@ public final class PeerNativeRtcTransport implements HubTransport, AutoCloseable
             throw new SecurityException("peer_route_not_authorized");
         CompletableFuture<JSONObject> future = new CompletableFuture<>();
         if (pending.putIfAbsent(id, future) != null) throw new IllegalStateException("request_already_pending");
-        byte[] key = store.key(peer.getString("id"));
+        PeerSendGate sendGate = new PeerSendGate();
+        byte[] key = null;
         try {
+            key = store.key(peer.getString("id"));
             JSONObject frame = PeerProtocol.seal(key, store.myId(), peer.getString("id"), id,
                     System.currentTimeMillis() / 1000 + 120, req);
             final String encoded = frame.toString();
             dispatch.execute(() -> {
                 try {
-                    sendFrame(encoded);
+                    sendGate.send(() -> {
+                        if (!closed && pending.get(id) == future) sendFrame(encoded);
+                    });
                 } catch (Exception error) {
                     if (pending.remove(id, future)) future.completeExceptionally(error);
                 }
             });
             return future.get(20, TimeUnit.SECONDS);
         } finally {
-            pending.remove(id);
-            Arrays.fill(key, (byte) 0);
+            // A timeout must cancel work still waiting on the serial executor.
+            // If sendFrame already started, drain that direct enqueue before
+            // returning and releasing the caller's peer publication lease.
+            sendGate.close();
+            pending.remove(id, future);
+            if (key != null) Arrays.fill(key, (byte) 0);
         }
     }
 

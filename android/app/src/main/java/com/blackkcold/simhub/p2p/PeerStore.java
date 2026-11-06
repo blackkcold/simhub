@@ -15,6 +15,9 @@ public final class PeerStore extends SQLiteOpenHelper {
     private static PeerStore INSTANCE;
     private final Context context;
     private static final String IDENTITY="simhub-p2p-identity-v1";
+    // Only active publications have entries. This is per-peer coordination;
+    // network I/O never holds the global store monitor.
+    private final java.util.Map<String,Integer> publications=new java.util.HashMap<>();
     public static synchronized PeerStore get(Context c){if(INSTANCE==null)INSTANCE=new PeerStore(c.getApplicationContext());return INSTANCE;}
     private PeerStore(Context c){super(c,"simhub-peers-v1.db",null,3);context=c;setWriteAheadLoggingEnabled(true);}
     public void onCreate(SQLiteDatabase db){
@@ -46,7 +49,9 @@ public final class PeerStore extends SQLiteOpenHelper {
     public String myId()throws Exception{return PeerCrypto.digest(identity().getPublic().getEncoded());}
     public synchronized void save(JSONObject p,byte[] key)throws Exception{
         String id=p.getString("id");if(!id.equals(PeerCrypto.digest(PeerCrypto.publicKey(p.getString("publicKey")).getEncoded())))throw new SecurityException("peer_id_mismatch");
+        awaitPublications(id);
         try(Cursor existing=getReadableDatabase().rawQuery("SELECT profile FROM peers WHERE id=?",new String[]{id})){if(existing.moveToFirst()&&!"REVOKED".equals(new JSONObject(existing.getString(0)).optString("pairState")))throw new SecurityException("peer_already_known");}
+        RelayLiteCache.get(context).revokePeer(id);
         new SecretStore(context).putBytes("p2p.content."+id,key);
         ContentValues v=new ContentValues();v.put("id",id);v.put("profile",p.toString());if(getWritableDatabase().insertWithOnConflict("peers",null,v,SQLiteDatabase.CONFLICT_REPLACE)==-1)throw new IllegalStateException("peer_profile_not_durable");
     }
@@ -54,7 +59,52 @@ public final class PeerStore extends SQLiteOpenHelper {
     public synchronized JSONArray list(){JSONArray a=new JSONArray();try(Cursor c=getReadableDatabase().rawQuery("SELECT profile FROM peers ORDER BY id",null)){while(c.moveToNext())try{a.put(new JSONObject(c.getString(0)));}catch(Exception e){throw new IllegalStateException(e);}}return a;}
     public synchronized void update(JSONObject p)throws Exception{JSONObject previous=peer(p.getString("id"));if("REVOKED".equals(previous.optString("pairState"))&&!"REVOKED".equals(p.optString("pairState")))throw new SecurityException("peer_revoked");for(String field:List.of("publicKey","localRole","permissions","protocolVersion","grantsToRemote","grantsFromRemote"))if(!previous.optString(field).equals(p.optString(field)))throw new SecurityException("immutable_peer_grant");ContentValues v=new ContentValues();v.put("profile",p.toString());if(getWritableDatabase().update("peers",v,"id=?",new String[]{p.getString("id")})!=1)throw new SecurityException("peer_not_authorized");}
     public byte[] key(String id)throws Exception{JSONObject p=peer(id);if("REVOKED".equals(p.optString("pairState")))throw new SecurityException("peer_revoked");byte[] key=new SecretStore(context).getBytes("p2p.content."+id);if(key==null||key.length!=32)throw new SecurityException("peer_key_unavailable");return key;}
-    public synchronized void revoke(String id)throws Exception{JSONObject p=peer(id);p.put("pairState","REVOKED").put("activeTransport","OFFLINE");update(p);new SecretStore(context).remove("p2p.content."+id);getWritableDatabase().delete("outbox","peer=?",new String[]{id});getWritableDatabase().delete("peer_events","peer=?",new String[]{id});getWritableDatabase().delete("lite_outbox","peer=?",new String[]{id});RelayLiteMailbox.get(context).revokePeer(id);}
+    public synchronized void revoke(String id)throws Exception{
+        JSONObject p=peer(id);p.put("pairState","REVOKED").put("activeTransport","OFFLINE");update(p);
+        new SecretStore(context).remove("p2p.content."+id);
+        getWritableDatabase().delete("outbox","peer=?",new String[]{id});
+        getWritableDatabase().delete("peer_events","peer=?",new String[]{id});
+        getWritableDatabase().delete("lite_outbox","peer=?",new String[]{id});
+        RelayLiteMailbox.get(context).revokePeer(id);RelayLiteCache.get(context).revokePeer(id);
+        // Mark revoked before waiting, so no new publication can acquire a
+        // lease. wait() releases even a reentrant PeerRpc store monitor.
+        awaitPublications(id);
+    }
+    private void awaitPublications(String id)throws Exception{
+        long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(45);
+        while(publications.getOrDefault(id,0)>0){
+            long left=deadline-System.nanoTime();
+            if(left<=0)throw new IllegalStateException("peer_publication_drain_pending");
+            java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this,left);
+        }
+    }
+    public final class Publication implements AutoCloseable {
+        private final String peer;private boolean closed;
+        private Publication(String peer){this.peer=peer;}
+        @Override public void close(){
+            synchronized(PeerStore.this){
+                if(closed)return;closed=true;
+                int remaining=publications.getOrDefault(peer,0)-1;
+                if(remaining<=0)publications.remove(peer);else publications.put(peer,remaining);
+                PeerStore.this.notifyAll();
+            }
+        }
+    }
+    public synchronized Publication beginPublication(String id,String generation)throws Exception{
+        byte[] root=key(id);
+        try{if(!PeerCrypto.digest(root).equals(generation))throw new SecurityException("peer_publication_generation_changed");}
+        finally{java.util.Arrays.fill(root,(byte)0);}
+        return beginPublication(id);
+    }
+    /** For a new request, acquire before preparing its frame and keep through publication. */
+    public synchronized Publication beginPublication(String id)throws Exception{
+        JSONObject profile=peer(id);
+        if(!"ACTIVE".equals(profile.optString("pairState"))
+            &&!(profile.optInt("protocolVersion",1)>=2&&"PENDING".equals(profile.optString("pairState"))))
+            throw new SecurityException("peer_publication_revoked");
+        publications.put(id,publications.getOrDefault(id,0)+1);
+        return new Publication(id);
+    }
     /** Atomic durable claim. A crash after dispatch remains 'indeterminate', never blindly resends. */
     public synchronized JSONObject receipt(String peer,String id,String digest)throws Exception{
         try(Cursor c=getReadableDatabase().rawQuery("SELECT digest,result FROM receipts WHERE peer=? AND id=?",new String[]{peer,id})){

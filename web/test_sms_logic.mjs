@@ -16,10 +16,10 @@ function segment(from,to){
   assert.ok(a>=0&&b>a,"Missing conversation implementation: "+from);
   return source.slice(a,b);
 }
-const helpers=segment("function eventIsInbound(e){","function filteredEvents(){")+
+const helpers=segment("function collapseMessageEvents(source){","function filteredEvents(){")+
               segment("function buildThreads(source){","function renderInbox(){");
-const {threadKey,eventSimKey,buildThreads,canonicalAddress}=runInNewContext(
-  helpers+"\n({threadKey,eventSimKey,buildThreads,canonicalAddress})",Object.create(null));
+const {threadKey,eventSimKey,buildThreads,canonicalAddress,collapseMessageEvents}=runInNewContext(
+  helpers+"\n({threadKey,eventSimKey,buildThreads,canonicalAddress,collapseMessageEvents})",Object.create(null));
 function sms(deviceId,channelId,revision,direction,address,occurredAt){
   const payload={direction,body:"synthetic",channelId,channelRevision:revision};
   payload[direction==="in"?"sender":"recipient"]=address;
@@ -44,4 +44,25 @@ assert.notEqual(canonicalAddress("+12025550123"),canonicalAddress("+441632960000
   "Different countries must not be collapsed");
 assert.notEqual(canonicalAddress("106900"),canonicalAddress("106901"),
   "Different shortcodes must remain distinct");
+// Android/provider row IDs are local identifiers, not global SMS identities.
+const sent=sms('a','sim-A',1,'out','+86 (138) 0013-8000',100);
+sent.eventId='sent';sent.payload.providerId=7;
+const delivered={...sent,eventId:'delivered',kind:'sms.delivered',occurredAt:200,
+  payload:{...sent.payload,recipient:'13800138000'}};
+const collisions=[
+  sms('a','sim-B',1,'out','13800138000',300),
+  sms('a','sim-A',2,'out','13800138000',400),
+  sms('a','sim-A',1,'out','+441632960000',500),
+  sms('b','sim-A',1,'out','13800138000',600)
+];
+collisions.forEach((e,i)=>{e.eventId='distinct-'+i;e.payload.providerId=7;});
+const folded=collapseMessageEvents([sent,delivered,...collisions]);
+assert.equal(folded.length,5,'A provider ID must not collapse another node, SIM, revision or correspondent');
+assert.ok(folded.some(e=>e.eventId==='delivered'));assert.ok(!folded.some(e=>e.eventId==='sent'));
+for(const e of collisions)assert.ok(folded.some(actual=>actual.eventId===e.eventId));
+const legacy=sms('a','',0,'out','13800138000',700);
+legacy.subscriptionId='1';legacy.payload.providerId=7;
+const otherLegacy={...legacy,subscriptionId:'2',payload:{...legacy.payload}};
+assert.equal(collapseMessageEvents([sent,legacy,otherLegacy]).length,3,
+  'Unverified subscription identities cannot be merged with another source');
 console.log("PASS: source-isolated conversation identity and canonical correspondent");

@@ -31,7 +31,7 @@ class PeerRelayTransport(private val context:Context,private val origin:String,p
         val until=System.currentTimeMillis()+6000
         do {
             val response=try{api.api(path).optJSONObject("frame")}catch(e:Exception){
-                if(e !is ControllerSecureClient.ApiError||e.code!="peer_response_pending")throw e
+                if(e !is ControllerSecureClient.ApiFailure||e.code!="peer_response_pending")throw e
                 null
             }
             if(response!=null){

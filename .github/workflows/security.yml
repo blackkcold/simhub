@@ -34,7 +34,7 @@ jobs:
       matrix:
         language: [python, javascript-typescript, java-kotlin]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         if: matrix.language == 'java-kotlin'
         with:
@@ -51,7 +51,7 @@ jobs:
         if: matrix.language == 'java-kotlin'
         with:
           gradle-version: '9.6.0'
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
@@ -59,25 +59,12 @@ jobs:
       - name: Compile Java and Kotlin under CodeQL instrumentation
         if: matrix.language == 'java-kotlin'
         run: gradle -p android :app:compileDebugKotlin :app:compileDebugJavaWithJavac --no-build-cache --rerun-tasks --stacktrace
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066
         with:
           output: codeql-results
-      - name: Summarize CodeQL findings (rule and location only)
+      - name: Block high and critical CodeQL findings
         if: always()
-        run: |
-          python3 - <<'PY'
-          import glob, json
-          for path in glob.glob("codeql-results/**/*.sarif", recursive=True):
-              with open(path, encoding="utf-8") as handle:
-                  data = json.load(handle)
-              for run in data.get("runs", []):
-                  for result in run.get("results", [])[:150]:
-                      locs = result.get("locations", [])
-                      physical = locs[0].get("physicalLocation", {}) if locs else {}
-                      where = physical.get("artifactLocation", {}).get("uri", "?")
-                      line = physical.get("region", {}).get("startLine", "?")
-                      print(f"CODEQL_FINDING rule={result.get('ruleId', '?')} file={where}:{line}")
-          PY
+        run: python3 scripts/check_codeql.py codeql-results
 
   # Preserve additional categories retained in GitHub's main-branch scan history.
   # Each job performs genuine security-extended analysis, not an empty status shim.
@@ -95,13 +82,18 @@ jobs:
       matrix:
         language: [python, javascript-typescript]
     steps:
-      - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
           build-mode: none
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066
+        with:
+          output: codeql-results
+      - name: Block high and critical CodeQL findings
+        if: always()
+        run: python3 scripts/check_codeql.py codeql-results
 
   codeql-android:
     name: codeql compatibility (java-kotlin)
@@ -111,7 +103,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
@@ -124,11 +116,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
           gradle-version: '9.6.0'
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066
         with:
           languages: java-kotlin
           queries: security-extended
           build-mode: manual
       - name: Compile Java and Kotlin under CodeQL instrumentation
         run: gradle -p android :app:compileDebugKotlin :app:compileDebugJavaWithJavac --no-build-cache --rerun-tasks --stacktrace
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066
+        with:
+          output: codeql-results
+      - name: Block high and critical CodeQL findings
+        if: always()
+        run: python3 scripts/check_codeql.py codeql-results

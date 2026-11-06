@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
 
 const listeners=new Map(),deleted=[];
+let shellPaths=[];
 let online=false;
 const shell={kind:'offline-html'};
 const caches={
@@ -15,7 +16,7 @@ const caches={
     if(path==='/index.html')return shell;
     return undefined;
   },
-  async open(){return {addAll:async()=>{}}}
+  async open(){return {addAll:async paths=>{shellPaths=Array.from(paths);}}}
 };
 const ctx={
   self:{addEventListener:(name,handler)=>listeners.set(name,handler),
@@ -38,6 +39,20 @@ async function dispatch(name,request){
   });
   return task&&await task;
 }
+await dispatch('install');
+// Verify the transitive module graph, so adding another import cannot silently
+// break cold offline startup. This checks the original worker's actual manifest.
+const seen=new Set();
+function checkModule(path){
+  if(seen.has(path))return;seen.add(path);
+  assert.ok(shellPaths.includes(path),'Offline shell is missing '+path);
+  const text=readFileSync(new URL('.'+path,import.meta.url),'utf8');
+  for(const match of text.matchAll(/(?:from\s*|import\s*)['"](\.\.?\/[^'"]+\.js)['"]/g)){
+    const dependency=new URL(match[1],'https://simhub.example'+path).pathname;
+    checkModule(dependency);
+  }
+}
+checkModule('/app.js');
 await dispatch('activate');
 assert.ok(deleted.includes('simhub-shell-v21')&&deleted.includes('simhub-shell-v22'),
   'Old SIM Hub shell caches should be removed');

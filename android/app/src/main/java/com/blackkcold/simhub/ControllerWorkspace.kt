@@ -363,7 +363,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         throw ControllerSearchScopeChanged()
                     ControllerLoadResult(nodes,auth.optBoolean("totpRequired",true),result,highWater,settingsError)
                 }
-                if(requireLocalUnlock && !localUnlocked)return@launch
+                if(!api.hasGrant()||(requireLocalUnlock && !localUnlocked))return@launch
                 if(inboxPrivacy.observe(data.devices)){
                     lastEventSeq=0L;page=0;cursors=emptyList();unreadable=0;historySearch=null
                     devices=data.devices;pendingLoad="latest"

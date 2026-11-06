@@ -42,24 +42,28 @@ public final class ChannelIdentity {
     public static Channel forSubscription(Context c,int subscriptionId){
         try{
             SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);
+            if(sm==null)return null;
             List<SubscriptionInfo> list=sm.getActiveSubscriptionInfoList();
             if(list!=null)for(SubscriptionInfo si:list){
                 if(si.getSubscriptionId()==subscriptionId)return describe(c,si);
             }
-        }catch(Exception ignored){}
+        }catch(SecurityException denied){return null;}
+        catch(Exception ignored){}
         return null;
     }
 
     public static Channel resolve(Context c,String channelId,long expectedRevision){
         try{
             SubscriptionManager sm=c.getSystemService(SubscriptionManager.class);
+            if(sm==null)return null;
             List<SubscriptionInfo> list=sm.getActiveSubscriptionInfoList();
             if(list==null)return null;
             for(SubscriptionInfo s:list){
                 Channel ch=describe(c,s);
                 if(ch.channelId.equals(channelId)&&(expectedRevision<=0||ch.revision==expectedRevision))return ch;
             }
-        }catch(Exception ignored){}
+        }catch(SecurityException denied){return null;}
+        catch(Exception ignored){}
         return null;
     }
 

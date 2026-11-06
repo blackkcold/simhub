@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# simhub-test-group: p2p-integration
 """Use the actual connection-service TURN credential generator with real coturn."""
 import os
 import pathlib

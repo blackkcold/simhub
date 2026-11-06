@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# simhub-test-group: p2p-integration
 """Controlled-packaging negative tests for the injected trusted-center description.
 
 Proves, with a unique synthetic canary and the real generator:

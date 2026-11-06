@@ -89,6 +89,90 @@ public final class PeerInstrumentedTest {
         }catch(SecurityException expected){}
         store.clearLiteOutbound(controllerId,id);
     }
+    @Test public void testRelayLitePoisonHeadsDoNotStarveOtherSources()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();RelayLiteMailbox box=RelayLiteMailbox.get(c);
+        String[] sources={"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cccccccccccccccccccccccccccccccc"};
+        String target=store.myId();long now=System.currentTimeMillis()/1000;box.setEnabled(true);
+        Map<String,JSONObject> frames=new HashMap<>();
+        try{
+            for(String source:sources)for(int i=0;i<2;i++){
+                String id=source+"-"+i;
+                JSONObject frame=PeerOfflineProtocol.seal(root,source,target,id,now,now+600,new JSONObject().put("action","device.state"));
+                box.enqueue(source,target,frame);frames.put(id,frame);
+            }
+            JSONArray first=box.pull(target,2).getJSONArray("items");assertEquals(2,first.length());
+            assertNotEquals(first.getJSONObject(0).getString("source"),first.getJSONObject(1).getString("source"));
+            Set<String> offered=new HashSet<>();
+            for(int i=0;i<first.length();i++)offered.add(first.getJSONObject(i).getString("source"));
+            JSONArray second=box.pull(target,2).getJSONArray("items");
+            boolean newSource=false;for(int i=0;i<second.length();i++)if(!offered.contains(second.getJSONObject(i).getString("source")))newSource=true;
+            assertTrue("unacknowledged poison heads must not starve a later source",newSource);
+            JSONObject poison=first.getJSONObject(0);String source=poison.getString("source"),id=poison.getString("id");
+            assertFalse(box.reject(controllerId,source,id,"invalid_envelope"));
+            assertTrue(box.reject(target,source,id,"invalid_envelope"));
+            JSONObject retry=box.enqueue(source,target,frames.get(id));
+            assertEquals("rejected",retry.getString("state"));assertEquals("invalid_envelope",retry.getString("reason"));
+            assertFalse(box.ack(target,source,id));
+            try{box.enqueue(source,target,new JSONObject(frames.get(id).toString()).put("ct","changed"));fail("rejected message id rebound");}
+            catch(SecurityException expected){}
+            assertTrue(box.stats().getInt("rejected")>=1);
+        }finally{for(String source:sources)box.revokePeer(source);box.setEnabled(false);}
+    }
+    @Test public void testRelayLiteCacheBindsPairAndKeepsMutationTombstones()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();RelayLiteCache cache=RelayLiteCache.get(c);
+        long now=System.currentTimeMillis()/1000;String id=UUID.randomUUID().toString();
+        assertNull(cache.claim(controllerId,root,id,"sent","request-digest",now+600,true,now));
+        cache.complete(controllerId,root,id,"sent",new JSONObject().put("body","private-cache-fixture"));
+        assertEquals("private-cache-fixture",cache.get(controllerId,root,id,"sent",now).value.getString("body"));
+        try(android.database.Cursor row=cache.getReadableDatabase().rawQuery("SELECT cipher FROM entries WHERE peer=?",new String[]{controllerId})){
+            assertTrue(row.moveToFirst());assertFalse(row.getString(0).contains("private-cache-fixture"));
+        }
+        try{cache.claim(controllerId,root,id,"sent","different-request",now+600,true,now);fail("logical id changed payload");}
+        catch(SecurityException expected){}
+        byte[] replaced=PeerCrypto.random(32);
+        try{assertNull(cache.get(controllerId,replaced,id,"sent",now));}finally{Arrays.fill(replaced,(byte)0);}
+        // Read-only RPC entries may be discarded at capacity; the dispatch
+        // identity of a mutation remains until its authenticated TTL expires.
+        for(int i=0;i<RelayLiteCache.MAX_PEER_ROWS+4;i++)
+            cache.claim(controllerId,root,"read-"+i,"sent","read-"+i,now+600,false,now);
+        assertNotNull(cache.get(controllerId,root,id,"sent",now));
+        try(android.database.Cursor count=cache.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM entries WHERE peer=?",new String[]{controllerId})){
+            count.moveToFirst();assertTrue(count.getInt(0)<=RelayLiteCache.MAX_PEER_ROWS);
+        }
+        new com.blackkcold.simhub.SecretStore(c).putString("p2p.relayLite.response."+controllerId+".legacy-fixture",new JSONObject().put("body","legacy-private").toString());
+        store.revoke(controllerId);
+        assertNull(cache.get(controllerId,root,id,"sent",now));
+        assertNull(new com.blackkcold.simhub.SecretStore(c).getString("p2p.relayLite.response."+controllerId+".legacy-fixture"));
+    }
+    @Test public void testRelayLitePayloadLimitEvictsContentButNotDispatchIdentity()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();RelayLiteCache cache=RelayLiteCache.get(c);
+        long now=System.currentTimeMillis()/1000;char[] text=new char[48000];Arrays.fill(text,'z');
+        JSONObject payload=new JSONObject().put("body",new String(text));
+        for(int i=0;i<52;i++){
+            String id="bounded-payload-"+i;
+            assertNull(cache.claim(controllerId,root,id,"sent",id,now+600,true,now));
+            cache.complete(controllerId,root,id,"sent",payload);
+        }
+        RelayLiteCache.Entry tombstone=cache.claim(controllerId,root,"bounded-payload-0","sent","bounded-payload-0",now+600,true,now);
+        assertNotNull(tombstone);assertNull(tombstone.value);assertEquals("evicted",tombstone.state);
+        try(android.database.Cursor bytes=cache.getReadableDatabase().rawQuery("SELECT SUM(bytes) FROM entries WHERE peer=?",new String[]{controllerId})){
+            bytes.moveToFirst();assertTrue(bytes.getLong(0)<=RelayLiteCache.MAX_PEER_BYTES);
+        }
+        assertTrue(cache.stats(now).getLong("bytes")<=RelayLiteCache.MAX_BYTES);
+        assertNull(cache.get(controllerId,root,"bounded-payload-0","sent",now+601));
+    }
+    @Test public void testRelayLiteLegacyPreferencesRetireAfterOneOfflineWindow()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();RelayLiteCache cache=RelayLiteCache.get(c);
+        long now=System.currentTimeMillis()/1000;
+        cache.getWritableDatabase().execSQL("UPDATE metadata SET value=? WHERE name='legacyRetireAt'",new Object[]{now+60});
+        String name="p2p.relayLite.response."+controllerId+".legacy-expiry-fixture";
+        new com.blackkcold.simhub.SecretStore(c).putString(name,new JSONObject().put("state","submitted").toString());
+        try{
+            assertEquals("submitted",cache.legacy(controllerId,"legacy-expiry-fixture","response",now).getString("state"));
+            assertNull(cache.legacy(controllerId,"legacy-expiry-fixture","response",now+61));
+            assertNull(new com.blackkcold.simhub.SecretStore(c).getString(name));
+        }finally{cache.getWritableDatabase().execSQL("UPDATE metadata SET value=? WHERE name='legacyRetireAt'",new Object[]{now+PeerOfflineProtocol.MAX_TTL_SECONDS});}
+    }
     @Test public void testAuthenticatedDirectStateAndRevocation()throws Exception{
         assertEquals("succeeded",rpc(new JSONObject().put("action","device.state")).getString("state"));
         store.revoke(controllerId);try{rpc(new JSONObject().put("action","device.state"));fail("revoked peer accepted");}catch(java.io.IOException expected){}

@@ -54,9 +54,9 @@ public final class PeerOfflineProtocol {
             throw new SecurityException("offline_frame_expired");
         byte[] key=offlineKey(contentRoot);
         try{
-            return new JSONObject(new String(PeerCrypto.crypt(false,key,
-                PeerCrypto.unb64(frame.getString("iv")),aad(from,to,id,exp),
-                PeerCrypto.unb64(frame.getString("ct"))),StandardCharsets.UTF_8));
+            byte[] nonce=PeerCrypto.unb64(frame.getString("iv")),cipher=PeerCrypto.unb64(frame.getString("ct"));
+            if(nonce.length!=12||cipher.length<16)throw new SecurityException("offline_cipher_invalid");
+            return new JSONObject(new String(PeerCrypto.crypt(false,key,nonce,aad(from,to,id,exp),cipher),StandardCharsets.UTF_8));
         }finally{Arrays.fill(key,(byte)0);}
     }
 }

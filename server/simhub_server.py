@@ -11,7 +11,6 @@ import hmac
 import ipaddress
 import json
 import logging
-import mimetypes
 import os
 import re
 import secrets
@@ -52,6 +51,7 @@ DB_PATH = Path(os.getenv("SIMHUB_DB", "/data/simhub.db"))
 WEB_ROOT = Path(os.getenv("SIMHUB_WEB_ROOT", str(Path(__file__).resolve().parents[1] / "web")))
 # Only files inventoried inside the immutable Web root may be served. Untrusted
 # request strings are dictionary keys, never components of filesystem paths.
+# The Web root is deployed with the Relay; restart after replacing its assets.
 _WEB_BASE = WEB_ROOT.resolve()
 WEB_STATIC_ASSETS = {
     item.relative_to(_WEB_BASE).as_posix(): resolved
@@ -62,7 +62,8 @@ WEB_MIME_TYPES = {
     ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
     ".mjs": "application/javascript", ".svg": "image/svg+xml",
     ".webmanifest": "application/manifest+json", ".json": "application/json",
-    ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2"
+    ".txt": "text/plain", ".png": "image/png", ".ico": "image/x-icon",
+    ".woff": "font/woff", ".woff2": "font/woff2"
 }
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 PUBLIC_BASE_URL = os.getenv("SIMHUB_PUBLIC_BASE_URL", "").rstrip("/")
@@ -1041,12 +1042,30 @@ def push_tickle_async(device_id: str, reason: str) -> None:
         log.warning("push_tickle_dropped queue_full")
 
 
+def http_log_field(value: Any, limit: int) -> str:
+    """Keep each untrusted field bounded and unable to create lines or terminal controls."""
+    text=str(value)[:limit]
+    text=text.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+    return "".join(char if char.isprintable() else f"\\u{ord(char):04x}" for char in text)
+
+
 class SimHubHandler(BaseHTTPRequestHandler):
     server_version = "SimHubRelay/0.6.0"
     sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:
-        log.info("http %s %s -> %s", self.command, urllib.parse.urlsplit(self.path).path, str(args[1]) if len(args)>1 else "")
+        try:
+            path=urllib.parse.urlsplit(getattr(self,"path","")).path
+        except ValueError:
+            path="<invalid-target>"
+        # BaseHTTPRequestHandler uses different argument orders for access and
+        # error logs. Keep only the numeric status, never a raw request error.
+        raw_status=args[1] if fmt=='"%s" %s %s' and len(args)>1 else args[0] if args else None
+        try: status=int(raw_status)
+        except (TypeError,ValueError): status=0
+        if not 100<=status<=599: status=0
+        log.info("http %s %s -> %s", http_log_field(getattr(self,"command",""),32),
+                 http_log_field(path,2048),status)
 
     @property
     def ip(self) -> str:
@@ -2993,14 +3012,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
             candidate=WEB_STATIC_ASSETS.get("index.html")
         if candidate is None:
             self.send_error(404); return
-        if rel=="manifest.webmanifest" and RELEASE_CHANNEL=="dev":
-            manifest=json.loads(candidate.read_text("utf-8"))
-            manifest.update({"name":"SIM Hub Dev","short_name":"SIM Hub Dev",
-                             "id":"/simhub-dev","theme_color":"#E87936"})
-            data=json.dumps(manifest,ensure_ascii=False,separators=(",",":")).encode("utf-8")
-        else:
-            data=candidate.read_bytes()
-        # All Content-Type values come from code-owned constants, never a URI.
+        try:
+            if rel=="manifest.webmanifest" and RELEASE_CHANNEL=="dev":
+                manifest=json.loads(candidate.read_text("utf-8"))
+                manifest.update({"name":"SIM Hub Dev","short_name":"SIM Hub Dev",
+                                 "id":"/simhub-dev","theme_color":"#E87936"})
+                data=json.dumps(manifest,ensure_ascii=False,separators=(",",":")).encode("utf-8")
+            else:
+                data=candidate.read_bytes()
+        except OSError:
+            self.send_error(404); return
+        # Header values are code-owned constants, independent of request bytes.
         ctype=WEB_MIME_TYPES.get(candidate.suffix.lower(),"application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type",ctype+("; charset=utf-8" if ctype.startswith("text/") or ctype in {"application/javascript","application/json","application/manifest+json"} else ""))

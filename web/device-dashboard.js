@@ -34,6 +34,22 @@ export function nodeDashboardModel(device){
    .map(([label,time])=>({label,time:Number(time)})).sort((a,b)=>b.time-a.time);
   return {s,online,pct,pending,ack,mode,send,developerSend,events,revoked,sampledAt,freshness};
 }
+export function recoveryActions(device,now=Math.floor(Date.now()/1000)){
+  const s=device.state||{},actions=[];
+  const add=(code,zh,en)=>actions.push({code,zh,en});
+  if(device.resetRequestedAt)add('reset','解绑等待节点确认：让节点联网完成本机清理；离线时可查看解绑记录。','Unpair awaits node acknowledgement: reconnect the node to complete local cleanup.');
+  else if(device.revoked)add('revoked','访问已撤销：节点只能确认清理。重新接入需要在本机重新配对。','Access revoked: only cleanup acknowledgement is allowed; pair again on the node to reconnect.');
+  if(!device.online&&!device.revoked&&!device.resetRequestedAt)add('offline','节点离线：先检查电源与网络，再在节点执行立即同步。','Node offline: check power and network, then sync from the node.');
+  if(s.smsMode==='companion')add('companion','当前为只读伴随模式。若需发送，请在节点明确选择默认短信应用。','Companion mode is read-only; choose the default SMS role on the node if sending is needed.');
+  if(s.smsMode==='default'&&s.smsSendPermission===false)add('permission','发送权限未授权：在节点的系统权限设置中授予短信权限。','SMS permission is missing; grant it in the node system settings.');
+  if(s.internetValidated===false)add('network','网络尚未通过连通性验证：先完成 Wi-Fi 登录或检查蜂窝数据。','Internet is not validated; complete Wi-Fi sign-in or check mobile data.');
+  if(Number(s.nextRetryAt||s.nextSyncAllowedAt)>now)add('backoff','正在等待下一次重试，队列已保留；立即同步会重新检查连接。','Waiting for the next retry; queued work is retained. Manual sync rechecks connectivity.');
+  if(device.pendingTokenRotation||s.pendingTokenRotation)add('credentials','凭据轮换待确认：保持现有配对并让节点联网恢复，不要删除待确认凭据。','Credential rotation awaits confirmation: reconnect without deleting the pending credential.');
+  if(['failed','interrupted','cancelled'].includes(s.remoteOtaStage))add('ota','更新已停止：检查设备上的失败原因和安装权限，再发起新的更新。','Update stopped: check the node error and installation permission before starting a new update.');
+  if(['installing','awaiting_confirmation','verification_pending'].includes(s.remoteOtaStage))add('ota-confirm','更新结果待确认：检查节点上的系统安装提示和实际应用版本。','Update outcome pending: check the system install prompt and actual app version on the node.');
+  if(s.lastUploadError||s.lastSyncError||s.lastCommandFetchError)add('diagnostics','存在同步错误：请求设备诊断；结果未知的短信请在发送中心先核对状态。','A sync error is reported: request diagnostics; check uncertain sends in Send center first.');
+  return actions;
+}
 /** Each lit mark corresponds to an actual SDK signal level, not continuous animation. */
 export function signalBars(level){
   const n=validNumber(level),known=n!==null&&Number.isInteger(n)&&n>=0&&n<=4;
@@ -69,7 +85,7 @@ export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusT
   const chip=(name,value,kind='')=>'<div class="node-health-metric '+kind+'"><div class="node-metric-head">'+icon(name)+'</div><strong>'+e(value)+'</strong><small>'+({battery:t('设备电量','Battery'),message:t('短信总量','Messages'),sync:t('待上传事件','Pending events')}[name]||'')+'</small></div>';
   const perm=(label,value)=>row(label,value===true?t('已授权','Granted'):value===false?t('未授权','Not granted'):t('未报告','Unknown'),value===true?'node-positive':value===false?'node-warning':'');
   const sims=channels.map((c,i)=>'<div class="node-sim-row">'+
-    '<span class="node-icon-box">'+signalBars(c.signalLevel)+'</span><div class="node-sim-main"><strong>'+e(c.displayName||c.alias||c.carrierName||'SIM '+(i+1))+'</strong>'+
+    '<span class="node-icon-box">'+signalBars(c.signalLevel)+'</span><div class="node-sim-main"><strong>'+e(c.alias||c.displayName||c.carrierName||'SIM '+(i+1))+'</strong>'+
     '<small>'+e(c.phoneNumber||t('号码未设置','Number unknown'))+' · '+e(c.serviceState||c.carrierName||'—')+
     ' · '+t('信号','Signal')+' '+e(c.signalLevel??'—')+'</small></div>'+
     '<button class="ghost mini" type="button" data-action="edit-sim" data-id="'+e(device.id)+'" data-channel="'+e(c.id)+'">'+t('设置号码','Edit number')+'</button><button class="ghost mini" type="button" data-action="edit-sim-alias" data-id="'+e(device.id)+'" data-channel="'+e(c.id)+'">'+t('设置标签','Edit label')+'</button></div>').join('');
@@ -113,6 +129,8 @@ export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusT
   const queue=Array.isArray(s.pendingEventTasks)&&s.pendingEventTasks.length?
     '<div class="node-task-items">'+s.pendingEventTasks.slice(0,10).map(q=>row(q.kind||'unknown',fmtTime(q.queuedAt))).join('')+'</div>':
     '<p class="node-empty">'+t('没有已报告的待处理事件任务','No pending event tasks reported')+'</p>';
+  const recovery=recoveryActions(device);
+  const age=stamp=>Number(stamp)>0?Math.max(0,Math.floor((Date.now()/1000-Number(stamp))/60))+' min':t('未报告','Unknown');
   return '<div class="node-dashboard">'+
     '<section class="node-identity"><div class="node-identity-title">'+
     '<span class="status-pill '+(m.online?'online':'')+'">'+e(deviceStatusText(device))+'</span>'+
@@ -155,6 +173,11 @@ export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusT
       '<p class="node-field-note">'+t('当前数据为状态快照，不构造缺乏采样依据的趋势图。','Snapshot data only; no synthetic trends.')+'</p></section>'+
     '<section class="node-panel">'+header('tasks',t('任务与诊断','Tasks & diagnostics'))+
       row(t('待处理事件','Queued events'),number(m.pending))+row(t('待处理命令 ACK','Queued command ACKs'),number(m.ack))+
+      row(t('最早事件等待','Oldest event waiting'),age(s.oldestPendingEventAt||s.pendingEventTasks?.[0]?.queuedAt))+
+      row(t('最早回执等待','Oldest acknowledgement waiting'),age(s.oldestPendingAckAt))+
+      row(t('下次重试','Next retry'),time(s.nextRetryAt||s.nextSyncAllowedAt))+
+      row(t('上次凭据确认','Credential confirmed'),time(device.tokenIssuedAt))+
+      (recovery.length?'<ol class="node-recovery-actions">'+recovery.map(a=>'<li>'+e(zh?a.zh:a.en)+'</li>').join('')+'</ol>':'')+
       '<details class="node-tasks-details"><summary>'+t('查看任务明细','Task details')+'</summary>'+queue+'</details>'+
       (issues.length?'<div class="node-problems">'+issues.map(i=>'<p>'+icon('alert')+'<strong>'+e(i.type)+'</strong> '+e(i.detail)+'</p>').join('')+'</div>':
       '<p class="node-positive node-check">'+icon('shield')+' '+t('未报告同步或状态采集错误','No sync or collection errors reported')+'</p>')+

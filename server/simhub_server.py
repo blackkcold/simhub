@@ -800,6 +800,14 @@ def sanitize_state(body: Any) -> dict[str,Any]:
         v=body.get(k)
         if isinstance(v,(str,int,float,bool)) or v is None:
             out[k]=v
+    # Recovery metadata is bounded and never contains a token, task ID or SMS.
+    for key in ("oldestPendingEventAt", "oldestPendingAckAt", "nextRetryAt", "tokenRotationExpiresAt"):
+        value=body.get(key)
+        maximum=now()+300 if key.startswith("oldest") else now()+366*86400
+        if type(value) is int and 0<=value<=maximum:
+            out[key]=value
+    if type(body.get("pendingTokenRotation")) is bool:
+        out["pendingTokenRotation"]=body["pendingTokenRotation"]
     sampled=out.get("sampledAt")
     if type(sampled) is not int or sampled<=0 or sampled>now()+300:
         out.pop("sampledAt",None)
@@ -2023,6 +2031,9 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 "pendingKeyId":r["pending_key_id"] or None,"pendingWrappedKey":safe_json_loads(r["pending_wrapped_key_json"],{}) if r["pending_key_id"] else None,
                 "createdAt":r["created_at"],"lastSeenAt":r["last_seen_at"],"offlineAfterSeconds":offline_after,"online":bool(not r["revoked_at"] and not r["reset_requested_at"] and ts-last<=offline_after),"revoked":bool(r["revoked_at"]),
                 "resetRequestedAt":r["reset_requested_at"] or None,"resetSource":r["reset_source"],
+                "lifecycleStatus":"reset_pending" if r["reset_requested_at"] else ("revoked" if r["revoked_at"] else "active"),
+                "pendingTokenRotation":bool(r["pending_token_hash"]),
+                "tokenRotationExpiresAt":r["pending_token_expires_at"] if r["pending_token_hash"] else None,
                 "smsCount":sms_counts.get(r["id"],0),"smsPurgeAt":r["sms_purged_before"],"smsEpoch":r["sms_epoch"],
                 "state":safe_json_loads(r["state_json"],{}) if r["state_json"] else None,
                 "historicalWrappedKeys": [

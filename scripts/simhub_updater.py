@@ -291,7 +291,7 @@ def database_schema():
 
 
 def backup_database():
-    save("backup")
+    save("backup", backupVerified=False)
     backups = STATE_DIR / "backups"
     backups.mkdir(mode=0o700, exist_ok=True)
     os.chmod(backups, 0o700)
@@ -310,8 +310,11 @@ def backup_database():
             compose("cp", "simhub:" + remote, str(target))
             os.chmod(target, 0o600)
             verified = verify_database(target)
-            write_checksum(target)
-            save("backup", backupVerified=True, backupSchemaVersion=verified["schemaVersion"])
+            checksum=write_checksum(target).read_text("utf-8").split()[0]
+            save("backup", backupVerified=True, backupSchemaVersion=verified["schemaVersion"],
+                 lastBackup={"createdAt":int(time.time()),"sha256":checksum,
+                             "schemaVersion":verified["schemaVersion"],"bytes":target.stat().st_size,
+                             "integrityChecked":True,"restoreChecked":False})
             return str(target)
         except BaseException:
             target.unlink(missing_ok=True)
@@ -368,7 +371,7 @@ def job(version):
     switched = False
     try:
         require_rootless()
-        save("checking", requested=version, error=None)
+        save("checking", requested=version, error=None, backupVerified=False, backupSchemaVersion=None)
         info = latest()
         if not channel_version(version) or version != info["version"] or parse_version(version) <= parse_version(current_version()):
             raise ValueError("Only a newer latest stable release may be deployed")

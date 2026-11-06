@@ -234,7 +234,7 @@ async function loadVaultSettings(){
     const result=await ensureVaultSettings().load({v:1,phoneOverrides,channelAliases});
     if(epoch!==securityEpoch||!vaultKey)return;
     phoneOverrides=result.settings.phoneOverrides;channelAliases=result.settings.channelAliases;
-    remoteSettingsAvailable=true;
+    remoteSettingsAvailable=true;if($('metadataSyncStatus'))$('metadataSyncStatus').textContent=getLocale()==='zh-CN'?'SIM 标签已加密同步':'SIM labels synchronized with end-to-end encryption';
   }catch(error){
     if(error.status===404&&error.code==='not_found'){remoteSettingsAvailable=false;return;}
     throw error;
@@ -566,7 +566,7 @@ function purgeSensitiveUI(){
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
-  for(const id of ['sendIntentList','replyDraftStatus'])$(id)?.replaceChildren();
+  for(const id of ['sendIntentList','replyDraftStatus','backupStatus','metadataSyncStatus','updateStatus','updateAgentHelp'])$(id)?.replaceChildren();
   const lifecycle=$('lifecycleHistory');if(lifecycle)lifecycle.replaceChildren();
   const badge=$('smsUnreadBadge');if(badge){badge.textContent='';badge.hidden=true;}
   if($('notifyHistoryList'))$('notifyHistoryList').replaceChildren();
@@ -591,7 +591,7 @@ function lockVault(broadcast=true){
   simProfileIndex.clear();simProfileIndexVersion='';lastSeq=0;oldestSeq=0;
   initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
-  clearTimeout(refreshTimer);refreshTimer=null;
+  clearTimeout(refreshTimer);refreshTimer=null;clearTimeout(updatePolling);updatePolling=null;
   if(eventSource){eventSource.close();eventSource=null;}
   $('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;
   clearTrustedVault();
@@ -803,7 +803,7 @@ let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
   const epoch=securityEpoch;
-  refreshing=(async()=>{try{await loadVaultSettings();if(epoch!==securityEpoch||!vaultKey)return;await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
+  refreshing=(async()=>{try{try{await loadVaultSettings();}catch(error){if(epoch===securityEpoch&&vaultKey&&$('metadataSyncStatus'))$('metadataSyncStatus').textContent='SIM 标签同步暂不可用 / SIM label sync unavailable: '+error.message;}if(epoch!==securityEpoch||!vaultKey)return;await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
@@ -931,7 +931,7 @@ async function loadLifecycleHistory(){
   const result=await api('/api/v1/audit?limit=200');
   const container=$('lifecycleHistory');
   if(!container||!vaultKey||epoch!==securityEpoch)return;
-  const relevant=(result.audit||[]).filter(row=>row.action.startsWith('device.reset.')||row.action==='device.sms.purge').slice(0,20);
+  const relevant=(result.audit||[]).filter(row=>row.action.startsWith('device.reset.')||row.action.startsWith('device.revoke')||row.action.startsWith('device.token.')||row.action==='device.sms.purge').slice(0,20);
   container.textContent=relevant.map(row=>fmtTime(row.occurred_at)+' · '+row.action+' · '+row.target).join('\n')||'暂无设备清理记录';
 }
 function resetEventCache(){
@@ -945,10 +945,12 @@ function resetEventCache(){
 let updatePolling=null;
 async function refreshUpdateInfo(force=false){
   const zh=getLocale()==='zh-CN', el=$('updateStatus');
-  if(!el)return;
+  if(!el||!vaultKey)return;
+  const epoch=securityEpoch;
   el.textContent=zh?'正在查询版本信息…':'Checking available updates…';
   let result;
-  try{result=await api('/api/v1/update'+(force?'?refresh=1':''));}catch(error){el.textContent=(zh?'检查失败：':'Check failed: ')+error.message;return;}
+  try{result=await api('/api/v1/update'+(force?'?refresh=1':''));}catch(error){if(epoch===securityEpoch&&vaultKey)el.textContent=(zh?'检查失败：':'Check failed: ')+error.message;return;}
+  if(epoch!==securityEpoch||!vaultKey)return;
   const phase=result.phase||'idle', latest=result.latest||null;
   const states={queued:'排队中',checking:'检查版本',downloading:'下载中',
     verifying_image:'验证签名并拉取镜像',verified_image:'已验证镜像',backup:'备份数据',switching:'切换容器',
@@ -976,6 +978,11 @@ async function refreshUpdateInfo(force=false){
     '安全更新未启用：请迁移到 Rootless Docker，以普通用户运行 scripts/install-updater.sh；不支持旧版 root 更新器。':
     'Verified updater unavailable. Configure rootless Docker and run scripts/install-updater.sh without sudo; legacy root updater is disabled.');
   if(result.agentError)$('updateAgentHelp').textContent+=' · '+result.agentError;
+  const backup=result.lastBackup,backupStatus=$('backupStatus');
+  if(backupStatus)backupStatus.textContent=backup?.integrityChecked===true&&/^[a-f0-9]{64}$/.test(backup.sha256||'')?
+    (zh?'最近升级备份：':'Last upgrade backup: ')+fmtTime(backup.createdAt)+' · '+Math.ceil(Number(backup.bytes||0)/1024)+' KiB · '+(zh?'数据库版本 ':'DB schema ')+Number(backup.schemaVersion)+'\nSHA-256: '+backup.sha256+'\n'+
+      (zh?'完整性已校验；恢复演练需在部署主机执行 verify_backup.py --restore-check。':'Integrity checked; run verify_backup.py --restore-check on the deployment host for a restore rehearsal.'):
+    (zh?'更新器尚未报告已校验的备份。可在部署主机运行 scripts/backup.sh，并用 scripts/verify_backup.py --restore-check 验证恢复。':'No verified backup reported by the updater. Run scripts/backup.sh and scripts/verify_backup.py --restore-check on the deployment host.');
   clearTimeout(updatePolling);
   if(['queued','checking','downloading','building','verifying_image','verified_image','backup','switching','verifying','rolling_back'].includes(phase))
     updatePolling=setTimeout(()=>refreshUpdateInfo().catch(e=>toast(e.message)),3500);
@@ -1596,7 +1603,7 @@ async function queueCommand(deviceId,type,payload,ttl,draftId='compose'){const e
   const minimumTtl=(!power.foregroundRelay||energy==='eco')?1200:(energy==='balanced'?300:180);
   ttl=Math.max(ttl||120,minimumTtl);
   if(type==='sms.send')return ensureSendCoordinator().submit({draftId,deviceId,payload,ttl});
-  const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
+  const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked');return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
 async function sendSms(draftId='compose'){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前是只读短信模式，不能发送');if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
   if(!confirm((getLocale()==='zh-CN'?'该设备使用省电/非前台模式，发送可能延迟约 15 分钟。请确认接收方及发送时效要求。':'This device may check remote commands only every 15 minutes. Confirm the recipient and acceptable delay.')))return;
 }

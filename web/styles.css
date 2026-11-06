@@ -723,3 +723,7 @@ dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:c
 .send-intent p { margin:6px 0; }
 .send-intent small { overflow-wrap:anywhere; }
 .draft-status { margin:4px 0;font-size:12px; }
+.node-recovery-actions { padding-inline-start:22px;margin:14px 0; }
+.node-recovery-actions li { margin:8px 0;line-height:1.5; }
+
+.backup-status { white-space:pre-line;overflow-wrap:anywhere; }

@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -150,9 +151,8 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
     var loadedLocationDevice by remember(selected){mutableStateOf("")}
     var locationSample by remember(selected){mutableStateOf<ControllerLocationSample?>(null)}
-    val nativeLabel:(String,String)->String={zh,en->
-        if(context.resources.configuration.locales.get(0)?.language=="zh")zh else en
-    }
+    val nativeLanguage=LocalConfiguration.current.locales.get(0)?.language
+    val nativeLabel:(String,String)->String={zh,en->if(nativeLanguage=="zh")zh else en}
     var locationState by remember(selected){mutableStateOf(nativeLabel("尚未读取","Not loaded"))}
     var locationLoading by remember(selected){mutableStateOf(false)}
     var pendingManageAction by remember{mutableStateOf<Pair<JSONObject,String>?>(null)}

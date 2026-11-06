@@ -10,15 +10,15 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyManager;
+import androidx.annotation.RequiresApi;
+import androidx.annotation.RequiresPermission;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Signal callbacks are active only during the already running Relay service. */
 public final class SimSignalObserver {
     private final Context context;
-    private final List<TelephonyManager> managers=new ArrayList<>();
-    private final List<TelephonyCallback> callbacks=new ArrayList<>();
-    private final List<PhoneStateListener> legacy=new ArrayList<>();
+    private final List<Registration> registrations=new ArrayList<>();
     private SubscriptionManager subscriptions;
     private boolean started=false;
     private final SubscriptionManager.OnSubscriptionsChangedListener changes=
@@ -41,25 +41,17 @@ public final class SimSignalObserver {
         rebind();
     }
     private synchronized void rebind(){
-        for(int i=0;i<managers.size();i++){
-            try{
-                if(Build.VERSION.SDK_INT>=31)managers.get(i).unregisterTelephonyCallback(callbacks.get(i));
-                else managers.get(i).listen(legacy.get(i),PhoneStateListener.LISTEN_NONE);
-            }catch(Exception ignored){}
-        }
-        managers.clear();callbacks.clear();legacy.clear();
-        if(context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)!=PackageManager.PERMISSION_GRANTED)return;
+        clearRegistrations();
+        if(subscriptions==null||context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)!=PackageManager.PERMISSION_GRANTED)return;
         try{
             List<SubscriptionInfo> infos=subscriptions.getActiveSubscriptionInfoList();
             TelephonyManager base=context.getSystemService(TelephonyManager.class);
             if(infos==null||base==null)return;
             for(SubscriptionInfo info:infos){
-                if(managers.size()>=8)break;
+                if(registrations.size()>=8)break;
                 TelephonyManager tm=base.createForSubscriptionId(info.getSubscriptionId());
-                if(Build.VERSION.SDK_INT>=31){
-                    LevelCallback callback=new LevelCallback(context);
-                    tm.registerTelephonyCallback(context.getMainExecutor(),callback);
-                    managers.add(tm);callbacks.add(callback);
+                if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S){
+                    registrations.add(Api31.register(context,tm));
                 }else{
                     PhoneStateListener listener=new PhoneStateListener(){
                         @Override public void onSignalStrengthsChanged(SignalStrength signal){
@@ -67,7 +59,7 @@ public final class SimSignalObserver {
                         }
                     };
                     tm.listen(listener,PhoneStateListener.LISTEN_SIGNAL_STRENGTHS);
-                    managers.add(tm);legacy.add(listener);
+                    registrations.add(()->tm.listen(listener,PhoneStateListener.LISTEN_NONE));
                 }
             }
         }catch(Exception ignored){}
@@ -76,19 +68,32 @@ public final class SimSignalObserver {
         if(!started)return;
         started=false;
         if(subscriptions!=null)try{subscriptions.removeOnSubscriptionsChangedListener(changes);}catch(Exception ignored){}
-        for(int i=0;i<managers.size();i++){
-            try{
-                if(Build.VERSION.SDK_INT>=31)managers.get(i).unregisterTelephonyCallback(callbacks.get(i));
-                else managers.get(i).listen(legacy.get(i),PhoneStateListener.LISTEN_NONE);
-            }catch(Exception ignored){}
-        }
-        managers.clear();callbacks.clear();legacy.clear();
+        clearRegistrations();
     }
-    private static final class LevelCallback extends TelephonyCallback implements TelephonyCallback.SignalStrengthsListener {
-        private final Context context;
-        LevelCallback(Context context){this.context=context;}
-        @Override public void onSignalStrengthsChanged(SignalStrength signal){
-            TelemetryPolicy.onObserved(context);
+    private void clearRegistrations(){
+        for(Registration registration:registrations){
+            try{registration.unregister();}catch(Exception ignored){}
+        }
+        registrations.clear();
+    }
+    private interface Registration { void unregister(); }
+
+    /** Only loaded from the SDK 31 branch; older releases keep PhoneStateListener. */
+    @RequiresApi(Build.VERSION_CODES.S)
+    private static final class Api31 {
+        @RequiresPermission(Manifest.permission.READ_PHONE_STATE)
+        static Registration register(Context context,TelephonyManager manager){
+            LevelCallback callback=new LevelCallback(context);
+            manager.registerTelephonyCallback(context.getMainExecutor(),callback);
+            return ()->manager.unregisterTelephonyCallback(callback);
+        }
+        @RequiresApi(Build.VERSION_CODES.S)
+        private static final class LevelCallback extends TelephonyCallback implements TelephonyCallback.SignalStrengthsListener {
+            private final Context context;
+            LevelCallback(Context context){this.context=context;}
+            @Override public void onSignalStrengthsChanged(SignalStrength signal){
+                TelemetryPolicy.onObserved(context);
+            }
         }
     }
 }

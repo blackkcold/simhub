@@ -45,7 +45,7 @@ public final class ReleaseUpdateSource {
                     if(out.size()+n>limit)throw new SecurityException("Update metadata exceeds limit");
                     out.write(chunk,0,n);
                 }
-                return out.toString(StandardCharsets.UTF_8);
+                return new String(out.toByteArray(), StandardCharsets.UTF_8);
             }
         }finally{connection.disconnect();}
     }

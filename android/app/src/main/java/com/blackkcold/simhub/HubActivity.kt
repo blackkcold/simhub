@@ -29,6 +29,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -253,8 +254,7 @@ class HubActivity: ComponentActivity(), HubController {
         val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
         poolFilter.addAction(EnrollmentManager.ACTION_ENROLLMENT_CHANGED)
         poolFilter.addAction(RelayForegroundService.ACTION_RELAY_STATE)
-        if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
-        else registerReceiver(poolObserver,poolFilter)
+        ContextCompat.registerReceiver(this,poolObserver,poolFilter,ContextCompat.RECEIVER_NOT_EXPORTED)
         // User-visible startup is permitted; recover an explicitly enabled
         // foreground relay if the OEM previously killed its process.
         if(AgentConfig(this).alwaysOn()&&AgentConfig(this).isEnrolled()&&
@@ -1034,10 +1034,10 @@ class HubActivity: ComponentActivity(), HubController {
         tools.compatibilityNote="已复制只读 ADB 命令。使用 Rish 时去掉 adb shell 前缀。"
     }
     override fun startCompanionAssociation(){
-        if(!CompatibilityPolicy.canOfferSelfManagedAssociation(
+        if(Build.VERSION.SDK_INT<33 || !CompatibilityPolicy.canOfferSelfManagedAssociation(
                 Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled()) ||
                 !CompatibilityManager.supportsSelfManagedAssociation(this)){
-            tools.compatibilityError="需要 Android 13+、已配对 Relay，且 ROM 支持 Companion Device Setup。"
+            tools.compatibilityError="需要 Android 13+、已配对 Relay、系统伴侣服务及系统授予的自管理关联权限。普通安装不会获得此系统权限。"
             return
         }
         if(CompatibilityManager.associationCount(this)>0){
@@ -1049,37 +1049,45 @@ class HubActivity: ComponentActivity(), HubController {
             .setMessage("将向 Android 请求自管理伴侣关联，需要系统授权确认。它不会自动读取 OTP，也不保证获得验证码实时访问豁免。仅对自己管理的可信设备进行关联。")
             .setNegativeButton("取消",null)
             .setPositiveButton("继续") { _,_ ->
-                try{
-                    val cdm=getSystemService(CompanionDeviceManager::class.java)
-                        ?:throw IllegalStateException("Companion service unavailable")
-                    val name=AgentConfig(this).deviceName().take(40)
-                    val request=AssociationRequest.Builder()
-                        .setSelfManaged(true)
-                        .setDisplayName("SIM Hub · "+name)
-                        .setSingleDevice(true).build()
-                    auditCompatibility("companion_association","requested")
-                    cdm.associate(request,mainExecutor,object:CompanionDeviceManager.Callback(){
-                        override fun onAssociationPending(intentSender:IntentSender){
-                            companionLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                        }
-                        override fun onAssociationCreated(associationInfo:AssociationInfo){
-                            auditCompatibility("companion_association","created")
-                            refreshCompatibility()
-                        }
-                        override fun onFailure(errorMessage:CharSequence?){
-                            auditCompatibility("companion_association","failed")
-                            tools.compatibilityError="系统拒绝伴侣关联："+
-                                (errorMessage?.toString()?.take(200) ?: "unknown")
-                            AppLogger.w(this@HubActivity,"Companion","Association callback failed")
-                        }
-                    })
-                }catch(error:Exception){
-                    auditCompatibility("companion_association","failed")
-                    AppLogger.e(this@HubActivity,"Companion","Association request rejected",error)
-                    tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName+
-                        (error.message?.take(180)?.let{" · "+it} ?: "")
-                }
+                if(Build.VERSION.SDK_INT>=33)requestCompanionAssociation()
             }.show()
+    }
+    @androidx.annotation.RequiresApi(33)
+    private fun requestCompanionAssociation(){
+        if(checkSelfPermission(Manifest.permission.REQUEST_COMPANION_SELF_MANAGED)!=PackageManager.PERMISSION_GRANTED){
+            tools.compatibilityError="当前安装未获得系统自管理伴侣权限。"
+            return
+        }
+        try{
+            val cdm=getSystemService(CompanionDeviceManager::class.java)
+                ?:throw IllegalStateException("Companion service unavailable")
+            val name=AgentConfig(this).deviceName().take(40)
+            val request=AssociationRequest.Builder()
+                .setSelfManaged(true)
+                .setDisplayName("SIM Hub · "+name)
+                .setSingleDevice(true).build()
+            auditCompatibility("companion_association","requested")
+            cdm.associate(request,mainExecutor,object:CompanionDeviceManager.Callback(){
+                override fun onAssociationPending(intentSender:IntentSender){
+                    companionLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                }
+                override fun onAssociationCreated(associationInfo:AssociationInfo){
+                    auditCompatibility("companion_association","created")
+                    refreshCompatibility()
+                }
+                override fun onFailure(errorMessage:CharSequence?){
+                    auditCompatibility("companion_association","failed")
+                    tools.compatibilityError="系统拒绝伴侣关联："+
+                        (errorMessage?.toString()?.take(200) ?: "unknown")
+                    AppLogger.w(this@HubActivity,"Companion","Association callback failed")
+                }
+            })
+        }catch(error:Exception){
+            auditCompatibility("companion_association","failed")
+            AppLogger.e(this,"Companion","Association request rejected",error)
+            tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName+
+                (error.message?.take(180)?.let{" · "+it} ?: "")
+        }
     }
     override fun removeCompanionAssociations(){
         AlertDialog.Builder(this)

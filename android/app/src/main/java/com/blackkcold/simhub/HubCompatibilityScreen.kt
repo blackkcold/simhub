@@ -206,12 +206,17 @@ fun HubCompatibilityScreen(
                 style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             CompatibilityValue(hubLabel("CDM 系统支持","CDM availability"),
-                if(status?.optBoolean("associationSupported")==true)hubLabel("可申请","Available") else hubLabel("系统不支持","Unsupported"))
+                when {
+                    status?.optBoolean("associationSupported")==true -> hubLabel("可申请","Available")
+                    (status?.optInt("sdk",0)?:0)>=33 && status?.optBoolean("associationPermissionGranted")!=true ->
+                        hubLabel("未获系统专属权限","System permission not granted")
+                    else -> hubLabel("系统不支持","Unsupported")
+                })
             CompatibilityValue(hubLabel("SIM Hub 关联数","SIM Hub associations"),
                 (status?.optInt("associations",0)?:0).toString())
             Text(hubLabel(
-                "仅在已配对可信 Relay 后允许申请自管理关联，必须经 Android 系统确认。CDM 关联本身不证明获准实时读取任意第三方验证码。",
-                "Only offer self-managed association after trusted Relay enrollment. Android requires confirmation. An association alone does NOT prove unrestricted real-time OTP access."
+                "自管理关联还需要系统专属权限，普通安装无法获取；仅在系统实际授权且已配对可信 Relay 时可申请。此能力与短信 Companion 模式独立，CDM 关联本身不授予第三方验证码访问权限。",
+                "Self-managed association requires a system-only permission that ordinary installations cannot obtain. It is offered only with that grant and trusted Relay enrollment. This is separate from SMS Companion mode and does not grant access to third-party OTPs."
             ),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(9.dp))
             Button(onClick=controller::startCompanionAssociation,

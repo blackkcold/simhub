@@ -22,7 +22,7 @@ final class BoundedHttpReader {
                     throw new IOException("Relay response exceeds " + maxBytes + " bytes");
                 out.write(buffer, 0, count);
             }
-            return out.toString(StandardCharsets.UTF_8);
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
         }
     }
 }

@@ -32,13 +32,14 @@ import org.json.JSONObject
 import kotlinx.coroutines.flow.collect
 
 /**
- * Native presentation of controller-decrypted SMS; never persists SMS or Vault secrets.
- * Payloads arrive exclusively from a verified HTTPS main frame via WebMessageListener.
+ * Native presentation of messages decrypted by the authorized controller.
+ * This view holds plaintext in memory; durable workspaces are separately encrypted.
  */
 data class ControllerSms(
     val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,
     val inbound:Boolean,val device:String,val sim:String,val sourceId:String,val otp:String,val failed:Boolean,
-    val address:String
+    val address:String,val deviceId:String="",val channelId:String="",val channelRevision:Long=0,
+    val bodyTruncated:Boolean=false
 )
 class ControllerInboxState {
     val messages=mutableStateListOf<ControllerSms>()
@@ -52,6 +53,14 @@ class ControllerInboxState {
         private set
     fun clear() {
         messages.clear();unlocked=false;hasMore=false;hasNewer=false;warning=""
+    }
+    fun relabel(devices:List<JSONObject>){
+        val byId=devices.associateBy{it.optString("id")}
+        for(i in messages.indices){
+            val item=messages[i]
+            if(item.deviceId.isNotEmpty()&&item.channelId.isNotEmpty())messages[i]=item.copy(
+                sim=ControllerSourceLabel.name(byId[item.deviceId],item.channelId,item.channelRevision.toInt(),item.sim))
+        }
     }
     /** Returns false on *any* rejected payload. Callers must never advance an
      * event cursor until this method has accepted the complete batch. */
@@ -77,7 +86,7 @@ class ControllerInboxState {
                             str("body",4000),row.optLong("timestamp",0),
                             row.optBoolean("inbound",true),str("device",100),
                             str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false),
-                             str("address",120)
+                             str("address",120),str("deviceId",80),str("channelId",80),row.optLong("channelRevision",0)
                         ))
                     }
                     // Stable IDs keep loaded conversation history across refreshes and
@@ -110,7 +119,8 @@ class ControllerInboxState {
 @Composable
 fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                           onOlder:()->Unit,onNewer:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit,
-                           onReply:(String)->Unit,canCompose:Boolean,isLoading:Boolean=false) {
+                           onReply:(ControllerSms)->Unit,canCompose:Boolean,isLoading:Boolean=false,
+                           onSearchAll:((ControllerSearchFilter)->Unit)?=null) {
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var filtersExpanded by remember { mutableStateOf(false) }
@@ -198,6 +208,14 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
         if(activeThread==null && filtersExpanded) {
             OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),
                 label={Text(hubLabel("搜索已加载短信、号码与来源","Search loaded SMS, numbers and sources"))},singleLine=true)
+            Text(hubLabel("当前只搜索已加载的 ${state.messages.size} 条，未覆盖全部历史。",
+                "Only the ${state.messages.size} loaded messages are searched here; history coverage is partial."),
+                modifier=Modifier.padding(horizontal=16.dp,vertical=4.dp),
+                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(onSearchAll!=null)OutlinedButton(onClick={onSearchAll(ControllerSearchFilter(query.take(200),otpOnly,sourceFilter))},
+                modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp)){
+                Text(hubLabel("搜索所有可用历史","Search all available history"))
+            }
             Row(Modifier.padding(horizontal=16.dp,vertical=7.dp),
                 horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 FilterChip(selected=!otpOnly,onClick={otpOnly=false},label={Text(hubLabel("全部短信","All messages"))})
@@ -231,7 +249,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 Text(conversation.lastOrNull()?.sender.orEmpty(),modifier=Modifier.weight(1f),
                     fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                 if(canCompose && conversation.lastOrNull()?.address?.isNotBlank()==true)
-                    IconButton(onClick={onReply(conversation.last().address)}){
+                    IconButton(onClick={onReply(conversation.last())}){
                         HubIcon(R.drawable.ic_hub_send,Modifier.size(20.dp),
                             description=hubLabel("回复此会话","Reply in conversation"))
                     }

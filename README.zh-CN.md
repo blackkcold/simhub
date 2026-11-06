@@ -88,6 +88,9 @@ Web「设置 → 系统版本」支持通过独立 **Rootless Docker** 更新器
 | 功能 | 最新能力 |
 |---|---|
 | **短信与验证码** | 本机及远程短信会话、可见 OTP 识别/复制、会话聚合、来源设备/SIM 标签、筛选与历史分页；按短信工作模式展示发送功能 |
+| **可恢复发送中心** | 加密草稿和固定发送任务可在重载后恢复；重试先核对原命令，保留设备/SIM 来源，明确展示未确认的发送结果 |
+| **私密历史检索** | 在本机搜索 Relay 保留的全部可用短信，支持停止扫描与范围提示；搜索词和明文索引不上传 Relay |
+| **跨终端 SIM 标签** | 端到端加密同步别名与号码标签，Web 与原生管理中心共享；标签变化不改变实际发送来源 |
 | **Android 原生 UI** | SIM 节点与管理中心共用 Compose 导航架构，角色配色区分、功能卡片、原生设备详情、大屏折叠屏适配 |
 | **设备与 SIM** | Android / Linux 蜂窝 Modem 节点；SIM Channel ID 与 Revision、信号、充电、电量、Wi-Fi、版本与在线状态 |
 | **设备遥测与位置** | 电量、Wi-Fi、SIM 信号可视化；按需单次定位并以 Node Key 加密。远程定位需单独授权，OSM 地图仅主动点击加载。[详情](docs/DEVICE_TELEMETRY_LOCATION.md) |
@@ -132,7 +135,7 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 ## 系统兼容实验室
 
-Android「设置 → 系统兼容实验室」提供短信角色与权限、SMS Provider、只读 OTP AppOps、兼容性审计、厂商后台设置和受系统确认的 **Companion Device 关联**。
+Android「设置 → 系统兼容实验室」提供短信角色与权限、SMS Provider、只读 OTP AppOps、兼容性审计、厂商后台设置，以及本应用已有 **Companion Device 关联**的查看与清理。普通 APK 无法创建需要系统专属权限的 CDM 自管理关联；短信 Companion 模式仍可正常使用。
 
 可选使用官方 **Shizuku** 授权本机执行 Shell：点击预设诊断任务，开发者模式可输入命令，查看命令输出、错误日志和退出状态。**Shizuku 仅在本机经明确授权运行，服务器无法远程执行；Shizuku/CDM 也不能豁免 Android 的 OTP 安全策略。** 详见 [兼容性说明](docs/COMPATIBILITY_LAB.md)。
 

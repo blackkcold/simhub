@@ -37,12 +37,18 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import serial
 from serial.tools import list_ports
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/config.json"))
 DEFAULT_DB = Path(os.getenv("SIMHUB_MODEM_DB", "/var/lib/simhub-modem/agent.db"))
 POLL_SECONDS = max(3, int(os.getenv("SIMHUB_MODEM_POLL_SECONDS", "10")))
 MAX_SMS_PER_CYCLE = max(10, min(int(os.getenv("SIMHUB_MODEM_MAX_SMS_PER_CYCLE", "200")), 5000))
 TOKEN_ROTATE_AFTER = 60 * 86400
+EVENT_BATCH_SIZE = 20
+EVENT_BATCH_BYTES = 900_000
+EVENT_BATCHES_PER_CYCLE = 2
+ACKS_PER_FLUSH = 10
+COMMANDS_PER_CYCLE = 10
+NETWORK_PHASE_SECONDS = 5
 
 
 def now() -> int:
@@ -361,7 +367,7 @@ class Store:
         return cur.rowcount > 0 or self.db.execute("SELECT 1 FROM events WHERE id=?", (event_id,)).fetchone() is not None
 
     def pending_events(self, limit: int = 200) -> list[dict[str, Any]]:
-        rows = self.db.execute("SELECT * FROM events ORDER BY created_at ASC LIMIT ?", (limit,)).fetchall()
+        rows = self.db.execute("SELECT * FROM events ORDER BY created_at ASC,id ASC LIMIT ?", (limit,)).fetchall()
         return [
             {
                 "eventId": r["id"],
@@ -376,8 +382,17 @@ class Store:
         ]
 
     def mark_event_sent(self, event_id: str) -> None:
-        self.db.execute("DELETE FROM events WHERE id=?", (event_id,))
-        self.db.commit()
+        self.mark_events_sent([event_id])
+
+    def mark_events_sent(self, event_ids: list[str]) -> None:
+        with self.db:
+            self.db.executemany("DELETE FROM events WHERE id=?",[(value,) for value in event_ids])
+
+    def queue_health(self) -> dict[str,Any]:
+        return {"pendingEvents":self.db.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+                "pendingCommandAcks":self.db.execute("SELECT COUNT(*) FROM command_acks").fetchone()[0],
+                "pendingEventTasks":[{"kind":row["kind"],"queuedAt":row["created_at"]}
+                    for row in self.db.execute("SELECT kind,created_at FROM events ORDER BY created_at,id LIMIT 10")]}
 
     def seen(self, local_id: str) -> bool:
         return self.db.execute("SELECT 1 FROM seen_sms WHERE local_id=?", (local_id,)).fetchone() is not None
@@ -465,8 +480,8 @@ class Store:
         for row in rows:
             self.finish_command_and_queue_ack(row["id"],"sent",{"reason":"recovered_sent_event"})
 
-    def pending_acks(self) -> list[sqlite3.Row]:
-        return self.db.execute("SELECT * FROM command_acks ORDER BY updated_at ASC LIMIT 200").fetchall()
+    def pending_acks(self, limit: int = 200) -> list[sqlite3.Row]:
+        return self.db.execute("SELECT * FROM command_acks ORDER BY updated_at ASC,command_id ASC LIMIT ?",(limit,)).fetchall()
 
     def mark_ack_sent(self, command_id: str, state: str) -> None:
         self.db.execute("DELETE FROM command_acks WHERE command_id=? AND state=?", (command_id,state))
@@ -1116,6 +1131,24 @@ def transient_relay_error(error: Exception) -> bool:
     return False
 
 
+def relay_http_status(error: Exception) -> int | None:
+    match=re.match(r"^relay HTTP (\d{3}):",str(error)) if isinstance(error,RuntimeError) else None
+    return int(match.group(1)) if match else None
+
+
+def event_was_acknowledged(receipt: Any, event_id: str) -> bool:
+    """Validate the exact receipt before retiring encrypted local data."""
+    if not isinstance(receipt,dict) or receipt.get("accepted") is not True or receipt.get("eventId")!=event_id:
+        return False
+    sequence=receipt.get("serverSequence")
+    disposition=receipt.get("receiptState")
+    if disposition is not None and disposition not in {"stored","duplicate","suppressed"}:
+        return False
+    if receipt.get("suppressed") is True or disposition=="suppressed":
+        return type(sequence) is int and sequence==0 and disposition in {None,"suppressed"}
+    return type(sequence) is int and sequence>0
+
+
 class Agent:
     def __init__(self, config_path: Path, db_path: Path) -> None:
         self.config_path = config_path
@@ -1250,53 +1283,88 @@ class Agent:
             return True
         return False
 
-    def rotate_device_token(self) -> None:
-        ts=now()
+    def _save_token_state(self, updated: dict[str,Any]) -> None:
+        # Retain a local reset requested by the CLI while a network call was
+        # in flight. Publish the new in-memory credential only after fsync.
+        current=load_json(self.config_path)
+        if current.get("deviceId")==updated.get("deviceId") and current.get("resetPending"):
+            updated["resetPending"]=True
+        atomic_write_json(self.config_path,updated)
+        self.config=updated
+        self.relay.device_token=str(updated["deviceToken"])
+
+    def _lifecycle(self, token_override: str | None = None) -> dict[str,Any]:
+        try:
+            state=self.relay.request("GET",f"/api/v1/devices/{self.config['deviceId']}/lifecycle",
+                                     token_override=token_override)
+        except RuntimeError as error:
+            if relay_http_status(error)==410:
+                self.config["resetPending"]=True
+                self._clear_enrollment(self._preserve_pending())
+            raise
+        if state.get("resetRequired") is True:
+            updated={**self.config,"resetPending":True}
+            if token_override:
+                # Lifecycle proved this exact credential is cleanup-only.
+                # Persist it for a retried reset, never for normal business work.
+                updated["deviceToken"]=token_override
+            self._save_token_state(updated)
+            self._finish_reset()
+        return state
+
+    def recover_pending_device_token(self) -> bool:
+        """Resolve an interrupted commit before using either credential normally."""
         pending=str(self.config.get("pendingDeviceToken") or "")
-        pending_exp=int(self.config.get("pendingTokenExpiresAt",0) or 0)
-        if pending:
-            if pending_exp<=ts:
-                self.config.pop("pendingDeviceToken",None)
-                self.config.pop("pendingTokenExpiresAt",None)
-                self.config["tokenRotationPending"]=False
-                atomic_write_json(self.config_path,self.config)
+        if not pending:
+            return False
+        try:
+            # A committed token is current forever until rotated/revoked; its
+            # old prepare expiry is not evidence that the commit failed.
+            committed=self.relay.request("POST",
+                f"/api/v1/devices/{self.config['deviceId']}/token/commit",{},token_override=pending)
+        except RuntimeError as commit_error:
+            if relay_http_status(commit_error) not in {401,403,409}:
+                raise
+            try:
+                candidate=self._lifecycle(token_override=pending)
+            except RuntimeError as lifecycle_error:
+                if relay_http_status(lifecycle_error) not in {401,403}:
+                    raise
             else:
-                committed=self.relay.request(
-                    "POST",
-                    f"/api/v1/devices/{self.config['deviceId']}/token/commit",
-                    {},
-                    token_override=pending,
-                )
-                self.config["deviceToken"]=pending
-                self.relay.device_token=pending
-                self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
-                self.config["tokenRotationPending"]=False
-                self.config.pop("pendingDeviceToken",None)
-                self.config.pop("pendingTokenExpiresAt",None)
-                atomic_write_json(self.config_path,self.config)
-                return
+                # A recognized but non-reset candidate with a refused commit is
+                # inconsistent. Keep the journal and wait for reconciliation.
+                raise commit_error
+            # Only a rejected candidate AND a recognized old credential prove
+            # the pending token can be discarded. 404/offline is not that proof.
+            current=self._lifecycle()
+            if current.get("status")!="active" or current.get("resetRequired") is not False:
+                raise RuntimeError("relay credential recovery status is ambiguous")
+            updated={**self.config,"tokenRotationPending":False}
+            updated.pop("pendingDeviceToken",None)
+            updated.pop("pendingTokenExpiresAt",None)
+            self._save_token_state(updated)
+            return False
+        if committed.get("ok") is not True:
+            raise RuntimeError("relay token commit receipt is ambiguous")
+        updated={**self.config,"deviceToken":pending,
+                 "tokenIssuedAt":int(committed.get("tokenIssuedAt",now())),"tokenRotationPending":False}
+        updated.pop("pendingDeviceToken",None)
+        updated.pop("pendingTokenExpiresAt",None)
+        self._save_token_state(updated)
+        return True
+
+    def rotate_device_token(self) -> None:
+        if self.recover_pending_device_token():
+            return
+        ts=now()
         issued=int(self.config.get("tokenIssuedAt",0) or 0)
         if issued>0 and ts-issued<TOKEN_ROTATE_AFTER:
             return
         prepared=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/prepare",{})
         pending=str(prepared["deviceToken"])
-        self.config["pendingDeviceToken"]=pending
-        self.config["pendingTokenExpiresAt"]=int(prepared.get("expiresAt",ts+3600))
-        self.config["tokenRotationPending"]=True
-        atomic_write_json(self.config_path,self.config)
-        committed=self.relay.request(
-            "POST",
-            f"/api/v1/devices/{self.config['deviceId']}/token/commit",
-            {},
-            token_override=pending,
-        )
-        self.config["deviceToken"]=pending
-        self.relay.device_token=pending
-        self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
-        self.config["tokenRotationPending"]=False
-        self.config.pop("pendingDeviceToken",None)
-        self.config.pop("pendingTokenExpiresAt",None)
-        atomic_write_json(self.config_path,self.config)
+        self._save_token_state({**self.config,"pendingDeviceToken":pending,
+            "pendingTokenExpiresAt":int(prepared.get("expiresAt",ts+3600)),"tokenRotationPending":True})
+        self.recover_pending_device_token()
 
     def receive(self) -> None:
         for sms in self.adapter.list_sms():
@@ -1350,23 +1418,76 @@ class Agent:
         for group_id in self.store.stale_multipart_groups(86400):
             self._emit_multipart_group(group_id,force=True)
 
-    def flush_events(self) -> None:
-        for event in self.store.pending_events():
-            response = self.relay.request("POST", f"/api/v1/devices/{self.config['deviceId']}/events", event)
-            if response.get("accepted"):
-                self.store.mark_event_sent(str(event["eventId"]))
+    def flush_events(self) -> int:
+        """Bound bulk work so an old inbox cannot starve command/health traffic."""
+        deadline=time.monotonic()+NETWORK_PHASE_SECONDS
+        sent=0
+        for _ in range(EVENT_BATCHES_PER_CYCLE):
+            if time.monotonic()>=deadline:
+                break
+            batch=[];size=len(b'{"events":[]}')
+            for event in self.store.pending_events(EVENT_BATCH_SIZE):
+                encoded=len(json.dumps(event,separators=(",",":")).encode())+1
+                if size+encoded>EVENT_BATCH_BYTES:
+                    if not batch:
+                        raise ValueError("Encrypted event exceeds the upload budget")
+                    break
+                batch.append(event);size+=encoded
+            if not batch:
+                break
+            try:
+                response=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/events/batch",{"events":batch})
+            except RuntimeError as error:
+                if relay_http_status(error) not in {404,405}:
+                    raise
+                # Older Relays retain the single-event API. Reuse each exact
+                # identity, and bound this compatibility path as well.
+                for event in batch[:10]:
+                    if time.monotonic()>=deadline:
+                        break
+                    receipt=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/events",event)
+                    if not event_was_acknowledged(receipt,str(event["eventId"])):
+                        raise RuntimeError("relay event receipt is ambiguous")
+                    self.store.mark_event_sent(str(event["eventId"]));sent+=1
+                return sent
+            results=response.get("results")
+            if response.get("accepted") is not True or not isinstance(results,list):
+                raise RuntimeError("relay batch receipt is ambiguous")
+            requested={str(event["eventId"]) for event in batch};seen=set();acknowledged=[]
+            for receipt in results:
+                event_id=receipt.get("eventId") if isinstance(receipt,dict) else None
+                if not isinstance(event_id,str) or event_id not in requested or event_id in seen:
+                    raise RuntimeError("relay batch receipt identity mismatch")
+                seen.add(event_id)
+                if event_was_acknowledged(receipt,event_id):
+                    acknowledged.append(event_id)
+            self.store.mark_events_sent(acknowledged)
+            sent+=len(acknowledged)
+            if len(acknowledged)!=len(batch):
+                # A partial response only acknowledges those exact items. Keep
+                # every missing or unconfirmed item for a later idempotent retry.
+                break
+        return sent
 
-    def flush_acks(self) -> None:
-        for row in self.store.pending_acks():
-            self.relay.request(
+    def flush_acks(self) -> int:
+        deadline=time.monotonic()+NETWORK_PHASE_SECONDS
+        sent=0
+        for row in self.store.pending_acks(ACKS_PER_FLUSH):
+            if time.monotonic()>=deadline:
+                break
+            response=self.relay.request(
                 "POST",
                 f"/api/v1/devices/{self.config['deviceId']}/commands/{row['command_id']}/ack",
                 {"state": row["state"], "result": json.loads(row["result_json"])},
             )
+            if response.get("ok") is not True:
+                raise RuntimeError("relay command acknowledgement receipt is ambiguous")
             self.store.mark_ack_sent(str(row["command_id"]),str(row["state"]))
+            sent+=1
+        return sent
 
     def process_commands(self) -> None:
-        data = self.relay.request("GET", f"/api/v1/devices/{self.config['deviceId']}/commands/pending?limit=50")
+        data = self.relay.request("GET", f"/api/v1/devices/{self.config['deviceId']}/commands/pending?limit={COMMANDS_PER_CYCLE}")
         for env in data.get("commands", []):
             command_id = str(env.get("commandId", ""))
             if not command_id:
@@ -1426,7 +1547,7 @@ class Agent:
                     self.store.finish_command_and_queue_ack(command_id,"succeeded",{"refreshed":True})
                 elif ctype == "diagnostics.request":
                     stamp=now(); event_id="diag-"+command_id
-                    data={"requestId":command_id,"diagnosticAt":stamp,"nodeType":"modem","adapter":self.adapter.name,"pendingEvents":len(self.store.pending_events(1000))}
+                    data={"requestId":command_id,"diagnosticAt":stamp,"nodeType":"modem","adapter":self.adapter.name,**self.store.queue_health()}
                     cipher=self.encrypt_event(event_id,"device.diagnostics",stamp,False,data)
                     self.store.queue_event(event_id,"device.diagnostics",stamp,self.channel_id,False,{},cipher)
                     self.store.finish_command_and_queue_ack(command_id,"succeeded",{"adapter":self.adapter.name})
@@ -1456,7 +1577,7 @@ class Agent:
             "appVersion": VERSION,
             "model": state.get("displayName", "Linux Modem"),
             "network": "CELLULAR",
-            "pendingEvents": len(self.store.pending_events(1000)),
+            **self.store.queue_health(),
             "cryptoKeyId": self.kid,
             "capabilities": ["sms.receive", "sms.send", "sms.history", "signal.basic", "signal.radio"],
             "channels": [channel],
@@ -1605,22 +1726,15 @@ class Agent:
             self.config["resetPending"]=True
             self._finish_reset()
         try:
-            state=self.relay.request("GET",f"/api/v1/devices/{self.config['deviceId']}/lifecycle")
+            self._lifecycle()
         except RuntimeError as exc:
-            if "relay HTTP 410:" in str(exc):
-                self.config["resetPending"]=True
-                archive=self._preserve_pending()
-                self._clear_enrollment(archive)
             if "relay HTTP 404:" in str(exc):
                 return  # Rolling upgrade against an older Relay
             raise
-        if state.get("resetRequired"):
-            self.config["resetPending"]=True
-            atomic_write_json(self.config_path,self.config)
-            self._finish_reset()
 
     def cycle(self) -> None:
         try:
+            self.recover_pending_device_token()
             self._check_reset()
             self.rotate_device_token()
         except (OSError,RuntimeError) as error:
@@ -1636,7 +1750,6 @@ class Agent:
         self.store.recover_interrupted_claims()
         self._sync_channel_identity()
         self.receive()
-        self.flush_events()
         self.flush_acks()
         self.process_commands()
         self.flush_acks()

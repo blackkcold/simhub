@@ -20,6 +20,14 @@ public class RemoteOtaPolicyTest {
         assertFalse(RemoteOtaPolicy.installationNeedsVerification("installing",100,200));
         assertFalse(RemoteOtaPolicy.installationNeedsVerification("awaiting_confirmation",100,1000));
     }
+    @Test public void workerRecoveryDoesNotConfuseInstallerWithDownload(){
+        assertTrue(RemoteOtaPolicy.requiresWorker("checking"));
+        assertTrue(RemoteOtaPolicy.requiresWorker("downloading"));
+        assertTrue(RemoteOtaPolicy.requiresWorker("verified"));
+        assertFalse(RemoteOtaPolicy.requiresWorker("installing"));
+        assertFalse(RemoteOtaPolicy.requiresWorker("awaiting_confirmation"));
+        assertFalse(RemoteOtaPolicy.requiresWorker("verification_pending"));
+    }
     @Test public void localConsentStillRequired() {
         assertFalse(RemoteOtaPolicy.canOffer(37,false,false));
         assertFalse(RemoteOtaPolicy.canOffer(35,true,false));

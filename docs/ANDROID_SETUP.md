@@ -158,4 +158,4 @@ Do **not** erase the Web Master Vault or its recovery key.
 
 ## Advanced diagnostics (v0.12.0)
 
-Open **Settings → System compatibility lab** for optional Shizuku status/authorization, Android 13+ self-managed CDM association, read-only OTP AppOp status, SMS Provider permission tests, manual rolling reconciliation and redacted audit export. These controls are **separate** from normal SMS permission management and never silently modify OEM SMS packages or Android OTP security restrictions. See [the compatibility lab guide](COMPATIBILITY_LAB.md).
+Open **Settings → System compatibility lab** for optional Shizuku status/authorization, inspection/removal of existing app-owned CDM associations on Android 13+, read-only OTP AppOp status, SMS Provider permission tests, manual rolling reconciliation and redacted audit export. Ordinary APK installations cannot create privileged CDM self-managed associations. These controls are **separate** from normal SMS permission management and never silently modify OEM SMS packages or Android OTP security restrictions. See [the compatibility lab guide](COMPATIBILITY_LAB.md).

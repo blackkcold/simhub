@@ -28,6 +28,7 @@ public final class SharedPoolClient {
     public static final String ACTION_CACHE_UPDATED="com.blackkcold.simhub.SHARED_SMS_CACHE_UPDATED";
     private static final int PAGE=100,UPLOAD=20;
     private static final SecureRandom RANDOM=new SecureRandom();
+    private static final java.util.Map<String,Store> STORES=new java.util.HashMap<>();
     private final Context context;
     private final AgentConfig config;
     private final SharedPreferences prefs;
@@ -37,22 +38,51 @@ public final class SharedPoolClient {
         this.context=context.getApplicationContext();
         config=new AgentConfig(this.context);
         prefs=this.context.getSharedPreferences(PREF,Context.MODE_PRIVATE);
-        store=new Store(this.context);
+        synchronized(STORES){store=STORES.computeIfAbsent(this.context.getDatabasePath("simhub-pool-cache.db").getAbsolutePath(),unused->new Store(this.context));}
+        synchronized(SharedPoolClient.class){
+            if(prefs.getInt("publication_version",0)<2&&!prefs.edit().putInt("publication_version",2)
+                .remove("initial_staged").remove("publish_cursor_date").remove("publish_cursor_id")
+                .remove("publish_initial_count").remove("publish_has_more").commit())
+                throw new IllegalStateException("Unable to migrate shared history progress");
+        }
     }
     /** Called on both local and remote enrollment reset. Never contacts the Relay. */
     public static void clearLocalForReset(Context c){
         SharedPoolClient client=new SharedPoolClient(c);
-        client.store.clear();
-        SecretStore secret=new SecretStore(c);
-        for(int epoch:client.epochs()){
-            try{secret.remove("pool-key-"+epoch);}
-            catch(Exception e){AppLogger.e(c,"SharedPool","Pool Key cleanup failed during reset",e);}
+        synchronized(SharedPoolClient.class){
+            List<Integer> oldEpochs=client.epochs();
+            boolean persisted=client.prefs.edit().clear().putString("privacy_generation",java.util.UUID.randomUUID().toString()).commit();
+            try{client.store.clear();}finally{client.removeKeys(oldEpochs);}
+            if(!persisted)throw new IllegalStateException("Unable to clear local pool settings");
         }
-        if(!client.prefs.edit().clear().commit())
-            throw new IllegalStateException("Unable to clear local pool settings");
     }
     public boolean optedIn(){return prefs.getBoolean("requested",false);}
     public boolean approved(){return optedIn()&&prefs.getBoolean("approved",false);}
+    /** A generation fences late crypto, network, history and cache work after consent changes. */
+    String privacyScope(){return config.server()+"|"+config.deviceId()+"|"+config.enrollmentGeneration()+"|"+prefs.getString("privacy_generation","legacy");}
+    private boolean sameScope(String expected){return config.isEnrolled()&&expected!=null&&expected.equals(privacyScope());}
+    private void requireScope(String expected,boolean approval)throws java.io.IOException{
+        if(!sameScope(expected)||!optedIn()||(approval&&!approved()))throw new java.io.IOException("sharing_scope_changed");
+    }
+    private void removeKeys(List<Integer> epochs){
+        SecretStore secrets=new SecretStore(context);
+        for(int epoch:epochs)try{secrets.remove("pool-key-"+epoch);}
+        catch(Exception error){AppLogger.e(context,"SharedPool","Pool Key cleanup failed",error);}
+    }
+    /** Caller holds the same lock as stage/cache commits; no network under this lock. */
+    private void invalidateLocal(boolean requested,boolean pendingDisable){
+        List<Integer> oldEpochs=epochs();
+        boolean persisted=prefs.edit().putString("privacy_generation",java.util.UUID.randomUUID().toString())
+            .putBoolean("requested",requested).putBoolean("approved",false).putBoolean("pending_disable",pendingDisable)
+            .putLong("last_download",0).putLong("oldest_download",0).remove("oldest_download_time")
+            .remove("older_has_more").remove("initial_staged").remove("publish_cursor_date").remove("publish_cursor_id")
+            .remove("publish_initial_count").remove("publish_has_more").remove("key_epochs").remove("current_epoch").commit();
+        try{store.clear();}finally{removeKeys(oldEpochs);}
+        if(!persisted)throw new IllegalStateException("Unable to persist shared-pool privacy state");
+    }
+    String disableLocalForPrivacy(){
+        synchronized(SharedPoolClient.class){invalidateLocal(false,true);return privacyScope();}
+    }
     public int pendingUploadCount(){return store.pendingCount();}
     /** A scheduled pool retry must be visible to the shared sync coordinator. */
     public boolean retryDue(){
@@ -60,6 +90,7 @@ public final class SharedPoolClient {
         return next>0&&next<=System.currentTimeMillis();
     }
     public void scheduleRetry(Exception error){
+        if("sharing_scope_changed".equals(error.getMessage())||"sharing_choice_changed".equals(error.getMessage()))return;
         int attempts=Math.min(7,prefs.getInt("retry_attempts",0)+1);
         long delay=Math.min(15*60*1000L,15000L*(1L<<Math.min(5,attempts-1)));
         if(error instanceof ApiClient.ApiFailure failure && failure.status==429)
@@ -79,46 +110,90 @@ public final class SharedPoolClient {
     private String path(){return "/api/v1/devices/"+config.deviceId()+"/pool";}
     private ApiClient client(){return new ApiClient(context);}
 
-    public synchronized void setEnabled(boolean value)throws Exception{
+    public void setEnabled(boolean value)throws Exception{
         if(!config.isEnrolled())throw new SecurityException("Pairing required");
         if(!value){
             // Privacy-first: stop local sharing immediately, even if Relay is offline.
-            if(!prefs.edit().putBoolean("requested",false).putBoolean("approved",false)
-                .putBoolean("pending_disable",true).putLong("last_download",0)
-                .putLong("oldest_download",0).remove("oldest_download_time")
-                .remove("older_has_more").remove("initial_staged").commit())
-                throw new IllegalStateException("Unable to persist sharing disable");
-            store.clear();
-            SecretStore secret=new SecretStore(context);
-            for(int epoch:epochs())secret.remove("pool-key-"+epoch);
-            prefs.edit().remove("key_epochs").remove("current_epoch").apply();
+            final String scope;
+            scope=disableLocalForPrivacy();
             try{
                 client().request("POST",path()+"/request",new JSONObject().put("enabled",false));
-                prefs.edit().putBoolean("pending_disable",false).apply();
+                synchronized(SharedPoolClient.class){if(sameScope(scope))prefs.edit().putBoolean("pending_disable",false).commit();}
             }catch(Exception error){
                 AppLogger.e(context,"SharedPool","Remote disable deferred until network resumes",error);
             }
             SyncJobService.scheduleNow(context);
             return;
         }
+        final String scope;
+        synchronized(SharedPoolClient.class){if(optedIn())return;scope=privacyScope();}
         client().request("POST",path()+"/request",new JSONObject().put("enabled",true));
-        prefs.edit().putBoolean("requested",true).putBoolean("approved",false)
-            .putBoolean("pending_disable",false).putLong("last_download",0)
-            .putLong("oldest_download",0).remove("oldest_download_time")
-            .remove("older_has_more").remove("initial_staged").apply();
+        synchronized(SharedPoolClient.class){
+            if(!sameScope(scope)){
+                if(config.isEnrolled()&&!optedIn())prefs.edit().putBoolean("pending_disable",true).commit();
+                SyncJobService.scheduleNow(context);
+                throw new java.io.IOException("sharing_choice_changed");
+            }
+            invalidateLocal(true,false);
+        }
         SyncJobService.scheduleNow(context);
     }
 
     /** Called after original local message was durably queued. Never performs IO over network. */
-    public static void stage(Context c,String eventId,long occurred,String channelId,JSONObject payload){
+    public static boolean needsStage(Context c,String eventId){
+        SharedPoolClient pool=new SharedPoolClient(c);
+        return pool.optedIn()&&pool.config.isEnrolled()&&!pool.store.hasSeen(eventId);
+    }
+    public static boolean stage(Context c,String eventId,long occurred,String channelId,JSONObject payload){
         try{
             SharedPoolClient pool=new SharedPoolClient(c);
-            if(!pool.optedIn()||!pool.config.isEnrolled())return;
-            JSONObject wrapped=new CryptoBox(c).encryptLocal(payload);
-            pool.store.stage(eventId,occurred,channelId,wrapped);
+            final String scope;
+            synchronized(SharedPoolClient.class){
+                if(!pool.optedIn()||!pool.config.isEnrolled()||pool.store.hasSeen(eventId))return true;
+                scope=pool.privacyScope();
+            }
+            return pool.stageInScope(scope,eventId,occurred,channelId,payload);
         }catch(Exception error){
             AppLogger.e(c,"SharedPool","Unable to queue protected local SMS",error);
+            return false;
         }
+    }
+    boolean stageInScope(String scope,String eventId,long occurred,String channelId,JSONObject payload)throws Exception{
+        synchronized(SharedPoolClient.class){requireScope(scope,false);}
+        JSONObject wrapped=new CryptoBox(context).encryptLocal(payload);
+        // stage() atomically deduplicates against both queued and uploaded IDs.
+        // Do not rely on a pre-encryption inspection of mutable store state.
+        synchronized(SharedPoolClient.class){requireScope(scope,false);store.stage(eventId,occurred,channelId,wrapped);}
+        return true;
+    }
+    long historyDate(){return prefs.getLong("publish_cursor_date",0);}
+    long historyId(){return prefs.getLong("publish_cursor_id",-1);}
+    int initialHistoryRemaining(){return Math.max(0,PAGE-prefs.getInt("publish_initial_count",0));}
+    boolean initialHistoryStaged(){return prefs.getBoolean("initial_staged",false);}
+    void historyRowStaged(String scope,long date,long id,boolean initial)throws java.io.IOException{
+        synchronized(SharedPoolClient.class){
+        requireScope(scope,true);
+        SharedPreferences.Editor edit=prefs.edit().putLong("publish_cursor_date",date).putLong("publish_cursor_id",id);
+        if(initial){
+            int count=prefs.getInt("publish_initial_count",0)+1;
+            edit.putInt("publish_initial_count",count);
+            if(count>=PAGE)edit.putBoolean("initial_staged",true);
+        }
+        if(!edit.commit())throw new IllegalStateException("Unable to persist shared history cursor");
+        }
+    }
+    void historyExhausted(String scope)throws java.io.IOException{
+        synchronized(SharedPoolClient.class){
+        requireScope(scope,true);
+        if(!prefs.edit().putBoolean("initial_staged",true).putBoolean("publish_has_more",false).commit())
+            throw new IllegalStateException("Unable to persist shared history completion");
+        }
+    }
+    public int stageOlderHistory(int requested){
+        if(!approved()||!prefs.getBoolean("publish_has_more",true))return 0;
+        int count=SmsHistorySync.syncSharedHistory(context,requested);
+        if(count>=0)SyncJobService.scheduleNow(context);
+        return count;
     }
 
     private List<Integer> epochs(){
@@ -172,77 +247,87 @@ public final class SharedPoolClient {
 
     public synchronized void sync()throws Exception{
         if(!config.isEnrolled())return;
-        if(prefs.getLong("next_retry",0)>System.currentTimeMillis())return;
+        if(!prefs.getBoolean("pending_disable",false)&&prefs.getLong("next_retry",0)>System.currentTimeMillis())return;
+        final String scope;
+        synchronized(SharedPoolClient.class){scope=privacyScope();}
         if(prefs.getBoolean("pending_disable",false)){
             client().request("POST",path()+"/request",new JSONObject().put("enabled",false));
-            prefs.edit().putBoolean("pending_disable",false).apply();
+            synchronized(SharedPoolClient.class){
+                if(!sameScope(scope))return;
+                prefs.edit().putBoolean("pending_disable",false).commit();
+            }
         }
         if(!optedIn())return;
         JSONObject status=client().request("GET",path(),null);
+        synchronized(SharedPoolClient.class){
+        requireScope(scope,false);
         if(!status.optBoolean("requested",false)){
             // Server-side opt-out wins; do not silently re-enable.
-            prefs.edit().putBoolean("requested",false).putBoolean("approved",false).apply();
-            store.clear();
-            SecretStore secret=new SecretStore(context);
-            for(int epoch:epochs())secret.remove("pool-key-"+epoch);
-            prefs.edit().remove("key_epochs").apply();return;
+            invalidateLocal(false,false);return;
         }
-        boolean wasApproved=approved();
         boolean isApproved=status.optBoolean("approved",false);
-        prefs.edit().putBoolean("approved",isApproved).apply();
         if(!isApproved){
             // Remote revocation is authoritative: wipe other-device cache and
-            // pool keys immediately; publishing stays suspended until reapproval.
-            store.clear();
-            SecretStore secret=new SecretStore(context);
-            for(int oldEpoch:epochs())secret.remove("pool-key-"+oldEpoch);
-            prefs.edit().remove("key_epochs").remove("current_epoch")
-                .putLong("last_download",0).putLong("oldest_download",0).apply();
+            // pool keys immediately. Pending initial approval must not repeatedly
+            // erase the local SMS staged since the user opted in.
+            if(approved()||!epochs().isEmpty())invalidateLocal(true,false);
             return;
+        }
+        if(!prefs.edit().putBoolean("approved",true).commit())throw new java.io.IOException("pool_approval_not_durable");
         }
         JSONArray keys=status.optJSONArray("keys");
         int current=status.optInt("epoch",0);
         if(keys==null||keys.length()==0||current<=0)return;
         SecretStore secrets=new SecretStore(context);
-        byte[] own=nodeKey();
-        for(int i=0;i<keys.length();i++){
-            JSONObject entry=keys.getJSONObject(i);
-            int epoch=entry.getInt("epoch");
-            byte[] raw=decryptRaw(entry.getJSONObject("wrappedKey"),own,
-                "simhub-pool-member-v1|default|"+config.deviceId()+"|"+epoch);
-            if(raw.length!=32||!keyId(raw).equals(entry.getString("keyId")))
-                throw new SecurityException("Pool Key identity mismatch");
-            secrets.putBytes("pool-key-"+epoch,raw);
-            Arrays.fill(raw,(byte)0);
-            rememberEpoch(epoch);
+        synchronized(SharedPoolClient.class){
+            requireScope(scope,true);
+            byte[] own=nodeKey();
+            try{
+                for(int i=0;i<keys.length();i++){
+                    JSONObject entry=keys.getJSONObject(i);
+                    int epoch=entry.getInt("epoch");
+                    byte[] raw=decryptRaw(entry.getJSONObject("wrappedKey"),own,
+                        "simhub-pool-member-v1|default|"+config.deviceId()+"|"+epoch);
+                    try{
+                        if(raw.length!=32||!keyId(raw).equals(entry.getString("keyId")))throw new SecurityException("Pool Key identity mismatch");
+                        secrets.putBytes("pool-key-"+epoch,raw);rememberEpoch(epoch);
+                    }finally{Arrays.fill(raw,(byte)0);}
+                }
+                prefs.edit().putInt("current_epoch",current).commit();
+            }finally{Arrays.fill(own,(byte)0);}
         }
-        Arrays.fill(own,(byte)0);
-        prefs.edit().putInt("current_epoch",current).apply();
-        if(!wasApproved && !prefs.getBoolean("initial_staged",false)){
-            // History scan queues up to the latest 100 provider messages.
-            SmsHistorySync.syncRecent(context,100);
-            prefs.edit().putBoolean("initial_staged",true).apply();
+        if(!initialHistoryStaged()){
+            // Independent pool receipts and cursor also include SMS uploaded to
+            // the ordinary Relay before sharing was enabled. Retry failures even
+            // when the previous cycle already recorded administrator approval.
+            if(SmsHistorySync.syncSharedHistory(context,PAGE)<0)
+                throw new java.io.IOException("Shared SMS history staging incomplete");
         }
         // An administrative revocation freezes new ciphertext until the Vault
         // completes a new epoch. Existing historical ciphertext remains readable.
-        if(!status.optBoolean("rotationRequired",false))upload(current);
-        download();
-        prefs.edit().remove("retry_attempts").remove("next_retry").apply();
+        if(!status.optBoolean("rotationRequired",false))upload(scope,current);
+        download(scope);
+        synchronized(SharedPoolClient.class){requireScope(scope,true);prefs.edit().remove("retry_attempts").remove("next_retry").apply();}
     }
 
-    private void upload(int epoch)throws Exception{
-        byte[] key=poolKey(epoch);
+    private void upload(String scope,int epoch)throws Exception{
+        final byte[] key;
+        final String device;
+        synchronized(SharedPoolClient.class){requireScope(scope,true);key=poolKey(epoch);device=config.deviceId();}
+        try{
         for(int page=0;page<3;page++){
-            List<Store.Pending> queued=store.pending(UPLOAD);
+            final List<Store.Pending> queued;
+            synchronized(SharedPoolClient.class){requireScope(scope,true);queued=store.pending(UPLOAD);}
             if(queued.isEmpty())break;
             JSONArray batch=new JSONArray();
             for(Store.Pending p:queued){
                 JSONObject payload=new CryptoBox(context).decryptLocal(p.localCipher);
                 JSONObject cipher=encryptRaw(payload.toString().getBytes(StandardCharsets.UTF_8),
-                    key,keyId(key),aad(config.deviceId(),p.id,p.occurred,p.channel,epoch));
+                    key,keyId(key),aad(device,p.id,p.occurred,p.channel,epoch));
                 batch.put(new JSONObject().put("originEventId",p.id).put("occurredAt",p.occurred)
                     .put("channelId",p.channel).put("epoch",epoch).put("ciphertext",cipher));
             }
+            synchronized(SharedPoolClient.class){requireScope(scope,true);}
             JSONObject response=client().request("POST",path()+"/messages",new JSONObject().put("messages",batch));
             JSONArray results=response.getJSONArray("results");
             if(results.length()!=queued.size())throw new IllegalStateException("Incomplete upload acknowledgement");
@@ -250,87 +335,90 @@ public final class SharedPoolClient {
                 JSONObject ack=results.getJSONObject(i);
                 if(!ack.optBoolean("accepted")||!queued.get(i).id.equals(ack.getString("originEventId")))
                     throw new SecurityException("Pool upload acknowledgement mismatch");
-                store.markUploaded(queued.get(i).id);
+            }
+            synchronized(SharedPoolClient.class){
+                requireScope(scope,true);
+                for(Store.Pending pending:queued)store.markUploaded(pending.id);
             }
         }
-        Arrays.fill(key,(byte)0);
+        }finally{Arrays.fill(key,(byte)0);}
         if(store.pendingCount()>0)SyncJobService.scheduleAfter(context,5000);
     }
 
-    private void download()throws Exception{
+    private void download(String scope)throws Exception{
+        synchronized(SharedPoolClient.class){requireScope(scope,true);}
         long cursor=prefs.getLong("last_download",0);
         String query=cursor>0?"?since="+cursor+"&limit="+PAGE:"?limit="+PAGE;
         JSONObject response=client().request("GET",path()+"/messages"+query,null);
+        int count=acceptDownloaded(scope,response,cursor,false);
+        if(count>0)context.sendBroadcast(new Intent(ACTION_CACHE_UPDATED).setPackage(context.getPackageName()));
+        if(response.optBoolean("hasMore")&&cursor>0)SyncJobService.scheduleAfter(context,10000);
+    }
+
+    /** Network-independent commit boundary, shared by normal and older-history reads. */
+    int acceptDownloaded(String scope,JSONObject response,long cursor,boolean older)throws Exception{
+        synchronized(SharedPoolClient.class){
+        requireScope(scope,true);
         JSONArray messages=response.optJSONArray("messages");
-        if(messages==null)return;
+        if(messages==null)return 0;
+        if(messages.length()>PAGE)throw new SecurityException("Shared history page exceeds limit");
         long max=cursor;
         for(int i=0;i<messages.length();i++){
             JSONObject m=messages.getJSONObject(i);
             int epoch=m.getInt("epoch");
             // Reject unverifiable events before caching, and never expose ciphertext as plaintext.
             byte[] key=poolKey(epoch);
-            byte[] plaintext=decryptRaw(m.getJSONObject("ciphertext"),key,
-                aad(m.getString("deviceId"),m.getString("originEventId"),
-                    m.getLong("occurredAt"),m.optString("channelId",""),epoch));
-            new JSONObject(new String(plaintext,StandardCharsets.UTF_8));
-            Arrays.fill(key,(byte)0);Arrays.fill(plaintext,(byte)0);
+            try{
+                byte[] plaintext=decryptRaw(m.getJSONObject("ciphertext"),key,
+                    aad(m.getString("deviceId"),m.getString("originEventId"),m.getLong("occurredAt"),m.optString("channelId",""),epoch));
+                try{new JSONObject(new String(plaintext,StandardCharsets.UTF_8));}finally{Arrays.fill(plaintext,(byte)0);}
+            }finally{Arrays.fill(key,(byte)0);}
             store.cache(m);
             long seq=m.getLong("seq");max=Math.max(max,seq);
         }
-        if(cursor==0&&messages.length()>0){
+        if((older||cursor==0)&&messages.length()>0){
             JSONObject oldest=messages.getJSONObject(messages.length()-1);
             prefs.edit().putLong("oldest_download",oldest.getLong("seq"))
                 .putLong("oldest_download_time",oldest.getLong("occurredAt"))
                 .putBoolean("older_has_more",response.optBoolean("hasMore",false)).apply();
         }
-        if(max>cursor)prefs.edit().putLong("last_download",max).apply();
+        if(older)prefs.edit().putBoolean("older_has_more",response.optBoolean("hasMore",false)).apply();
+        else if(max>cursor)prefs.edit().putLong("last_download",max).apply();
         store.trim(2000);
-        if(messages.length()>0)context.sendBroadcast(new Intent(ACTION_CACHE_UPDATED).setPackage(context.getPackageName()));
-        if(response.optBoolean("hasMore")&&cursor>0)SyncJobService.scheduleAfter(context,10000);
+        return messages.length();
+        }
     }
 
     public synchronized int loadOlder()throws Exception{
         if(!approved())return 0;
+        final String scope;
+        synchronized(SharedPoolClient.class){scope=privacyScope();requireScope(scope,true);}
         long before=prefs.getLong("oldest_download",0),time=prefs.getLong("oldest_download_time",0);
         if(before<=0||time<=0||!prefs.getBoolean("older_has_more",false))return 0;
         JSONObject response=client().request("GET",path()+"/messages?beforeTime="+time+"&beforeSeq="+before+"&limit=50",null);
-        JSONArray items=response.optJSONArray("messages");
-        if(items==null)return 0;
-        for(int i=0;i<items.length();i++){
-            JSONObject row=items.getJSONObject(i);
-            // Validate MAC before persisting.
-            byte[] key=poolKey(row.getInt("epoch"));
-            byte[] bytes=decryptRaw(row.getJSONObject("ciphertext"),key,
-                aad(row.getString("deviceId"),row.getString("originEventId"),
-                    row.getLong("occurredAt"),row.optString("channelId",""),row.getInt("epoch")));
-            Arrays.fill(bytes,(byte)0);Arrays.fill(key,(byte)0);
-            store.cache(row);
-        }
-        if(items.length()>0){
-            JSONObject last=items.getJSONObject(items.length()-1);
-            prefs.edit().putLong("oldest_download",last.getLong("seq"))
-                .putLong("oldest_download_time",last.getLong("occurredAt")).apply();
-        }
-        prefs.edit().putBoolean("older_has_more",response.optBoolean("hasMore",false)).apply();
-        store.trim(2000);
-        return items.length();
+        return acceptDownloaded(scope,response,before,true);
     }
 
     /** Only decrypted in process memory for UI; server and SQLite see ciphertext. */
     public List<JSONObject> cached(int limit){
         List<JSONObject> result=new ArrayList<>();
-        if(!approved())return result;
-        for(JSONObject m:store.cached(limit))try{
+        final String scope;
+        final List<JSONObject> rows;
+        synchronized(SharedPoolClient.class){
+            if(!approved()||!config.isEnrolled())return result;
+            scope=privacyScope();rows=store.cached(Math.max(1,Math.min(2000,limit)));
+        }
+        for(JSONObject m:rows)try{
             int epoch=m.getInt("epoch");
             byte[] key=poolKey(epoch);
-            byte[] bytes=decryptRaw(m.getJSONObject("ciphertext"),key,
-                aad(m.getString("deviceId"),m.getString("originEventId"),
-                    m.getLong("occurredAt"),m.optString("channelId",""),epoch));
-            JSONObject payload=new JSONObject(new String(bytes,StandardCharsets.UTF_8));
-            Arrays.fill(key,(byte)0);Arrays.fill(bytes,(byte)0);
-            m.put("payload",payload);result.add(m);
+            try{
+                byte[] bytes=decryptRaw(m.getJSONObject("ciphertext"),key,
+                    aad(m.getString("deviceId"),m.getString("originEventId"),m.getLong("occurredAt"),m.optString("channelId",""),epoch));
+                try{m.put("payload",new JSONObject(new String(bytes,StandardCharsets.UTF_8)));result.add(m);}
+                finally{Arrays.fill(bytes,(byte)0);}
+            }finally{Arrays.fill(key,(byte)0);}
         }catch(Exception e){AppLogger.e(context,"SharedPool","Unable to decode cached message",e);}
-        return result;
+        synchronized(SharedPoolClient.class){return sameScope(scope)&&approved()?result:new ArrayList<>();}
     }
 
     private static final class Store extends SQLiteOpenHelper {
@@ -342,13 +430,16 @@ public final class SharedPoolClient {
             db.execSQL("CREATE INDEX idx_pool_cache_time ON cached(occurred DESC,seq DESC)");
         }
         @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion){}
-        synchronized void stage(String id,long occurred,String channel,JSONObject cipher){
-            SQLiteDatabase db=getWritableDatabase();
-            try(Cursor old=db.rawQuery("SELECT 1 FROM uploaded WHERE id=?",new String[]{id})){
-                if(old.moveToFirst())return;
+        synchronized boolean hasSeen(String id){
+            try(Cursor row=getReadableDatabase().rawQuery("SELECT 1 FROM uploaded WHERE id=? UNION ALL SELECT 1 FROM staged WHERE id=? LIMIT 1",new String[]{id,id})){
+                return row.moveToFirst();
             }
-            db.execSQL("INSERT OR IGNORE INTO staged VALUES(?,?,?,?,?)",
-                new Object[]{id,occurred,channel,cipher.toString(),System.currentTimeMillis()/1000});
+        }
+        synchronized void stage(String id,long occurred,String channel,JSONObject cipher){
+            getWritableDatabase().execSQL(
+                "INSERT OR IGNORE INTO staged(id,occurred,channel,local_cipher,created_at) "+
+                "SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM uploaded WHERE id=?)",
+                new Object[]{id,occurred,channel,cipher.toString(),System.currentTimeMillis()/1000,id});
         }
         static final class Pending {
             final String id,channel;final long occurred;final JSONObject localCipher;

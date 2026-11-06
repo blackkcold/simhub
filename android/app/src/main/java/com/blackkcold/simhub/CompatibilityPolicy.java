@@ -12,7 +12,4 @@ public final class CompatibilityPolicy {
         return targetSdk>=37?"android_17_generic_otp_protection":
                 "android_17_target_compatibility_not_full_exemption";
     }
-    public static boolean canOfferSelfManagedAssociation(int sdk,boolean enrolled){
-        return sdk>=33 && enrolled;
-    }
 }

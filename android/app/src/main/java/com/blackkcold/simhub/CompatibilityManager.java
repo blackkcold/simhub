@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Process;
 import android.provider.Telephony;
 import android.database.Cursor;
+import androidx.annotation.RequiresApi;
 import org.json.JSONObject;
 import rikka.shizuku.Shizuku;
 
@@ -79,7 +80,9 @@ public final class CompatibilityManager {
                     }
                 }catch(Exception permissionError){state.put("shizukuAuthorized",false);}
             }else state.put("shizukuAuthorized",false);
-            state.put("associationSupported",supportsSelfManagedAssociation(context));
+            // This ordinary APK does not provide the privileged creation flow.
+            // Existing app-owned records remain inspectable and removable.
+            state.put("associationSupported",false);
             state.put("associations",associationCount(context));
             if(providerProbe){
                 if(!granted(context,Manifest.permission.READ_SMS))state.put("providerProbe","permission_missing");
@@ -102,37 +105,39 @@ public final class CompatibilityManager {
     private static boolean granted(Context c,String permission){
         return c.checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED;
     }
-    public static boolean supportsSelfManagedAssociation(Context c){
-        return Build.VERSION.SDK_INT>=33 && c.getPackageManager().hasSystemFeature(
-                PackageManager.FEATURE_COMPANION_DEVICE_SETUP) &&
-                c.getSystemService(CompanionDeviceManager.class)!=null;
-    }
     public static int associationCount(Context c){
-        if(!supportsSelfManagedAssociation(c))return 0;
+        if(Build.VERSION.SDK_INT<33)return 0;
         try{
             CompanionDeviceManager manager=c.getSystemService(CompanionDeviceManager.class);
             if(manager==null)return 0;
             int count=0;
             List<AssociationInfo> associations=manager.getMyAssociations();
             if(associations!=null)for(AssociationInfo item:associations){
-                if(item.isSelfManaged() && item.getDisplayName()!=null &&
-                        item.getDisplayName().toString().startsWith("SIM Hub · "))count++;
+                if(isSimHubAssociation(item))count++;
             }
             return count;
         }catch(Exception unsupported){return 0;}
     }
     public static boolean removeSimHubAssociations(Context c){
-        if(!supportsSelfManagedAssociation(c))return false;
+        if(Build.VERSION.SDK_INT<33)return false;
         CompanionDeviceManager manager=c.getSystemService(CompanionDeviceManager.class);
         if(manager==null)return false;
         boolean removed=false;
         for(AssociationInfo item:manager.getMyAssociations()){
-            if(item.isSelfManaged() && item.getDisplayName()!=null &&
-                    item.getDisplayName().toString().startsWith("SIM Hub · ")){
+            if(isSimHubAssociation(item)){
                 manager.disassociate(item.getId());
                 removed=true;
             }
         }
         return removed;
+    }
+    @RequiresApi(33)
+    private static boolean isSimHubAssociation(AssociationInfo item){
+        // getMyAssociations is already scoped to this app. Before API35 there
+        // is no public self-managed flag; our own association name identifies
+        // legacy self-managed associations owned by this app.
+        if(Build.VERSION.SDK_INT>=35&&!item.isSelfManaged())return false;
+        return item.getDisplayName()!=null &&
+                item.getDisplayName().toString().startsWith("SIM Hub · ");
     }
 }

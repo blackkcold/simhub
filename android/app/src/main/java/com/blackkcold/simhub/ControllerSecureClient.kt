@@ -44,6 +44,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         private set
 
     data class PairStatus(val requestId:String,val code:String)
+    class ApiFailure(val status:Int,val code:String,message:String):java.io.IOException(message)
     data class DecodedMessage(val id:String,val thread:String,val sender:String,val body:String,
         val timestamp:Long,val inbound:Boolean,val device:String,val sim:String,
         val otp:String,val failed:Boolean)
@@ -51,6 +52,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     fun hasGrant():Boolean=prefs.getString("controllerId",null)!=null &&
         prefs.getString("sealedVault",null)!=null
     fun controllerId():String=prefs.getString("controllerId","")?:""
+    internal fun vaultId():String=prefs.getString("vaultId","")?:""
     fun requireLocalUnlock():Boolean=prefs.getBoolean("requireDeviceUnlock",false)
     fun setRequireLocalUnlock(enabled:Boolean){
         prefs.edit().putBoolean("requireDeviceUnlock",enabled).apply()
@@ -141,6 +143,30 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         cipher.updateAAD(origin.toByteArray(StandardCharsets.UTF_8))
         return JSONObject().put("iv",enc(cipher.iv)).put("ct",enc(cipher.doFinal(vault))).toString()
     }
+    /** Durable local workspaces are bound to this origin and controller grant. */
+    internal fun readLocalJournal(name:String):JSONObject {
+        require(name.matches(Regex("[a-z0-9-]{1,40}")))
+        check(hasGrant()){ "Controller authorization required" }
+        val stored=prefs.getString("sealedLocal:$name",null)?:return JSONObject()
+        val envelope=JSONObject(stored)
+        val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE,localWrappingKey(),GCMParameterSpec(128,dec(envelope.getString("iv"))))
+        cipher.updateAAD(("simhub-controller-local-v1|$origin|${controllerId()}|$name").toByteArray(StandardCharsets.UTF_8))
+        val clear=cipher.doFinal(dec(envelope.getString("ct")))
+        try{return JSONObject(String(clear,StandardCharsets.UTF_8))}finally{clear.fill(0)}
+    }
+    internal fun writeLocalJournal(name:String,value:JSONObject){
+        require(name.matches(Regex("[a-z0-9-]{1,40}")))
+        check(hasGrant()){ "Controller authorization required" }
+        val clear=value.toString().toByteArray(StandardCharsets.UTF_8)
+        try{
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE,localWrappingKey())
+            cipher.updateAAD(("simhub-controller-local-v1|$origin|${controllerId()}|$name").toByteArray(StandardCharsets.UTF_8))
+            val envelope=JSONObject().put("v",1).put("iv",enc(cipher.iv)).put("ct",enc(cipher.doFinal(clear)))
+            check(prefs.edit().putString("sealedLocal:$name",envelope.toString()).commit()){"Encrypted local journal was not durably saved"}
+        }finally{clear.fill(0)}
+    }
     fun vault():ByteArray {
         val saved=JSONObject(prefs.getString("sealedVault",null)?:throw SecurityException("No authorized Vault"))
         val cipher=Cipher.getInstance("AES/GCM/NoPadding")
@@ -175,7 +201,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
                 if(status==401 && authenticated){cookie="";csrf=""}
                 if(status==401 && path.startsWith("/api/v1/controllers/login/"))
                     throw SecurityException("管理终端授权已失效，请在网页重新批准")
-                throw IllegalStateException(json.optString("message","HTTP $status").take(180))
+                throw ApiFailure(status,json.optString("error",json.optString("code","http_error")),json.optString("message","HTTP $status").take(180))
             }
             if(path=="/api/v1/controllers/login/verify"){
                 val setCookie=connection.getHeaderField("Set-Cookie")?:""
@@ -352,6 +378,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
         }finally{vault.fill(0)}
     }
     companion object {
+        internal val localJournalLock=Any()
         fun enc(data:ByteArray):String=Base64.encodeToString(data,Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         fun dec(data:String):ByteArray=Base64.decode(data,Base64.URL_SAFE or Base64.NO_WRAP)
         private fun hex(value:String):String=MessageDigest.getInstance("SHA-256")

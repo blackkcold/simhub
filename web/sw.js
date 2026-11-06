@@ -1,5 +1,5 @@
-const CACHE='simhub-shell-v23';
-const SHELL=['/','/index.html','/styles.css','/app.js','/notifications.js','/notification-store.js','/notification-ui.js','/toast.js','/i18n.js','/device-dashboard.js','/device-dashboard.css','/vendor/qrcode.min.js','/icon.svg','/manifest.webmanifest'];
+const CACHE='simhub-shell-v27';
+const SHELL=['/','/index.html','/styles.css','/app.js','/send-intents.js','/vault-settings.js','/history-search.js','/history-backfill.js','/notifications.js','/notification-store.js','/notification-ui.js','/toast.js','/i18n.js','/device-dashboard.js','/device-location.js','/device-dashboard.css','/vendor/qrcode.min.js','/icon.svg','/manifest.webmanifest'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('simhub-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{

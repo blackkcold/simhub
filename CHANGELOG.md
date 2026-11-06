@@ -1,3 +1,17 @@
+## v0.19.0 — Recoverable sending, private search and lifecycle safety
+
+- Add encrypted persistent Web and native send centers: keep one immutable command and SIM route through lost responses, process restarts and explicit retries; reconcile the original receipt before resubmission and display uncertain outcomes honestly.
+- Preserve minimal command receipts when SMS history is purged, preventing the same accepted command from re-entering the queue. Handle late acknowledgements without restoring deleted content, and serialize revocation, command dispatch and acknowledgement transitions.
+- Synchronize end-to-end encrypted SIM aliases and phone labels across Web and native controllers with conflict-safe revisions. Replies keep their original device, channel and revision instead of following changing list positions.
+- Add cancellable searches across Relay-retained encrypted history with visible coverage, unreadable counts and local-only query matching. Keep historical paging separate from incremental synchronization, and clear plaintext search state on lock or lifecycle changes.
+- Recover interrupted node/modem token rotations before authenticated requests; bind location consent to the current enrollment; distinguish stored, duplicate and privacy-suppressed event receipts; repair independent shared-history backfill and modem upload fairness.
+- Support local default-handler SMS on Android 10/11 without Relay enrollment, recover interrupted OTA stages, and add generic private SMS notifications plus actionable queue, credential, role and permission diagnostics.
+- Correct CDM capability reporting and remove the unavailable privileged association-creation flow from ordinary APKs; retain existing app-owned association inspection/removal and normal SMS Companion mode.
+- Repair standalone deployment-ZIP updater preflight and selected proxy ports; add private, serialized SQLite backups and an isolated restore verifier. Display backup integrity and restore-rehearsal status separately.
+- Pin workflow actions, container bases and Python dependency hashes; publish OCI SBOM/provenance; discover regression entry points and require current-commit security, API29/30 compatibility and API35 isolated acceptance before release.
+- Stable continues to exclude experimental P2P/WebRTC. Dev retains separate package, signing-workflow and release-channel identities; Dev transport changes are documented in its channel notes.
+- Existing Global Vault and Node Keys are preserved. New Relay tables are additive; back up before upgrading. Emulator and synthetic tests do not establish physical-carrier delivery, OEM background behavior or hardware-authenticated Vault decryption.
+
 ## v0.18.0 — Private device telemetry and delivery reliability
 
 - Add battery, Wi-Fi and SIM signal telemetry and device health dashboards.

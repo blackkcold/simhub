@@ -4,6 +4,21 @@ import unittest
 import simhub_server as server
 
 class DeviceTelemetrySecurityTest(unittest.TestCase):
+    def test_recovery_metadata_has_no_credentials_and_bounded_types(self):
+        stamp=int(time.time())
+        state=server.sanitize_state({"oldestPendingEventAt":stamp-60,"oldestPendingAckAt":stamp-20,
+            "nextRetryAt":stamp+120,"tokenRotationExpiresAt":stamp+900,"pendingTokenRotation":True,
+            "pendingToken":"synthetic-secret","deviceToken":"synthetic-secret"})
+        self.assertEqual(state["oldestPendingEventAt"],stamp-60)
+        self.assertEqual(state["nextRetryAt"],stamp+120)
+        self.assertTrue(state["pendingTokenRotation"])
+        self.assertNotIn("pendingToken",state)
+        self.assertNotIn("deviceToken",state)
+        bad=server.sanitize_state({"oldestPendingEventAt":stamp+600,"oldestPendingAckAt":True,
+            "nextRetryAt":"private-value","tokenRotationExpiresAt":2**63,"pendingTokenRotation":"true"})
+        for name in ("oldestPendingEventAt","oldestPendingAckAt","nextRetryAt","tokenRotationExpiresAt","pendingTokenRotation"):
+            self.assertNotIn(name,bad)
+
     def test_valid_compact_health_fields(self):
         ts=int(time.time())
         state=server.sanitize_telemetry({

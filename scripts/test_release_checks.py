@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for mandatory independent release scan gates."""
 import unittest
-from scripts.verify_release_checks import REQUIRED_CODEQL, verdict
+from scripts.verify_release_checks import REQUIRED_CHECKS, REQUIRED_CODEQL, REQUIRED_COMPATIBILITY, verdict
 
 SHA = "a" * 40
 
@@ -15,7 +15,7 @@ def scans(*, sha=SHA, overrides=None):
     values = overrides or {}
     return [{"name": name, "status": "completed", "conclusion": values.get(name, "success"),
              "head_sha": sha, "id": i + 10}
-            for i, name in enumerate(REQUIRED_CODEQL)]
+            for i, name in enumerate(REQUIRED_CHECKS)]
 
 
 class ReleaseChecksTests(unittest.TestCase):
@@ -43,6 +43,12 @@ class ReleaseChecksTests(unittest.TestCase):
         runs = [workflow("CI"), workflow("Security scan", "failure")]
         self.assertEqual(verdict(runs, scans(), SHA, "main")[0], "failed")
 
+    def test_minimum_android_versions_are_mandatory_on_current_head(self):
+        for name in REQUIRED_COMPATIBILITY:
+            self.assertEqual(verdict(self.runs, [check for check in scans() if check["name"] != name], SHA, "main")[0], "waiting")
+            for conclusion in ("failure", "skipped", "neutral"):
+                self.assertEqual(verdict(self.runs, scans(overrides={name: conclusion}), SHA, "main")[0], "failed")
+
     def test_unrelated_sha_and_pr_runs_cannot_satisfy_gate(self):
         self.assertEqual(verdict(self.runs, scans(sha="b" * 40), SHA, "main")[0], "waiting")
         runs = [workflow("CI"), workflow("Security scan", event="pull_request")]
@@ -59,6 +65,16 @@ class ReleaseChecksTests(unittest.TestCase):
 
     def test_reject_unrecognized_branch(self):
         self.assertEqual(verdict([], [], SHA, "feature")[0], "failed")
+
+    def test_develop_requires_its_actual_p2p_workflow_and_emulator(self):
+        runs = [{**run, "head_branch": "develop"} for run in self.runs]
+        self.assertEqual(verdict(runs, scans(), SHA, "develop")[0], "waiting")
+        runs.append({**workflow("P2P isolated preview"), "head_branch": "develop"})
+        p2p = [{"name": name, "status": "completed", "conclusion": "success", "head_sha": SHA, "id": 100+i}
+               for i, name in enumerate(("preview", "android-sandbox"))]
+        self.assertEqual(verdict(runs, scans()+p2p, SHA, "develop")[0], "ready")
+        p2p[-1]["conclusion"] = "failure"
+        self.assertEqual(verdict(runs, scans()+p2p, SHA, "develop")[0], "failed")
 
 
 if __name__ == "__main__":

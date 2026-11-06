@@ -182,6 +182,215 @@ class ModemRecoveryTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):self.old.cycle()
         self.assertEqual(len(self.old.adapter.records),1)
 
+    def test_lost_commit_response_recovers_before_lifecycle_even_after_expiry(self):
+        old_token=self.old.config["deviceToken"]
+        pending="new-synthetic-device-token-"+"D"*32
+        self.old.config["tokenIssuedAt"]=modem.now()-modem.TOKEN_ROTATE_AFTER-1
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        class LostCommitRelay:
+            device_token=old_token
+            active=old_token
+            lost=False
+            calls=[]
+            def request(relay,method,path,body=None,token_override=None):
+                token=token_override or relay.device_token
+                relay.calls.append((path,token))
+                if path.endswith("/token/prepare"):
+                    return {"deviceToken":pending,"expiresAt":modem.now()+3600}
+                if path.endswith("/token/commit"):
+                    self.assertEqual(token,pending)
+                    relay.active=pending
+                    if not relay.lost:
+                        relay.lost=True
+                        raise OSError("response lost after durable commit")
+                    return {"ok":True,"alreadyCommitted":True,"tokenIssuedAt":modem.now()}
+                if token!=relay.active:
+                    raise RuntimeError("relay HTTP 401: old credential")
+                return {"resetRequired":False,"status":"active"} if path.endswith("/lifecycle") else {"commands":[]}
+        self.old.relay=LostCommitRelay()
+        with self.assertRaises(OSError):self.old.rotate_device_token()
+        self.assertEqual(self.old.config["deviceToken"],old_token)
+        self.assertEqual(modem.load_json(self.old.config_path)["pendingDeviceToken"],pending)
+        # Model a restart occurring after the local prepare deadline.
+        self.old.config=modem.load_json(self.old.config_path)
+        self.old.config["pendingTokenExpiresAt"]=modem.now()-1
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        self.old.relay.calls=[]
+        with patch.object(self.old,"put_state"),patch.object(self.old,"heartbeat"):
+            self.old.cycle()
+        self.assertTrue(self.old.relay.calls[0][0].endswith("/token/commit"))
+        self.assertTrue(self.old.relay.calls[1][0].endswith("/lifecycle"))
+        self.assertTrue(all(token==pending for _,token in self.old.relay.calls))
+        self.assertEqual(modem.load_json(self.old.config_path)["deviceToken"],pending)
+        self.assertNotIn("pendingDeviceToken",self.old.config)
+
+    def test_pending_candidate_discard_requires_definitive_old_credential_proof(self):
+        pending="pending-synthetic-token-"+"P"*32
+        old_token=self.old.config["deviceToken"]
+        class RejectPending:
+            device_token=old_token
+            old_failure=None
+            candidate_failure=RuntimeError("relay HTTP 401: rejected pending")
+            def request(relay,method,path,body=None,token_override=None):
+                if path.endswith("/token/commit"):
+                    raise RuntimeError("relay HTTP 401: rejected pending")
+                if token_override==pending:
+                    raise relay.candidate_failure
+                if relay.old_failure:raise relay.old_failure
+                return {"resetRequired":False,"status":"active"}
+        relay=RejectPending();self.old.relay=relay
+        def journal():
+            self.old.config.update({"pendingDeviceToken":pending,"pendingTokenExpiresAt":1,"tokenRotationPending":True})
+            modem.atomic_write_json(self.old.config_path,self.old.config)
+        for failure in (RuntimeError("relay HTTP 401: invalid old"),urllib.error.URLError("offline")):
+            journal();relay.old_failure=failure
+            with self.assertRaises((RuntimeError,OSError)):self.old.recover_pending_device_token()
+            self.assertEqual(modem.load_json(self.old.config_path)["pendingDeviceToken"],pending)
+        relay.old_failure=None
+        relay.candidate_failure=RuntimeError("relay HTTP 404: lifecycle unavailable")
+        with self.assertRaises(RuntimeError):self.old.recover_pending_device_token()
+        self.assertEqual(self.old.config["pendingDeviceToken"],pending)
+        relay.candidate_failure=RuntimeError("relay HTTP 401: rejected pending")
+        self.assertFalse(self.old.recover_pending_device_token())
+        self.assertNotIn("pendingDeviceToken",modem.load_json(self.old.config_path))
+        self.assertEqual(self.old.config["deviceToken"],old_token)
+
+    def test_revoked_pending_current_token_is_used_only_for_cleanup(self):
+        pending="revoked-current-token-"+"R"*32
+        self.old.config.update({"pendingDeviceToken":pending,"pendingTokenExpiresAt":1})
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        class RevokedRelay:
+            device_token=self.old.config["deviceToken"]
+            calls=[]
+            def request(relay,method,path,body=None,token_override=None):
+                token=token_override or relay.device_token
+                relay.calls.append((path,token))
+                if path.endswith("/token/commit"):
+                    raise RuntimeError("relay HTTP 409: only reset acknowledgement allowed")
+                self.assertEqual(token,pending)
+                if path.endswith("/lifecycle"):
+                    return {"resetRequired":True,"status":"revoked"}
+                if path.endswith("/reset"):
+                    return {"ok":True,"status":"revoked"}
+                self.fail("Revoked token reached normal business API")
+        relay=RevokedRelay();self.old.relay=relay
+        with self.assertRaises(modem.NodeResetComplete):self.old.cycle()
+        self.assertFalse(self.old.config_path.exists())
+        self.assertEqual(len(relay.calls),3)
+
+    def test_token_journal_survives_local_write_failure_after_commit(self):
+        pending="new-current-token-"+"N"*32
+        old_token=self.old.config["deviceToken"]
+        self.old.config.update({"pendingDeviceToken":pending,"pendingTokenExpiresAt":modem.now()+300})
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        class CommittedRelay:
+            device_token=old_token
+            def request(relay,*args,**kwargs):return {"ok":True,"tokenIssuedAt":modem.now()}
+        self.old.relay=CommittedRelay()
+        with patch.object(modem,"atomic_write_json",side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):self.old.recover_pending_device_token()
+        self.assertEqual(self.old.config["deviceToken"],old_token)
+        self.assertEqual(self.old.relay.device_token,old_token)
+        self.assertEqual(modem.load_json(self.old.config_path)["pendingDeviceToken"],pending)
+        self.assertTrue(self.old.recover_pending_device_token())
+        self.assertEqual(modem.load_json(self.old.config_path)["deviceToken"],pending)
+
+    def queue_events(self,count):
+        for index in range(count):
+            event_id=f"test-event-{index:04d}";stamp=modem.now()
+            cipher=self.old.encrypt_event(event_id,"sms.history",stamp,False,{"body":"synthetic"})
+            self.old.store.queue_event(event_id,"sms.history",stamp,"old-channel",False,{},cipher)
+
+    @staticmethod
+    def receipts(events):
+        return {"accepted":True,"results":[{"accepted":True,"eventId":event["eventId"],
+            "receiptState":"stored","serverSequence":index+1} for index,event in enumerate(events)]}
+
+    def test_bulk_backlog_does_not_precede_command_or_ack_traffic(self):
+        self.queue_events(100)
+        for index in range(20):
+            command=f"ack-{index}"
+            self.old.store.claim_command(command)
+            self.old.store.finish_command_and_queue_ack(command,"sent",{})
+        self.old.config["tokenIssuedAt"]=modem.now()
+        calls=[]
+        def request(method,path,body=None,**kwargs):
+            calls.append(path)
+            if path.endswith("/lifecycle"):return {"resetRequired":False,"status":"active"}
+            if path.endswith("/events/batch"):return self.receipts(body["events"])
+            return {"ok":True,"commands":[]}
+        self.old.relay.request=request
+        with patch.object(self.old,"put_state"),patch.object(self.old,"heartbeat"):
+            self.old.cycle()
+        pending_index=next(index for index,path in enumerate(calls) if "/commands/pending?" in path)
+        first_batch=next(index for index,path in enumerate(calls) if path.endswith("/events/batch"))
+        self.assertLess(pending_index,first_batch)
+        self.assertEqual(sum(path.endswith("/ack") for path in calls[:first_batch]),20)
+        self.assertEqual(sum(path.endswith("/events/batch") for path in calls),2)
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],60)
+        self.assertEqual(self.old.store.queue_health()["pendingCommandAcks"],0)
+        self.assertTrue(all(set(row)=={"kind","queuedAt"} for row in self.old.store.queue_health()["pendingEventTasks"]))
+
+    def test_batch_response_loss_retries_exact_durable_envelopes(self):
+        self.queue_events(20)
+        calls=[]
+        def request(method,path,body,**kwargs):
+            calls.append(body)
+            if len(calls)==1:raise OSError("Response lost after acceptance")
+            return self.receipts(body["events"])
+        self.old.relay.request=request
+        with self.assertRaises(OSError):self.old.flush_events()
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],20)
+        self.assertEqual(self.old.flush_events(),20)
+        self.assertEqual(calls[0],calls[1])
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],0)
+
+    def test_partial_batch_receipt_only_retires_confirmed_identity(self):
+        self.queue_events(3)
+        self.old.relay.request=lambda method,path,body:self.receipts(body["events"][:1])
+        self.assertEqual(self.old.flush_events(),1)
+        self.assertEqual([event["eventId"] for event in self.old.store.pending_events()],
+                         ["test-event-0001","test-event-0002"])
+        def malformed(method,path,body):
+            result=self.receipts(body["events"])
+            result["results"][1]["eventId"]=result["results"][0]["eventId"]
+            return result
+        self.old.relay.request=malformed
+        with self.assertRaises(RuntimeError):self.old.flush_events()
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],2)
+
+    def test_batch_endpoint_falls_back_to_bounded_legacy_uploads(self):
+        self.queue_events(25)
+        calls=[]
+        def request(method,path,body):
+            calls.append(path)
+            if path.endswith("/events/batch"):
+                raise RuntimeError("relay HTTP 404: old Relay")
+            return {"accepted":True,"eventId":body["eventId"],"serverSequence":1}
+        self.old.relay.request=request
+        self.assertEqual(self.old.flush_events(),10)
+        self.assertEqual(len(calls),11)
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],15)
+
+    def test_network_phase_budget_yields_between_batches(self):
+        self.queue_events(60)
+        self.old.relay.request=lambda method,path,body:self.receipts(body["events"])
+        with patch.object(modem.time,"monotonic",side_effect=[0,0,6]):
+            self.assertEqual(self.old.flush_events(),20)
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],40)
+
+    def test_ambiguous_ack_receipt_remains_durable(self):
+        for index in range(12):
+            command=f"ack-{index}"
+            self.old.store.claim_command(command)
+            self.old.store.finish_command_and_queue_ack(command,"sent",{})
+        self.old.relay.request=lambda *args,**kwargs:{}
+        with self.assertRaises(RuntimeError):self.old.flush_acks()
+        self.assertEqual(self.old.store.queue_health()["pendingCommandAcks"],12)
+        self.old.relay.request=lambda *args,**kwargs:{"ok":True,"currentState":"sent"}
+        self.assertEqual(self.old.flush_acks(),10)
+        self.assertEqual(self.old.store.queue_health()["pendingCommandAcks"],2)
+
     def test_failed_hardware_deletion_is_retried_without_duplicate_event(self):
         self.old.adapter.records=[self.sms()]
         real_delete=self.old.adapter.delete_sms

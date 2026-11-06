@@ -24,37 +24,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with: {node-version: '22'}
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050 server.test_pairing
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state server.test_device_telemetry server.test_device_location
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening server.test_controller_auth server.test_controller_http server.test_global_vault
-      - run: PYTHONPATH=server python3 server/test_auth_stages.py
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota server.test_command_expiry server.test_schema_rollback
-      - run: python3 scripts/test_updater.py
-      - run: python3 scripts/test_docs.py
-      - run: python3 scripts/test_release_notes.py
+      - name: Discover all Python and Web regression entry points
+        run: python3 scripts/run_regressions.py
       - name: Enforce Stable / experimental P2P boundary
         if: github.base_ref == 'main' || github.ref == 'refs/heads/main'
         run: python3 scripts/check_stable_boundary.py
-      - run: python3 scripts/test_stable_boundary.py
-      - run: python3 scripts/test_release_pipeline.py
-      - run: python3 scripts/test_deployment_bundle.py
-      - run: python3 -m unittest -v scripts.test_release_checks scripts.test_apk_release_metadata
-      - run: python3 scripts/test_controller_same_phone.py
-      - run: python3 scripts/test_icons.py
-      - run: python3 server/test_simhub.py
-      - run: python3 server/test_surfaces.py
-      - run: PYTHONPATH=server python3 server/test_shared_pool.py
-      - run: PYTHONPATH=server python3 server/test_migration.py
-      - run: PYTHONPATH=server python3 server/test_maintenance.py
-      - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
-      - run: PYTHONPATH=modem_agent python3 -m unittest -v modem_agent.test_recovery
-      - run: node --check web/app.js && node --check web/device-dashboard.js && node --check web/device-location.js && node --check web/i18n.js && node --check web/sw.js
-      - run: node web/test_node_dashboard.mjs
-      - run: node web/test_device_location.mjs
-      - run: node web/test_sms_logic.mjs
-      - run: node web/test_service_worker.mjs
-      - run: node web/test_crypto_vector.mjs
-      - run: node web/test_bootstrap_vector.mjs
       - name: Browser UI regression
         run: |
           npm install --no-save playwright@1.56.1
@@ -85,7 +59,21 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
           gradle-version: '9.6.0'
-      - run: gradle -p android :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDevRelease -PsimhubDevSequence=1 --stacktrace
+      - run: gradle -p android :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDevRelease -PsimhubDevSequence=1 --stacktrace
+      - name: Print complete Android lint diagnostics
+        if: always()
+        run: |
+          report=android/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          if [ -f "$report" ]; then cat "$report"; fi
+      - name: Retain Android lint reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: simhub-android-lint
+          if-no-files-found: ignore
+          path: |
+            android/app/build/reports/lint-results-debug.*
+            android/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
       - name: Verify actual APK package and version metadata
         shell: bash
         run: |
@@ -114,6 +102,40 @@ jobs:
         with:
           name: simhub-agent-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  android-min-api:
+    name: android-min-api (${{ matrix.api }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 30]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        with: {packages: 'platform-tools'}
+      - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with: {gradle-version: '9.6.0'}
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          disable-animations: true
+          script: gradle -p android :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.blackkcold.simhub.NodeRecoveryInstrumentedTest --stacktrace
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: simhub-min-api-${{ matrix.api }}-results
+          path: android/app/build/outputs/androidTest-results/connected/
 
   android-cloud-acceptance:
     runs-on: ubuntu-latest

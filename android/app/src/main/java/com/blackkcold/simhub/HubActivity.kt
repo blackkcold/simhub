@@ -7,12 +7,7 @@ import android.os.Looper
 import android.provider.Telephony
 import android.app.AlertDialog
 import android.app.role.RoleManager
-import android.companion.AssociationInfo
-import android.companion.AssociationRequest
-import android.companion.CompanionDeviceManager
-import android.content.IntentSender
 import android.provider.Settings
-import androidx.activity.result.IntentSenderRequest
 import rikka.shizuku.Shizuku
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -29,6 +24,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -107,7 +103,6 @@ interface HubController {
     fun openShizukuManager()
     fun copyAdbDiagnostics()
     fun runShellCommand(command:String)
-    fun startCompanionAssociation()
     fun removeCompanionAssociations()
     fun openBatteryOptimization()
     fun refreshCompatibilityAudit()
@@ -123,6 +118,7 @@ class HubActivity: ComponentActivity(), HubController {
     private var loading by mutableStateOf(true)
     private var smsLimit=100
     private var incomingId by mutableStateOf(0)
+    private var incomingInboxId by mutableStateOf(0)
     private var incomingRecipient by mutableStateOf("")
     private var incomingBody by mutableStateOf("")
     private var controllerRevision by mutableStateOf(0)
@@ -151,11 +147,6 @@ class HubActivity: ComponentActivity(), HubController {
                 SyncJobService.scheduleNow(applicationContext)
             }
         }
-    }
-    private val companionLauncher=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()){result->
-        CompatibilityAudit.record(this,"companion_confirmation",
-            if(result.resultCode==RESULT_OK)"accepted" else "cancelled")
-        refreshCompatibility()
     }
     private val shizukuPermissionListener=Shizuku.OnRequestPermissionResultListener {requestCode,result->
         if(requestCode==12012){
@@ -218,8 +209,9 @@ class HubActivity: ComponentActivity(), HubController {
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         handleComposeIntent(intent)
+        if(intent?.action==NotificationHelper.ACTION_OPEN_SMS)incomingInboxId+=1
         setContent { HubApp(snapshot,loading,pairing,fold,this,tools,
-            incomingId,incomingRecipient,incomingBody,controllerRevision) }
+            incomingId,incomingRecipient,incomingBody,controllerRevision,incomingInboxId) }
         // ACTION_VIEW is delivered to onCreate for a cold-start browser QR link;
         // onNewIntent only handles an already running Activity.
         if(intent?.action==Intent.ACTION_VIEW &&
@@ -251,8 +243,7 @@ class HubActivity: ComponentActivity(), HubController {
         val poolFilter=IntentFilter(SharedPoolClient.ACTION_CACHE_UPDATED)
         poolFilter.addAction(EnrollmentManager.ACTION_ENROLLMENT_CHANGED)
         poolFilter.addAction(RelayForegroundService.ACTION_RELAY_STATE)
-        if(Build.VERSION.SDK_INT>=33)registerReceiver(poolObserver,poolFilter,Context.RECEIVER_NOT_EXPORTED)
-        else registerReceiver(poolObserver,poolFilter)
+        ContextCompat.registerReceiver(this,poolObserver,poolFilter,ContextCompat.RECEIVER_NOT_EXPORTED)
         // User-visible startup is permitted; recover an explicitly enabled
         // foreground relay if the OEM previously killed its process.
         if(AgentConfig(this).alwaysOn()&&AgentConfig(this).isEnrolled()&&
@@ -299,6 +290,7 @@ class HubActivity: ComponentActivity(), HubController {
     override fun onNewIntent(intent:Intent){
         super.onNewIntent(intent)
         handleComposeIntent(intent)
+        if(intent.action==NotificationHelper.ACTION_OPEN_SMS)incomingInboxId+=1
         if(intent.action==Intent.ACTION_VIEW && intent.data?.scheme=="simhub") {
             if(intent.data?.host=="controller")handleControllerDeepLink(intent.data.toString())
             else enrollLink(intent.data.toString())
@@ -564,6 +556,8 @@ class HubActivity: ComponentActivity(), HubController {
                 }
                 toast(if(status.optBoolean("published",false))
                     actionLabel("加密位置已上传并确认","Encrypted location confirmed by Relay")
+                else if(status.optBoolean("suppressed",false))
+                    actionLabel("位置未发布：服务器隐私设置已阻止该记录，请检查共享授权", "Location was not published: Relay privacy settings suppressed this sample")
                 else actionLabel("位置已加密排队，尚未收到服务器确认","Encrypted location queued; Relay ACK pending"))
             }catch(error:Exception){
                 // Deliberately do not log raw location or errors that may contain coordinates.
@@ -1027,54 +1021,6 @@ class HubActivity: ComponentActivity(), HubController {
         getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
         auditCompatibility("copy_adb_diagnostics","copied")
         tools.compatibilityNote="已复制只读 ADB 命令。使用 Rish 时去掉 adb shell 前缀。"
-    }
-    override fun startCompanionAssociation(){
-        if(!CompatibilityPolicy.canOfferSelfManagedAssociation(
-                Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled()) ||
-                !CompatibilityManager.supportsSelfManagedAssociation(this)){
-            tools.compatibilityError="需要 Android 13+、已配对 Relay，且 ROM 支持 Companion Device Setup。"
-            return
-        }
-        if(CompatibilityManager.associationCount(this)>0){
-            tools.compatibilityNote="已存在 SIM Hub 关联。如需重新测试，先手动解除关联。"
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Android 系统伴侣关联")
-            .setMessage("将向 Android 请求自管理伴侣关联，需要系统授权确认。它不会自动读取 OTP，也不保证获得验证码实时访问豁免。仅对自己管理的可信设备进行关联。")
-            .setNegativeButton("取消",null)
-            .setPositiveButton("继续") { _,_ ->
-                try{
-                    val cdm=getSystemService(CompanionDeviceManager::class.java)
-                        ?:throw IllegalStateException("Companion service unavailable")
-                    val name=AgentConfig(this).deviceName().take(40)
-                    val request=AssociationRequest.Builder()
-                        .setSelfManaged(true)
-                        .setDisplayName("SIM Hub · "+name)
-                        .setSingleDevice(true).build()
-                    auditCompatibility("companion_association","requested")
-                    cdm.associate(request,mainExecutor,object:CompanionDeviceManager.Callback(){
-                        override fun onAssociationPending(intentSender:IntentSender){
-                            companionLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                        }
-                        override fun onAssociationCreated(associationInfo:AssociationInfo){
-                            auditCompatibility("companion_association","created")
-                            refreshCompatibility()
-                        }
-                        override fun onFailure(errorMessage:CharSequence?){
-                            auditCompatibility("companion_association","failed")
-                            tools.compatibilityError="系统拒绝伴侣关联："+
-                                (errorMessage?.toString()?.take(200) ?: "unknown")
-                            AppLogger.w(this@HubActivity,"Companion","Association callback failed")
-                        }
-                    })
-                }catch(error:Exception){
-                    auditCompatibility("companion_association","failed")
-                    AppLogger.e(this@HubActivity,"Companion","Association request rejected",error)
-                    tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName+
-                        (error.message?.take(180)?.let{" · "+it} ?: "")
-                }
-            }.show()
     }
     override fun removeCompanionAssociations(){
         AlertDialog.Builder(this)

@@ -60,21 +60,23 @@ Use SIM Hub as a **SIM Node**, **Management Center**, or both. A native Material
 
 **SIM Node settings:** Five compact native categories, adaptive foldable layout and on-demand diagnostics.
 
-**Same-phone controller approval:** Scan the management QR or import a trusted HTTPS address; authenticate in the phone's **system browser** with registered Passkey or password/TOTP, unlock the existing Global Vault, confirm the device fingerprint and return to SIM Hub. Native access uses a Keystore signing identity. Browser WebAuthn is not native Credential Manager; optional biometric app locking is not hardware-authenticated Vault decryption.
+**Same-phone approval:** Scan the QR or import a trusted HTTPS address, authenticate in the **system browser**, unlock the existing Vault and verify the fingerprint. Native access uses a Keystore signing identity. Browser WebAuthn and optional biometric app locking do not provide hardware-authenticated Vault decryption.
 
 ## Features
 
 | Capability | What it does |
 |---|---|
 | **SMS and OTP** | Local/remote conversations, OTP extraction for accessible texts, SIM tags, filters and paging; read-only companion mode versus permission-gated full SMS-handler sending |
-| **Native Android UI** | Material 3 dual roles, distinct themes, four-tab navigation, foldable layouts, quick actions and native device detail |
+| **Send center** | Encrypted drafts, fixed device/SIM routes and original-command reconciliation; uncertain delivery stays explicit |
+| **History search** | Cancellable client-side search of retained history, with coverage; queries stay local |
+| **SIM labels** | Encrypted aliases/phone labels sync across controllers; source identity stays fixed |
 | **Devices and SIMs** | Android / Linux modem nodes, SIM channel identity, signal, battery, Wi-Fi, installed app version and task states |
 | **Private telemetry & one-shot location** | Battery/Wi-Fi/SIM gauges; opt-in Node Key–encrypted location, separately authorized remote requests and user-triggered OpenStreetMap viewing. [Details](docs/DEVICE_TELEMETRY_LOCATION.md) |
 | **Shared SMS (opt-in)** | Authorized members decrypt an encrypted common pool with source attribution, history pagination, revocation and key rotation |
 | **Pairing and security** | QR/link or eight-digit pairing code and fingerprint, one Global Vault, independent Node Keys, password/TOTP/Passkeys, native controller identity |
 | **Reliability** | Encrypted local queue, manual immediate command/SMS sync, older-history rescan, foreground HTTPS long-poll, offline retry and durable acknowledgements |
 | **Reset and OTA** | Remote unpair and recovery states, signed APK self-updates, opt-in Android remote OTA, verified Rootless Docker Relay upgrades |
-| **Diagnostics** | Redacted logs, SMS Provider tests, user-confirmed Companion Device association and locally authorized Shizuku Shell console |
+| **Diagnostics** | Redacted logs, SMS Provider tests, CDM inspection and locally authorized Shizuku Shell console |
 
 Editable SVG icons are in [design/icons](design/icons), with matching Android VectorDrawables.
 
@@ -110,7 +112,7 @@ Open the management URL, log in, initialize the single encrypted Global Vault on
 
 **Android:** Signed APK checks work without pairing. Android 16+ can enable opt-in remote OTA with platform confirmation. [Remote OTA](docs/REMOTE_OTA.md).
 
-**Compatibility lab:** On-device Shizuku shell (local authorization only), Companion Device association, SMS Provider/AppOps probes, and redacted logs. No remote Shell access or OTP bypass. [Compatibility lab](docs/COMPATIBILITY_LAB.md).
+**Compatibility lab:** On-device Shizuku shell (local authorization only), existing CDM association inspection/removal, SMS Provider/AppOps probes, and redacted logs. No remote Shell access or OTP bypass. [Compatibility lab](docs/COMPATIBILITY_LAB.md).
 
 ## SMS modes and response time
 

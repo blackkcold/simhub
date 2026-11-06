@@ -5,6 +5,7 @@ import {NotificationCenter} from './notifications.js';
 import {bindNotificationUI} from './notification-ui.js';
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 import {IntentJournal, SendCoordinator} from './send-intents.js';
+import {VaultSettingsClient} from './vault-settings.js';
 const $ = (id) => document.getElementById(id);
 const androidShell = new URLSearchParams(location.search).get('native') === '1';
 const samePhoneControllerApproval = new URLSearchParams(location.search).get('controller') === 'local';
@@ -23,6 +24,7 @@ let authenticated=false;
 let passwordConfigured=false;
 const PHONE_OVERRIDES_STORE = 'simhub_phone_overrides_v1';
 let phoneOverrides={};
+let channelAliases={},vaultSettingsClient=null,remoteSettingsAvailable=true;
 let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
@@ -209,21 +211,62 @@ async function loadPhoneOverrides(){
 }
 async function savePhoneOverrides(){
   if(!vaultKey)throw Error('Vault locked');
+  const epoch=securityEpoch,key=vaultKey;
   const iv=crypto.getRandomValues(new Uint8Array(12));
   const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-phone-overrides-v1')},vaultKey,enc.encode(JSON.stringify(phoneOverrides)));
+  if(epoch!==securityEpoch||key!==vaultKey)throw Error('Vault locked');
   localStorage.setItem(PHONE_OVERRIDES_STORE,JSON.stringify({v:1,iv:b64u(iv),ct:b64u(new Uint8Array(ct))}));
+}
+function ensureVaultSettings(){
+  if(!vaultKey||!globalVault?.initialized)throw Error('Vault locked');
+  if(!vaultSettingsClient||vaultSettingsClient.key!==vaultKey){
+    const key=vaultKey,epoch=securityEpoch;
+    vaultSettingsClient?.close();
+    vaultSettingsClient=new VaultSettingsClient({vaultId:globalVault.vaultId,keyId:globalVault.keyId,
+      key,api,isCurrent:()=>key===vaultKey&&epoch===securityEpoch});
+  }
+  return vaultSettingsClient;
+}
+async function loadVaultSettings(){
+  if(!vaultKey||!globalVault?.initialized)return;
+  const epoch=securityEpoch;
+  try{
+    const result=await ensureVaultSettings().load({v:1,phoneOverrides,channelAliases});
+    if(epoch!==securityEpoch||!vaultKey)return;
+    phoneOverrides=result.settings.phoneOverrides;channelAliases=result.settings.channelAliases;
+    remoteSettingsAvailable=true;
+  }catch(error){
+    if(error.status===404&&error.code==='not_found'){remoteSettingsAvailable=false;return;}
+    throw error;
+  }
+}
+async function updateVaultSetting(section,id,value){
+  const epoch=securityEpoch;
+  const result=await ensureVaultSettings().update(section,id,value,{v:1,phoneOverrides,channelAliases});
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked');
+  phoneOverrides=result.settings.phoneOverrides;channelAliases=result.settings.channelAliases;
+  await savePhoneOverrides();
+  renderDevices();renderDeviceSelectors();renderInbox();updateReplyChannels();
 }
 function phoneOverrideKey(device,ch){return device.id+'|'+ch.id+'|'+String(ch.revision||ch.channelRevision||1);}
 async function editSimPhone(deviceId,channelId){
   const d=devices.find(x=>x.id===deviceId),ch=nodeChannels(d).find(x=>String(x.id)===channelId);
   if(!d||!ch)throw Error('SIM 通道不存在');
-  const input=prompt('设置 SIM 电话号码（仅当前浏览器加密保存；留空清除覆盖值）',ch.phoneNumber||'');
+  const input=prompt(remoteSettingsAvailable?'设置显示号码（加密同步到已授权的管理终端；留空清除）':'设置 SIM 显示号码（当前 Relay 仅支持本机加密保存）',ch.phoneNumber||'');
   if(input===null)return;
   const number=input.trim();
   if(number&&!/^\+?[0-9 ()-]{5,24}$/.test(number))throw Error('电话号码格式无效');
   const key=phoneOverrideKey(d,ch);
+  if(remoteSettingsAvailable){await updateVaultSetting('phoneOverrides',key,number);return;}
   if(number)phoneOverrides[key]=number;else delete phoneOverrides[key];
   await savePhoneOverrides();renderDevices();renderDeviceSelectors();renderInbox();updateReplyChannels();
+}
+async function editSimAlias(deviceId,channelId){
+  const d=devices.find(x=>x.id===deviceId),ch=nodeChannels(d).find(x=>String(x.id)===channelId);
+  if(!d||!ch)throw Error('SIM 通道不存在');
+  const input=prompt('设置 SIM 标签（加密同步到已授权的管理终端；留空恢复设备标签）',channelAliases[phoneOverrideKey(d,ch)]||'');
+  if(input===null)return;
+  await updateVaultSetting('channelAliases',phoneOverrideKey(d,ch),input.trim());
 }
 async function deriveWrapKey(passphrase,salt,iterations=PBKDF2_ITER){const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}
 async function wrapVaultRaw(raw,passphrase){if(passphrase.length<10)throw new Error('Use a vault passphrase of at least 10 characters.');const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),wrapKey=await deriveWrapKey(passphrase,salt);const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,raw));localStorage.setItem(VAULT_STORE,JSON.stringify({v:1,kdf:'PBKDF2-SHA256',iterations:PBKDF2_ITER,salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}));}
@@ -533,6 +576,7 @@ function purgeSensitiveUI(){
 function lockVault(broadcast=true){
   securityEpoch++;androidNativePage=0;
   intentJournal?.close();intentJournal=null;sendCoordinator=null;recentCommands=[];
+  vaultSettingsClient?.close();vaultSettingsClient=null;channelAliases={};remoteSettingsAvailable=true;
   if(androidShell&&window.SimHubNativeInbox?.postMessage)
     window.SimHubNativeInbox.postMessage(JSON.stringify({type:'locked'}));
   phoneOverrides={};clearTabVault();activeConversationKey=null;diagnosticsDeviceId=null;
@@ -759,7 +803,7 @@ let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
   const epoch=securityEpoch;
-  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
+  refreshing=(async()=>{try{await loadVaultSettings();if(epoch!==securityEpoch||!vaultKey)return;await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
@@ -813,7 +857,7 @@ function nodeChannels(d){
   return channels.map(ch=>{
     const found=phones.find(n=>String(n.channelId)===String(ch.id));
     const profile=profiles.get(d.id+'|'+String(ch.id)+'|'+Number(ch.revision||ch.channelRevision||1))?.payload;
-    return {...ch,alias:profile?.tag||ch.alias,
+    return {...ch,alias:channelAliases[phoneOverrideKey(d,ch)]||profile?.tag||ch.alias,
       phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||
         (profile?.tail?'••••'+profile.tail:'')).trim()};
   });
@@ -2002,7 +2046,7 @@ async function handleDeviceAction(btn){
     await fullRefresh();
     toast(zh?'服务器设备数据已清除':'Relay device records deleted');
     return;
-  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队'); }else if(action==='restore-history'){
+  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='edit-sim-alias'){await editSimAlias(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队'); }else if(action==='restore-history'){
     const d=devices.find(x=>x.id===id);
     if(!d||!versionAtLeast(d.appVersion,'0.17.0'))throw Error('请先更新 Android 节点至 v0.17.0');
     const notice=getLocale()==='zh-CN'

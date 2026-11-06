@@ -72,7 +72,7 @@ export function renderNodeDashboard(device,{escapeHtml:esc,fmtTime,deviceStatusT
     '<span class="node-icon-box">'+signalBars(c.signalLevel)+'</span><div class="node-sim-main"><strong>'+e(c.displayName||c.alias||c.carrierName||'SIM '+(i+1))+'</strong>'+
     '<small>'+e(c.phoneNumber||t('号码未设置','Number unknown'))+' · '+e(c.serviceState||c.carrierName||'—')+
     ' · '+t('信号','Signal')+' '+e(c.signalLevel??'—')+'</small></div>'+
-    '<button class="ghost mini" type="button" data-action="edit-sim" data-id="'+e(device.id)+'" data-channel="'+e(c.id)+'">'+t('设置号码','Edit number')+'</button></div>').join('');
+    '<button class="ghost mini" type="button" data-action="edit-sim" data-id="'+e(device.id)+'" data-channel="'+e(c.id)+'">'+t('设置号码','Edit number')+'</button><button class="ghost mini" type="button" data-action="edit-sim-alias" data-id="'+e(device.id)+'" data-channel="'+e(c.id)+'">'+t('设置标签','Edit label')+'</button></div>').join('');
   const sendMode=m.mode==='companion'?(m.developerSend?t('开发者临时发送','Temporary developer send'):t('不接管 · 默认禁止发送','Companion · read-only')):
     m.mode==='default'?t('默认短信应用','Default SMS handler'):t('未报告','Unknown');
   const sendCapability=m.send?t('满足基本发送条件','Basic send prerequisites met'):m.developerSend?t('仅开发者测试','Developer test only'):t('不可远程发送','Remote send unavailable');

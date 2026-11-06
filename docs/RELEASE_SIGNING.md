@@ -10,7 +10,8 @@ SIM Hub never stores the signing private key or passwords in the public reposito
 - Certificate SHA-256 fingerprint:
   `63:3F:60:0F:7E:C0:AC:5C:DC:DC:FF:B5:36:AD:E4:BE:EC:83:12:CC:08:34:87:A2:25:C8:C3:08:77:1F:D8:D3`
 
-The fingerprint is public information and is pinned in both the manual signing-verification workflow and the tag-driven release workflow.
+The fingerprint is public information and is pinned in the manual verification,
+Stable release and Dev release workflows.
 
 ## Required GitHub Actions secrets
 
@@ -23,21 +24,33 @@ Repository Actions secrets:
 
 The keystore is decoded only into the ephemeral Actions runner. The private JKS is never uploaded as a repository or release artifact.
 
-## v0.2.1+ release policy
+## Release policy
 
-A release tag such as `v0.2.1` triggers `.github/workflows/release.yml`.
+Normal releases start when a protected-branch PR changes the appropriate trigger:
 
-The workflow:
+| Channel | Target branch | Trigger | Workflow |
+|---|---|---|---|
+| Stable | `main` | `.github/release/v<VERSION>.trigger`, with `VERSION` on its first line | `.github/workflows/release.yml` |
+| Dev | `develop` | `.github/dev-release/publish.trigger` | `.github/workflows/release-dev.yml` |
 
-1. verifies the tagged commit belongs to `main` history;
-2. verifies the tag version equals Android `versionName` and relay `APP_VERSION`;
-3. runs the full server/web/modem/Android test suite;
-4. fails immediately if any signing secret is missing;
-5. builds `assembleRelease`;
-6. runs `apksigner verify --print-certs`;
-7. fails unless the signing certificate matches the pinned SHA-256 fingerprint;
-8. uploads the signed APK to a separate artifact;
-9. creates the GitHub Release from a publish job that does not receive the keystore secrets.
+Stable requires the trigger version to match Android `versionName` and Relay
+`APP_VERSION`. Dev derives its `-dev.N` version from the matching base version and
+the release workflow sequence. Creating a tag manually does not start these
+workflows; the publish job creates the tag after verification.
+
+The workflows:
+
+1. validate the trigger, version and source channel;
+2. require successful CI, security scans and API 29/30 checks on the exact merged
+   target-branch commit; Dev also requires the P2P preview and Android sandbox;
+3. run regression checks and fail if a required signing secret is missing;
+4. build the signed release APK and run `apksigner verify --print-certs`;
+5. verify the pinned certificate and extract the actual APK package/version
+   metadata; Stable also rejects native WebRTC artifacts;
+6. upload the signed APK to a separate workflow artifact and sign/verify the
+   immutable OCI image with the channel's workflow identity;
+7. recheck the exact-commit gates, then create the tag and GitHub Release from a
+   publish job that does not receive the keystore secrets.
 
 There is **no debug-signed fallback** for v0.2.1 and later releases.
 

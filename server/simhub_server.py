@@ -29,6 +29,7 @@ from pathlib import Path
 import passkeys
 import controller_auth
 import global_vault
+import vault_settings
 from argon2 import PasswordHasher, exceptions as argon2_errors
 import shared_pool
 import update_bridge
@@ -502,6 +503,7 @@ def init_db() -> None:
         shared_pool.init(con)
         controller_auth.init(con)
         global_vault.init(con)
+        vault_settings.init(con)
         _add_column(con,"admin_sessions","controller_id","TEXT NOT NULL DEFAULT ''")
         _add_column(con,"location_purge","active_epoch","TEXT NOT NULL DEFAULT ''")
         con.execute("PRAGMA user_version=13")
@@ -1206,6 +1208,14 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if not self.require_admin():return
             with open_db() as con: result=global_vault.status(con)
             self.send_json(200,result);return
+        if path=="/api/v1/vault/settings":
+            if not self.require_admin():return
+            try:
+                with open_db() as con: result=vault_settings.get(con)
+                self.send_json(200,result)
+            except vault_settings.SettingsConflict as error:
+                self.send_error_json(409,"settings_conflict",str(error))
+            return
         if path=="/api/v1/controllers/pending":
             if not self.require_admin():return
             with open_db() as con: result=controller_auth.pending(con,now())
@@ -1323,6 +1333,21 @@ class SimHubHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path,p,q=self.route()
         if not self.preflight("POST", path): return
+        if path=="/api/v1/vault/settings":
+            if not self.require_admin():return
+            body=self.read_json()
+            if body is None:return
+            try:
+                with open_db() as con:
+                    con.execute("BEGIN IMMEDIATE")
+                    result=vault_settings.put(con,body)
+                audit("vault.settings.update",result["vaultId"],"ok",self.ip)
+                self.send_json(200,result)
+            except vault_settings.SettingsConflict as error:
+                self.send_error_json(409,"settings_conflict",str(error))
+            except ValueError as error:
+                self.send_error_json(400,"invalid_settings",str(error))
+            return
         if path in {"/api/v1/vault/initialize","/api/v1/vault/rewrap"}:
             if not self.require_stepup():return
             body=self.read_json()

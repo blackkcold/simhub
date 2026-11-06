@@ -7,6 +7,14 @@ import com.blackkcold.simhub.p2p.RelayLiteClient
 import org.json.JSONObject
 import java.util.UUID
 
+internal object ControllerPeerReceiptState {
+    fun normalize(state:String):String?=when(state){
+        "claimed","indeterminate","unknown","outcome_unknown"->"outcome_unknown"
+        "queued","submitted","sent","delivered","succeeded","failed","rejected","expired"->state
+        else->null
+    }
+}
+
 /** Dev-only adapter: one encrypted controller intent keeps one immutable peer route. */
 internal class ControllerPeerSendTransport(private val api:ControllerSecureClient):ControllerSendTransport {
     private val context=api.applicationContext()
@@ -72,11 +80,8 @@ internal class ControllerPeerSendTransport(private val api:ControllerSecureClien
     private fun normalize(intent:JSONObject,result:JSONObject):JSONObject {
         val id=intent.getString("id")
         if(result.has("commandId")&&result.optString("commandId")!=id)throw SecurityException("peer_receipt_identity_mismatch")
-        val state=when(result.optString("state")){
-            "claimed","indeterminate","unknown"->"outcome_unknown"
-            "queued","submitted","sent","delivered","succeeded","failed","rejected","expired"->result.getString("state")
-            else->throw java.io.IOException("peer_receipt_unavailable")
-        }
+        val state=ControllerPeerReceiptState.normalize(result.optString("state"))
+            ?:throw java.io.IOException("peer_receipt_unavailable")
         return JSONObject().put("commandId",id).put("deviceId",intent.getString("deviceId"))
             .put("type","sms.send").put("state",state).put("result",result)
     }

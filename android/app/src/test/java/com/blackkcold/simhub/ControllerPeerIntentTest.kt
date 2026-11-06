@@ -42,6 +42,13 @@ class ControllerPeerIntentTest {
     private fun node()=JSONObject().put("id","node").put("name","Node").put("online",true).put("nodeType","modem")
         .put("state",JSONObject().put("smsOperational",true).put("channels",JSONArray().put(JSONObject().put("id","sim").put("revision",1))))
     private fun draft()=ControllerSendDraft("node","sim",1,"12345","synthetic peer body")
+    @Test fun staleSmsAndAmbiguousPeerReceiptsRemainOutcomeUnknown(){
+        for(state in listOf("outcome_unknown","claimed","indeterminate","unknown"))
+            assertEquals("outcome_unknown",ControllerPeerReceiptState.normalize(state))
+        for(state in listOf("queued","submitted","sent","delivered","failed"))
+            assertEquals(state,ControllerPeerReceiptState.normalize(state))
+        assertNull(ControllerPeerReceiptState.normalize("unrecognized"))
+    }
     @Test fun lostResponseAndProcessRecreationRetainPeerIdDeadlineAndPayload(){
         val store=Journal();val peer=Peer();var now=1000L
         val first=ControllerSendCoordinator(store,peer){now}

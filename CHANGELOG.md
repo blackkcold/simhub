@@ -9,6 +9,7 @@
 - Correct CDM capability reporting and remove the unavailable privileged association-creation flow from ordinary APKs; retain existing app-owned association inspection/removal and normal SMS Companion mode.
 - Repair standalone deployment-ZIP updater preflight and selected proxy ports; add private, serialized SQLite backups and an isolated restore verifier. Display backup integrity and restore-rehearsal status separately.
 - Pin workflow actions, container bases and Python dependency hashes; publish OCI SBOM/provenance; discover regression entry points and require current-commit security, API29/30 compatibility and API35 isolated acceptance before release.
+- Harden static asset selection and request logging, eliminate pathological OTP-redaction backtracking, and run full-scope CodeQL checks on pull requests as well as merged release commits.
 - Stable continues to exclude experimental P2P/WebRTC. Dev retains separate package, signing-workflow and release-channel identities; Dev transport changes are documented in its channel notes.
 - Existing Global Vault and Node Keys are preserved. New Relay tables are additive; back up before upgrading. Emulator and synthetic tests do not establish physical-carrier delivery, OEM background behavior or hardware-authenticated Vault decryption.
 

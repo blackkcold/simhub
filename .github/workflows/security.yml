@@ -17,6 +17,12 @@ concurrency:
 permissions:
   contents: read
 
+# The pinned v4.39.3 implementation supports this override before init. Scan the
+# full repository on PRs as well as pushes, so release blockers surface before merge.
+# Recheck this source-backed flag when updating the pinned CodeQL Action version.
+env:
+  CODEQL_ACTION_DIFF_INFORMED_QUERIES: 'false'
+
 jobs:
   # Preserve the original Code Scanning configuration identity present on main:
   # .github/workflows/security.yml:codeql/language:{java-kotlin,javascript-typescript,python}

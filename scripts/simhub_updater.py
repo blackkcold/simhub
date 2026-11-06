@@ -105,9 +105,49 @@ def require_rootless():
         raise PermissionError("Docker daemon is not rootless; refusing deployment")
     if not (ROOT / "docker-compose.yml").is_file() or not ENV_FILE.is_file():
         raise ValueError("Missing initialized SIM Hub deployment")
-    # The bridge may request an update, never modify the Compose deployment.
-    if not (ROOT / "server" / "Dockerfile").is_file():
-        raise ValueError("Missing SIM Hub deployment checkout")
+    validate_deployment()
+
+
+def validate_deployment():
+    """Validate the installed instance, including source-free deployment ZIPs.
+
+    Compose and .env are controlled by the rootless host user, never by the
+    bridge. The optional bundle manifest describes its initial release; updates
+    may advance .env to a newer signed digest without rewriting that manifest.
+    """
+    channel = release_channel()
+    manifest = ROOT / "deployment.json"
+    if manifest.exists():
+        data = json.loads(manifest.read_text("utf-8"))
+        identity = DEV_CERT_IDENTITY if channel == "dev" else CERT_IDENTITY
+        if (not isinstance(data, dict) or data.get("schemaVersion") != 1
+                or data.get("channel") != channel
+                or not channel_version(data.get("version", ""))
+                or not DIGEST_IMAGE.fullmatch(str(data.get("image", "")))
+                or data.get("cosignIdentity") != identity
+                or data.get("cosignIssuer") != CERT_ISSUER):
+            raise ValueError("Invalid or mismatched deployment bundle identity")
+    # Do not require server/Dockerfile: verified deployments use a prebuilt
+    # image and must never need a source checkout or a host-side Docker build.
+    config = json.loads(compose("config", "--format", "json", timeout=15))
+    service = config.get("services", {}).get("simhub", {}) if isinstance(config, dict) else {}
+    image = service.get("image", "")
+    if not (DIGEST_IMAGE.fullmatch(str(image)) or LOCAL_IMAGE.fullmatch(str(image))):
+        raise ValueError("Untrusted configured SIM Hub image")
+    environment = service.get("environment", {})
+    if (not isinstance(environment, dict)
+            or environment.get("SIMHUB_CHANNEL", "stable") != channel):
+        raise ValueError("Compose service does not match the fixed release channel")
+    ports = service.get("ports", [])
+    if not ports or any(
+            not isinstance(port, dict)
+            or str(port.get("target")) != "8787"
+            or str(port.get("published")) != str(host_port())
+            or port.get("host_ip") not in {"127.0.0.1", "::1"}
+            or port.get("protocol", "tcp") != "tcp" for port in ports):
+        raise ValueError("SIM Hub must publish only its configured loopback port")
+    if service.get("privileged") or service.get("read_only") is not True:
+        raise ValueError("SIM Hub must remain an unprivileged read-only container")
 
 
 def fetch_json(url, limit=131072):
@@ -196,7 +236,12 @@ def current_version():
             return str(version).removeprefix("v")
     except (OSError, ValueError):
         pass
-    text = (ROOT / "server" / "simhub_server.py").read_text("utf-8")
+    try:
+        text = (ROOT / "server" / "simhub_server.py").read_text("utf-8")
+    except OSError:
+        # A source-free deployment can be offline before its first start. Keep
+        # status/check available; never invent an installed bundle version.
+        return "0.0.0"
     m = re.search(r'^APP_VERSION = "([0-9.]+)"', text, re.M)
     return m.group(1) if m else "0.0.0"
 
@@ -294,7 +339,8 @@ def health(version):
             with urllib.request.urlopen("http://127.0.0.1:" + str(host_port()) + "/readyz", timeout=3) as r:
                 payload = json.load(r)
             consecutive = (consecutive + 1) if (
-                payload.get("ok") and payload.get("version") == version) else 0
+                payload.get("ok") and payload.get("version") == version
+                and payload.get("channel", release_channel()) == release_channel()) else 0
             if consecutive >= 2:
                 return True
         except (OSError, ValueError):

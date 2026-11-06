@@ -31,9 +31,11 @@ env={}
 for line in pathlib.Path(".env").read_text().splitlines():
     if line and not line.lstrip().startswith("#") and "=" in line:
         k,v=line.split("=",1); env[k.strip()]=v.strip().strip('"').strip("'")
-for key,expected in (("SIMHUB_CHANNEL",channel),("COMPOSE_PROJECT_NAME","simhub-"+channel),
-                     ("SIMHUB_HOST_PORT","8788" if channel=="dev" else "8787")):
+for key,expected in (("SIMHUB_CHANNEL",channel),("COMPOSE_PROJECT_NAME","simhub-"+channel)):
     if env.get(key)!=expected: raise SystemExit("REFUSED: mismatched "+key)
+port=env.get("SIMHUB_HOST_PORT", "")
+if not port.isdecimal() or not 1 <= int(port) <= 65535:
+    raise SystemExit("REFUSED: invalid private SIMHUB_HOST_PORT")
 for key in ("SIMHUB_ADMIN_TOKEN","SIMHUB_TOTP_SECRET","SIMHUB_PUBLIC_BASE_URL","SIMHUB_MANAGEMENT_ORIGIN"):
     if not env.get(key) or any(x in env[key].lower() for x in ("change_me","your_","example.com")):
         raise SystemExit("REFUSED: missing or placeholder configuration "+key)

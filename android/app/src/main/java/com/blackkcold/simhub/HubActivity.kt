@@ -123,6 +123,7 @@ class HubActivity: ComponentActivity(), HubController {
     private var loading by mutableStateOf(true)
     private var smsLimit=100
     private var incomingId by mutableStateOf(0)
+    private var incomingInboxId by mutableStateOf(0)
     private var incomingRecipient by mutableStateOf("")
     private var incomingBody by mutableStateOf("")
     private var controllerRevision by mutableStateOf(0)
@@ -218,8 +219,9 @@ class HubActivity: ComponentActivity(), HubController {
         window.navigationBarColor=android.graphics.Color.TRANSPARENT
         ActivePairing.session?.let{pairing=PairingDisplay(it.code,it.fingerprint,true)}
         handleComposeIntent(intent)
+        if(intent?.action==NotificationHelper.ACTION_OPEN_SMS)incomingInboxId+=1
         setContent { HubApp(snapshot,loading,pairing,fold,this,tools,
-            incomingId,incomingRecipient,incomingBody,controllerRevision) }
+            incomingId,incomingRecipient,incomingBody,controllerRevision,incomingInboxId) }
         // ACTION_VIEW is delivered to onCreate for a cold-start browser QR link;
         // onNewIntent only handles an already running Activity.
         if(intent?.action==Intent.ACTION_VIEW &&
@@ -299,6 +301,7 @@ class HubActivity: ComponentActivity(), HubController {
     override fun onNewIntent(intent:Intent){
         super.onNewIntent(intent)
         handleComposeIntent(intent)
+        if(intent.action==NotificationHelper.ACTION_OPEN_SMS)incomingInboxId+=1
         if(intent.action==Intent.ACTION_VIEW && intent.data?.scheme=="simhub") {
             if(intent.data?.host=="controller")handleControllerDeepLink(intent.data.toString())
             else enrollLink(intent.data.toString())

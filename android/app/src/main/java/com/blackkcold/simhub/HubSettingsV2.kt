@@ -298,6 +298,7 @@ private fun RelayRuntimeCard(state:HubSnapshot?,controller:HubController,tools:H
         val relayPhase=RelayUiState.phase(state?.enrolled==true,
             state?.resetPending==true,state?.resetRecoveryRequired==true)
         if(RelayUiState.showTransportDiagnostics(relayPhase)){
+        state?.state?.let{NodeRecoveryDetails(org.json.JSONObject().put("state",it),showOta=false)}
         val commandAt=state?.state?.optLong("lastCommandFetchAt",0L)?:0L
         InfoRow(hubLabel("上次成功检查命令","Last successful command check"),
             if(commandAt>0)java.text.DateFormat.getDateTimeInstance()
@@ -530,6 +531,10 @@ private fun RemoteOtaCard(state:HubSnapshot?,tools:HubToolsState,controller:HubC
             val reason=otaState?.optString("remoteOtaError","").orEmpty()
             if(reason.isNotBlank())Text(reason,style=MaterialTheme.typography.bodySmall,
                 color=MaterialTheme.colorScheme.error)
+            otaState?.let{NodeRecoveryGuidance.ota(it)}?.let{hint->
+                Text(hubLabel(hint.zh,hint.en),style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(hubLabel("服务端可下发更新命令，但无法保证免确认安装或后台弹出界面。安装成功后仅尝试自动恢复原有中继服务。",

@@ -1,4 +1,8 @@
 <resources>
+    <string name="sms_notification_channel">New messages</string>
+    <string name="sms_notification_description">Private notifications while SIM Hub is the default SMS app</string>
+    <string name="sms_notification_title">New message</string>
+    <string name="sms_notification_body">Open SIM Hub to view your messages</string>
     <string name="app_name">SIM Hub</string>
     <string name="dashboard_title">SIM Hub</string>
     <string name="dashboard_subtitle">Private SIM node and encrypted SMS relay</string>

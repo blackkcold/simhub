@@ -44,6 +44,12 @@ public class CloudAcceptanceInstrumentedTest {
         String deviceToken=args.getString("ciDeviceToken","");
         adminToken=args.getString("ciAdminToken","");
         assertFalse("Synthetic CI enrollment missing",deviceId.isBlank()||deviceToken.isBlank()||adminToken.isBlank());
+        CenterTrustStore trustStore=CenterTrustStore.get(context);
+        CenterTrust trust=trustStore.injected();
+        assertNotNull("Cloud fixture must inject its per-run pinned identity",trust);
+        assertTrue("Injected identity must cover the synthetic node origin",trust.covers(CenterTrust.ROLE_NODE,ORIGIN));
+        assertTrue("Cloud requests must exercise production certificate pinning",
+            SecureHttp.endpoint(trustStore,CenterTrust.ROLE_NODE,ORIGIN).isPinned());
         context.getSharedPreferences("simhub_location_privacy_v1",Context.MODE_PRIVATE).edit().clear().commit();
         nodeKey=new byte[32];for(int i=0;i<nodeKey.length;i++)nodeKey[i]=(byte)(i+1);
         config=new AgentConfig(context);

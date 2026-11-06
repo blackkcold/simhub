@@ -2133,7 +2133,7 @@ async function handleDeviceAction(btn){
     return;
   }
   if(action==='purge-sms'){
-    if(!confirm(zh?'仅清除该设备在服务器中的短信和未完成短信指令，不会清除 Android 手机上的原始短信。确认继续？':'Delete only relay-hosted SMS and queued SMS commands, not messages on the phone?'))return;
+    if(!confirm(zh?'清除该设备在服务器中的短信内容和共享副本；保留必要发送状态以防止重复发送。手机上的原始短信不受影响。确认继续？':'Delete relay SMS content and shared copies? Minimal send receipts remain to prevent duplicate sending. Messages on the phone are preserved.'))return;
     await ensureStepUp();
     const result=await api('/api/v1/devices/'+encodeURIComponent(id)+'/sms',{method:'DELETE'});
     await fullRefresh();

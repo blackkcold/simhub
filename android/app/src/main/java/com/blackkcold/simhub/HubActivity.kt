@@ -7,12 +7,7 @@ import android.os.Looper
 import android.provider.Telephony
 import android.app.AlertDialog
 import android.app.role.RoleManager
-import android.companion.AssociationInfo
-import android.companion.AssociationRequest
-import android.companion.CompanionDeviceManager
-import android.content.IntentSender
 import android.provider.Settings
-import androidx.activity.result.IntentSenderRequest
 import rikka.shizuku.Shizuku
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -108,7 +103,6 @@ interface HubController {
     fun openShizukuManager()
     fun copyAdbDiagnostics()
     fun runShellCommand(command:String)
-    fun startCompanionAssociation()
     fun removeCompanionAssociations()
     fun openBatteryOptimization()
     fun refreshCompatibilityAudit()
@@ -153,11 +147,6 @@ class HubActivity: ComponentActivity(), HubController {
                 SyncJobService.scheduleNow(applicationContext)
             }
         }
-    }
-    private val companionLauncher=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()){result->
-        CompatibilityAudit.record(this,"companion_confirmation",
-            if(result.resultCode==RESULT_OK)"accepted" else "cancelled")
-        refreshCompatibility()
     }
     private val shizukuPermissionListener=Shizuku.OnRequestPermissionResultListener {requestCode,result->
         if(requestCode==12012){
@@ -1034,62 +1023,6 @@ class HubActivity: ComponentActivity(), HubController {
         getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
         auditCompatibility("copy_adb_diagnostics","copied")
         tools.compatibilityNote="已复制只读 ADB 命令。使用 Rish 时去掉 adb shell 前缀。"
-    }
-    override fun startCompanionAssociation(){
-        if(Build.VERSION.SDK_INT<33 || !CompatibilityPolicy.canOfferSelfManagedAssociation(
-                Build.VERSION.SDK_INT,AgentConfig(this).isEnrolled()) ||
-                !CompatibilityManager.supportsSelfManagedAssociation(this)){
-            tools.compatibilityError="需要 Android 13+、已配对 Relay、系统伴侣服务及系统授予的自管理关联权限。普通安装不会获得此系统权限。"
-            return
-        }
-        if(CompatibilityManager.associationCount(this)>0){
-            tools.compatibilityNote="已存在 SIM Hub 关联。如需重新测试，先手动解除关联。"
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Android 系统伴侣关联")
-            .setMessage("将向 Android 请求自管理伴侣关联，需要系统授权确认。它不会自动读取 OTP，也不保证获得验证码实时访问豁免。仅对自己管理的可信设备进行关联。")
-            .setNegativeButton("取消",null)
-            .setPositiveButton("继续") { _,_ ->
-                if(Build.VERSION.SDK_INT>=33)requestCompanionAssociation()
-            }.show()
-    }
-    @androidx.annotation.RequiresApi(33)
-    private fun requestCompanionAssociation(){
-        if(checkSelfPermission(Manifest.permission.REQUEST_COMPANION_SELF_MANAGED)!=PackageManager.PERMISSION_GRANTED){
-            tools.compatibilityError="当前安装未获得系统自管理伴侣权限。"
-            return
-        }
-        try{
-            val cdm=getSystemService(CompanionDeviceManager::class.java)
-                ?:throw IllegalStateException("Companion service unavailable")
-            val name=AgentConfig(this).deviceName().take(40)
-            val request=AssociationRequest.Builder()
-                .setSelfManaged(true)
-                .setDisplayName("SIM Hub · "+name)
-                .setSingleDevice(true).build()
-            auditCompatibility("companion_association","requested")
-            cdm.associate(request,mainExecutor,object:CompanionDeviceManager.Callback(){
-                override fun onAssociationPending(intentSender:IntentSender){
-                    companionLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                }
-                override fun onAssociationCreated(associationInfo:AssociationInfo){
-                    auditCompatibility("companion_association","created")
-                    refreshCompatibility()
-                }
-                override fun onFailure(errorMessage:CharSequence?){
-                    auditCompatibility("companion_association","failed")
-                    tools.compatibilityError="系统拒绝伴侣关联："+
-                        (errorMessage?.toString()?.take(200) ?: "unknown")
-                    AppLogger.w(this@HubActivity,"Companion","Association callback failed")
-                }
-            })
-        }catch(error:Exception){
-            auditCompatibility("companion_association","failed")
-            AppLogger.e(this,"Companion","Association request rejected",error)
-            tools.compatibilityError="无法申请系统关联："+error.javaClass.simpleName+
-                (error.message?.take(180)?.let{" · "+it} ?: "")
-        }
     }
     override fun removeCompanionAssociations(){
         AlertDialog.Builder(this)

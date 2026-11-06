@@ -131,7 +131,7 @@ python3 scripts/setup.py --admin-domain admin.example.com --node-domain node.exa
 
 ## 系统兼容实验室
 
-Android「设置 → 系统兼容实验室」提供短信角色与权限、SMS Provider、只读 OTP AppOps、兼容性审计、厂商后台设置和受系统确认的 **Companion Device 关联**。
+Android「设置 → 系统兼容实验室」提供短信角色与权限、SMS Provider、只读 OTP AppOps、兼容性审计、厂商后台设置，以及本应用已有 **Companion Device 关联**的查看与清理。普通 APK 无法创建需要系统专属权限的 CDM 自管理关联；短信 Companion 模式仍可正常使用。
 
 可选使用官方 **Shizuku** 授权本机执行 Shell：点击预设诊断任务，开发者模式可输入命令，查看命令输出、错误日志和退出状态。**Shizuku 仅在本机经明确授权运行，服务器无法远程执行；Shizuku/CDM 也不能豁免 Android 的 OTP 安全策略。** 详见 [兼容性说明](docs/COMPATIBILITY_LAB.md)。
 

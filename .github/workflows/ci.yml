@@ -60,6 +60,20 @@ jobs:
         with:
           gradle-version: '9.6.0'
       - run: gradle -p android :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDevRelease -PsimhubDevSequence=1 --stacktrace
+      - name: Print complete Android lint diagnostics
+        if: always()
+        run: |
+          report=android/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          if [ -f "$report" ]; then cat "$report"; fi
+      - name: Retain Android lint reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: simhub-android-lint
+          if-no-files-found: ignore
+          path: |
+            android/app/build/reports/lint-results-debug.*
+            android/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
       - name: Verify actual APK package and version metadata
         shell: bash
         run: |

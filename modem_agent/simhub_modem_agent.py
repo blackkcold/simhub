@@ -37,7 +37,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import serial
 from serial.tools import list_ports
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 DEFAULT_CONFIG = Path(os.getenv("SIMHUB_MODEM_CONFIG", "/var/lib/simhub-modem/config.json"))
 DEFAULT_DB = Path(os.getenv("SIMHUB_MODEM_DB", "/var/lib/simhub-modem/agent.db"))
 POLL_SECONDS = max(3, int(os.getenv("SIMHUB_MODEM_POLL_SECONDS", "10")))
@@ -1116,6 +1116,11 @@ def transient_relay_error(error: Exception) -> bool:
     return False
 
 
+def relay_http_status(error: Exception) -> int | None:
+    match=re.match(r"^relay HTTP (\d{3}):",str(error)) if isinstance(error,RuntimeError) else None
+    return int(match.group(1)) if match else None
+
+
 class Agent:
     def __init__(self, config_path: Path, db_path: Path) -> None:
         self.config_path = config_path
@@ -1250,53 +1255,88 @@ class Agent:
             return True
         return False
 
-    def rotate_device_token(self) -> None:
-        ts=now()
+    def _save_token_state(self, updated: dict[str,Any]) -> None:
+        # Retain a local reset requested by the CLI while a network call was
+        # in flight. Publish the new in-memory credential only after fsync.
+        current=load_json(self.config_path)
+        if current.get("deviceId")==updated.get("deviceId") and current.get("resetPending"):
+            updated["resetPending"]=True
+        atomic_write_json(self.config_path,updated)
+        self.config=updated
+        self.relay.device_token=str(updated["deviceToken"])
+
+    def _lifecycle(self, token_override: str | None = None) -> dict[str,Any]:
+        try:
+            state=self.relay.request("GET",f"/api/v1/devices/{self.config['deviceId']}/lifecycle",
+                                     token_override=token_override)
+        except RuntimeError as error:
+            if relay_http_status(error)==410:
+                self.config["resetPending"]=True
+                self._clear_enrollment(self._preserve_pending())
+            raise
+        if state.get("resetRequired") is True:
+            updated={**self.config,"resetPending":True}
+            if token_override:
+                # Lifecycle proved this exact credential is cleanup-only.
+                # Persist it for a retried reset, never for normal business work.
+                updated["deviceToken"]=token_override
+            self._save_token_state(updated)
+            self._finish_reset()
+        return state
+
+    def recover_pending_device_token(self) -> bool:
+        """Resolve an interrupted commit before using either credential normally."""
         pending=str(self.config.get("pendingDeviceToken") or "")
-        pending_exp=int(self.config.get("pendingTokenExpiresAt",0) or 0)
-        if pending:
-            if pending_exp<=ts:
-                self.config.pop("pendingDeviceToken",None)
-                self.config.pop("pendingTokenExpiresAt",None)
-                self.config["tokenRotationPending"]=False
-                atomic_write_json(self.config_path,self.config)
+        if not pending:
+            return False
+        try:
+            # A committed token is current forever until rotated/revoked; its
+            # old prepare expiry is not evidence that the commit failed.
+            committed=self.relay.request("POST",
+                f"/api/v1/devices/{self.config['deviceId']}/token/commit",{},token_override=pending)
+        except RuntimeError as commit_error:
+            if relay_http_status(commit_error) not in {401,403,409}:
+                raise
+            try:
+                candidate=self._lifecycle(token_override=pending)
+            except RuntimeError as lifecycle_error:
+                if relay_http_status(lifecycle_error) not in {401,403}:
+                    raise
             else:
-                committed=self.relay.request(
-                    "POST",
-                    f"/api/v1/devices/{self.config['deviceId']}/token/commit",
-                    {},
-                    token_override=pending,
-                )
-                self.config["deviceToken"]=pending
-                self.relay.device_token=pending
-                self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
-                self.config["tokenRotationPending"]=False
-                self.config.pop("pendingDeviceToken",None)
-                self.config.pop("pendingTokenExpiresAt",None)
-                atomic_write_json(self.config_path,self.config)
-                return
+                # A recognized but non-reset candidate with a refused commit is
+                # inconsistent. Keep the journal and wait for reconciliation.
+                raise commit_error
+            # Only a rejected candidate AND a recognized old credential prove
+            # the pending token can be discarded. 404/offline is not that proof.
+            current=self._lifecycle()
+            if current.get("status")!="active" or current.get("resetRequired") is not False:
+                raise RuntimeError("relay credential recovery status is ambiguous")
+            updated={**self.config,"tokenRotationPending":False}
+            updated.pop("pendingDeviceToken",None)
+            updated.pop("pendingTokenExpiresAt",None)
+            self._save_token_state(updated)
+            return False
+        if committed.get("ok") is not True:
+            raise RuntimeError("relay token commit receipt is ambiguous")
+        updated={**self.config,"deviceToken":pending,
+                 "tokenIssuedAt":int(committed.get("tokenIssuedAt",now())),"tokenRotationPending":False}
+        updated.pop("pendingDeviceToken",None)
+        updated.pop("pendingTokenExpiresAt",None)
+        self._save_token_state(updated)
+        return True
+
+    def rotate_device_token(self) -> None:
+        if self.recover_pending_device_token():
+            return
+        ts=now()
         issued=int(self.config.get("tokenIssuedAt",0) or 0)
         if issued>0 and ts-issued<TOKEN_ROTATE_AFTER:
             return
         prepared=self.relay.request("POST",f"/api/v1/devices/{self.config['deviceId']}/token/prepare",{})
         pending=str(prepared["deviceToken"])
-        self.config["pendingDeviceToken"]=pending
-        self.config["pendingTokenExpiresAt"]=int(prepared.get("expiresAt",ts+3600))
-        self.config["tokenRotationPending"]=True
-        atomic_write_json(self.config_path,self.config)
-        committed=self.relay.request(
-            "POST",
-            f"/api/v1/devices/{self.config['deviceId']}/token/commit",
-            {},
-            token_override=pending,
-        )
-        self.config["deviceToken"]=pending
-        self.relay.device_token=pending
-        self.config["tokenIssuedAt"]=int(committed.get("tokenIssuedAt",ts))
-        self.config["tokenRotationPending"]=False
-        self.config.pop("pendingDeviceToken",None)
-        self.config.pop("pendingTokenExpiresAt",None)
-        atomic_write_json(self.config_path,self.config)
+        self._save_token_state({**self.config,"pendingDeviceToken":pending,
+            "pendingTokenExpiresAt":int(prepared.get("expiresAt",ts+3600)),"tokenRotationPending":True})
+        self.recover_pending_device_token()
 
     def receive(self) -> None:
         for sms in self.adapter.list_sms():
@@ -1605,22 +1645,15 @@ class Agent:
             self.config["resetPending"]=True
             self._finish_reset()
         try:
-            state=self.relay.request("GET",f"/api/v1/devices/{self.config['deviceId']}/lifecycle")
+            self._lifecycle()
         except RuntimeError as exc:
-            if "relay HTTP 410:" in str(exc):
-                self.config["resetPending"]=True
-                archive=self._preserve_pending()
-                self._clear_enrollment(archive)
             if "relay HTTP 404:" in str(exc):
                 return  # Rolling upgrade against an older Relay
             raise
-        if state.get("resetRequired"):
-            self.config["resetPending"]=True
-            atomic_write_json(self.config_path,self.config)
-            self._finish_reset()
 
     def cycle(self) -> None:
         try:
+            self.recover_pending_device_token()
             self._check_reset()
             self.rotate_device_token()
         except (OSError,RuntimeError) as error:

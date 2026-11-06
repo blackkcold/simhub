@@ -182,6 +182,119 @@ class ModemRecoveryTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):self.old.cycle()
         self.assertEqual(len(self.old.adapter.records),1)
 
+    def test_lost_commit_response_recovers_before_lifecycle_even_after_expiry(self):
+        old_token=self.old.config["deviceToken"]
+        pending="new-synthetic-device-token-"+"D"*32
+        self.old.config["tokenIssuedAt"]=modem.now()-modem.TOKEN_ROTATE_AFTER-1
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        class LostCommitRelay:
+            device_token=old_token
+            active=old_token
+            lost=False
+            calls=[]
+            def request(relay,method,path,body=None,token_override=None):
+                token=token_override or relay.device_token
+                relay.calls.append((path,token))
+                if path.endswith("/token/prepare"):
+                    return {"deviceToken":pending,"expiresAt":modem.now()+3600}
+                if path.endswith("/token/commit"):
+                    self.assertEqual(token,pending)
+                    relay.active=pending
+                    if not relay.lost:
+                        relay.lost=True
+                        raise OSError("response lost after durable commit")
+                    return {"ok":True,"alreadyCommitted":True,"tokenIssuedAt":modem.now()}
+                if token!=relay.active:
+                    raise RuntimeError("relay HTTP 401: old credential")
+                return {"resetRequired":False,"status":"active"} if path.endswith("/lifecycle") else {"commands":[]}
+        self.old.relay=LostCommitRelay()
+        with self.assertRaises(OSError):self.old.rotate_device_token()
+        self.assertEqual(self.old.config["deviceToken"],old_token)
+        self.assertEqual(modem.load_json(self.old.config_path)["pendingDeviceToken"],pending)
+        # Model a restart occurring after the local prepare deadline.
+        self.old.config=modem.load_json(self.old.config_path)
+        self.old.config["pendingTokenExpiresAt"]=modem.now()-1
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        self.old.relay.calls=[]
+        with patch.object(self.old,"put_state"),patch.object(self.old,"heartbeat"):
+            self.old.cycle()
+        self.assertTrue(self.old.relay.calls[0][0].endswith("/token/commit"))
+        self.assertTrue(self.old.relay.calls[1][0].endswith("/lifecycle"))
+        self.assertTrue(all(token==pending for _,token in self.old.relay.calls))
+        self.assertEqual(modem.load_json(self.old.config_path)["deviceToken"],pending)
+        self.assertNotIn("pendingDeviceToken",self.old.config)
+
+    def test_pending_candidate_discard_requires_definitive_old_credential_proof(self):
+        pending="pending-synthetic-token-"+"P"*32
+        old_token=self.old.config["deviceToken"]
+        class RejectPending:
+            device_token=old_token
+            old_failure=None
+            candidate_failure=RuntimeError("relay HTTP 401: rejected pending")
+            def request(relay,method,path,body=None,token_override=None):
+                if path.endswith("/token/commit"):
+                    raise RuntimeError("relay HTTP 401: rejected pending")
+                if token_override==pending:
+                    raise relay.candidate_failure
+                if relay.old_failure:raise relay.old_failure
+                return {"resetRequired":False,"status":"active"}
+        relay=RejectPending();self.old.relay=relay
+        def journal():
+            self.old.config.update({"pendingDeviceToken":pending,"pendingTokenExpiresAt":1,"tokenRotationPending":True})
+            modem.atomic_write_json(self.old.config_path,self.old.config)
+        for failure in (RuntimeError("relay HTTP 401: invalid old"),urllib.error.URLError("offline")):
+            journal();relay.old_failure=failure
+            with self.assertRaises((RuntimeError,OSError)):self.old.recover_pending_device_token()
+            self.assertEqual(modem.load_json(self.old.config_path)["pendingDeviceToken"],pending)
+        relay.old_failure=None
+        relay.candidate_failure=RuntimeError("relay HTTP 404: lifecycle unavailable")
+        with self.assertRaises(RuntimeError):self.old.recover_pending_device_token()
+        self.assertEqual(self.old.config["pendingDeviceToken"],pending)
+        relay.candidate_failure=RuntimeError("relay HTTP 401: rejected pending")
+        self.assertFalse(self.old.recover_pending_device_token())
+        self.assertNotIn("pendingDeviceToken",modem.load_json(self.old.config_path))
+        self.assertEqual(self.old.config["deviceToken"],old_token)
+
+    def test_revoked_pending_current_token_is_used_only_for_cleanup(self):
+        pending="revoked-current-token-"+"R"*32
+        self.old.config.update({"pendingDeviceToken":pending,"pendingTokenExpiresAt":1})
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        class RevokedRelay:
+            device_token=self.old.config["deviceToken"]
+            calls=[]
+            def request(relay,method,path,body=None,token_override=None):
+                token=token_override or relay.device_token
+                relay.calls.append((path,token))
+                if path.endswith("/token/commit"):
+                    raise RuntimeError("relay HTTP 409: only reset acknowledgement allowed")
+                self.assertEqual(token,pending)
+                if path.endswith("/lifecycle"):
+                    return {"resetRequired":True,"status":"revoked"}
+                if path.endswith("/reset"):
+                    return {"ok":True,"status":"revoked"}
+                self.fail("Revoked token reached normal business API")
+        relay=RevokedRelay();self.old.relay=relay
+        with self.assertRaises(modem.NodeResetComplete):self.old.cycle()
+        self.assertFalse(self.old.config_path.exists())
+        self.assertEqual(len(relay.calls),3)
+
+    def test_token_journal_survives_local_write_failure_after_commit(self):
+        pending="new-current-token-"+"N"*32
+        old_token=self.old.config["deviceToken"]
+        self.old.config.update({"pendingDeviceToken":pending,"pendingTokenExpiresAt":modem.now()+300})
+        modem.atomic_write_json(self.old.config_path,self.old.config)
+        class CommittedRelay:
+            device_token=old_token
+            def request(relay,*args,**kwargs):return {"ok":True,"tokenIssuedAt":modem.now()}
+        self.old.relay=CommittedRelay()
+        with patch.object(modem,"atomic_write_json",side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):self.old.recover_pending_device_token()
+        self.assertEqual(self.old.config["deviceToken"],old_token)
+        self.assertEqual(self.old.relay.device_token,old_token)
+        self.assertEqual(modem.load_json(self.old.config_path)["pendingDeviceToken"],pending)
+        self.assertTrue(self.old.recover_pending_device_token())
+        self.assertEqual(modem.load_json(self.old.config_path)["deviceToken"],pending)
+
     def test_failed_hardware_deletion_is_retried_without_duplicate_event(self):
         self.old.adapter.records=[self.sms()]
         real_delete=self.old.adapter.delete_sms

@@ -172,12 +172,47 @@ public class NodeRecoveryInstrumentedTest {
     @Test public void sharedBackfillCheckpointSurvivesRecreation()throws Exception{
         Context c=isolatedContext();rotationPending(c);
         SharedPoolClient first=new SharedPoolClient(c);
-        first.historyRowStaged(1000,7,true);
+        c.getSharedPreferences("simhub_pool_v1",Context.MODE_PRIVATE).edit().putBoolean("requested",true).putBoolean("approved",true).commit();
+        first.historyRowStaged(first.privacyScope(),1000,7,true);
         SharedPoolClient resumed=new SharedPoolClient(c);
         assertEquals(1000,resumed.historyDate());assertEquals(7,resumed.historyId());
         assertEquals(99,resumed.initialHistoryRemaining());assertFalse(resumed.initialHistoryStaged());
         assertEquals(0,new AgentConfig(c).historyDate());
         SharedPoolClient.clearLocalForReset(c);
+    }
+    @Test public void oldSharedWorkCannotRepopulateAfterOptOutOrResetAndReenable()throws Exception{
+        for(boolean reset:new boolean[]{false,true}){
+            Context c=isolatedContext();rotationPending(c);
+            SharedPoolClient pool=new SharedPoolClient(c);
+            SharedPreferences prefs=c.getSharedPreferences("simhub_pool_v1",Context.MODE_PRIVATE);
+            prefs.edit().putBoolean("requested",true).putBoolean("approved",true).putString("key_epochs","1").commit();
+            byte[] key=new byte[32];key[0]=29;new SecretStore(c).putBytes("pool-key-1",key);
+            byte[] iv=new byte[12];iv[0]=12;
+            javax.crypto.Cipher cipher=javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE,new javax.crypto.spec.SecretKeySpec(key,"AES"),new javax.crypto.spec.GCMParameterSpec(128,iv));
+            cipher.updateAAD("simhub-pool-sms-v1|default|other-node|event-1|100|sim-1|1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            JSONObject encrypted=new JSONObject().put("alg","A256GCM").put("iv",CryptoBox.b64(iv))
+                .put("ct",CryptoBox.b64(cipher.doFinal("{\"body\":\"synthetic shared cache\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+            JSONObject row=new JSONObject().put("seq",1).put("deviceId","other-node").put("originEventId","event-1")
+                .put("occurredAt",100).put("channelId","sim-1").put("epoch",1).put("ciphertext",encrypted);
+            JSONObject response=new JSONObject().put("messages",new org.json.JSONArray().put(row));
+            String previous=pool.privacyScope();
+            assertEquals(1,pool.acceptDownloaded(previous,response,0,false));
+            assertEquals(1,pool.cached(10).size());
+            if(reset)SharedPoolClient.clearLocalForReset(c);else pool.disableLocalForPrivacy();
+            assertFalse(pool.optedIn());assertTrue(pool.cached(10).isEmpty());
+            assertNull(new SecretStore(c).getBytes("pool-key-1"));
+            // Even reauthorizing with the same pool key cannot validate work from
+            // before the consent change; the local generation must also match.
+            prefs.edit().putBoolean("requested",true).putBoolean("approved",true).putString("key_epochs","1").commit();
+            new SecretStore(c).putBytes("pool-key-1",key);
+            assertNotEquals(previous,pool.privacyScope());
+            try{pool.acceptDownloaded(previous,response,0,false);fail("Stale download accepted");}catch(java.io.IOException expected){}
+            try{pool.stageInScope(previous,"old-event",100,"sim-1",new JSONObject().put("body","stale"));fail("Stale stage accepted");}catch(java.io.IOException expected){}
+            try{pool.historyRowStaged(previous,1000,7,true);fail("Stale cursor accepted");}catch(java.io.IOException expected){}
+            assertEquals(0,pool.pendingUploadCount());assertEquals(0,pool.historyDate());assertTrue(pool.cached(10).isEmpty());
+            SharedPoolClient.clearLocalForReset(c);
+        }
     }
     @Test public void interruptedOtaWorkersBecomeRetryableTerminalFailures()throws Exception{
         for(String stage:new String[]{"checking","downloading","verified"}){

@@ -1,4 +1,4 @@
-# Web history and local search
+# Private history and local search
 
 The inbox reports three different kinds of coverage:
 
@@ -27,6 +27,29 @@ The trigram posting lists have a 200,000-posting budget and a 4,096-gram budget 
 Backfill admission stops before adding a row that would exceed **50,000 loaded events or 64 MiB of estimated row and normalized-text storage**. The byte count conservatively estimates UTF-16 strings plus row overhead; it is **not a guarantee about the browser's total heap**, transient network/decryption buffers, or live incremental arrivals. New live records retain priority over bulk history loading.
 
 At this limit, the page keeps its previous cursor, explicitly states that some history remains unsearched, and offers **Release history cache**. Releasing the cache reclaims the loaded history and starts again from recent records. It does not make an oversized history fully searchable: histories exceeding the budget remain partial in this implementation. No percentage or “all phone messages searched” claim is made.
+
+## Native Android full-history search
+
+The normal inbox keeps a 1,200-row window and labels its search accordingly.
+**Search all available history** captures a Relay upload-sequence watermark and
+streams retained SMS in pages of 50. Decryption and full-body matching happen on
+the phone; search terms are not sent in requests or persisted. The scan counts
+all matches, but its result list retains only the newest 1,000 matching previews.
+Previews over 4,000 characters are labelled truncated; matching checks the entire
+decrypted body before truncating the display.
+
+Stopping preserves only the current partial results; starting again performs a
+fresh scan. Closing or backgrounding the search drops its plaintext state. Every
+published page rechecks enrollment, key and SMS-purge metadata; completed/stopped
+results refresh those privacy fields every 15 seconds. The ordinary inbox also
+clears its memory/cursors when the same scope changes, including metadata checks
+while browsing older pages. Network failures cannot establish that remote
+privacy state is current, and are presented as a refresh problem.
+
+Messages uploaded after the captured watermark, content already removed by
+retention/purge and records that cannot be decrypted are outside a successful
+scan's coverage. Counts and unreadable records remain explicit. This search does
+not request SMS retransmission or a new node-side history upload.
 
 ## Verification
 

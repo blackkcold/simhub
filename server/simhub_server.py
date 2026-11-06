@@ -724,6 +724,13 @@ def validate_cipher(obj: Any) -> bool:
     return True
 
 
+def event_receipt(event_id: str, sequence: int, disposition: str) -> dict[str,Any]:
+    """An accepted receipt may retire a queue item without claiming publication."""
+    return {"accepted":True,"eventId":event_id,"serverSequence":sequence,
+            "receiptState":disposition,"duplicate":disposition=="duplicate",
+            "suppressed":disposition=="suppressed"}
+
+
 def sanitize_metadata(kind: str, value: Any) -> dict[str,Any]:
     if not isinstance(value, dict):
         return {}
@@ -2247,16 +2254,26 @@ class SimHubHandler(BaseHTTPRequestHandler):
         metadata=sanitize_metadata(kind,body.get("metadata",{})); received=now()
         try:
             with open_db() as con:
-                threshold=con.execute("SELECT sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()["sms_purged_before"]
+                # Serialize the privacy fence and duplicate decision with storage.
+                con.execute("BEGIN IMMEDIATE")
+                device=con.execute("SELECT * FROM devices WHERE id=?",(device_id,)).fetchone()
+                auth=self.headers.get("Authorization","")
+                if (not auth.startswith("Device ") or not device_credential_matches(device,sha256_text(auth[7:]))
+                        or device["revoked_at"] or device["reset_requested_at"]):
+                    self.send_error_json(409,"device_unavailable","Device lifecycle changed; reconcile before upload");return
+                existing=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,event_id)).fetchone()
+                if existing:
+                    self.send_json(200,event_receipt(event_id,existing["seq"],"duplicate"));return
+                threshold=device["sms_purged_before"]
                 if kind.startswith("sms.") and occurred<=threshold:
-                    self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
+                    self.send_json(200,event_receipt(event_id,0,"suppressed"));return
                 if kind=="device.location":
                     fence=con.execute("SELECT purged_at,active_epoch FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
                     if not fence or not fence["active_epoch"] or not hmac.compare_digest(metadata.get("locationEpoch",""),fence["active_epoch"]) or occurred<=fence["purged_at"]:
-                        self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
+                        self.send_json(200,event_receipt(event_id,0,"suppressed"));return
                     latest=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
                     if latest is not None and occurred<=latest:
-                        self.send_json(200,{"accepted":True,"suppressed":True,"eventId":event_id,"serverSequence":0});return
+                        self.send_json(200,event_receipt(event_id,0,"suppressed"));return
                 cur=con.execute(
                     "INSERT INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",
                     (event_id,device_id,kind,occurred,received,sub,1 if has_otp else 0,json.dumps(metadata,separators=(",",":")),json.dumps(cipher,separators=(",",":"))),
@@ -2269,11 +2286,11 @@ class SimHubHandler(BaseHTTPRequestHandler):
             with open_db() as con:
                 row=con.execute("SELECT seq FROM events WHERE id=? AND device_id=?",(event_id,device_id)).fetchone()
             if row:
-                self.send_json(200,{"accepted":True,"duplicate":True,"eventId":event_id,"serverSequence":row["seq"]}); return
+                self.send_json(200,event_receipt(event_id,row["seq"],"duplicate")); return
             self.send_error_json(409,"event_conflict","Event identity conflicts with existing data"); return
         notify_async(kind,device_id,d["name"] if d else "SIM Node",has_otp,occurred)
         signal_stream()
-        self.send_json(201,{"accepted":True,"eventId":event_id,"serverSequence":seq})
+        self.send_json(201,event_receipt(event_id,seq,"stored"))
 
     def ingest_events_batch(self, device_id: str, body: dict[str, Any]) -> None:
         """Authenticated, atomic, idempotent ingestion of up to 20 encrypted events."""
@@ -2298,27 +2315,36 @@ class SimHubHandler(BaseHTTPRequestHandler):
             prepared.append((eid,device_id,kind,occurred,received,sub,int(bool(item.get("hasOtp",False))),json.dumps(meta,separators=(",",":")),json.dumps(cipher,separators=(",",":"))))
         results=[];notifications=[]
         with open_db() as con:
-            d=con.execute("SELECT name,sms_purged_before FROM devices WHERE id=?",(device_id,)).fetchone()
+            con.execute("BEGIN IMMEDIATE")
+            d=con.execute("SELECT * FROM devices WHERE id=?",(device_id,)).fetchone()
+            auth=self.headers.get("Authorization","")
+            if (not auth.startswith("Device ") or not device_credential_matches(d,sha256_text(auth[7:]))
+                    or d["revoked_at"] or d["reset_requested_at"]):
+                self.send_error_json(409,"device_unavailable","Device lifecycle changed; reconcile before upload");return
             for row in prepared:
+                existing=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,row[0])).fetchone()
+                if existing:
+                    results.append(event_receipt(row[0],existing["seq"],"duplicate"))
+                    continue
                 if row[2].startswith("sms.") and row[3]<=d["sms_purged_before"]:
-                    results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                    results.append(event_receipt(row[0],0,"suppressed"))
                     continue
                 if row[2]=="device.location":
                     fence=con.execute("SELECT purged_at,active_epoch FROM location_purge WHERE device_id=?",(device_id,)).fetchone()
                     epoch=safe_json_loads(row[7],{}).get("locationEpoch","")
                     if not fence or not fence["active_epoch"] or not isinstance(epoch,str) or not hmac.compare_digest(epoch,fence["active_epoch"]) or row[3]<=fence["purged_at"]:
-                        results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                        results.append(event_receipt(row[0],0,"suppressed"))
                         continue
                     recent=con.execute("SELECT MAX(occurred_at) AS at FROM events WHERE device_id=? AND kind='device.location'",(device_id,)).fetchone()["at"]
                     if recent is not None and row[3]<=recent:
-                        results.append({"eventId":row[0],"accepted":True,"suppressed":True,"duplicate":False,"serverSequence":0})
+                        results.append(event_receipt(row[0],0,"suppressed"))
                         continue
                 cur=con.execute("INSERT OR IGNORE INTO events(id,device_id,kind,occurred_at,received_at,subscription_id,has_otp,metadata_json,ciphertext_json) VALUES(?,?,?,?,?,?,?,?,?)",row)
                 duplicate=cur.rowcount==0
                 seq=con.execute("SELECT seq FROM events WHERE device_id=? AND id=?",(device_id,row[0])).fetchone()["seq"]
                 if row[2]=="device.location" and not duplicate:
                     con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
-                results.append({"eventId":row[0],"accepted":True,"duplicate":duplicate,"serverSequence":seq})
+                results.append(event_receipt(row[0],seq,"duplicate" if duplicate else "stored"))
                 if not duplicate and row[2]=="sms.received": notifications.append((bool(row[6]),row[3]))
             con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
         for has_otp,occurred in notifications:

@@ -75,6 +75,7 @@ class LocationPrivacyIntegration(unittest.TestCase):
         code,response=self.call("POST",f"/api/v1/devices/{self.device_id}/events",eid,device=True)
         self.assertEqual(code,200)
         self.assertTrue(response["suppressed"])
+        self.assertEqual(response["receiptState"],"suppressed")
         self.assertEqual(self.call("GET",f"/api/v1/devices/{self.device_id}/location")[1]["location"],None)
         self.assertNotEqual(self.call("GET",f"/api/v1/devices/{self.device_id}/location",admin=False)[0],200)
         self.assertNotEqual(self.call("POST",f"/api/v1/devices/{self.device_id}/location/activate",
@@ -92,6 +93,13 @@ class LocationPrivacyIntegration(unittest.TestCase):
         event=self.event(first,now+1)
         code,r=self.call("POST",f"/api/v1/devices/{self.device_id}/events",event,device=True)
         self.assertEqual(code,201,r)
+        self.assertEqual(r["receiptState"],"stored")
+        # A lost upload response must be recoverable as a duplicate receipt,
+        # including for the currently retained location at the same timestamp.
+        retry_code,retry=self.call("POST",f"/api/v1/devices/{self.device_id}/events",event,device=True)
+        self.assertEqual(retry_code,200)
+        self.assertEqual(retry["receiptState"],"duplicate")
+        self.assertEqual(retry["serverSequence"],r["serverSequence"])
         code,details=self.call("GET",f"/api/v1/devices/{self.device_id}/location")
         self.assertEqual(code,200)
         self.assertEqual(details["location"]["eventId"],event["eventId"])
@@ -100,6 +108,9 @@ class LocationPrivacyIntegration(unittest.TestCase):
         code,response=self.call("POST",f"/api/v1/devices/{self.device_id}/events/batch",
             {"events":[newer]},device=True)
         self.assertEqual(code,200,response)
+        self.assertEqual(response["results"][0]["receiptState"],"stored")
+        _,again=self.call("POST",f"/api/v1/devices/{self.device_id}/events/batch",{"events":[newer]},device=True)
+        self.assertEqual(again["results"][0]["receiptState"],"duplicate")
         self.assertEqual(self.call("GET",f"/api/v1/devices/{self.device_id}/location")[1]["location"]["eventId"],
             newer["eventId"])
         code,response=self.call("POST",f"/api/v1/devices/{self.device_id}/location/purge",{},device=True)
@@ -110,6 +121,7 @@ class LocationPrivacyIntegration(unittest.TestCase):
             {"events":[delayed]},device=True)
         self.assertEqual(code,200,response)
         self.assertTrue(response["results"][0]["suppressed"],response)
+        self.assertEqual(response["results"][0]["receiptState"],"suppressed")
         # New local consent with a fresh UUID cannot resurrect an old revocation epoch.
         second=str(uuid.uuid4())
         self.assertEqual(self.call("POST",f"/api/v1/devices/{self.device_id}/location/activate",

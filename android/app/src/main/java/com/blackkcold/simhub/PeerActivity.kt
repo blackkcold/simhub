@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.Lifecycle
@@ -489,7 +490,7 @@ class PeerActivity:ComponentActivity(){
                 }
                 Text("连接阶段：${discoveryLabel(p.optString("discoveryState","WAITING"))} · 上次成功路径：${routeLabel(p.optString("activeTransport"))}",style=MaterialTheme.typography.bodySmall)
                 Text(diagnosticLabel(p),color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodySmall)
-                if(p.optLong("lastSyncAt",0)>0)Text("最后通信：${java.text.SimpleDateFormat("MM-dd HH:mm",java.util.Locale.getDefault()).format(java.util.Date(p.optLong("lastSyncAt")*1000))}",style=MaterialTheme.typography.labelSmall)
+                if(p.optLong("lastSyncAt",0)>0)Text("最后通信：${java.text.SimpleDateFormat("MM-dd HH:mm",LocalConfiguration.current.locales[0]?:java.util.Locale.ROOT).format(java.util.Date(p.optLong("lastSyncAt")*1000))}",style=MaterialTheme.typography.labelSmall)
                 Text("设备身份：${p.optString("id").take(16)}…",style=MaterialTheme.typography.labelSmall)
                 if(p.optBoolean("signalingConsent")){
                     Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,

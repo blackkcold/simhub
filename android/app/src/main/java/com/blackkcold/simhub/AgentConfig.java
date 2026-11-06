@@ -168,18 +168,23 @@ public final class AgentConfig {
     public long pendingTokenExpiresAt(){return prefs.getLong("pending_token_expires_at",0);}
     public void stageDeviceToken(String token,long expiresAt)throws Exception{
         secrets.putString(SECRET_PENDING_DEVICE_TOKEN,token);
-        prefs.edit().putBoolean("token_rotation_pending",true).putLong("pending_token_expires_at",expiresAt).apply();
+        if(!prefs.edit().putBoolean("token_rotation_pending",true).putLong("pending_token_expires_at",expiresAt).commit())
+            throw new IllegalStateException("Unable to persist device-token recovery journal");
     }
     public void discardPendingDeviceToken(){
+        if(!prefs.edit().putBoolean("token_rotation_pending",false).remove("pending_token_expires_at").commit())
+            throw new IllegalStateException("Unable to clear device-token recovery journal");
         secrets.remove(SECRET_PENDING_DEVICE_TOKEN);
-        prefs.edit().putBoolean("token_rotation_pending",false).remove("pending_token_expires_at").apply();
     }
     public void commitDeviceToken(long issuedAt)throws Exception{
         String pending=pendingDeviceToken();
         if(pending==null||pending.isBlank())throw new IllegalStateException("Pending device token missing");
         secrets.putString(SECRET_DEVICE_TOKEN,pending);
+        // Clear the journal only after the active credential is durable. If the
+        // process dies before this commit, the retained candidate can be retried.
+        if(!prefs.edit().putLong("token_issued_at",issuedAt).putBoolean("token_rotation_pending",false).remove("pending_token_expires_at").commit())
+            throw new IllegalStateException("Unable to commit device-token recovery journal");
         secrets.remove(SECRET_PENDING_DEVICE_TOKEN);
-        prefs.edit().putLong("token_issued_at",issuedAt).putBoolean("token_rotation_pending",false).remove("pending_token_expires_at").apply();
     }
     public byte[] vaultKey(){try{return secrets.getBytes(SECRET_VAULT_KEY);}catch(Exception e){return null;}}
     public byte[] nodeKey(){try{return secrets.getBytes(SECRET_NODE_KEY);}catch(Exception e){return null;}}

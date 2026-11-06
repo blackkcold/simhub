@@ -10,6 +10,8 @@ import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 import static org.junit.Assert.*;
 
 /** Runs on min-SDK emulators with synthetic data, never sends a radio SMS. */
@@ -36,5 +38,54 @@ public class NodeRecoveryInstrumentedTest {
         JSONObject envelope=PendingSmsCrypto.encrypt(c,new JSONObject().put("body","synthetic pending SMS"));
         config.clearEnrollment();
         assertEquals("synthetic pending SMS",PendingSmsCrypto.decrypt(c,envelope).getString("body"));
+    }
+    private AgentConfig rotationPending(Context c)throws Exception{
+        AgentConfig config=new AgentConfig(c);
+        byte[] key=new byte[32];key[0]=19;
+        config.setNodeEnrollment("https://relay.example.invalid","synthetic-device","synthetic","old-token",CryptoBox.keyId(key),key);
+        config.stageDeviceToken("candidate-token",1); // Expired locally; server may already have committed.
+        return config;
+    }
+    @Test public void committedCandidateIsRecoveredAfterLostResponseAndLocalExpiry()throws Exception{
+        Context c=isolatedContext();AgentConfig config=rotationPending(c);
+        List<String> calls=new ArrayList<>();
+        ApiClient client=new ApiClient(c,(method,path,body,token)->{
+            calls.add(method+" "+path+" "+token);
+            assertTrue(path.endsWith("/token/commit"));
+            assertEquals("candidate-token",token);
+            return new JSONObject().put("tokenIssuedAt",1234);
+        });
+        assertFalse(client.recoverPendingDeviceToken());
+        assertFalse(client.recoverPendingDeviceToken());
+        assertEquals(1,calls.size());
+        assertEquals("candidate-token",config.deviceToken());
+        assertEquals(1234,config.tokenIssuedAt());
+        assertFalse(config.tokenRotationPending());
+    }
+    @Test public void rejectedCandidateRequiresVerifiedPreviousCredential()throws Exception{
+        Context c=isolatedContext();AgentConfig config=rotationPending(c);
+        List<String> calls=new ArrayList<>();
+        ApiClient client=new ApiClient(c,(method,path,body,token)->{
+            calls.add(token);
+            if("candidate-token".equals(token))throw new ApiClient.ApiFailure(401,"unauthorized","synthetic rejection",0);
+            assertTrue(path.endsWith("/lifecycle"));
+            return new JSONObject().put("resetRequired",false);
+        });
+        assertFalse(client.recoverPendingDeviceToken());
+        assertEquals(java.util.Arrays.asList("candidate-token","candidate-token","old-token"),calls);
+        assertEquals("old-token",config.deviceToken());
+        assertFalse(config.tokenRotationPending());
+    }
+    @Test public void ambiguousTokenRecoveryRetainsCandidate()throws Exception{
+        Context c=isolatedContext();AgentConfig config=rotationPending(c);
+        ApiClient client=new ApiClient(c,(method,path,body,token)->{
+            if(path.endsWith("/token/commit"))throw new ApiClient.ApiFailure(401,"unauthorized","synthetic rejection",0);
+            throw new java.io.IOException("synthetic network failure");
+        });
+        try{client.recoverPendingDeviceToken();fail("Expected retryable failure");}
+        catch(java.io.IOException expected){}
+        assertTrue(config.tokenRotationPending());
+        assertEquals("candidate-token",config.pendingDeviceToken());
+        assertEquals("old-token",config.deviceToken());
     }
 }

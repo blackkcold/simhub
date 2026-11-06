@@ -185,11 +185,12 @@ public final class LocalStore extends SQLiteOpenHelper {
         db.beginTransaction();
         try{
             ContentValues v=new ContentValues();v.put("command_id",commandId);v.put("provider_uri",providerUri);v.put("total_parts",Math.max(1,totalParts));v.put("event_cipher_json",eventCipher.toString());v.put("sub_id",subId);v.put("created_at",System.currentTimeMillis()/1000);
-            db.insertWithOnConflict("pending_sms",null,v,SQLiteDatabase.CONFLICT_REPLACE);
+            if(db.insertWithOnConflict("pending_sms",null,v,SQLiteDatabase.CONFLICT_REPLACE)==-1)
+                throw new IllegalStateException("Pending SMS could not be durably stored");
             db.delete("sms_part_status","command_id=?",new String[]{commandId});
             for(int i=0;i<Math.max(1,totalParts);i++){
                 ContentValues p=new ContentValues();p.put("command_id",commandId);p.put("part_index",i);p.put("updated_at",System.currentTimeMillis()/1000);
-                db.insertWithOnConflict("sms_part_status",null,p,SQLiteDatabase.CONFLICT_IGNORE);
+                db.insertOrThrow("sms_part_status",null,p);
             }
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
@@ -288,7 +289,11 @@ public final class LocalStore extends SQLiteOpenHelper {
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try{
-            db.delete("events",null,null);db.delete("uploaded_event_ids",null,null);db.delete("processed_commands",null,null);db.delete("command_acks",null,null);db.delete("sms_part_status",null,null);db.delete("pending_sms",null,null);
+            db.delete("events",null,null);db.delete("uploaded_event_ids",null,null);db.delete("processed_commands",null,null);db.delete("command_acks",null,null);
+            // Local Android sends outlive a Relay reset. Keep their radio callbacks
+            // and independent local envelope; remove only the old Relay's sends.
+            db.delete("pending_sms","command_id NOT LIKE 'local-%' AND command_id NOT LIKE 'respond-%'",null);
+            db.delete("sms_part_status","command_id NOT IN (SELECT command_id FROM pending_sms)",null);
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }

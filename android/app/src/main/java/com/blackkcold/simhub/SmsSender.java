@@ -6,6 +6,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.provider.Telephony;
 import android.telephony.SmsManager;
 import org.json.JSONObject;
@@ -18,6 +19,8 @@ public final class SmsSender {
         SmsSendPolicy.requireCanSend(c);
         if(to==null||!DEST.matcher(to).matches())throw new IllegalArgumentException("Invalid destination");
         if(body==null||body.isBlank()||body.length()>4000)throw new IllegalArgumentException("Invalid SMS body");
+        SmsManager sms=managerForSubscription(c,subId);
+        ArrayList<String> parts=sms.divideMessage(body);if(parts.isEmpty())parts.add(body);
         long ts=System.currentTimeMillis()/1000;
         // Only the default handler can modify SMS Provider. In companion mode,
         // SmsManager itself sends the message and Android persists the sent row.
@@ -35,12 +38,21 @@ public final class SmsSender {
         JSONObject eventPayload=new JSONObject().put("direction","out").put("recipient",to).put("body",body).put("occurredAt",ts).put("subscriptionId",subId).put("commandId",commandId);
         if(providerId>=0)eventPayload.put("providerId",providerId);
         if(channel!=null)eventPayload.put("channelId",channel.channelId).put("channelRevision",channel.revision);
-        JSONObject localCipher=new CryptoBox(c).encryptLocal(eventPayload);
-        SmsManager base=c.getSystemService(SmsManager.class);SmsManager sms=base.createForSubscriptionId(subId);ArrayList<String> parts=sms.divideMessage(body);if(parts.isEmpty())parts.add(body);
-        LocalStore.get(c).createPendingSms(commandId,provider==null?"":provider.toString(),parts.size(),localCipher,subId);
-        ArrayList<PendingIntent> sent=new ArrayList<>(),delivered=new ArrayList<>();for(int i=0;i<parts.size();i++){sent.add(pi(c,SmsStatusReceiver.ACTION_SENT,commandId,i,i));delivered.add(pi(c,SmsStatusReceiver.ACTION_DELIVERED,commandId,i,1000+i));}
-        try{if(parts.size()==1)sms.sendTextMessage(to,null,body,sent.get(0),delivered.get(0));else sms.sendMultipartTextMessage(to,null,parts,sent,delivered);AppLogger.i(c,"SmsSender","SMS submitted subscription="+subId+" parts="+parts.size());}
+        try{
+            JSONObject localCipher=PendingSmsCrypto.encrypt(c,eventPayload);
+            LocalStore.get(c).createPendingSms(commandId,provider==null?"":provider.toString(),parts.size(),localCipher,subId);
+            ArrayList<PendingIntent> sent=new ArrayList<>(),delivered=new ArrayList<>();for(int i=0;i<parts.size();i++){sent.add(pi(c,SmsStatusReceiver.ACTION_SENT,commandId,i,i));delivered.add(pi(c,SmsStatusReceiver.ACTION_DELIVERED,commandId,i,1000+i));}
+            if(parts.size()==1)sms.sendTextMessage(to,null,body,sent.get(0),delivered.get(0));else sms.sendMultipartTextMessage(to,null,parts,sent,delivered);AppLogger.i(c,"SmsSender","SMS submitted subscription="+subId+" parts="+parts.size());}
         catch(Exception e){if(provider!=null){ContentValues fail=new ContentValues();fail.put(Telephony.Sms.TYPE,Telephony.Sms.MESSAGE_TYPE_FAILED);try{c.getContentResolver().update(provider,fail,null,null);}catch(SecurityException denied){AppLogger.w(c,"SmsSender","SMS provider update denied after role change");}}EventQueue.queue(c,providerId>=0?"sms-provider-"+providerId+"-failed":"sms-command-"+commandId+"-failed","sms.failed",System.currentTimeMillis()/1000,subId,false,eventPayload,new JSONObject().put("stage","submit"));LocalStore.get(c).removePendingSms(commandId);AppLogger.e(c,"SmsSender","SMS submission failed subscription="+subId+" parts="+parts.size(),e);throw e;}
+    }
+    @SuppressWarnings("deprecation")
+    static SmsManager managerForSubscription(Context c,int subId){
+        if(Build.VERSION.SDK_INT>=31){
+            SmsManager base=c.getSystemService(SmsManager.class);
+            if(base==null)throw new IllegalStateException("SMS service unavailable");
+            return base.createForSubscriptionId(subId);
+        }
+        return SmsManager.getSmsManagerForSubscriptionId(subId);
     }
     private static PendingIntent pi(Context c,String action,String commandId,int partIndex,int request){Intent i=new Intent(c,SmsStatusReceiver.class).setAction(action).putExtra("command_id",commandId).putExtra("part_index",partIndex);return PendingIntent.getBroadcast(c,(commandId.hashCode()*31)^request,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     private SmsSender(){}

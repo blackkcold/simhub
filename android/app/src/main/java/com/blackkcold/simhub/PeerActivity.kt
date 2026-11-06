@@ -63,7 +63,9 @@ class PeerActivity:ComponentActivity(){
     private var recentSendIds by mutableStateOf<Map<String,String>>(emptyMap())
     private var sendRequest:JSONObject?=null
     private var sendId:String?=null
-    private var channelIndex by mutableIntStateOf(0)
+    private var sendPeerId by mutableStateOf("")
+    private var sendChannelId by mutableStateOf("")
+    private var sendChannelRevision by mutableLongStateOf(0L)
     private var relayLiteEnabled by mutableStateOf(false)
     private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
         if(Build.VERSION.SDK_INT>=37
@@ -149,6 +151,9 @@ class PeerActivity:ComponentActivity(){
             return
         }
         clearPendingId(key)
+        page.optJSONArray("messages")?.let{rows->
+            for(i in 0 until rows.length())rows.getJSONObject(i).put("deviceId",p.getString("id"))
+        }
         if(inbox.accept(page.toString(),older,older)){cursor=page.optJSONObject("cursor");historyMode=older}
         if(!older){
             val stateKey=pendingKey(p.getString("id"),"device.state","latest")
@@ -188,7 +193,8 @@ class PeerActivity:ComponentActivity(){
             val provider=payload.optLong("providerId",-1).takeIf{it>=0}?.toString()?:Regex("^sms-provider-([0-9]+).*$").find(eventId)?.groupValues?.get(1)
             rows.put(JSONObject().put("id",if(provider!=null)"peer-${p.getString("id")}-$provider" else "peer-event-${p.getString("id")}-${eventId}")
                 .put("thread",PeerCrypto.digest(PeerCrypto.utf8("${p.getString("id")}|$sub|$address"))).put("sender",address).put("address",address).put("body",payload.optString("body")).put("timestamp",event.optLong("occurred"))
-                .put("inbound",payload.optString("direction")=="in").put("device",p.optString("name")).put("sim",payload.optString("simTag","SIM $sub")).put("sourceId","${p.getString("id")}-$sub").put("otp",payload.optJSONObject("otp")?.optString("value")?:"").put("failed",event.optString("kind")=="sms.failed"))
+                .put("inbound",payload.optString("direction")=="in").put("device",p.optString("name")).put("sim",payload.optString("simTag","SIM $sub")).put("sourceId","${p.getString("id")}-$sub").put("otp",payload.optJSONObject("otp")?.optString("value")?:"").put("failed",event.optString("kind")=="sms.failed")
+                .put("deviceId",p.getString("id")).put("channelId",payload.optString("channelId")).put("channelRevision",payload.optLong("channelRevision",0)))
             ack.put(event.getLong("seq"))
         }
         if(rows.length()>0&&inbox.accept(JSONObject().put("type","snapshot").put("v",1).put("messages",rows).put("incremental",true).toString(),true)){
@@ -207,9 +213,24 @@ class PeerActivity:ComponentActivity(){
             if(isActive&&generation==peerEpoch&&selected?.optString("id")==p.optString("id"))work{load(false)}
         }
     }
-    private fun beginWrite(to:String=""){recipient=to;body="";sendId=null;sendRequest=null;channelIndex=0;compose=true}
-    private fun send(){val p=selected?:return;val channels=remoteState?.optJSONArray("channels")?:return;val ch=channels.optJSONObject(channelIndex)?:return
-        if(sendId==null){sendId=UUID.randomUUID().toString();sendRequest=JSONObject().put("action","sms.send").put("to",recipient).put("body",body).put("channelId",ch.getString("id")).put("channelRevision",ch.getLong("revision")).put("commandExpires",System.currentTimeMillis()/1000+120)}
+    private fun beginWrite(reply:ControllerSms?=null){
+        val p=selected?:return
+        if(reply!=null&&reply.deviceId.isNotBlank()&&reply.deviceId!=p.optString("id")){
+            notice="会话来自另一台设备，请重新打开原设备后回复";return
+        }
+        recipient=reply?.address.orEmpty();body="";sendId=null;sendRequest=null
+        sendPeerId=p.getString("id");sendChannelId=reply?.channelId.orEmpty();sendChannelRevision=reply?.channelRevision?:0L
+        compose=true
+    }
+    private fun selectedSendChannel():JSONObject?{
+        if(selected?.optString("id")!=sendPeerId)return null
+        val channels=remoteState?.optJSONArray("channels")?:return null
+        return (0 until channels.length()).mapNotNull{channels.optJSONObject(it)}.firstOrNull{
+            ControllerSendTarget.channelId(it)==sendChannelId&&ControllerSendTarget.revision(it)==sendChannelRevision&&sendChannelRevision>0
+        }
+    }
+    private fun send(){val p=selected?:return;if(selectedSendChannel()==null){notice="发送设备或 SIM 版本已变化，请重新选择；未切换发送路由";return}
+        if(sendId==null){sendId=UUID.randomUUID().toString();sendRequest=JSONObject().put("action","sms.send").put("to",recipient).put("body",body).put("channelId",sendChannelId).put("channelRevision",sendChannelRevision).put("commandExpires",System.currentTimeMillis()/1000+120)}
         val id=sendId!!;val request=sendRequest!!
         work{withContext(Dispatchers.IO){SecretStore(applicationContext).putString("p2p.lastCommand.${p.getString("id")}",id)}
             val result=withContext(Dispatchers.IO){PeerHubGateway.send(applicationContext,p.getString("id"),id,request)}
@@ -278,9 +299,14 @@ class PeerActivity:ComponentActivity(){
         if(compose)AlertDialog(onDismissRequest={if(!busy)compose=false},title={Text("通过已授权 SIM 发送短信")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
             OutlinedTextField(recipient,{if(sendId==null)recipient=it},label={Text("收件号码")},enabled=sendId==null)
             OutlinedTextField(body,{if(sendId==null)body=it},label={Text("短信内容")},enabled=sendId==null)
-            val channels=remoteState?.optJSONArray("channels")?:JSONArray();for(i in 0 until channels.length()){val ch=channels.getJSONObject(i);FilterChip(selected=channelIndex==i,onClick={if(sendId==null)channelIndex=i},label={Text("SIM ${ch.optInt("slotIndex")+1} · ${ch.optString("carrierName")}")})}
+            val channels=remoteState?.optJSONArray("channels")?:JSONArray();for(i in 0 until channels.length()){
+                val ch=channels.getJSONObject(i);val id=ControllerSendTarget.channelId(ch);val revision=ControllerSendTarget.revision(ch)
+                FilterChip(selected=sendChannelId==id&&sendChannelRevision==revision,enabled=sendId==null,
+                    onClick={if(sendId==null){sendChannelId=id;sendChannelRevision=revision}},label={Text("SIM ${ch.optInt("slotIndex")+1} · ${ch.optString("carrierName")}")})
+            }
+            if(selectedSendChannel()==null)Text("请选择发送 SIM；旧会话缺少来源或 SIM 已变化时不会自动选卡。",style=MaterialTheme.typography.bodySmall)
             Text("断线重试保留同一命令 ID；不确定状态不会自动重复发送。",style=MaterialTheme.typography.bodySmall)
-        }},confirmButton={Button(onClick={send()},enabled=!busy&&recipient.isNotBlank()&&body.isNotBlank()){Text(if(sendId==null)"发送" else "重试原命令")}},dismissButton={TextButton(onClick={compose=false},enabled=!busy){Text("关闭")}})
+        }},confirmButton={Button(onClick={send()},enabled=!busy&&recipient.isNotBlank()&&body.isNotBlank()&&selectedSendChannel()!=null){Text(if(sendId==null)"发送" else "重试原命令")}},dismissButton={TextButton(onClick={compose=false},enabled=!busy){Text("关闭")}})
     }
     @Composable private fun DeviceScreen(){LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{HubCard(Modifier.fillMaxWidth()){

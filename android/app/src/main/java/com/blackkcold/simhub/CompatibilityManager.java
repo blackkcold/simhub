@@ -80,9 +80,9 @@ public final class CompatibilityManager {
                     }
                 }catch(Exception permissionError){state.put("shizukuAuthorized",false);}
             }else state.put("shizukuAuthorized",false);
-            state.put("associationSupported",supportsSelfManagedAssociation(context));
-            state.put("associationPermissionGranted",Build.VERSION.SDK_INT>=33 &&
-                granted(context,Manifest.permission.REQUEST_COMPANION_SELF_MANAGED));
+            // This ordinary APK does not provide the privileged creation flow.
+            // Existing app-owned records remain inspectable and removable.
+            state.put("associationSupported",false);
             state.put("associations",associationCount(context));
             if(providerProbe){
                 if(!granted(context,Manifest.permission.READ_SMS))state.put("providerProbe","permission_missing");
@@ -104,13 +104,6 @@ public final class CompatibilityManager {
     }
     private static boolean granted(Context c,String permission){
         return c.checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED;
-    }
-    public static boolean supportsSelfManagedAssociation(Context c){
-        return Build.VERSION.SDK_INT>=33 &&
-                granted(c,Manifest.permission.REQUEST_COMPANION_SELF_MANAGED) &&
-                c.getPackageManager().hasSystemFeature(
-                PackageManager.FEATURE_COMPANION_DEVICE_SETUP) &&
-                c.getSystemService(CompanionDeviceManager.class)!=null;
     }
     public static int associationCount(Context c){
         if(Build.VERSION.SDK_INT<33)return 0;
@@ -142,7 +135,7 @@ public final class CompatibilityManager {
     private static boolean isSimHubAssociation(AssociationInfo item){
         // getMyAssociations is already scoped to this app. Before API35 there
         // is no public self-managed flag; our own association name identifies
-        // the records created by this app's self-managed association flow.
+        // legacy self-managed associations owned by this app.
         if(Build.VERSION.SDK_INT>=35&&!item.isSelfManaged())return false;
         return item.getDisplayName()!=null &&
                 item.getDisplayName().toString().startsWith("SIM Hub · ");

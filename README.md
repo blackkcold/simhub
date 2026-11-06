@@ -76,7 +76,7 @@ Use SIM Hub as a **SIM Node**, **Management Center**, or both. A native Material
 | **Pairing and security** | QR/link or eight-digit pairing code and fingerprint, one Global Vault, independent Node Keys, password/TOTP/Passkeys, native controller identity |
 | **Reliability** | Encrypted local queue, manual immediate command/SMS sync, older-history rescan, foreground HTTPS long-poll, offline retry and durable acknowledgements |
 | **Reset and OTA** | Remote unpair and recovery states, signed APK self-updates, opt-in Android remote OTA, verified Rootless Docker Relay upgrades |
-| **Diagnostics** | Redacted logs, SMS Provider tests, user-confirmed Companion Device association and locally authorized Shizuku Shell console |
+| **Diagnostics** | Redacted logs, SMS Provider tests, CDM inspection and locally authorized Shizuku Shell console |
 
 Editable SVG icons are in [design/icons](design/icons), with matching Android VectorDrawables.
 
@@ -112,7 +112,7 @@ Open the management URL, log in, initialize the single encrypted Global Vault on
 
 **Android:** Signed APK checks work without pairing. Android 16+ can enable opt-in remote OTA with platform confirmation. [Remote OTA](docs/REMOTE_OTA.md).
 
-**Compatibility lab:** On-device Shizuku shell (local authorization only), Companion Device association, SMS Provider/AppOps probes, and redacted logs. No remote Shell access or OTP bypass. [Compatibility lab](docs/COMPATIBILITY_LAB.md).
+**Compatibility lab:** On-device Shizuku shell (local authorization only), existing CDM association inspection/removal, SMS Provider/AppOps probes, and redacted logs. No remote Shell access or OTP bypass. [Compatibility lab](docs/COMPATIBILITY_LAB.md).
 
 ## SMS modes and response time
 

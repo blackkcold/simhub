@@ -32,13 +32,13 @@ import org.json.JSONObject
 import kotlinx.coroutines.flow.collect
 
 /**
- * Native presentation of controller-decrypted SMS; never persists SMS or Vault secrets.
- * Payloads arrive exclusively from a verified HTTPS main frame via WebMessageListener.
+ * Native presentation of messages decrypted by the authorized controller.
+ * This view holds plaintext in memory; durable workspaces are separately encrypted.
  */
 data class ControllerSms(
     val id:String,val thread:String,val sender:String,val body:String,val timestamp:Long,
     val inbound:Boolean,val device:String,val sim:String,val sourceId:String,val otp:String,val failed:Boolean,
-    val address:String
+    val address:String,val deviceId:String="",val channelId:String="",val channelRevision:Long=0
 )
 class ControllerInboxState {
     val messages=mutableStateListOf<ControllerSms>()
@@ -77,7 +77,7 @@ class ControllerInboxState {
                             str("body",4000),row.optLong("timestamp",0),
                             row.optBoolean("inbound",true),str("device",100),
                             str("sim",90),str("sourceId",160),str("otp",20),row.optBoolean("failed",false),
-                             str("address",120)
+                             str("address",120),str("deviceId",80),str("channelId",80),row.optLong("channelRevision",0)
                         ))
                     }
                     // Stable IDs keep loaded conversation history across refreshes and
@@ -110,7 +110,7 @@ class ControllerInboxState {
 @Composable
 fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                           onOlder:()->Unit,onNewer:()->Unit,onOpenLogin:()->Unit,onWrite:()->Unit,
-                           onReply:(String)->Unit,canCompose:Boolean,isLoading:Boolean=false) {
+                           onReply:(ControllerSms)->Unit,canCompose:Boolean,isLoading:Boolean=false) {
     val context=LocalContext.current
     var query by remember { mutableStateOf("") }
     var filtersExpanded by remember { mutableStateOf(false) }
@@ -231,7 +231,7 @@ fun NativeControllerInbox(state:ControllerInboxState,onRefresh:()->Unit,
                 Text(conversation.lastOrNull()?.sender.orEmpty(),modifier=Modifier.weight(1f),
                     fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                 if(canCompose && conversation.lastOrNull()?.address?.isNotBlank()==true)
-                    IconButton(onClick={onReply(conversation.last().address)}){
+                    IconButton(onClick={onReply(conversation.last())}){
                         HubIcon(R.drawable.ic_hub_send,Modifier.size(20.dp),
                             description=hubLabel("回复此会话","Reply in conversation"))
                     }

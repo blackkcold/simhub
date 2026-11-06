@@ -137,13 +137,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
     var cursors by remember(selected){mutableStateOf(listOf<Pair<Long,Long>>())}
     var unreadable by remember(selected){mutableIntStateOf(0)}
     var lastEventSeq by remember(selected){mutableLongStateOf(0L)}
-    var showWrite by remember{mutableStateOf(false)}
-    var composeRecipient by remember(selected){mutableStateOf("")}
-    var composeMessage by remember(selected){mutableStateOf("")}
-    var composeSubmittedDraft by remember(selected){mutableStateOf("")}
-    var composeCommandId by remember(selected){mutableStateOf(UUID.randomUUID().toString())}
-    var composeDeviceIdx by remember(selected){mutableIntStateOf(0)}
-    var composeChannelIdx by remember(selected){mutableIntStateOf(0)}
+    var showWrite by remember(selected){mutableStateOf(false)}
+    var composeReply by remember(selected){mutableStateOf<ControllerSendDraft?>(null)}
+    var resumeSendId by remember(selected){mutableStateOf<String?>(null)}
+    var sendJournalTick by remember(selected){mutableIntStateOf(0)}
     var showReset by remember{mutableStateOf(false)}
     var resetCredential by remember{mutableStateOf("")}
     var selectedDevice by remember{mutableStateOf<JSONObject?>(null)}
@@ -315,6 +312,7 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                                     .put("device",node?.optString("name")?.take(100)?:"未知设备")
                                     .put("sim",provenance.take(90))
                                     .put("sourceId",(item.optString("deviceId")+"|"+ch+"|"+rev).take(160))
+                                    .put("deviceId",item.optString("deviceId")).put("channelId",ch).put("channelRevision",rev)
                                     .put("otp",otp.take(20)).put("failed",failed))
                             }
                             // A single SMS may contain many escapable characters.
@@ -556,9 +554,12 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
             if(!busy){
                 try{
                     val recent=withContext(Dispatchers.IO){
-                        api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")?:JSONArray()
+                        val recent=api.api("/api/v1/commands/recent?limit=50").optJSONArray("commands")?:JSONArray()
+                        ControllerSendCoordinator.forClient(api).observe((0 until recent.length()).mapNotNull{recent.optJSONObject(it)})
+                        recent
                     }
                     commandHistory=(0 until recent.length()).mapNotNull{recent.optJSONObject(it)}
+                    sendJournalTick++
                     commandHistoryError=""
                     val current=commandHistory.firstOrNull{it.optString("commandId")==lastCommandId}
                     if(current!=null)
@@ -723,6 +724,11 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                             }
                         }
                     }
+                    if(client!=null)item{
+                        ControllerSendCenter(client,sendJournalTick){id->
+                            resumeSendId=id;composeReply=null;showWrite=true
+                        }
+                    }
                     item{
                         HubCard(Modifier.fillMaxWidth()){
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
@@ -763,7 +769,10 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                         onNewer={navigateToLatest()},
                         onOpenLogin={refreshDelta()},
                         onWrite={showWrite=true},
-                         onReply={address->composeRecipient=address;showWrite=true},
+                         onReply={sms->
+                             composeReply=ControllerSendDraft(sms.deviceId,sms.channelId,sms.channelRevision,sms.address,"")
+                             resumeSendId=null;showWrite=true
+                         },
                          canCompose=devices.any{ControllerNodePolicy.canSend(it)},
                          isLoading=busy)
                 }
@@ -1208,107 +1217,17 @@ fun ControllerWorkspace(visible:Boolean,revision:Int,onScan:()->Unit,
                 Text(hubLabel("取消","Cancel"))
             }})
     }
-    if(showWrite){
-        var sendError by remember{mutableStateOf("")}
-        var sending by remember{mutableStateOf(false)}
-        // Draft, SIM choice and idempotency key survive closing the compose page.
-        val recipient=composeRecipient
-        val message=composeMessage
-        val submittedDraft=composeSubmittedDraft
-        val messageCommandId=composeCommandId
-        val deviceIdx=composeDeviceIdx
-        val channelIdx=composeChannelIdx
-        val possible=devices.filter{ControllerNodePolicy.canSend(it)}
-        val current=possible.getOrNull(deviceIdx)
-        val channels=current?.let{ControllerNodePolicy.channels(it)}?:JSONArray()
-        val currentDraft=(current?.optString("id")?:"")+"|"+deviceIdx+"|"+channelIdx+"|"+recipient+"|"+message
-        var stepUp by remember{mutableStateOf("")}
-        Dialog(onDismissRequest={showWrite=false},
-            properties=DialogProperties(usePlatformDefaultWidth=false)){
-            Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
-                Column(Modifier.fillMaxSize().imePadding().padding(18.dp)){
-                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-                        Text(hubLabel("发送加密短信","Send encrypted SMS"),
-                            modifier=Modifier.weight(1f),style=MaterialTheme.typography.titleLarge)
-                        TextButton(onClick={showWrite=false}){Text(hubLabel("关闭","Close"))}
-                    }
-                    HorizontalDivider()
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
-                        verticalArrangement=Arrangement.spacedBy(12.dp)){
-                if(sendError.isNotEmpty())Text(sendError,color=MaterialTheme.colorScheme.error)
-                if(submittedDraft.isNotEmpty() && currentDraft!=submittedDraft)
-                    Text(hubLabel("重试需保留原收件人、SIM 与短信内容；修改内容请新建发送任务。",
-                        "For an idempotent retry, restore the original recipient, SIM and message."),
-                        color=MaterialTheme.colorScheme.error)
-                if(possible.isEmpty())Text(hubLabel("当前没有具备发送能力的在线节点。不接管模式默认只读，完全接管模式需取得发送权限。",
-                        "No send-capable online node. Companion mode is read-only; default SMS mode requires permission."))
-                else{
-                    Text(hubLabel("核对发送节点和 SIM，系统不会因会话来源自动替换路由。",
-                        "Verify node and SIM; the conversation does not automatically change routing."),
-                        style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("发送设备",style=MaterialTheme.typography.labelLarge)
-                    possible.forEachIndexed{i,d->
-                        FilterChip(selected=i==deviceIdx,onClick={composeDeviceIdx=i;composeChannelIdx=0},
-                            label={Text(d.optString("name"))})
-                    }
-                    if(current!=null)Text(ControllerNodePolicy.sendModeLabel(current),
-                        color=if(ControllerNodePolicy.isDeveloperSend(current))MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.bodySmall)
-                    Text("来源 SIM",style=MaterialTheme.typography.labelLarge)
-                    for(i in 0 until channels.length()){
-                        val ch=channels.optJSONObject(i)?:continue
-                        FilterChip(selected=i==channelIdx,onClick={composeChannelIdx=i},
-                            label={Text(ch.optString("displayName").ifBlank{ch.optString("id")})})
-                    }
-                    OutlinedTextField(recipient,{composeRecipient=it},label={Text(hubLabel("收件人号码","Recipient number"))})
-                    OutlinedTextField(message,{composeMessage=it},label={Text(hubLabel("短信内容","Message"))},minLines=3)
-                    OutlinedTextField(stepUp,{stepUp=it},label={Text(if(secondFactorTotp)"二次验证 TOTP" else "管理员令牌（敏感操作）")},
-                        singleLine=true,visualTransformation=PasswordVisualTransformation())
+    if(showWrite&&client!=null){
+        ControllerSendDialog(client,devices,secondFactorTotp,resumeSendId,composeReply,sendJournalTick,
+            onDismiss={showWrite=false;resumeSendId=null;composeReply=null},
+            onChanged={intent->
+                sendJournalTick++
+                if(intent!=null){
+                    lastCommandId=intent.optString("id")
+                    lastCommandDevice=intent.optString("deviceName")
+                    lastCommandState=ControllerSendFacts.summary(intent)
+                    commandTick++
                 }
-                    }
-                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
-                        Button(enabled=!sending && (submittedDraft.isEmpty() || submittedDraft==currentDraft) && current!=null && ControllerNodePolicy.canSend(current) && recipient.isNotBlank() && message.isNotBlank(),
-                onClick={
-                    if(submittedDraft.isEmpty())composeSubmittedDraft=currentDraft
-                    sending=true;sendError=""
-                    scope.launch{
-                        try {
-                            val queuedId=withContext(Dispatchers.IO){
-                                // Server always independently enforces second factor for sms.send.
-                                if(stepUp.isNotEmpty())client!!.api("/api/v1/auth/elevate","POST",
-                                    JSONObject().put(if(secondFactorTotp)"totp" else "adminToken",stepUp))
-                                val channel=channels.optJSONObject(channelIdx)?:throw IllegalStateException("SIM 未选择")
-                                val id=messageCommandId
-                                val now=System.currentTimeMillis()/1000
-                                val expires=now+1200
-                                val payload=JSONObject().put("v",2).put("action","sms.send")
-                                    .put("commandId",id).put("issuedAt",now).put("expiresAt",expires)
-                                    .put("channelId",channel.optString("id"))
-                                    .put("channelRevision",channel.optInt("revision",1))
-                                    .put("to",recipient).put("body",message)
-                                val cipher=client!!.encryptCommand(current!!,id,"sms.send",now,expires,payload)
-                                client.api("/api/v1/devices/"+current.getString("id")+"/commands","POST",
-                                    JSONObject().put("commandId",id).put("idempotencyKey",id)
-                                        .put("type","sms.send").put("createdAt",now)
-                                        .put("expiresAt",expires).put("ciphertext",cipher))
-                                id
-                            }
-                            lastCommandId=queuedId
-                            lastCommandDevice=current?.optString("name").orEmpty()
-                            lastCommandState="等待设备连接并领取任务"
-                            showWrite=false;error=""
-                            composeRecipient="";composeMessage=""
-                            composeSubmittedDraft=""
-                            composeCommandId=UUID.randomUUID().toString()
-                        }catch(e:Exception){
-                            sendError=(e.message?:"请求失败")+
-                                "。若请求状态不明，请先查看命令执行状态再重试。"
-                        }finally{sending=false}
-                    }
-                        }){Text(hubLabel("确认发送","Confirm send"))}
-                    }
-                }
-            }
-        }
+            })
     }
 }

@@ -6,6 +6,8 @@ import {bindNotificationUI} from './notification-ui.js';
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
 import {IntentJournal, SendCoordinator} from './send-intents.js';
 import {VaultSettingsClient} from './vault-settings.js';
+import {LocalHistoryIndex, HistoryLoadBudget, normalizeSearch, eventSearchId, summarizeHistoryCoverage} from './history-search.js';
+import {HistoryBackfill, HISTORY_PAGE_SIZE, validateHistoryPage} from './history-backfill.js';
 const $ = (id) => document.getElementById(id);
 const androidShell = new URLSearchParams(location.search).get('native') === '1';
 const samePhoneControllerApproval = new URLSearchParams(location.search).get('controller') === 'local';
@@ -31,6 +33,14 @@ let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=
 let csrfToken='',stepUpUntil=0,secondFactorIsTotp=true,activeStepUp=null,enrolling=false,initialEventsLoaded=false,passkeyCount=0;
 let olderCursor=null,historyHasMore=true,visibleCount=40,activeConversationKey=null,diagnosticsDeviceId=null;
 let historyFetchInFlight=null,loadObserver=null,lastAutoScroll=-1;
+let historyRequestController=null,incrementalCaughtUp=false;
+const historyIndex=new LocalHistoryIndex();
+const historyBudget=new HistoryLoadBudget();
+const historyBackfill=new HistoryBackfill({
+  loadPage:signal=>fetchHistoryPage({limit:HISTORY_PAGE_SIZE,signal}),
+  hasMore:()=>!!vaultKey&&initialEventsLoaded&&historyHasMore,
+  onChange:()=>{if(vaultKey)renderHistoryCoverage();}
+});
 let poolState=null,globalVault=null;
 const expandedDeviceDetails=new Set();
 // Decrypted coordinates live in this tab's RAM only and disappear on Vault lock.
@@ -389,13 +399,20 @@ async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body
   // Only retry idempotent reads: never resend SMS, enrollment, or update POSTs.
   const safe=method==='GET'||method==='HEAD';
   for(let attempt=0;attempt<4;attempt++){
+    if(opts.signal?.aborted)throw opts.signal.reason||new DOMException('Request stopped','AbortError');
     try{
-      res=await fetch(path,{method:method,headers:headers,body:body===null?undefined:JSON.stringify(body),cache:'no-store',credentials:'same-origin'});
+      res=await fetch(path,{method:method,headers:headers,body:body===null?undefined:JSON.stringify(body),cache:'no-store',credentials:'same-origin',signal:opts.signal});
       if(!safe||![502,503,504].includes(res.status)||attempt===3)break;
     }catch(error){
-      if(!safe||attempt===3)throw error;
+      if(opts.signal?.aborted||error.name==='AbortError'||!safe||attempt===3)throw error;
     }
-    await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)));
+    await new Promise((resolve,reject)=>{
+      const finish=()=>{opts.signal?.removeEventListener('abort',cancel);resolve();};
+      const timer=setTimeout(finish,250*Math.pow(2,attempt));
+      const cancel=()=>{clearTimeout(timer);opts.signal?.removeEventListener('abort',cancel);reject(opts.signal.reason||new DOMException('Request stopped','AbortError'));};
+      opts.signal?.addEventListener('abort',cancel,{once:true});
+      if(opts.signal?.aborted)cancel();
+    });
   }
   let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check'){authenticated=false;lockVault();}throw Object.assign(new Error(data.message||data.error||('HTTP '+res.status)),{status:res.status,code:data.error});}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;
   if(typeof data.passwordConfigured==='boolean'){passwordConfigured=data.passwordConfigured;
@@ -566,7 +583,7 @@ function purgeSensitiveUI(){
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
-  for(const id of ['sendIntentList','replyDraftStatus','backupStatus','metadataSyncStatus','updateStatus','updateAgentHelp'])$(id)?.replaceChildren();
+  for(const id of ['sendIntentList','replyDraftStatus','backupStatus','metadataSyncStatus','updateStatus','updateAgentHelp','historyCoverage','historyExplanation','historyNodeCoverage'])$(id)?.replaceChildren();
   const lifecycle=$('lifecycleHistory');if(lifecycle)lifecycle.replaceChildren();
   const badge=$('smsUnreadBadge');if(badge){badge.textContent='';badge.hidden=true;}
   if($('notifyHistoryList'))$('notifyHistoryList').replaceChildren();
@@ -575,6 +592,7 @@ function purgeSensitiveUI(){
 }
 function lockVault(broadcast=true){
   securityEpoch++;androidNativePage=0;
+  clearHistoryState();
   intentJournal?.close();intentJournal=null;sendCoordinator=null;recentCommands=[];
   vaultSettingsClient?.close();vaultSettingsClient=null;channelAliases={};remoteSettingsAvailable=true;
   if(androidShell&&window.SimHubNativeInbox?.postMessage)
@@ -720,7 +738,7 @@ async function loadDevices(){
   if(epoch!==securityEpoch||!vaultKey)return;
   renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();syncSendControls();
 }
-async function ingestEvents(batch,notify=true,signal){
+async function ingestEvents(batch,notify=true,signal,bounded=false){
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
   let changed=false;
   for(const e of batch){
@@ -739,7 +757,9 @@ async function ingestEvents(batch,notify=true,signal){
     // plaintext after a purge or mark an interrupted decryption as ingested.
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey||signal?.aborted)return false;
     if(eventIds.has(id))continue; // A concurrent incremental page may have won.
+    historyBudget.addEvent(row,bounded);
     events.push(e);eventIds.add(id);decryptedEvents.push(row);changed=true;
+    historyIndex.addEvent(row);
     if(notify&&!row.decryptError)maybeNotify(row);
   }
   return changed;
@@ -751,11 +771,11 @@ async function loadEvents(){
   if(!initialEventsLoaded){
     const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
-    const first=await api('/api/v1/events?order=occurred&scope=sms&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
-    olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
-    historyHasMore=!!first.hasMore;
-    await ingestEvents(first.events||[],false);
+    const response=await api('/api/v1/events?order=occurred&scope=sms&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    const first=validateHistoryPage(response,null,100);
+    await ingestEvents(first.events,false);
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    olderCursor=first.cursor;historyHasMore=first.hasMore;
     // Recent uploads can contain old-dated messages excluded by occurredAt paging.
     // Historical/overlapping pages must never advance the incremental cursor.
     // Catch up from the head captured BEFORE either initial page was requested.
@@ -767,40 +787,75 @@ async function loadEvents(){
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     initialEventsLoaded=true;renderInbox();
   }
-  let changed=false,loops=0;
+  let changed=false,loops=0,caughtUp=false;
   while(loops++<3){
     const r=await api('/api/v1/events?since='+lastSeq+'&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     const batch=r.events||[];
-    if(!batch.length)break;
+    if(!batch.length){caughtUp=true;break;}
     changed=await ingestEvents(batch,!bootstrapping)||changed;
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=Math.max(lastSeq,...batch.map(e=>Number(e.seq)||0));
-    if(batch.length<100)break;
+    if(batch.length<100){caughtUp=true;break;}
   }
-  if(changed&&epoch===securityEpoch&&vaultKey)renderInbox();
+  if(epoch===securityEpoch&&dataGeneration===eventDataGeneration&&vaultKey){
+    incrementalCaughtUp=caughtUp;
+    if(changed)renderInbox();else renderHistoryCoverage();
+  }
 }
 async function loadOlder(){
   if(!vaultKey)return;
   if(historyFetchInFlight)return historyFetchInFlight;
   const threads=buildThreads(filteredEvents());
   if(visibleCount<threads.length){visibleCount=Math.min(visibleCount+30,threads.length);renderInbox();return;}
+  if(historyBudget.limited)return;
   if(!historyHasMore||!olderCursor)return;
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
-  historyFetchInFlight=(async()=>{
-    const r=await api('/api/v1/events?order=occurred&scope=sms&limit=50&beforeTime='+olderCursor.time+'&beforeSeq='+olderCursor.seq);
-    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
-    // Commit the pagination checkpoint only after the full page has been
-    // accepted. A failed or invalidated ingest must remain retryable.
-    const accepted=await ingestEvents(r.events||[],false);
-    if(!accepted&&((r.events||[]).length>0) &&
-        (epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey))return;
-    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
-    olderCursor=r.nextBeforeTime?{time:r.nextBeforeTime,seq:r.nextBeforeSeq}:null;
-    historyHasMore=!!r.hasMore;
-    visibleCount=Math.min(Math.max(visibleCount+30,buildThreads(filteredEvents()).length),1000);
-    renderInbox();
+  await fetchHistoryPage();
+  if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+  visibleCount=Math.min(visibleCount+30,buildThreads(filteredEvents()).length);renderInbox();
+}
+function clearHistoryState(){
+  historyBackfill.reset();historyRequestController?.abort();historyRequestController=null;
+  historyFetchInFlight=null;historyIndex.clear();historyBudget.clear();incrementalCaughtUp=false;
+}
+async function fetchHistoryPage({limit=50,signal}={}){
+  // A background backfill can follow a manual page, but never issue concurrent
+  // requests for the same checkpoint. Manual loadOlder already joins this task.
+  if(historyFetchInFlight)await historyFetchInFlight;
+  if(signal?.aborted)throw signal.reason||new DOMException('History stopped','AbortError');
+  if(!vaultKey||!initialEventsLoaded||!historyHasMore)return {loaded:0};
+  if(!olderCursor)throw Error('History checkpoint unavailable. Refresh before continuing.');
+  const epoch=securityEpoch,dataGeneration=eventDataGeneration,cursor={...olderCursor};
+  const controller=new AbortController(),abort=()=>controller.abort();
+  signal?.addEventListener('abort',abort,{once:true});
+  historyRequestController=controller;
+  const current=()=>epoch===securityEpoch&&dataGeneration===eventDataGeneration&&!!vaultKey&&!controller.signal.aborted;
+  const task=(async()=>{
+    const response=await api('/api/v1/events?order=occurred&scope=sms&limit='+limit+'&beforeTime='+cursor.time+'&beforeSeq='+cursor.seq,{signal:controller.signal});
+    if(!current())return {loaded:0};
+    const page=validateHistoryPage(response,cursor,limit),before=decryptedEvents.length;
+    await ingestEvents(page.events,false,controller.signal,true);
+    if(!current())return {loaded:0};
+    // Commit only after every row, including unreadable rows, has been ingested.
+    // Incremental lastSeq is deliberately independent of this history cursor.
+    olderCursor=page.cursor;historyHasMore=page.hasMore;
+    return {loaded:decryptedEvents.length-before};
   })();
-  try{await historyFetchInFlight;}finally{historyFetchInFlight=null;}
+  historyFetchInFlight=task;renderHistoryCoverage();
+  try{return await task;}catch(error){if(!controller.signal.aborted)throw error;return {loaded:0};}
+  finally{
+    signal?.removeEventListener('abort',abort);
+    if(historyFetchInFlight===task)historyFetchInFlight=null;
+    if(historyRequestController===controller)historyRequestController=null;
+    if(epoch===securityEpoch&&dataGeneration===eventDataGeneration&&vaultKey)renderInbox();
+  }
+}
+async function releaseHistoryCache(){
+  if(!vaultKey)return;
+  const epoch=securityEpoch;
+  resetEventCache();renderInbox();
+  await fullRefresh();
+  if(epoch===securityEpoch&&vaultKey&&!initialEventsLoaded)await loadEvents();
 }
 
 let refreshing=null;
@@ -940,6 +995,7 @@ async function loadLifecycleHistory(){
 }
 function resetEventCache(){
   eventDataGeneration++;
+  clearHistoryState();
   events=[];decryptedEvents=[];eventIds.clear();
   simProfileIndex.clear();simProfileIndexVersion='';
   lastSeq=0;oldestSeq=0;initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
@@ -1262,14 +1318,17 @@ function refreshSimFilter(){
   if([...el.options].some(o=>o.value===prior))el.value=prior;
 }
 function filteredEvents(){
-  const q=$('search').value.trim().toLowerCase(),dev=$('deviceFilter').value,
+  const q=normalizeSearch($('search').value.trim()),dev=$('deviceFilter').value,
     sim=$('simFilter').value,kind=$('kindFilter').value;
-  return collapseMessageEvents(decryptedEvents).filter(e=>
+  const matches=q?historyIndex.search(q):null;
+  const matchingDevices=q?new Set(devices.filter(d=>normalizeSearch(deviceName(d.id)).includes(q)).map(d=>d.id)):null;
+  const matching=decryptedEvents.filter(e=>
     e.kind.startsWith('sms.')&&(!dev||e.deviceId===dev)&&(!sim||eventSimKey(e)===sim)&&
     (!kind||e.kind===kind))
-    .filter(e=>{if(!q)return true;const p=e.payload||{};
-      return [p.body,p.sender,p.recipient,p.contactName,p.otp&&p.otp.value,deviceName(e.deviceId)]
-        .some(v=>String(v||'').toLowerCase().includes(q));});
+    .filter(e=>!q||matches.has(eventSearchId(e))||matchingDevices.has(e.deviceId));
+  // Filter before folding status updates: a later delivery record with no
+  // body must not hide a matching historical record for the same provider ID.
+  return collapseMessageEvents(matching);
 }
 function buildThreads(source){
   const threads=new Map();
@@ -1284,14 +1343,54 @@ function buildThreads(source){
   }).sort((a,b)=>(b.latest.occurredAt||0)-(a.latest.occurredAt||0));
 }
 
+function renderHistoryCoverage(){
+  const summary=$('historyCoverage');if(!summary||!vaultKey)return;
+  const zh=getLocale()==='zh-CN',coverage=summarizeHistoryCoverage(decryptedEvents,devices,$('deviceFilter').value);
+  const number=value=>Number(value).toLocaleString(zh?'zh-CN':'en');
+  const retained=coverage.retained===null?(zh?'未知':'unknown'):number(coverage.retained);
+  let state;
+  if(historyBudget.limited)state=zh?'达到本机加载上限；仍有历史未检索':'Local loading budget reached; some history remains unsearched';
+  else if(!initialEventsLoaded)state=zh?'正在读取最新记录':'Reading recent records';
+  else if(historyBackfill.status==='running')state=zh?'正在加载历史，可停止':'Loading history; you can stop';
+  else if(historyBackfill.status==='stopping')state=zh?'正在停止':'Stopping';
+  else if(historyBackfill.status==='error')state=zh?'历史加载中断，可继续':'History interrupted; resume is available';
+  else if(historyHasMore)state=historyBackfill.status==='paused'?(zh?'已停止，可继续加载':'Stopped; you can resume'):(zh?'仍有更早的 Relay 记录':'Earlier Relay records remain');
+  else state=zh?'已读到本次 Relay 历史末尾':'Reached the Relay history end in this scan';
+  if(initialEventsLoaded&&!incrementalCaughtUp)state+=zh?'；新上传记录仍在追赶':'; catching up with new uploads';
+  summary.textContent=zh?
+    '已加载 '+number(coverage.loaded)+' 条记录 · 可检索 '+number(coverage.searchable)+' 条 · Relay 最近统计 '+retained+' 条 · '+state:
+    number(coverage.loaded)+' records loaded · '+number(coverage.searchable)+' searchable · Relay last reported '+retained+' · '+state;
+  $('historyDetailsTitle').textContent=zh?'检索范围与上传状态':'Search coverage and uploads';
+  $('historyExplanation').textContent=(zh?
+    '搜索仅覆盖本次解锁后已加载且可解密的记录；索引只在此页面内存中保留，锁定后清除。历史加载覆盖所有设备的 Relay 保留记录。统计按设备范围，不随 SIM、类型或关键词筛选变化；同一短信可能有多条状态记录。Relay 统计是最近一次快照，并非历史总量。':
+    'Search covers records loaded and decrypted in this unlocked tab. The index stays in memory and is cleared on lock. History loading reads Relay-retained records for all devices. Counts follow the device scope, before SIM, type or text filters; one SMS can have multiple status records. Relay counts are a recent snapshot, not the total phone history.')+
+    (coverage.unreadable?(zh?' 当前有 '+number(coverage.unreadable)+' 条记录无法解密，不包含在正文检索中。':' '+number(coverage.unreadable)+' records could not be decrypted and are excluded from text search.'):'')+
+    (zh?' 回溯上限为 '+number(historyBudget.maxRows)+' 条事件或约 '+number(historyBudget.maxEstimatedBytes/1048576)+' MiB 数据（估计值）。达到上限会停止加载并保留“未检索”提示；释放缓存后会从最新记录重新开始。':
+      ' Backfill stops at '+number(historyBudget.maxRows)+' loaded events or about '+number(historyBudget.maxEstimatedBytes/1048576)+' MiB of estimated data, with partial coverage clearly marked. Releasing the cache restarts from recent records.');
+  const unknown=coverage.pendingUnknownNodes;
+  $('historyNodeCoverage').textContent=zh?
+    '节点最近上报待上传事件 '+number(coverage.pending)+(unknown?'；另有未上报的节点':'')+'（包含非短信事件）。节点尚未上传或尚未扫描的短信不在 Relay 与当前检索范围内；队列为 0 也不代表全部手机历史已上传。需要补传时，请在设备详情中同步历史。':
+    'Nodes last reported '+number(coverage.pending)+' queued events'+(unknown?'; some node counts are unavailable':'')+' (including non-SMS events). Unuploaded or unscanned phone SMS are outside Relay and this search. A zero queue does not prove that all phone history was uploaded. Request history sync from device details when needed.';
+  const load=$('historyLoadAll'),stop=$('historyStop');
+  load.textContent=historyBudget.limited?(zh?'已达到加载上限':'Loading budget reached'):!historyHasMore?(zh?'已到 Relay 历史末尾':'Relay history end reached'):
+    ['paused','error'].includes(historyBackfill.status)?(zh?'继续加载历史':'Resume history'):(zh?'加载全部 Relay 历史':'Load all Relay history');
+  load.disabled=!initialEventsLoaded||!historyHasMore||historyBackfill.running||historyBudget.limited;
+  const clear=$('historyClear');clear.hidden=!historyBudget.limited;
+  clear.textContent=zh?'释放历史缓存':'Release history cache';
+  stop.textContent=historyBackfill.status==='stopping'?(zh?'停止中…':'Stopping…'):(zh?'停止':'Stop');
+  stop.hidden=!historyBackfill.running;stop.disabled=historyBackfill.status==='stopping';
+  $('loadOlderBtn').disabled=!!historyFetchInFlight;
+}
+
 function renderInbox(){
   refreshSimFilter();
   syncSendControls();
   renderDecryptNotice();
+  renderHistoryCoverage();
   const threads=buildThreads(filteredEvents()),show=threads.slice(0,visibleCount);
   const list=$('inboxList'),previousTop=list.scrollTop;
   $('emptyInbox').hidden=!!show.length;
-  $('loadOlderBtn').hidden=!historyHasMore&&threads.length<=visibleCount;
+  $('loadOlderBtn').hidden=(!historyHasMore||historyBudget.limited)&&threads.length<=visibleCount;
   $('loadNewerBtn').hidden=true;
   notificationUI?.render();
   $('inboxItems').innerHTML=show.map(t=>{
@@ -1415,7 +1514,8 @@ function renderConversation(){
     $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('new_sms_hint'))+'</p>';
     return;
   }
-  const messages=buildThreads(collapseMessageEvents(decryptedEvents)).find(t=>t.key===activeConversationKey)?.messages||[];
+  const searching=!!$('search').value.trim();
+  const messages=buildThreads(searching?filteredEvents():collapseMessageEvents(decryptedEvents)).find(t=>t.key===activeConversationKey)?.messages||[];
   if(!messages.length){
     $('conversationMessages').innerHTML='<p class="hint">'+escapeHtml(tr('load_older'))+'</p>';
     return;
@@ -1426,7 +1526,8 @@ function renderConversation(){
   const nearBottom=pane.scrollHeight-pane.scrollTop-pane.clientHeight<100;
   const oldScroll=pane.scrollTop;
   $('conversationTitle').textContent=last.payload?.contactName||messageAddress(last)||tr('unknown');
-  $('conversationMeta').textContent=deviceName(last.deviceId)+' · '+messageChannelLabel(last);
+  $('conversationMeta').textContent=deviceName(last.deviceId)+' · '+messageChannelLabel(last)+
+    (searching?(getLocale()==='zh-CN'?' · 搜索匹配':' · Search matches'):'');
   $('conversationMessages').innerHTML=messages.map(e=>{
     const p=e.payload||{},inbound=eventIsInbound(e),
       status=inbound?tr('received'):(e.kind==='sms.failed'?tr('failed'):e.kind==='sms.delivered'?'✓✓':tr('sent')),
@@ -2143,6 +2244,9 @@ function wire(){
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
   $('conversationMessages').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
+  $('historyLoadAll').onclick=()=>historyBackfill.start().catch(e=>{if(vaultKey)toast(e.message);});
+  $('historyStop').onclick=()=>historyBackfill.cancel();
+  $('historyClear').onclick=()=>releaseHistoryCache().catch(e=>{if(vaultKey)toast(e.message);});
   const inboxScroller=$('inboxList');
   const maybeLoadMore=()=>{
     if(!vaultKey||historyFetchInFlight||(!historyHasMore&&visibleCount>=buildThreads(filteredEvents()).length))return;

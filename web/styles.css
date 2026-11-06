@@ -727,3 +727,12 @@ dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:c
 .node-recovery-actions li { margin:8px 0;line-height:1.5; }
 
 .backup-status { white-space:pre-line;overflow-wrap:anywhere; }
+/* History counts distinguish local search coverage from Relay/node retention. */
+.history-tools{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;margin:0 2px 14px}
+.history-overview{flex:1 1 360px;min-width:0}
+.history-overview>p{margin:0;font-size:12px;line-height:1.6}
+.history-details{font-size:12px;max-width:80ch}
+.history-details summary{cursor:pointer;color:var(--muted);margin-top:4px}
+.history-details .hint{margin:8px 0;line-height:1.6}
+.history-actions{align-items:flex-start;max-width:100%}
+@media(max-width:640px){.history-overview{flex-basis:100%}.history-actions{width:100%}.history-actions button{white-space:normal;min-height:36px}}

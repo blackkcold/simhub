@@ -3,17 +3,20 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createContext,runInContext} from 'node:vm';
+import {LocalHistoryIndex,HistoryLoadBudget} from './history-search.js';
+import {validateHistoryPage} from './history-backfill.js';
 const source=readFileSync(new URL('./app.js',import.meta.url),'utf8');
 const code=source.slice(source.indexOf('async function ingestEvents('),source.indexOf('async function loadOlder('));
 const row=(seq,time=seq)=>({seq,deviceId:'synthetic-node',eventId:'event-'+seq,
   kind:'sms.received',occurredAt:time,ciphertext:{v:2}});
-const first=Array.from({length:100},(_,i)=>row(i+1,10000+i));
+const first=Array.from({length:100},(_,i)=>row(i+1,10000+i)).reverse();
 const late=Array.from({length:200},(_,i)=>row(i+101,1));
 const calls=[];
 let notify=0;
 const ctx=createContext({securityEpoch:0,eventDataGeneration:0,vaultKey:{},lastSeq:0,
   oldestSeq:0,initialEventsLoaded:false,events:[],decryptedEvents:[],eventIds:new Set(),
-  olderCursor:null,historyHasMore:true,renderInbox:()=>{},
+  olderCursor:null,historyHasMore:true,incrementalCaughtUp:false,renderInbox:()=>{},renderHistoryCoverage:()=>{},
+  validateHistoryPage,historyIndex:new LocalHistoryIndex(),historyBudget:new HistoryLoadBudget(),
   decryptEvent:async e=>({body:'synthetic '+e.seq}),maybeNotify:()=>notify++,
   decryptFailureCategory:()=>'',api:async path=>{
     calls.push(path);
@@ -45,10 +48,11 @@ for(const fails of [false,true]){
   ctx.decryptEvent=async()=>{enter();return barrier;};
   ctx.api=async()=>({events:[row(301)]});
   const pending=runInContext('loadEvents()',ctx);await entered;
-  ctx.eventDataGeneration++;ctx.events=[];ctx.decryptedEvents=[];ctx.eventIds.clear();ctx.lastSeq=0;
+  ctx.eventDataGeneration++;ctx.events=[];ctx.decryptedEvents=[];ctx.eventIds.clear();ctx.historyIndex.clear();ctx.historyBudget.clear();ctx.lastSeq=0;
   finish();await pending;
   assert.equal(ctx.decryptedEvents.length,0,'Reset invalidates successful and failed old decryption');
   assert.equal(ctx.events.length,0);assert.equal(ctx.eventIds.size,0);assert.equal(ctx.lastSeq,0);
+  assert.equal(ctx.historyIndex.size,0,'Old plaintext cannot re-enter the cleared search index');
 }
 // Cancellation leaves the same event retryable; no premature dedup checkpoint.
 ctx.vaultKey={};ctx.decryptEvent=async()=>({body:'current'});

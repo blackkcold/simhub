@@ -63,6 +63,7 @@ public final class SmsHistorySync {
         if(!canRead(c))return -1;
         SharedPoolClient pool=new SharedPoolClient(c);
         if(!pool.approved()||!new AgentConfig(c).isEnrolled())return 0;
+        String sharingScope=pool.privacyScope();
         boolean initial=!pool.initialHistoryStaged();
         int limit=Math.max(1,Math.min(PAGE,requested));
         if(initial)limit=Math.min(limit,pool.initialHistoryRemaining());
@@ -79,14 +80,17 @@ public final class SmsHistorySync {
                 String eventId="sms-provider-"+row.id;
                 if(row.type!=Telephony.Sms.MESSAGE_TYPE_DRAFT&&SharedPoolClient.needsStage(c,eventId)){
                     JSONObject payload=payload(c,row);
-                    if(!SharedPoolClient.stage(c,eventId,row.date/1000,payload.optString("channelId"),payload))return -1;
+                    if(!pool.stageInScope(sharingScope,eventId,row.date/1000,payload.optString("channelId"),payload))return -1;
                 }
                 // A staging exception never consumes the cursor or completion marker.
-                pool.historyRowStaged(row.date,row.id,initial);count++;
+                pool.historyRowStaged(sharingScope,row.date,row.id,initial);count++;
             }
-            if(count<limit)pool.historyExhausted();
+            if(count<limit)pool.historyExhausted(sharingScope);
             return count;
-        }catch(Exception error){scanFailed(c,error,"Shared history");return -1;}
+        }catch(Exception error){
+            if("sharing_scope_changed".equals(error.getMessage()))return 0;
+            scanFailed(c,error,"Shared history");return -1;
+        }
     }
 
     /**

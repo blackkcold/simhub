@@ -186,11 +186,10 @@ public final class SmsHistorySync {
         AgentConfig cfg=new AgentConfig(c);
         if(!cfg.isEnrolled())return -1;
         LocalStore local=LocalStore.get(c);
-        if(local.pendingEventCount()>100){
+        if(local.resetProviderUploadReceiptsForRestore(100)<0){
             cfg.recordSyncError("RESTORE_WAIT_FOR_PENDING_QUEUE");
             return -1;
         }
-        local.resetProviderUploadReceiptsForRestore();
         cfg.setHistoryInitialized(false);
         cfg.setHistoryBackfillCursor(0,-1);
         cfg.setHistoryCursor(0,-1);

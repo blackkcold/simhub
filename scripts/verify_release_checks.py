@@ -28,14 +28,16 @@ def verdict(runs: list[dict], checks: list[dict], sha: str, branch: str) -> tupl
     if branch not in {"main", "develop"} or len(sha) != 40:
         return "failed", "Invalid immutable release branch or commit"
     current = {}
+    required_workflows = REQUIRED_WORKFLOWS + (("P2P isolated preview",) if branch == "develop" else ())
+    required_checks = REQUIRED_CHECKS + (("preview", "android-sandbox") if branch == "develop" else ())
     for run in runs:
         if (run.get("head_sha") == sha and run.get("head_branch") == branch
-                and run.get("event") == "push" and run.get("name") in REQUIRED_WORKFLOWS):
+                and run.get("event") == "push" and run.get("name") in required_workflows):
             name = run["name"]
             if name not in current or run.get("id", 0) > current[name].get("id", 0):
                 current[name] = run
     pending = []
-    for name in REQUIRED_WORKFLOWS:
+    for name in required_workflows:
         run = current.get(name)
         if run is None or run.get("status") != "completed":
             pending.append(f"workflow {name}")
@@ -47,10 +49,10 @@ def verdict(runs: list[dict], checks: list[dict], sha: str, branch: str) -> tupl
     latest_checks = {}
     for check in checks:
         name = check.get("name")
-        if name in REQUIRED_CHECKS and check.get("head_sha") == sha:
+        if name in required_checks and check.get("head_sha") == sha:
             if name not in latest_checks or check.get("id", 0) > latest_checks[name].get("id", 0):
                 latest_checks[name] = check
-    for name in REQUIRED_CHECKS:
+    for name in required_checks:
         check = latest_checks.get(name)
         if check is None or check.get("status") != "completed":
             pending.append("check " + name)

@@ -52,6 +52,7 @@ class ControllerSecureClient(private val app:Context, val origin:String) {
     fun hasGrant():Boolean=prefs.getString("controllerId",null)!=null &&
         prefs.getString("sealedVault",null)!=null
     fun controllerId():String=prefs.getString("controllerId","")?:""
+    internal fun vaultId():String=prefs.getString("vaultId","")?:""
     fun requireLocalUnlock():Boolean=prefs.getBoolean("requireDeviceUnlock",false)
     fun setRequireLocalUnlock(enabled:Boolean){
         prefs.edit().putBoolean("requireDeviceUnlock",enabled).apply()

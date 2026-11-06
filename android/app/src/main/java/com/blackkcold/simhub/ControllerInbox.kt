@@ -53,6 +53,14 @@ class ControllerInboxState {
     fun clear() {
         messages.clear();unlocked=false;hasMore=false;hasNewer=false;warning=""
     }
+    fun relabel(devices:List<JSONObject>){
+        val byId=devices.associateBy{it.optString("id")}
+        for(i in messages.indices){
+            val item=messages[i]
+            if(item.deviceId.isNotEmpty()&&item.channelId.isNotEmpty())messages[i]=item.copy(
+                sim=ControllerSourceLabel.name(byId[item.deviceId],item.channelId,item.channelRevision.toInt(),item.sim))
+        }
+    }
     /** Returns false on *any* rejected payload. Callers must never advance an
      * event cursor until this method has accepted the complete batch. */
     @JvmOverloads fun accept(raw:String, append:Boolean=false, preferOlder:Boolean=false):Boolean {

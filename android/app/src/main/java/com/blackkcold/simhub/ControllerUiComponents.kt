@@ -111,7 +111,7 @@ internal fun ControllerDeviceCard(device:JSONObject,onClick:()->Unit){
 internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:String,
     error:String,onClose:()->Unit,onAction:(String)->Unit,onManage:(String)->Unit,onAdvanced:()->Unit,
     locationSample:ControllerLocationSample?,locationStatus:String,locationLoading:Boolean,
-    onLocationLoad:()->Unit,onLocationOpen:()->Unit){
+    onLocationLoad:()->Unit,onLocationOpen:()->Unit,onSimEdit:(JSONObject)->Unit){
     val state=device.optJSONObject("state")?:JSONObject()
     val channels=ControllerNodePolicy.channels(device)
     val isAndroid=device.optString("nodeType")!="modem"
@@ -174,7 +174,10 @@ internal fun ControllerDeviceDetails(device:JSONObject,busy:Boolean,lastStatus:S
                                     fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                                 Text("Revision "+c.optInt("revision",c.optInt("channelRevision",1))+" · "+c.optString("carrierName","—"),
                                     style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                if(c.optString("privatePhone").isNotBlank())Text(c.optString("privatePhone"),
+                                    style=MaterialTheme.typography.bodySmall)
                             }
+                            TextButton(onClick={onSimEdit(c)}){Text(hubLabel("编辑","Edit"))}
                         }
                     }
                 }

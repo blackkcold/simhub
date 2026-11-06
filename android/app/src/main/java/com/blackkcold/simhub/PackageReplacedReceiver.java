@@ -5,18 +5,28 @@ import android.content.Intent;
 
 /** Android's own-package replacement signal, not a background Activity launch. */
 public final class PackageReplacedReceiver extends BroadcastReceiver {
-    @Override public void onReceive(Context c,Intent intent){
-        if(c==null||intent==null)return;
-        final String action=intent.getAction();
-        if(action==null||!action.equals(Intent.ACTION_MY_PACKAGE_REPLACED))return;
-        RemoteOta.reconcileInstalledVersion(c);
-        DeviceMetadataSync.requestFull(c);
-        SyncJobService.schedule(c);
-        SyncJobService.scheduleNow(c);
-        AgentConfig cfg=new AgentConfig(c);
-        if(cfg.isEnrolled()&&cfg.alwaysOn()){
-            try{RelayForegroundService.resume(c);}
-            catch(Exception e){AppLogger.e(c,"RemoteOTA","Foreground relay recovery deferred to scheduler",e);}
+    @Override
+    public void onReceive(Context context, Intent receivedIntent) {
+        if (context == null || receivedIntent == null) return;
+        // An explicit broadcast need not match the manifest intent filter.
+        // Only Android's own-package action may enter the recovery path.
+        if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(receivedIntent.getAction())) {
+            recoverAfterOwnPackageReplacement(context);
+        }
+    }
+
+    private static void recoverAfterOwnPackageReplacement(Context context) {
+        RemoteOta.reconcileInstalledVersion(context);
+        DeviceMetadataSync.requestFull(context);
+        SyncJobService.schedule(context);
+        SyncJobService.scheduleNow(context);
+        AgentConfig cfg = new AgentConfig(context);
+        if (cfg.isEnrolled() && cfg.alwaysOn()) {
+            try {
+                RelayForegroundService.resume(context);
+            } catch (Exception error) {
+                AppLogger.e(context, "RemoteOTA", "Foreground relay recovery deferred to scheduler", error);
+            }
         }
     }
 }

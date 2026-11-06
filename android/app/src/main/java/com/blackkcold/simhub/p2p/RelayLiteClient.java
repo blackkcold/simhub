@@ -65,7 +65,31 @@ public final class RelayLiteClient {
 
     private static void process(Context c,PeerStore store,String relayId,String from,
                                 String localId,String id,JSONObject frame)throws Exception{
+        PreparedResponse response=prepareResponse(c,store,from,localId,id,frame);
+        if(response==null)return;
+        publishResponse(store,response,responseFrame->RelayLiteTransport.requestRelay(c,store,relayId,
+            UUID.randomUUID().toString(),new JSONObject().put("action","relay.put")
+                .put("target",from).put("frame",responseFrame)));
+    }
+    @FunctionalInterface interface ResponsePublisher {JSONObject publish(JSONObject frame)throws Exception;}
+    static final class PreparedResponse {
+        final String peer,generation;final JSONObject frame;
+        PreparedResponse(String peer,String generation,JSONObject frame){this.peer=peer;this.generation=generation;this.frame=frame;}
+    }
+    static void publishResponse(PeerStore store,PreparedResponse response,ResponsePublisher publisher)throws Exception{
+        // Validate the source generation at publication, not only at decrypt.
+        // A completed revoke prevents acquisition; an existing lease drains
+        // before revoke reports completion, without holding the store lock.
+        try(PeerStore.Publication ignored=store.beginPublication(response.peer,response.generation)){
+            JSONObject accepted=publisher.publish(response.frame);
+            if(!"accepted".equals(accepted.optString("state")))
+                throw new IllegalStateException("relay_lite_response_unconfirmed");
+        }
+    }
+    static PreparedResponse prepareResponse(Context c,PeerStore store,String from,
+                                String localId,String id,JSONObject frame)throws Exception{
         final JSONObject responseFrame;
+        final String generation;
         synchronized(store){
             JSONObject source;
             try{source=store.peer(from);}
@@ -76,6 +100,7 @@ public final class RelayLiteClient {
             if(frame==null||!id.equals(frame.optString("id")))throw new RejectedEnvelope("invalid_envelope");
             byte[] root=store.key(from);
             try{
+                generation=PeerCrypto.digest(root);
                 long now=System.currentTimeMillis()/1000;
                 final JSONObject decrypted;
                 try{decrypted=PeerOfflineProtocol.open(root,from,localId,frame,now);}
@@ -97,7 +122,7 @@ public final class RelayLiteClient {
                     String state=result.optString("state");
                     if("submitted".equals(state)||"succeeded".equals(state)||"failed".equals(state)
                         ||"delivered".equals(state)||"expired".equals(state))store.clearOutbound(from,id);
-                    return;
+                    return null;
                 }
                 boolean protect=!java.util.Arrays.asList("device.state","sms.page","events.page","command.status").contains(action);
                 RelayLiteCache.Entry previous=cache.claim(from,root,id,"sent",digest,frame.getLong("expires"),protect,now);
@@ -124,11 +149,7 @@ public final class RelayLiteClient {
                 }
             }finally{Arrays.fill(root,(byte)0);}
         }
-        JSONObject accepted=RelayLiteTransport.requestRelay(c,store,relayId,
-            UUID.randomUUID().toString(),new JSONObject().put("action","relay.put")
-                .put("target",from).put("frame",responseFrame));
-        if(!"accepted".equals(accepted.optString("state")))
-            throw new IllegalStateException("relay_lite_response_unconfirmed");
+        return new PreparedResponse(from,generation,responseFrame);
     }
     private static JSONObject sealResponse(byte[] root,String localId,String from,String id,long now,JSONObject result)throws Exception{
         try{return PeerOfflineProtocol.seal(root,localId,from,id,now,now+PeerOfflineProtocol.MAX_TTL_SECONDS,

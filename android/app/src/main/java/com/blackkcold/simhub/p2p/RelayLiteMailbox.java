@@ -27,7 +27,7 @@ public final class RelayLiteMailbox extends SQLiteOpenHelper {
         return INSTANCE;
     }
     private RelayLiteMailbox(Context c){
-        super(c,"simhub-relay-lite-v1.db",null,2);
+        super(c,"simhub-relay-lite-v1.db",null,3);
         context=c;setWriteAheadLoggingEnabled(true);
     }
     @Override public void onCreate(SQLiteDatabase db){
@@ -35,6 +35,7 @@ public final class RelayLiteMailbox extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX relay_lite_target ON envelopes(target,created)");
         db.execSQL("CREATE INDEX relay_lite_expiry ON envelopes(expires)");
         createDeliveryState(db);
+        createSourceSchedule(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion){
         if(oldVersion<2){
@@ -42,11 +43,16 @@ public final class RelayLiteMailbox extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE envelopes ADD COLUMN last_offered INTEGER NOT NULL DEFAULT 0");
             createDeliveryState(db);
         }
+        if(oldVersion<3)createSourceSchedule(db);
     }
     private static void createDeliveryState(SQLiteDatabase db){
         db.execSQL("CREATE INDEX IF NOT EXISTS relay_lite_delivery ON envelopes(target,source,available_at,created,id)");
         db.execSQL("CREATE TABLE IF NOT EXISTS rejections(source TEXT NOT NULL,target TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,reason TEXT NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(source,target,id))");
         db.execSQL("CREATE INDEX IF NOT EXISTS relay_lite_rejection_expiry ON rejections(expires)");
+    }
+    private static void createSourceSchedule(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE IF NOT EXISTS source_schedule(target TEXT NOT NULL,source TEXT NOT NULL,offered_order INTEGER NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(target,source))");
+        db.execSQL("INSERT OR IGNORE INTO source_schedule(target,source,offered_order,expires) SELECT target,source,MAX(last_offered),MAX(expires) FROM envelopes GROUP BY target,source");
     }
     public boolean enabled(){
         return context.getSharedPreferences("simhub-relay-lite",Context.MODE_PRIVATE)
@@ -63,6 +69,24 @@ public final class RelayLiteMailbox extends SQLiteOpenHelper {
     private static void purge(SQLiteDatabase db,long now){
         db.delete("envelopes","expires<=?",new String[]{String.valueOf(now)});
         db.delete("rejections","expires<=?",new String[]{String.valueOf(now)});
+        db.delete("source_schedule","expires<=? AND NOT EXISTS(SELECT 1 FROM envelopes e WHERE e.target=source_schedule.target AND e.source=source_schedule.source)",new String[]{String.valueOf(now)});
+    }
+    private static long lastOffer(SQLiteDatabase db,String target){
+        try(Cursor c=db.rawQuery("SELECT COALESCE(MAX(offered_order),0) FROM source_schedule WHERE target=?",new String[]{target})){
+            c.moveToFirst();return c.getLong(0);
+        }
+    }
+    private static void scheduleSource(SQLiteDatabase db,String target,String source,long now){
+        ContentValues refresh=new ContentValues();refresh.put("expires",now+PeerOfflineProtocol.MAX_TTL_SECONDS);
+        if(db.update("source_schedule",refresh,"target=? AND source=?",new String[]{target,source})>0)return;
+        try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM source_schedule",null)){
+            count.moveToFirst();if(count.getInt(0)>=MAX_ROWS*2)throw new IllegalStateException("relay_lite_source_capacity");
+        }
+        // New sources join at the current scheduling tail. Existing sources
+        // retain their age even when ACKs temporarily empty their queues.
+        refresh.put("target",target);refresh.put("source",source);
+        refresh.put("offered_order",lastOffer(db,target));
+        db.insertOrThrow("source_schedule",null,refresh);
     }
     private static long[] usage(SQLiteDatabase db,String selection,String[] args){
         try(Cursor c=db.rawQuery("SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM envelopes "+selection,args)){
@@ -117,6 +141,7 @@ public final class RelayLiteMailbox extends SQLiteOpenHelper {
             if(total[0]>=MAX_ROWS||total[1]+bytes>MAX_BYTES
                 ||perTarget[0]>=MAX_ROWS_PER_TARGET||perTarget[1]+bytes>MAX_BYTES_PER_TARGET)
                 throw new IllegalStateException("relay_lite_queue_full");
+            scheduleSource(db,target,authenticatedSource,now);
             ContentValues v=new ContentValues();
             v.put("source",authenticatedSource);v.put("target",target);
             v.put("id",id);v.put("expires",expires);v.put("bytes",bytes);
@@ -142,20 +167,24 @@ public final class RelayLiteMailbox extends SQLiteOpenHelper {
             // A short visibility lease lets transient failures retry without
             // pinning the head. Per-source offer age prevents a noisy sender
             // from starving other authorized sources.
-            try(Cursor c=db.rawQuery("SELECT e.source,e.id,e.cipher FROM envelopes e WHERE e.target=? AND e.available_at<=? "
+            try(Cursor c=db.rawQuery("SELECT e.source,e.id,e.cipher FROM envelopes e JOIN source_schedule s ON s.target=e.target AND s.source=e.source WHERE e.target=? AND e.available_at<=? "
                     +"AND NOT EXISTS(SELECT 1 FROM envelopes older WHERE older.target=e.target AND older.source=e.source AND older.available_at<=? AND (older.created<e.created OR (older.created=e.created AND older.id<e.id))) "
-                    +"ORDER BY (SELECT COALESCE(MAX(s.last_offered),0) FROM envelopes s WHERE s.target=e.target AND s.source=e.source),e.created,e.id LIMIT ?",
+                    +"ORDER BY s.offered_order,e.created,e.id LIMIT ?",
                     new String[]{authenticatedTarget,String.valueOf(now),String.valueOf(now),String.valueOf(limit)})){
                 while(c.moveToNext()){
                     items.put(new JSONObject().put("source",c.getString(0)).put("id",c.getString(1))
                         .put("frame",new JSONObject(c.getString(2))));
                 }
             }
+            long order=lastOffer(db,authenticatedTarget);
             for(int i=0;i<items.length();i++){
                 JSONObject row=items.getJSONObject(i);ContentValues lease=new ContentValues();
                 lease.put("available_at",now+30);lease.put("last_offered",System.currentTimeMillis());
                 db.update("envelopes",lease,"target=? AND source=? AND id=?",
                     new String[]{authenticatedTarget,row.getString("source"),row.getString("id")});
+                ContentValues age=new ContentValues();age.put("offered_order",++order);
+                age.put("expires",now+PeerOfflineProtocol.MAX_TTL_SECONDS);
+                db.update("source_schedule",age,"target=? AND source=?",new String[]{authenticatedTarget,row.getString("source")});
             }
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
@@ -195,6 +224,7 @@ public final class RelayLiteMailbox extends SQLiteOpenHelper {
         requirePeerId(peer);
         getWritableDatabase().delete("envelopes","source=? OR target=?",new String[]{peer,peer});
         getWritableDatabase().delete("rejections","source=? OR target=?",new String[]{peer,peer});
+        getWritableDatabase().delete("source_schedule","source=? OR target=?",new String[]{peer,peer});
     }
     public synchronized JSONObject stats()throws Exception{
         long now=System.currentTimeMillis()/1000;

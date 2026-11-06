@@ -47,8 +47,6 @@ public final class RelayLiteTransport implements HubTransport {
         JSONObject previouslyDelivered=RelayLiteClient.cachedResult(context,targetId,id);
         if(previouslyDelivered!=null)return previouslyDelivered;
         String action=request.getString("action");
-        if(!PeerGrantPolicy.allows(target,action,false))
-            throw new SecurityException("relay_lite_target_grant_missing");
         // These status/command requests are asynchronous. The app must not
         // pretend a relay acceptance means the target executed the command.
         long now=System.currentTimeMillis()/1000;
@@ -58,16 +56,20 @@ public final class RelayLiteTransport implements HubTransport {
         if(expiry<=now)throw new SecurityException("relay_lite_command_expired");
         // Store the exact sealed frame before network transmission. If the
         // first ACK is lost, retry with the same IV, ciphertext, and request id.
-        final JSONObject encrypted=store.liteOutbound(targetId,id,request,expiry);
-        JSONObject packet=new JSONObject().put("action","relay.put")
-            .put("target",targetId).put("frame",encrypted);
-        JSONObject result=requestRelay(context,store,relayId,UUID.randomUUID().toString(),packet);
-        if("rejected".equals(result.optString("state")))
-            return new JSONObject().put("state","indeterminate").put("route","RELAY_LITE")
-                .put("requestId",id).put("relayRejected",true).put("reason",result.optString("reason","relay_lite_rejected"));
-        if(!"accepted".equals(result.optString("state")))
-            throw new IllegalStateException("relay_lite_enqueue_unconfirmed");
-        return new JSONObject().put("state","queued").put("route","RELAY_LITE")
-            .put("requestId",id).put("relayAccepted",true);
+        try(PeerStore.Publication ignored=store.beginPublication(targetId)){
+            if(!PeerGrantPolicy.allows(store.peer(targetId),action,false))
+                throw new SecurityException("relay_lite_target_grant_missing");
+            final JSONObject encrypted=store.liteOutbound(targetId,id,request,expiry);
+            JSONObject packet=new JSONObject().put("action","relay.put")
+                .put("target",targetId).put("frame",encrypted);
+            JSONObject result=requestRelay(context,store,relayId,UUID.randomUUID().toString(),packet);
+            if("rejected".equals(result.optString("state")))
+                return new JSONObject().put("state","indeterminate").put("route","RELAY_LITE")
+                    .put("requestId",id).put("relayRejected",true).put("reason",result.optString("reason","relay_lite_rejected"));
+            if(!"accepted".equals(result.optString("state")))
+                throw new IllegalStateException("relay_lite_enqueue_unconfirmed");
+            return new JSONObject().put("state","queued").put("route","RELAY_LITE")
+                .put("requestId",id).put("relayAccepted",true);
+        }
     }
 }

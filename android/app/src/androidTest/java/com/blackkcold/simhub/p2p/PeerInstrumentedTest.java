@@ -14,6 +14,8 @@ import org.json.*;
 import java.net.*;
 import java.security.*;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Runs production Keystore, SQLite, double-scan parser, server and provider on Android. */
 @SuppressWarnings("deprecation")
@@ -143,6 +145,103 @@ public final class PeerInstrumentedTest {
         store.revoke(controllerId);
         assertNull(cache.get(controllerId,root,id,"sent",now));
         assertNull(new com.blackkcold.simhub.SecretStore(c).getString("p2p.relayLite.response."+controllerId+".legacy-fixture"));
+    }
+    @Test public void testRelayLiteFairnessSurvivesSustainedAcknowledgements()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();RelayLiteMailbox box=RelayLiteMailbox.get(c);
+        String target=store.myId(),waiting="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        String[] busy={"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","cccccccccccccccccccccccccccccccc"};
+        long now=System.currentTimeMillis()/1000;box.setEnabled(true);
+        try{
+            JSONObject delayed=PeerOfflineProtocol.seal(root,waiting,target,waiting+"-retry",now,now+600,new JSONObject().put("action","device.state"));
+            box.enqueue(waiting,target,delayed);
+            assertEquals(waiting,box.pull(target,1).getJSONArray("items").getJSONObject(0).getString("source"));
+            for(String source:busy)for(int i=0;i<4;i++)box.enqueue(source,target,
+                PeerOfflineProtocol.seal(root,source,target,source+"-"+i,now,now+600,new JSONObject().put("action","device.state")));
+            // Simulate the first source's failed delivery becoming eligible
+            // again, without waiting 30 seconds in an emulator test.
+            box.getWritableDatabase().execSQL("UPDATE envelopes SET available_at=0 WHERE source=? AND target=?",new Object[]{waiting,target});
+            boolean retried=false;
+            for(int round=0;round<4&&!retried;round++){
+                JSONArray offered=box.pull(target,2).getJSONArray("items");
+                for(int i=0;i<offered.length();i++){
+                    JSONObject row=offered.getJSONObject(i);String source=row.getString("source");
+                    if(waiting.equals(source)){retried=true;continue;}
+                    assertTrue(box.ack(target,source,row.getString("id")));
+                    // Successful sources keep a backlog and immediately
+                    // replenish it. ACK deletion must not reset their age.
+                    box.enqueue(source,target,PeerOfflineProtocol.seal(root,source,target,source+"-new-"+round,now,now+600,new JSONObject().put("action","device.state")));
+                }
+            }
+            assertTrue("continuously ACKed sources starved an eligible retry",retried);
+        }finally{
+            box.revokePeer(waiting);for(String source:busy)box.revokePeer(source);box.setEnabled(false);
+        }
+    }
+    private RelayLiteClient.PreparedResponse preparedPrivateResponse()throws Exception{
+        Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();long now=System.currentTimeMillis()/1000;
+        store.event(controllerId,UUID.randomUUID().toString(),"sms.received",now,
+            new JSONObject().put("body","private-publication-fixture"));
+        String id=UUID.randomUUID().toString();
+        JSONObject request=PeerOfflineProtocol.seal(root,controllerId,store.myId(),id,now,now+600,new JSONObject().put("action","events.page"));
+        RelayLiteClient.PreparedResponse result=RelayLiteClient.prepareResponse(c,store,controllerId,store.myId(),id,request);
+        assertNotNull(result);
+        assertTrue(PeerOfflineProtocol.open(root,store.myId(),controllerId,result.frame,now).toString().contains("private-publication-fixture"));
+        return result;
+    }
+    @Test public void testRelayLitePreparedResponseCannotPublishAfterRevokeOrRepair()throws Exception{
+        RelayLiteClient.PreparedResponse response=preparedPrivateResponse();JSONObject original=store.peer(controllerId);
+        CountDownLatch ready=new CountDownLatch(1),publish=new CountDownLatch(1);
+        AtomicInteger puts=new AtomicInteger();ExecutorService worker=Executors.newSingleThreadExecutor();
+        RelayLiteClient.ResponsePublisher publisher=frame->{puts.incrementAndGet();return new JSONObject().put("state","accepted");};
+        try{
+            Future<Boolean> pending=worker.submit(()->{
+                ready.countDown();assertTrue(publish.await(5,TimeUnit.SECONDS));
+                try{RelayLiteClient.publishResponse(store,response,publisher);return true;}
+                catch(SecurityException rejected){return false;}
+            });
+            assertTrue(ready.await(5,TimeUnit.SECONDS));
+            // The response was encrypted and cached, but relay.put has not
+            // begun. Completed local revocation must invalidate this capture.
+            store.revoke(controllerId);publish.countDown();assertFalse(pending.get(5,TimeUnit.SECONDS));
+            assertEquals(0,puts.get());
+            byte[] replacement=PeerCrypto.random(32);
+            try{
+                original.put("pairState","ACTIVE");store.save(original,replacement);
+                try{RelayLiteClient.publishResponse(store,response,publisher);fail("old response crossed pair generation");}
+                catch(SecurityException expected){}
+            }finally{Arrays.fill(replacement,(byte)0);}
+            assertEquals(0,puts.get());
+        }finally{publish.countDown();worker.shutdownNow();}
+    }
+    @Test public void testRelayLiteRevocationDrainsOnlyActivePeerPublication()throws Exception{
+        RelayLiteClient.PreparedResponse response=preparedPrivateResponse();
+        CountDownLatch entered=new CountDownLatch(1),finish=new CountDownLatch(1);
+        ExecutorService workers=Executors.newFixedThreadPool(3);
+        try{
+            Future<?> sending=workers.submit(()->{
+                RelayLiteClient.publishResponse(store,response,frame->{
+                    entered.countDown();assertTrue(finish.await(5,TimeUnit.SECONDS));
+                    return new JSONObject().put("state","accepted");
+                });return null;
+            });
+            assertTrue(entered.await(5,TimeUnit.SECONDS));
+            Future<?> revoking=workers.submit(()->{store.revoke(controllerId);return null;});
+            Future<String> independent=workers.submit(()->{
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
+                while(System.nanoTime()<deadline){
+                    if("REVOKED".equals(store.peer(controllerId).optString("pairState")))return store.myId();
+                    Thread.sleep(5);
+                }
+                throw new AssertionError("revocation did not invalidate the peer before draining");
+            });
+            // A global store lock held over network would block this probe.
+            String observed=independent.get(4,TimeUnit.SECONDS);
+            assertEquals(store.myId(),observed);
+            assertFalse("revoke reported completion before publication ended",revoking.isDone());
+            finish.countDown();sending.get(5,TimeUnit.SECONDS);revoking.get(5,TimeUnit.SECONDS);
+            try{store.beginPublication(controllerId,response.generation);fail("publication after completed revoke");}
+            catch(SecurityException expected){}
+        }finally{finish.countDown();workers.shutdownNow();}
     }
     @Test public void testRelayLitePayloadLimitEvictsContentButNotDispatchIdentity()throws Exception{
         Context c=InstrumentationRegistry.getInstrumentation().getTargetContext();RelayLiteCache cache=RelayLiteCache.get(c);

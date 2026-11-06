@@ -11,7 +11,12 @@ SMS. Route fallback retains the same request ID and the existing node receipt.
   envelopes are still eligible immediately.
 - Each pull offers at most one envelope per source, ordered by source offer age
   and oldest eligible message. Unprocessable heads cannot hold the entire inbox
-  until the 72-hour TTL.
+  until the 72-hour TTL. Offer order lives in separate per-source scheduling
+  rows, so successful ACKs and empty/refilled queues cannot reset a busy source's
+  priority. New sources join the current scheduling tail. Scheduling metadata
+  is capped at 4,000 rows, expires after 72 hours of inactivity once the queue is
+  empty, and is removed on peer revocation. Capacity applies backpressure before
+  accepting a new source.
 - An authenticated recipient can send a separate `relay.reject` receipt for
   invalid envelopes, revoked/unknown sources, or a lost response cache. It is
   scoped to that recipient and is never a successful application ACK. The relay
@@ -41,6 +46,21 @@ cross-route deduplication record. Cache exhaustion applies backpressure before
 dispatch and never turns an unknown command into a new send.
 
 Revocation and re-pairing clear that peer's cache and old preference entries.
+Outgoing requests acquire a target-peer publication lease before preparing their
+frame and retain it through relay submission. Publication of a prepared response
+checks the source peer's current content-key generation again immediately before
+acquiring its publication lease. Revocation
+invalidates the peer first, prevents new leases and waits for that peer's active
+publications to finish before reporting completion. This wait releases the
+global store monitor, so unrelated pair activity continues. If an active network
+operation does not drain within 45 seconds, revocation remains applied but the
+operation reports a pending-drain error; it does not falsely report completion.
+A response prepared before a completed revoke or re-pair cannot be published.
+RTC timeout cleanup cancels queued sends, or drains an enqueue already running,
+before releasing its publication lease; a delayed serial-executor task cannot
+publish after that cleanup returns.
+Ciphertext already published before revocation cannot be recalled from a peer.
+
 For an upgrade, existing encrypted preference values are read-only for one
 maximum offline window (72 hours from first cache initialization), allowing
 in-flight response identities to survive. New traffic never adds those entries;
@@ -51,6 +71,7 @@ the old prefixes are erased on subsequent cache maintenance after the deadline.
 The Dev Android instrumentation suite exercises actual SQLite/Keystore-backed
 pair storage, source fairness, negative-receipt scoping, duplicate rejection,
 payload and row capacity, tombstone survival, expiry and revocation. Pure JVM
-tests cover authenticated offline frames, TTL/domain/key binding and malformed
-nonce/tag rejection. Real-phone background scheduling, carrier delivery and
+tests cover authenticated offline frames, TTL/domain/key binding, malformed
+nonce/tag rejection, and queued RTC send cancellation and drain behavior.
+Real-phone background scheduling, carrier delivery and
 public-network NAT reliability still require the hardware validation matrix.

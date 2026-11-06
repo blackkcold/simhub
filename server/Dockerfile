@@ -1,4 +1,4 @@
-FROM python:3.13-alpine
+FROM python:3.13-alpine@sha256:4d511039677430640754cd1417737349067dfcdaba4dcf7e576334516f9f4c30
 WORKDIR /app
 COPY server /app/server
 RUN pip install --no-cache-dir -r /app/server/requirements.txt

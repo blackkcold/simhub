@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for mandatory independent release scan gates."""
 import unittest
-from scripts.verify_release_checks import REQUIRED_CODEQL, verdict
+from scripts.verify_release_checks import REQUIRED_CHECKS, REQUIRED_CODEQL, REQUIRED_COMPATIBILITY, verdict
 
 SHA = "a" * 40
 
@@ -15,7 +15,7 @@ def scans(*, sha=SHA, overrides=None):
     values = overrides or {}
     return [{"name": name, "status": "completed", "conclusion": values.get(name, "success"),
              "head_sha": sha, "id": i + 10}
-            for i, name in enumerate(REQUIRED_CODEQL)]
+            for i, name in enumerate(REQUIRED_CHECKS)]
 
 
 class ReleaseChecksTests(unittest.TestCase):
@@ -42,6 +42,12 @@ class ReleaseChecksTests(unittest.TestCase):
     def test_failed_security_scan_blocks_release(self):
         runs = [workflow("CI"), workflow("Security scan", "failure")]
         self.assertEqual(verdict(runs, scans(), SHA, "main")[0], "failed")
+
+    def test_minimum_android_versions_are_mandatory_on_current_head(self):
+        for name in REQUIRED_COMPATIBILITY:
+            self.assertEqual(verdict(self.runs, [check for check in scans() if check["name"] != name], SHA, "main")[0], "waiting")
+            for conclusion in ("failure", "skipped", "neutral"):
+                self.assertEqual(verdict(self.runs, scans(overrides={name: conclusion}), SHA, "main")[0], "failed")
 
     def test_unrelated_sha_and_pr_runs_cannot_satisfy_gate(self):
         self.assertEqual(verdict(self.runs, scans(sha="b" * 40), SHA, "main")[0], "waiting")

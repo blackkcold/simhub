@@ -19,6 +19,9 @@ FILES = (
     "scripts/deploy-verified.sh",
     "scripts/install-updater.sh",
     "scripts/simhub_updater.py",
+    "scripts/backup.sh",
+    "scripts/backup_tools.py",
+    "scripts/verify_backup.py",
     "LICENSE",
 )
 
@@ -56,6 +59,8 @@ def build(version: str, channel: str, image: str, output: Path) -> None:
         "   this same directory to configure the channel-specific rootless updater.\n"
         "Never use a Stable data volume, Vault, SMS secrets or paired devices for Dev.\n"
         "For an existing deployment back up the volume and .env before upgrading.\n"
+        "Use bash scripts/backup.sh for a private consistent database snapshot;\n"
+        "rehearse with python3 scripts/verify_backup.py <backup.db> --restore-check.\n"
         "Real public P2P/NAT reliability remains subject to on-device validation.\n"
     )
     entries = {p: (ROOT / p).read_bytes() for p in FILES}

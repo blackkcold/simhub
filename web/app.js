@@ -720,23 +720,27 @@ async function loadDevices(){
   if(epoch!==securityEpoch||!vaultKey)return;
   renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();syncSendControls();
 }
-async function ingestEvents(batch,notify=true){
+async function ingestEvents(batch,notify=true,signal){
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
   let changed=false;
   for(const e of batch){
-    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return false;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey||signal?.aborted)return false;
     // The location endpoint is opt-in: general SMS/event refresh never decrypts coordinates.
     if(e.kind==='device.location')continue;
     const id=e.deviceId+':'+e.eventId;
     if(eventIds.has(id))continue;
     // An SMS uploaded today can carry an older provider timestamp. Keep it visible
     // instead of discarding new Relay sequences solely due to message age.
-    events.push(e);eventIds.add(id);changed=true;
+    let row;
     try{
-      const payload=await decryptEvent(e),row=Object.assign({},e,{payload});
-      if(epoch!==securityEpoch||!vaultKey)return false;
-      decryptedEvents.push(row);if(notify)maybeNotify(row);
-    }catch(err){if(epoch!==securityEpoch||!vaultKey)return false;decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptCategory:decryptFailureCategory(e,err)}));}
+      const payload=await decryptEvent(e);row=Object.assign({},e,{payload});
+    }catch(err){row=Object.assign({},e,{payload:null,decryptError:true,decryptCategory:decryptFailureCategory(e,err)});}
+    // Reset and cancellation are independent of Vault lock. Do not restore old
+    // plaintext after a purge or mark an interrupted decryption as ingested.
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey||signal?.aborted)return false;
+    if(eventIds.has(id))continue; // A concurrent incremental page may have won.
+    events.push(e);eventIds.add(id);decryptedEvents.push(row);changed=true;
+    if(notify&&!row.decryptError)maybeNotify(row);
   }
   return changed;
 }
@@ -751,7 +755,7 @@ async function loadEvents(){
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
-    if(epoch!==securityEpoch||!vaultKey)return;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     // Recent uploads can contain old-dated messages excluded by occurredAt paging.
     // Historical/overlapping pages must never advance the incremental cursor.
     // Catch up from the head captured BEFORE either initial page was requested.
@@ -760,7 +764,7 @@ async function loadEvents(){
     const newest=await api('/api/v1/events?latest=1&limit=100');
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     await ingestEvents(newest.events||[],false);
-    if(epoch!==securityEpoch||!vaultKey)return;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     initialEventsLoaded=true;renderInbox();
   }
   let changed=false,loops=0;

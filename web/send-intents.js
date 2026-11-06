@@ -19,6 +19,7 @@ export class IntentJournal{
   }
   close(){this.epoch++;this.key=null;}
   current(epoch,key){return this.epoch===epoch&&this.key===key&&!!key&&this.isCurrent();}
+  assertOpen(){if(!this.current(this.epoch,this.key))throw Error('Vault locked');}
   async read(id){
     const epoch=this.epoch,key=this.key;
     if(!this.current(epoch,key))throw Error('Vault locked');
@@ -91,6 +92,7 @@ export class SendCoordinator{
   async remember(item){item.updatedAt=this.now();await this.journal.write('intent:'+item.id,item);return item;}
   async observe(item){
     try{
+      this.journal.assertOpen();
       const response=await this.api(this.path(item)),command=response.command;
       if(!command||String(command.commandId||command.id)!==item.id||command.deviceId!==item.deviceId)
         throw Error('Command reconciliation returned a different identity');
@@ -110,6 +112,8 @@ export class SendCoordinator{
     return this.journal.exclusive('draft:'+draftId,async()=>{
       const fingerprint=intentFingerprint(deviceId,payload),draft=await this.journal.draft(draftId);
       let item=draft?.intentId?await this.journal.read('intent:'+draft.intentId):null;
+      if(draft?.intentId&&!item)
+        throw Error('The saved send record is missing. Edit a new draft explicitly before sending.');
       if(item&&item.fingerprint!==fingerprint)
         throw Error('Resolve the previous send in Send center before changing its recipient or SIM.');
       if(!item){
@@ -127,33 +131,40 @@ export class SendCoordinator{
         await this.remember(item);
         await this.journal.write('draft:'+draftId,{...copy(payload),deviceId,intentId:id,updatedAt:Date.now()});
       }
-      return this.journal.exclusive('intent:'+item.id,async()=>{
-        if(item.phase!=='prepared'){
-          const command=await this.observe(item);
-          if(command){await this.finishDraft(item);return {accepted:true,duplicate:true,commandId:item.id,state:command.state};}
-          // A known acceptance cannot be disproved by later retention/deletion.
-          if(known(item.phase))throw Error('This command was previously accepted. Do not send it again.');
-        }
-        if(this.now()>=item.outer.expiresAt){
-          item.state='expired_unconfirmed';await this.remember(item);
-          throw Error('Saved command expired. Its outcome is unconfirmed; verify the node before creating another send.');
-        }
-        this.validate(item.deviceId,item.payload);
-        item.phase='submitting';item.state='acceptance_unknown';await this.remember(item);
-        let response;
-        try{
-          response=await this.api('/api/v1/devices/'+encodeURIComponent(item.deviceId)+'/commands',
-            {method:'POST',body:item.outer});
-          if(response.accepted!==true||String(response.commandId)!==item.id)throw Error('Command acceptance is unconfirmed');
-        }catch(error){
-          item.phase='uncertain';item.state='acceptance_unknown';
-          try{await this.remember(item);}catch{}
-          throw error;
-        }
-        item.phase='observed';item.state=response.state||'queued';await this.remember(item);
-        await this.finishDraft(item);return response;
-      });
+      return this.journal.exclusive('intent:'+item.id,()=>this.resumeSaved(item.id));
     });
+  }
+  async resumeSaved(id){
+    // Called while holding draft -> intent locks in that order. A different tab
+    // may have reconciled this record while we waited: always reread under lock.
+    const item=await this.journal.read('intent:'+id);if(!item)throw Error('Saved send not found');
+    if(item.phase!=='prepared'){
+      const command=await this.observe(item);
+      if(command){await this.finishDraft(item);return {accepted:true,duplicate:true,commandId:item.id,state:command.state};}
+      // A known acceptance cannot be disproved by later retention/deletion.
+      if(known(item.phase))throw Error('This command was previously accepted. Do not send it again.');
+    }
+    if(this.now()>=item.outer.expiresAt){
+      item.state='expired_unconfirmed';await this.remember(item);
+      throw Error('Saved command expired. Its outcome is unconfirmed; verify the node before creating another send.');
+    }
+    this.validate(item.deviceId,item.payload);
+    item.phase='submitting';item.state='acceptance_unknown';await this.remember(item);
+    let response;
+    try{
+      // Closing the Vault can occur after the durable write resolves but before
+      // this continuation runs. Check again at the actual network boundary.
+      this.journal.assertOpen();
+      response=await this.api('/api/v1/devices/'+encodeURIComponent(item.deviceId)+'/commands',
+        {method:'POST',body:item.outer});
+      if(response.accepted!==true||String(response.commandId)!==item.id)throw Error('Command acceptance is unconfirmed');
+    }catch(error){
+      item.phase='uncertain';item.state='acceptance_unknown';
+      try{await this.remember(item);}catch{}
+      throw error;
+    }
+    item.phase='observed';item.state=response.state||'queued';await this.remember(item);
+    await this.finishDraft(item);return response;
   }
   async finishDraft(item){
     const draft=await this.journal.draft(item.draftId);
@@ -162,11 +173,9 @@ export class SendCoordinator{
   }
   async retry(id){
     const item=await this.journal.read('intent:'+id);if(!item)throw Error('Saved send not found');
-    if(known(item.phase)){
-      const result=await this.reconcile(id);
-      return {accepted:true,duplicate:true,commandId:id,state:result.item.state};
-    }
-    return this.submit({draftId:item.draftId,deviceId:item.deviceId,payload:item.payload,
-      ttl:item.outer.expiresAt-item.outer.createdAt});
+    // Resume the selected immutable identity, never whichever intent a draft
+    // currently references. Concurrent new typing may already belong to a new SMS.
+    return this.journal.exclusive('draft:'+item.draftId,()=>
+      this.journal.exclusive('intent:'+id,()=>this.resumeSaved(id)));
   }
 }

@@ -159,8 +159,10 @@ public final class SharedPoolClient {
         }
     }
     boolean stageInScope(String scope,String eventId,long occurred,String channelId,JSONObject payload)throws Exception{
-        synchronized(SharedPoolClient.class){requireScope(scope,false);if(store.hasSeen(eventId))return true;}
+        synchronized(SharedPoolClient.class){requireScope(scope,false);}
         JSONObject wrapped=new CryptoBox(context).encryptLocal(payload);
+        // stage() atomically deduplicates against both queued and uploaded IDs.
+        // Do not rely on a pre-encryption inspection of mutable store state.
         synchronized(SharedPoolClient.class){requireScope(scope,false);store.stage(eventId,occurred,channelId,wrapped);}
         return true;
     }
@@ -434,12 +436,10 @@ public final class SharedPoolClient {
             }
         }
         synchronized void stage(String id,long occurred,String channel,JSONObject cipher){
-            SQLiteDatabase db=getWritableDatabase();
-            try(Cursor old=db.rawQuery("SELECT 1 FROM uploaded WHERE id=?",new String[]{id})){
-                if(old.moveToFirst())return;
-            }
-            db.execSQL("INSERT OR IGNORE INTO staged VALUES(?,?,?,?,?)",
-                new Object[]{id,occurred,channel,cipher.toString(),System.currentTimeMillis()/1000});
+            getWritableDatabase().execSQL(
+                "INSERT OR IGNORE INTO staged(id,occurred,channel,local_cipher,created_at) "+
+                "SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM uploaded WHERE id=?)",
+                new Object[]{id,occurred,channel,cipher.toString(),System.currentTimeMillis()/1000,id});
         }
         static final class Pending {
             final String id,channel;final long occurred;final JSONObject localCipher;

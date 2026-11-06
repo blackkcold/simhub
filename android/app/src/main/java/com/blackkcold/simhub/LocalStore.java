@@ -14,7 +14,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     private static LocalStore INSTANCE;
     private static long lastReceiptPruneAt=0L;
     public static synchronized LocalStore get(Context c){if(INSTANCE==null)INSTANCE=new LocalStore(c.getApplicationContext());return INSTANCE;}
-    private LocalStore(Context c){super(c,"simhub-agent.db",null,6);}
+    LocalStore(Context c){super(c,"simhub-agent.db",null,6);}
 
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE events(id TEXT PRIMARY KEY,kind TEXT NOT NULL,occurred_at INTEGER NOT NULL,subscription_id TEXT NOT NULL,has_otp INTEGER NOT NULL,metadata_json TEXT NOT NULL,ciphertext_json TEXT NOT NULL,created_at INTEGER NOT NULL)");
@@ -119,10 +119,16 @@ public final class LocalStore extends SQLiteOpenHelper {
      * preserve receipts to remain idempotent across process and Relay retries.
      * Server-side purge tombstones still suppress intentionally erased SMS.
      */
-    public synchronized int resetProviderUploadReceiptsForRestore(){
+    public synchronized int resetProviderUploadReceiptsForRestore(int maxPendingEvents){
+        if(maxPendingEvents<0)throw new IllegalArgumentException("Negative pending-event limit");
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
         try {
+            // Admission and receipt deletion share the same database transaction
+            // and store monitor, so queue writers cannot invalidate the limit.
+            try(Cursor count=db.rawQuery("SELECT COUNT(*) FROM events",null)){
+                if(count.moveToFirst()&&count.getInt(0)>maxPendingEvents)return -1;
+            }
             int deleted=db.delete("uploaded_event_ids","id LIKE ?",
                 new String[]{"sms-provider-%"});
             db.setTransactionSuccessful();

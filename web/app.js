@@ -79,25 +79,34 @@ function clearTrustedVault(){try{localStorage.removeItem(TRUSTED_VAULT_CACHE);}c
 async function storeTrustedVault(){
   const config=trustedOptions();
   if(!config.enabled||!vaultRaw||!authenticated)return;
+  const epoch=securityEpoch,snapshot=vaultKey;
   const secret=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
   try{
     const key=await tabVaultKey();
     const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-trusted-vault-v1')},key,secret);
+    if(epoch!==securityEpoch||snapshot!==vaultKey||!authenticated||!trustedOptions().enabled)return;
     localStorage.setItem(TRUSTED_VAULT_CACHE,JSON.stringify({v:1,iv:b64u(iv),
       ct:b64u(new Uint8Array(ct)),expiresAt:Date.now()+Math.min(config.duration*1000,sessionIdleMs)}));
   }finally{secret.fill(0);}
 }
 async function restoreTrustedVault(){
   if(!authenticated||!trustedOptions().enabled)return false;
+  const epoch=securityEpoch;
+  let raw;
   try{
     const data=JSON.parse(localStorage.getItem(TRUSTED_VAULT_CACHE)||'null');
     if(!data||data.v!==1||Date.now()>=data.expiresAt)throw Error('Expired');
-    const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(data.iv),
-      additionalData:enc.encode('simhub-trusted-vault-v1')},await tabVaultKey(),unb64u(data.ct));
+    raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(data.iv),
+      additionalData:enc.encode('simhub-trusted-vault-v1')},await tabVaultKey(),unb64u(data.ct)));
     if(raw.byteLength!==32)throw Error('Invalid Vault Key');
-    await importVault(raw);await loadPhoneOverrides();showUnlocked();await fullRefresh();
+    if(epoch!==securityEpoch||!authenticated||!trustedOptions().enabled)return false;
+    await importVault(raw,epoch);await loadPhoneOverrides();
+    if(epoch!==securityEpoch||!vaultKey)return false;
+    showUnlocked();await fullRefresh();
+    if(epoch!==securityEpoch||!vaultKey)return false;
     refreshVersionInfo().catch(()=>{});startRealtime();return true;
-  }catch{clearTrustedVault();return false;}
+  }catch{if(epoch===securityEpoch)clearTrustedVault();return false;}
+  finally{raw?.fill(0);}
 }
 async function setAdminPassword(){
   const value=$('newAdminPassword').value;
@@ -149,27 +158,33 @@ function promptLoginTotp(){
 
 async function cacheTabVault(){
   if(!vaultRaw||!vaultKey)return;
-  const snapshot=vaultKey,raw=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
+  const epoch=securityEpoch,snapshot=vaultKey,raw=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
   try{
     const key=await tabVaultKey();
     const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-session-tab-v1')},key,raw);
-    if(snapshot===vaultKey)sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify({v:1,iv:b64u(iv),ct:b64u(new Uint8Array(ct)),lastActivity}));
+    if(epoch===securityEpoch&&snapshot===vaultKey)sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify({v:1,iv:b64u(iv),ct:b64u(new Uint8Array(ct)),lastActivity}));
   }catch(e){console.warn('Session vault resume unavailable',e.name);}
   finally{raw.fill(0);}
 }
 async function restoreTabVault(){
+  const epoch=securityEpoch;
   let saved;
   try{saved=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE)||'null');}catch{}
   if(!saved||saved.v!==1||!Number.isFinite(saved.lastActivity)||Date.now()-saved.lastActivity>=sessionIdleMs||saved.lastActivity>Date.now()+60000){clearTabVault();return false;}
+  let raw;
   try{
     const key=await tabVaultKey();
-    const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(saved.iv),additionalData:enc.encode('simhub-session-tab-v1')},key,unb64u(saved.ct));
+    raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(saved.iv),additionalData:enc.encode('simhub-session-tab-v1')},key,unb64u(saved.ct)));
     if(raw.byteLength!==32)throw new Error('Invalid vault key length');
-    await importVault(raw);
+    if(epoch!==securityEpoch||!authenticated)return false;
+    await importVault(raw,epoch);
     lastActivity=saved.lastActivity;try{const restored=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE));restored.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(restored));}catch{}armAutoLock();
-    await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
+    await loadPhoneOverrides();if(epoch!==securityEpoch||!vaultKey)return false;
+    showUnlocked();await fullRefresh();if(epoch!==securityEpoch||!vaultKey)return false;
+    refreshVersionInfo().catch(()=>{});startRealtime();
     return true;
-  }catch(e){clearTabVault();if(vaultKey)lockVault();return false;}
+  }catch(e){if(epoch===securityEpoch){clearTabVault();if(vaultKey)lockVault();}return false;}
+  finally{raw?.fill(0);}
 }
 async function resumeExistingSession(){
   try{
@@ -183,11 +198,12 @@ async function resumeExistingSession(){
 async function loadPhoneOverrides(){
   phoneOverrides={};
   if(!vaultKey)return;
+  const epoch=securityEpoch,snapshot=vaultKey;
   try{
     const saved=JSON.parse(localStorage.getItem(PHONE_OVERRIDES_STORE)||'null');if(!saved)return;
     const clear=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(saved.iv),additionalData:enc.encode('simhub-phone-overrides-v1')},vaultKey,unb64u(saved.ct));
-    const parsed=JSON.parse(dec.decode(clear));if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))phoneOverrides=parsed;
-  }catch{phoneOverrides={};}
+    const parsed=JSON.parse(dec.decode(clear));if(epoch===securityEpoch&&snapshot===vaultKey&&parsed&&typeof parsed==='object'&&!Array.isArray(parsed))phoneOverrides=parsed;
+  }catch{if(epoch===securityEpoch)phoneOverrides={};}
 }
 async function savePhoneOverrides(){
   if(!vaultKey)throw Error('Vault locked');
@@ -209,7 +225,17 @@ async function editSimPhone(deviceId,channelId){
 }
 async function deriveWrapKey(passphrase,salt,iterations=PBKDF2_ITER){const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}
 async function wrapVaultRaw(raw,passphrase){if(passphrase.length<10)throw new Error('Use a vault passphrase of at least 10 characters.');const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),wrapKey=await deriveWrapKey(passphrase,salt);const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,raw));localStorage.setItem(VAULT_STORE,JSON.stringify({v:1,kdf:'PBKDF2-SHA256',iterations:PBKDF2_ITER,salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}));}
-async function importVault(raw){if(globalVault?.initialized && await globalKeyId(raw)!==globalVault.keyId)throw Error('Vault 密钥与服务器登记身份不一致');vaultRaw=new Uint8Array(raw);vaultKey=await crypto.subtle.importKey('raw',vaultRaw,{name:'AES-GCM'},false,['encrypt','decrypt']);deviceKeyCache.clear();resetAutoLock();await cacheTabVault();}
+async function importVault(raw,epoch=securityEpoch){
+  const copy=new Uint8Array(raw);
+  try{
+    if(globalVault?.initialized && await globalKeyId(copy)!==globalVault.keyId)throw Error('Vault 密钥与服务器登记身份不一致');
+    const key=await crypto.subtle.importKey('raw',copy,{name:'AES-GCM'},false,['encrypt','decrypt']);
+    if(epoch!==securityEpoch)throw Error('Vault lock cancelled the unlock request');
+    if(vaultRaw)vaultRaw.fill(0);
+    vaultRaw=new Uint8Array(copy);vaultKey=key;deviceKeyCache.clear();resetAutoLock();await cacheTabVault();
+    if(epoch!==securityEpoch||key!==vaultKey)throw Error('Vault lock cancelled the unlock request');
+  }finally{copy.fill(0);}
+}
 async function globalKeyId(raw){return b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)).slice(0,16));}
 async function makeGlobalEnvelope(raw,passphrase){
   if(passphrase.length<10)throw Error('Vault 密码至少 10 位');
@@ -237,6 +263,7 @@ async function unwrapLegacyVault(passphrase){
   catch{throw Error('旧 Vault 密码不正确，无法自动迁移');}
 }
 async function importRecoveryFlow(){
+  const epoch=securityEpoch;
   const text=$('recoveryKey').value.trim(),prefix='SIMHUB-RECOVERY-V1:';
   if(!text.startsWith(prefix))throw Error('恢复密钥格式无效');
   const raw=unb64u(text.slice(prefix.length));
@@ -246,11 +273,12 @@ async function importRecoveryFlow(){
     if(globalVault.initialized){
       if(await globalKeyId(raw)!==globalVault.keyId)throw Error('恢复密钥不属于当前共享 Vault，已阻止混用');
     }else await initGlobalVault(raw,$('passphrase').value);
-    await importVault(raw);$('recoveryKey').value='';$('passphrase').value='';
+    await importVault(raw,epoch);$('recoveryKey').value='';$('passphrase').value='';
     toast('共享 Vault 已通过恢复密钥解锁');
   }finally{raw.fill(0);}
 }
 async function unlockVault(passphrase){
+  const epoch=securityEpoch;
   if(!globalVault)await loadGlobalVault();
   if(!globalVault.initialized)throw Error('尚未初始化共享 Vault');
   const e=globalVault.envelope,wrapKey=await deriveWrapKey(passphrase,unb64u(e.salt),e.iterations);
@@ -260,7 +288,7 @@ async function unlockVault(passphrase){
   catch{throw Error('共享 Vault 密码错误');}
   try{
     if(await globalKeyId(raw)!==globalVault.keyId)throw Error('共享 Vault 密钥指纹不一致，已停止解锁');
-    await importVault(raw);$('passphrase').value='';
+    await importVault(raw,epoch);$('passphrase').value='';
   }finally{raw.fill(0);}
 }
 async function keyIdForRaw(raw){const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',raw));return b64u(digest.slice(0,12));}
@@ -273,7 +301,7 @@ async function encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid){
   const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:aad},key,nodeRaw));
   return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
 }
-async function deviceCrypto(deviceId){if(deviceKeyCache.has(deviceId))return deviceKeyCache.get(deviceId);const info=devices.find(x=>x.id===deviceId);let out;if(info&&info.keyId&&info.wrappedKey){const raw=await unwrapNodeKey(info.wrappedKey,info.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);out={raw:raw,key:key,kid:info.keyId,mode:'node'};}else out=await deriveLegacyDevice(deviceId);deviceKeyCache.set(deviceId,out);return out;}
+async function deviceCrypto(deviceId){const epoch=securityEpoch,snapshot=vaultKey;if(!snapshot)throw Error('Vault locked');if(deviceKeyCache.has(deviceId))return deviceKeyCache.get(deviceId);const info=devices.find(x=>x.id===deviceId);let out;if(info&&info.keyId&&info.wrappedKey){const raw=await unwrapNodeKey(info.wrappedKey,info.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);out={raw:raw,key:key,kid:info.keyId,mode:'node'};}else out=await deriveLegacyDevice(deviceId);if(epoch!==securityEpoch||snapshot!==vaultKey){out.raw.fill(0);throw Error('Vault locked');}deviceKeyCache.set(deviceId,out);return out;}
 /** Safe failure category only: never surface raw ciphertext, plaintext or keys. */
 function decryptFailureCategory(e,error){
   const d=devices.find(x=>x.id===e.deviceId);
@@ -448,7 +476,7 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){notificationCenter.locale=getLocale();notificationCenter.setScope($('username').value||'admin').catch(()=>{});if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);
+function showUnlocked(){if(!vaultKey)return;notificationCenter.locale=getLocale();notificationCenter.setScope($('username').value||'admin').catch(()=>{});if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{if(!vaultKey)return;document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);
   // Respect a notification deep link after authentication / Vault unlock.
   if(!samePhoneControllerApproval){
     const requested=new URLSearchParams(location.search).get('view');
@@ -462,7 +490,7 @@ function showUnlocked(){notificationCenter.locale=getLocale();notificationCenter
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','gateRecoveryKey','newAdminPassword','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary']){
+  for(const id of ['inboxItems','conversationMessages','conversationTitle','conversationMeta','deviceList','smsPoolMembers','diagnosticsOutput','diagnosticsTitle','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','gateRecoveryKey','newAdminPassword','newVaultPassphrase','confirmVaultPassphrase','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary','controllerPending','controllerAuthorized','controllerConnectLink','controllerQr']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
@@ -479,7 +507,7 @@ function purgeSensitiveUI(){
       if(!known)child.remove();
     }
   }
-  for(const id of ['deviceFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
+  for(const id of ['deviceFilter','simFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
     const el=$(id);if(el)el.replaceChildren();
   }
   const link=$('openEnroll');if(link){link.removeAttribute('href');link.hidden=true;}
@@ -488,7 +516,7 @@ function purgeSensitiveUI(){
   if($('enrollQr'))$('enrollQr').replaceChildren();
   if($('pairCodeInput'))$('pairCodeInput').value='';
   if($('pairCodeStatus'))$('pairCodeStatus').textContent='';
-  for(const id of ['enrollDialog','deviceDetailDialog','loginOtpDialog']){const d=$(id);if(d?.open)d.close();}
+  for(const id of ['enrollDialog','deviceDetailDialog','loginOtpDialog','controllerConnectDialog']){const d=$(id);if(d?.open)d.close();}
   nodeBaseUrl='';enrollStartingDevices.clear();
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
@@ -507,7 +535,9 @@ function lockVault(broadcast=true){
   $('smsLayout').classList.remove('conversation-open');
   purgeSensitiveUI();
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
-  vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
+  vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;
+  for(const value of deviceKeyCache.values())value.raw?.fill(0);
+  deviceKeyCache.clear();
   poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();
   locationCache.clear();locationMaps.clear();
   simProfileIndex.clear();simProfileIndexVersion='';lastSeq=0;oldestSeq=0;
@@ -523,7 +553,7 @@ function lockVault(broadcast=true){
   if(broadcast)try{vaultLockChannel?.postMessage({action:'lock'});}catch{}
   toast('Vault locked');
 }
-if(vaultLockChannel)vaultLockChannel.onmessage=e=>{if(e.data?.action==='lock'&&vaultKey)lockVault(false);};
+if(vaultLockChannel)vaultLockChannel.onmessage=e=>{if(e.data?.action==='lock')lockVault(false);};
 
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,sessionIdleMs-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();try{const s=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE)||'null');if(s){s.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(s));}}catch{}armAutoLock();}
@@ -553,6 +583,7 @@ async function importGateRecovery(){
 }
 async function createVaultFlow(){
   if(!authenticated)throw Error('请先登录');
+  const epoch=securityEpoch;
   await loadGlobalVault();
   if(globalVault.initialized){showVaultStage();throw Error('共享 Vault 已初始化，只需输入原密码');}
   const passphrase=$('passphrase').value;
@@ -566,7 +597,7 @@ async function createVaultFlow(){
   try{
     await initGlobalVault(raw,passphrase);
     showVaultStage();
-    await importVault(raw);
+    await importVault(raw,epoch);
     $('passphrase').value='';
     await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
     await storeTrustedVault();
@@ -725,7 +756,7 @@ async function fullRefresh(){
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
-function startRealtime(){if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>setConnected(true);eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
+function startRealtime(){if(!vaultKey)return;if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>{if(vaultKey)setConnected(true);};eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
 
 function deviceCanSendSms(d){
   if(!d||d.revoked||d.resetRequestedAt)return false;
@@ -838,9 +869,10 @@ async function loadCommandActivity(){
 }
 async function loadLifecycleHistory(){
   if(!vaultKey)return;
+  const epoch=securityEpoch;
   const result=await api('/api/v1/audit?limit=200');
   const container=$('lifecycleHistory');
-  if(!container||!vaultKey)return;
+  if(!container||!vaultKey||epoch!==securityEpoch)return;
   const relevant=(result.audit||[]).filter(row=>row.action.startsWith('device.reset.')||row.action==='device.sms.purge').slice(0,20);
   container.textContent=relevant.map(row=>fmtTime(row.occurred_at)+' · '+row.action+' · '+row.target).join('\n')||'暂无设备清理记录';
 }
@@ -1464,10 +1496,12 @@ async function sha256Hex(text){
 
 /** Encrypted controller grant: plaintext Master Vault never touches the Relay. */
 async function refreshControllerRequests(){
-  if(!authenticated)return;
+  if(!authenticated||!vaultKey)return;
+  const epoch=securityEpoch;
   const [pending,authorized]=await Promise.all([
     api('/api/v1/controllers/pending'),api('/api/v1/controllers')
   ]);
+  if(epoch!==securityEpoch||!vaultKey)return;
   const box=$('controllerPending'),list=pending.pending||[];
   box.replaceChildren();
   if(!list.length){const p=document.createElement('p');p.className='hint';p.textContent='暂无待授权请求';box.append(p);}
@@ -1506,8 +1540,9 @@ async function refreshControllerRequests(){
 }
 async function approveAndroidController(req,pairingCode){
   if(!vaultRaw||vaultRaw.length!==32)throw Error('必须先在本浏览器解锁原 Vault');
+  const epoch=securityEpoch;
   await ensureStepUp();
-  if(!vaultRaw||vaultRaw.length!==32)throw Error('授权期间 Vault 已被锁定');
+  if(epoch!==securityEpoch||!vaultRaw||vaultRaw.length!==32)throw Error('授权期间 Vault 已被锁定');
   const other=await crypto.subtle.importKey('spki',unb64u(req.exchangePublic),
     {name:'ECDH',namedCurve:'P-256'},false,[]);
   const local=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},
@@ -1520,14 +1555,18 @@ async function approveAndroidController(req,pairingCode){
   const key=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,
     info:enc.encode('simhub-controller-grant-v1|'+requestId+'|'+origin)},
     hkdf,{name:'AES-GCM',length:256},false,['encrypt']);
+  if(epoch!==securityEpoch||!vaultKey)throw Error('授权期间 Vault 已被锁定');
   const vaultCopy=new Uint8Array(vaultRaw);
   let ct;
   try{ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,
     additionalData:enc.encode('simhub-controller-vault-v1|'+requestId+'|'+origin)},
     key,vaultCopy));}finally{vaultCopy.fill(0);}
   const epk=new Uint8Array(await crypto.subtle.exportKey('spki',local.publicKey));
+  if(epoch!==securityEpoch||!vaultKey)throw Error('授权期间 Vault 已被锁定');
+  const vaultKeyId=await globalKeyId(vaultRaw);
+  if(epoch!==securityEpoch||!vaultKey)throw Error('授权期间 Vault 已被锁定');
   await api('/api/v1/controllers/approve',{method:'POST',body:{
-    requestId,pairingCode,vaultId:globalVault?.vaultId,vaultKeyId:await globalKeyId(vaultRaw),
+    requestId,pairingCode,vaultId:globalVault?.vaultId,vaultKeyId,
     vaultEnvelope:{v:1,epk:b64u(epk),salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}
   }});
   toast('管理终端已授权，可在手机继续连接');

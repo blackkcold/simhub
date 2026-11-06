@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,19 +20,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def python_command(path: Path) -> list[str]:
     tree = ast.parse(path.read_text("utf-8"))
-    unittest_module = any(
-        (isinstance(node, ast.Import) and any(alias.name == "unittest" for alias in node.names))
-        or (isinstance(node, ast.ImportFrom) and node.module == "unittest")
-        for node in ast.walk(tree))
+    unittest_module = any(isinstance(node, ast.ClassDef) and any(
+        isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)) and method.name.startswith("test")
+        for method in node.body) for node in ast.walk(tree))
     if unittest_module:
         return [sys.executable, "-m", "unittest", "discover", "-v", "-s", str(path.parent), "-p", path.name]
     return [sys.executable, str(path)]
 
 
-def commands(python=True, web=True, include_ui=False):
+def commands(python=True, web=True, include_ui=False, groups=()):
     if python:
         for directory in ("server", "modem_agent", "scripts"):
             for path in sorted(ROOT.joinpath(directory).glob("test_*.py")):
+                marker = re.search(r"(?m)^# simhub-test-group: ([a-z0-9-]+)$", path.read_text("utf-8"))
+                if marker and marker[1] not in groups:
+                    print(f"DEFERRED {path.relative_to(ROOT)} -> dedicated {marker[1]} workflow", flush=True)
+                    continue
                 yield path.relative_to(ROOT).as_posix(), python_command(path)
     if web:
         for path in sorted(ROOT.joinpath("web").glob("*.js")):
@@ -49,12 +53,13 @@ if __name__ == "__main__":
     group.add_argument("--web-only", action="store_true")
     parser.add_argument("--include-ui", action="store_true")
     parser.add_argument("--list", action="store_true", help="List discovered entry points without running them")
+    parser.add_argument("--group", action="append", default=[], help="Include a dedicated integration group after provisioning its dependencies")
     arguments = parser.parse_args()
     environment = {**os.environ, "PYTHONPATH": os.pathsep.join(
         [str(ROOT / directory) for directory in ("server", "modem_agent", "scripts")]
         + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else []))}
     count = 0
-    for label, command in commands(not arguments.web_only, not arguments.python_only, arguments.include_ui):
+    for label, command in commands(not arguments.web_only, not arguments.python_only, arguments.include_ui, arguments.group):
         count += 1
         print(f"REGRESSION {label}", flush=True)
         if not arguments.list:

@@ -17,6 +17,12 @@ Android CI runs full debug lint, unit/build checks, API29/30 recovery tests, and
 the existing API35 isolated Relay acceptance suite. Emulator tests do not prove
 physical carrier delivery or OEM background behavior.
 
+Dev's `P2P isolated preview`, `preview` and `android-sandbox` results are also
+required on the exact release commit. Scripts marked `p2p-integration` run in
+that provisioned workflow because they need real coturn or Gradle packaging;
+ordinary discovery reports their dedicated gate instead of silently skipping
+them. Use `--group p2p-integration` only after provisioning those dependencies.
+
 ## Pinned inputs
 
 - Every reusable workflow action is pinned to an upstream commit SHA. Mutable

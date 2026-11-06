@@ -295,6 +295,102 @@ class ModemRecoveryTests(unittest.TestCase):
         self.assertTrue(self.old.recover_pending_device_token())
         self.assertEqual(modem.load_json(self.old.config_path)["deviceToken"],pending)
 
+    def queue_events(self,count):
+        for index in range(count):
+            event_id=f"test-event-{index:04d}";stamp=modem.now()
+            cipher=self.old.encrypt_event(event_id,"sms.history",stamp,False,{"body":"synthetic"})
+            self.old.store.queue_event(event_id,"sms.history",stamp,"old-channel",False,{},cipher)
+
+    @staticmethod
+    def receipts(events):
+        return {"accepted":True,"results":[{"accepted":True,"eventId":event["eventId"],
+            "receiptState":"stored","serverSequence":index+1} for index,event in enumerate(events)]}
+
+    def test_bulk_backlog_does_not_precede_command_or_ack_traffic(self):
+        self.queue_events(100)
+        for index in range(20):
+            command=f"ack-{index}"
+            self.old.store.claim_command(command)
+            self.old.store.finish_command_and_queue_ack(command,"sent",{})
+        self.old.config["tokenIssuedAt"]=modem.now()
+        calls=[]
+        def request(method,path,body=None,**kwargs):
+            calls.append(path)
+            if path.endswith("/lifecycle"):return {"resetRequired":False,"status":"active"}
+            if path.endswith("/events/batch"):return self.receipts(body["events"])
+            return {"ok":True,"commands":[]}
+        self.old.relay.request=request
+        with patch.object(self.old,"put_state"),patch.object(self.old,"heartbeat"):
+            self.old.cycle()
+        pending_index=next(index for index,path in enumerate(calls) if "/commands/pending?" in path)
+        first_batch=next(index for index,path in enumerate(calls) if path.endswith("/events/batch"))
+        self.assertLess(pending_index,first_batch)
+        self.assertEqual(sum(path.endswith("/ack") for path in calls[:first_batch]),20)
+        self.assertEqual(sum(path.endswith("/events/batch") for path in calls),2)
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],60)
+        self.assertEqual(self.old.store.queue_health()["pendingCommandAcks"],0)
+        self.assertTrue(all(set(row)=={"kind","queuedAt"} for row in self.old.store.queue_health()["pendingEventTasks"]))
+
+    def test_batch_response_loss_retries_exact_durable_envelopes(self):
+        self.queue_events(20)
+        calls=[]
+        def request(method,path,body,**kwargs):
+            calls.append(body)
+            if len(calls)==1:raise OSError("Response lost after acceptance")
+            return self.receipts(body["events"])
+        self.old.relay.request=request
+        with self.assertRaises(OSError):self.old.flush_events()
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],20)
+        self.assertEqual(self.old.flush_events(),20)
+        self.assertEqual(calls[0],calls[1])
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],0)
+
+    def test_partial_batch_receipt_only_retires_confirmed_identity(self):
+        self.queue_events(3)
+        self.old.relay.request=lambda method,path,body:self.receipts(body["events"][:1])
+        self.assertEqual(self.old.flush_events(),1)
+        self.assertEqual([event["eventId"] for event in self.old.store.pending_events()],
+                         ["test-event-0001","test-event-0002"])
+        def malformed(method,path,body):
+            result=self.receipts(body["events"])
+            result["results"][1]["eventId"]=result["results"][0]["eventId"]
+            return result
+        self.old.relay.request=malformed
+        with self.assertRaises(RuntimeError):self.old.flush_events()
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],2)
+
+    def test_batch_endpoint_falls_back_to_bounded_legacy_uploads(self):
+        self.queue_events(25)
+        calls=[]
+        def request(method,path,body):
+            calls.append(path)
+            if path.endswith("/events/batch"):
+                raise RuntimeError("relay HTTP 404: old Relay")
+            return {"accepted":True,"eventId":body["eventId"],"serverSequence":1}
+        self.old.relay.request=request
+        self.assertEqual(self.old.flush_events(),10)
+        self.assertEqual(len(calls),11)
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],15)
+
+    def test_network_phase_budget_yields_between_batches(self):
+        self.queue_events(60)
+        self.old.relay.request=lambda method,path,body:self.receipts(body["events"])
+        with patch.object(modem.time,"monotonic",side_effect=[0,0,6]):
+            self.assertEqual(self.old.flush_events(),20)
+        self.assertEqual(self.old.store.queue_health()["pendingEvents"],40)
+
+    def test_ambiguous_ack_receipt_remains_durable(self):
+        for index in range(12):
+            command=f"ack-{index}"
+            self.old.store.claim_command(command)
+            self.old.store.finish_command_and_queue_ack(command,"sent",{})
+        self.old.relay.request=lambda *args,**kwargs:{}
+        with self.assertRaises(RuntimeError):self.old.flush_acks()
+        self.assertEqual(self.old.store.queue_health()["pendingCommandAcks"],12)
+        self.old.relay.request=lambda *args,**kwargs:{"ok":True,"currentState":"sent"}
+        self.assertEqual(self.old.flush_acks(),10)
+        self.assertEqual(self.old.store.queue_health()["pendingCommandAcks"],2)
+
     def test_failed_hardware_deletion_is_retried_without_duplicate_event(self):
         self.old.adapter.records=[self.sms()]
         real_delete=self.old.adapter.delete_sms

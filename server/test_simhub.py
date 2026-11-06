@@ -402,6 +402,33 @@ class ApiTest(unittest.TestCase):
             self.assertEqual(body["channel"],"stable")
             self.assertIn("version",body)
 
+    def test_vault_settings_http_is_private_revisioned_and_csrf_protected(self):
+        from test_global_vault import payload, b64
+        vault=payload()
+        self.assertEqual(self.req("POST","/api/v1/vault/initialize",vault)[0],201)
+        path="/api/v1/vault/settings"
+        self.assertEqual(self.req("GET",path,admin=False)[0],401)
+        st,empty,_=self.req("GET",path)
+        self.assertEqual(st,200);self.assertEqual(empty["revision"],0)
+        self.assertIsNone(empty["ciphertext"])
+        request={"vaultId":vault["vaultId"],"keyId":vault["keyId"],"expectedRevision":0,
+                 "ciphertext":{"v":2,"alg":"A256GCM","kid":vault["keyId"],"iv":b64(12),"ct":b64(48)}}
+        st,login,headers=self.req("POST","/api/v1/auth/session",{"adminToken":TOKEN},admin=False)
+        self.assertEqual(st,201)
+        cookie=headers["Set-Cookie"].split(";",1)[0]
+        self.assertEqual(self.req("POST",path,request,admin=False,headers={"Cookie":cookie})[0],403)
+        session={"Cookie":cookie,"X-SimHub-CSRF":login["csrfToken"]}
+        st,created,_=self.req("POST",path,request,admin=False,headers=session)
+        self.assertEqual(st,200);self.assertEqual(created["revision"],1)
+        self.assertEqual(self.req("POST",path,request,admin=False,headers=session)[0],409)
+        self.assertEqual(self.req("POST",path,{**request,"expectedRevision":1,"phoneOverrides":{"phone":"secret"}},
+                                  admin=False,headers=session)[0],400)
+        st,read,_=self.req("GET",path,admin=False,headers=session)
+        self.assertEqual(st,200);self.assertEqual(read["ciphertext"],request["ciphertext"])
+        with sqlite3.connect(self.db) as con:
+            saved=con.execute("SELECT ciphertext_json FROM vault_settings").fetchone()[0]
+            self.assertNotIn("secret",saved)
+
     def test_expired_pending_token_keeps_current_token_valid(self):
         d=self.enroll('RotateExpiry');did=d['deviceId'];old=d['deviceToken']
         st,p,_=self.req('POST',f'/api/v1/devices/{did}/token/prepare',{},device_token=old,admin=False);self.assertEqual(st,201)

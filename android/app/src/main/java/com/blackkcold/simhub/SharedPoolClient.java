@@ -28,6 +28,7 @@ public final class SharedPoolClient {
     public static final String ACTION_CACHE_UPDATED="com.blackkcold.simhub.SHARED_SMS_CACHE_UPDATED";
     private static final int PAGE=100,UPLOAD=20;
     private static final SecureRandom RANDOM=new SecureRandom();
+    private static final java.util.Map<String,Store> STORES=new java.util.HashMap<>();
     private final Context context;
     private final AgentConfig config;
     private final SharedPreferences prefs;
@@ -37,7 +38,13 @@ public final class SharedPoolClient {
         this.context=context.getApplicationContext();
         config=new AgentConfig(this.context);
         prefs=this.context.getSharedPreferences(PREF,Context.MODE_PRIVATE);
-        store=new Store(this.context);
+        synchronized(STORES){store=STORES.computeIfAbsent(this.context.getDatabasePath("simhub-pool-cache.db").getAbsolutePath(),unused->new Store(this.context));}
+        synchronized(SharedPoolClient.class){
+            if(prefs.getInt("publication_version",0)<2&&!prefs.edit().putInt("publication_version",2)
+                .remove("initial_staged").remove("publish_cursor_date").remove("publish_cursor_id")
+                .remove("publish_initial_count").remove("publish_has_more").commit())
+                throw new IllegalStateException("Unable to migrate shared history progress");
+        }
     }
     /** Called on both local and remote enrollment reset. Never contacts the Relay. */
     public static void clearLocalForReset(Context c){
@@ -86,7 +93,8 @@ public final class SharedPoolClient {
             if(!prefs.edit().putBoolean("requested",false).putBoolean("approved",false)
                 .putBoolean("pending_disable",true).putLong("last_download",0)
                 .putLong("oldest_download",0).remove("oldest_download_time")
-                .remove("older_has_more").remove("initial_staged").commit())
+                .remove("older_has_more").remove("initial_staged")
+                .remove("publish_cursor_date").remove("publish_cursor_id").remove("publish_initial_count").remove("publish_has_more").commit())
                 throw new IllegalStateException("Unable to persist sharing disable");
             store.clear();
             SecretStore secret=new SecretStore(context);
@@ -105,20 +113,53 @@ public final class SharedPoolClient {
         prefs.edit().putBoolean("requested",true).putBoolean("approved",false)
             .putBoolean("pending_disable",false).putLong("last_download",0)
             .putLong("oldest_download",0).remove("oldest_download_time")
-            .remove("older_has_more").remove("initial_staged").apply();
+            .remove("older_has_more").remove("initial_staged")
+            .remove("publish_cursor_date").remove("publish_cursor_id").remove("publish_initial_count").remove("publish_has_more").apply();
         SyncJobService.scheduleNow(context);
     }
 
     /** Called after original local message was durably queued. Never performs IO over network. */
-    public static void stage(Context c,String eventId,long occurred,String channelId,JSONObject payload){
+    public static boolean needsStage(Context c,String eventId){
+        SharedPoolClient pool=new SharedPoolClient(c);
+        return pool.optedIn()&&pool.config.isEnrolled()&&!pool.store.hasSeen(eventId);
+    }
+    public static boolean stage(Context c,String eventId,long occurred,String channelId,JSONObject payload){
         try{
             SharedPoolClient pool=new SharedPoolClient(c);
-            if(!pool.optedIn()||!pool.config.isEnrolled())return;
+            if(!pool.optedIn()||!pool.config.isEnrolled()||pool.store.hasSeen(eventId))return true;
             JSONObject wrapped=new CryptoBox(c).encryptLocal(payload);
-            pool.store.stage(eventId,occurred,channelId,wrapped);
+            synchronized(SharedPoolClient.class){
+                if(!pool.optedIn()||!pool.config.isEnrolled())return false;
+                pool.store.stage(eventId,occurred,channelId,wrapped);
+            }
+            return true;
         }catch(Exception error){
             AppLogger.e(c,"SharedPool","Unable to queue protected local SMS",error);
+            return false;
         }
+    }
+    long historyDate(){return prefs.getLong("publish_cursor_date",0);}
+    long historyId(){return prefs.getLong("publish_cursor_id",-1);}
+    int initialHistoryRemaining(){return Math.max(0,PAGE-prefs.getInt("publish_initial_count",0));}
+    boolean initialHistoryStaged(){return prefs.getBoolean("initial_staged",false);}
+    void historyRowStaged(long date,long id,boolean initial){
+        SharedPreferences.Editor edit=prefs.edit().putLong("publish_cursor_date",date).putLong("publish_cursor_id",id);
+        if(initial){
+            int count=prefs.getInt("publish_initial_count",0)+1;
+            edit.putInt("publish_initial_count",count);
+            if(count>=PAGE)edit.putBoolean("initial_staged",true);
+        }
+        if(!edit.commit())throw new IllegalStateException("Unable to persist shared history cursor");
+    }
+    void historyExhausted(){
+        if(!prefs.edit().putBoolean("initial_staged",true).putBoolean("publish_has_more",false).commit())
+            throw new IllegalStateException("Unable to persist shared history completion");
+    }
+    public int stageOlderHistory(int requested){
+        if(!approved()||!prefs.getBoolean("publish_has_more",true))return 0;
+        int count=SmsHistorySync.syncSharedHistory(context,requested);
+        if(count>=0)SyncJobService.scheduleNow(context);
+        return count;
     }
 
     private List<Integer> epochs(){
@@ -187,7 +228,6 @@ public final class SharedPoolClient {
             for(int epoch:epochs())secret.remove("pool-key-"+epoch);
             prefs.edit().remove("key_epochs").apply();return;
         }
-        boolean wasApproved=approved();
         boolean isApproved=status.optBoolean("approved",false);
         prefs.edit().putBoolean("approved",isApproved).apply();
         if(!isApproved){
@@ -197,6 +237,8 @@ public final class SharedPoolClient {
             SecretStore secret=new SecretStore(context);
             for(int oldEpoch:epochs())secret.remove("pool-key-"+oldEpoch);
             prefs.edit().remove("key_epochs").remove("current_epoch")
+                .remove("initial_staged").remove("publish_cursor_date").remove("publish_cursor_id")
+                .remove("publish_initial_count").remove("publish_has_more")
                 .putLong("last_download",0).putLong("oldest_download",0).apply();
             return;
         }
@@ -218,10 +260,12 @@ public final class SharedPoolClient {
         }
         Arrays.fill(own,(byte)0);
         prefs.edit().putInt("current_epoch",current).apply();
-        if(!wasApproved && !prefs.getBoolean("initial_staged",false)){
-            // History scan queues up to the latest 100 provider messages.
-            SmsHistorySync.syncRecent(context,100);
-            prefs.edit().putBoolean("initial_staged",true).apply();
+        if(!initialHistoryStaged()){
+            // Independent pool receipts and cursor also include SMS uploaded to
+            // the ordinary Relay before sharing was enabled. Retry failures even
+            // when the previous cycle already recorded administrator approval.
+            if(SmsHistorySync.syncSharedHistory(context,PAGE)<0)
+                throw new java.io.IOException("Shared SMS history staging incomplete");
         }
         // An administrative revocation freezes new ciphertext until the Vault
         // completes a new epoch. Existing historical ciphertext remains readable.
@@ -342,6 +386,11 @@ public final class SharedPoolClient {
             db.execSQL("CREATE INDEX idx_pool_cache_time ON cached(occurred DESC,seq DESC)");
         }
         @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion){}
+        synchronized boolean hasSeen(String id){
+            try(Cursor row=getReadableDatabase().rawQuery("SELECT 1 FROM uploaded WHERE id=? UNION ALL SELECT 1 FROM staged WHERE id=? LIMIT 1",new String[]{id,id})){
+                return row.moveToFirst();
+            }
+        }
         synchronized void stage(String id,long occurred,String channel,JSONObject cipher){
             SQLiteDatabase db=getWritableDatabase();
             try(Cursor old=db.rawQuery("SELECT 1 FROM uploaded WHERE id=?",new String[]{id})){

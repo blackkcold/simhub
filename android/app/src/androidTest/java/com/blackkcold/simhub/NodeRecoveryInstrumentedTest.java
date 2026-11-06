@@ -25,6 +25,13 @@ public class NodeRecoveryInstrumentedTest {
             @Override public SharedPreferences getSharedPreferences(String name,int mode){
                 return super.getSharedPreferences(prefix+name,mode);
             }
+            @Override public java.io.File getDatabasePath(String name){return super.getDatabasePath(prefix+name);}
+            @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name,int mode,android.database.sqlite.SQLiteDatabase.CursorFactory factory){
+                return super.openOrCreateDatabase(prefix+name,mode,factory);
+            }
+            @Override public android.database.sqlite.SQLiteDatabase openOrCreateDatabase(String name,int mode,android.database.sqlite.SQLiteDatabase.CursorFactory factory,android.database.DatabaseErrorHandler handler){
+                return super.openOrCreateDatabase(prefix+name,mode,factory,handler);
+            }
         };
     }
     @Test public void smsManagerFactorySupportsMinimumSdk(){
@@ -123,5 +130,41 @@ public class NodeRecoveryInstrumentedTest {
                 assertTrue(row.moveToFirst());assertEquals("stored",row.getString(0));
             }
         }finally{db.close();}
+    }
+    @Test public void alreadyUploadedSmsCanEnterNewlyEnabledSharedPoolOnce()throws Exception{
+        Context c=isolatedContext();rotationPending(c);
+        SharedPoolClient pool=new SharedPoolClient(c);
+        c.getSharedPreferences("simhub_pool_v1",Context.MODE_PRIVATE).edit()
+            .putBoolean("requested",true).putBoolean("approved",true).commit();
+        LocalStore local=LocalStore.get(c);String id="shared-test-"+UUID.randomUUID();
+        local.markEventSent(id);
+        int ordinaryBefore=local.pendingEventCount();
+        JSONObject payload=new JSONObject().put("direction","in").put("body","synthetic shared history");
+        try{
+            assertTrue(SharedPoolClient.needsStage(c,id));
+            assertTrue(EventQueue.queue(c,id,"sms.history",1234,-1,false,payload,new JSONObject()));
+            assertFalse(SharedPoolClient.needsStage(c,id));
+            assertEquals(1,pool.pendingUploadCount());
+            assertEquals(ordinaryBefore,local.pendingEventCount());
+            assertTrue(EventQueue.queue(c,id,"sms.history",1234,-1,false,payload,new JSONObject()));
+            assertEquals(1,pool.pendingUploadCount());
+            try(android.database.sqlite.SQLiteDatabase db=c.openOrCreateDatabase("simhub-pool-cache.db",0,null);
+                android.database.Cursor row=db.rawQuery("SELECT local_cipher FROM staged WHERE id=?",new String[]{id})){
+                assertTrue(row.moveToFirst());assertFalse(row.getString(0).contains("synthetic shared history"));
+            }
+        }finally{
+            local.getWritableDatabase().delete("uploaded_event_ids","id=?",new String[]{id});
+            SharedPoolClient.clearLocalForReset(c);
+        }
+    }
+    @Test public void sharedBackfillCheckpointSurvivesRecreation()throws Exception{
+        Context c=isolatedContext();rotationPending(c);
+        SharedPoolClient first=new SharedPoolClient(c);
+        first.historyRowStaged(1000,7,true);
+        SharedPoolClient resumed=new SharedPoolClient(c);
+        assertEquals(1000,resumed.historyDate());assertEquals(7,resumed.historyId());
+        assertEquals(99,resumed.initialHistoryRemaining());assertFalse(resumed.initialHistoryStaged());
+        assertEquals(0,new AgentConfig(c).historyDate());
+        SharedPoolClient.clearLocalForReset(c);
     }
 }

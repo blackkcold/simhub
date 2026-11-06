@@ -16,6 +16,7 @@ import org.json.JSONObject;
 public final class RemoteOta {
     private static final String PREF="simhub_remote_ota_v1";
     private static final String COMMAND="command";
+    private static final String PROCESS=java.util.UUID.randomUUID().toString();
     private RemoteOta(){}
     private static SharedPreferences prefs(Context c){return c.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE);}
     public static boolean supported(Context c){
@@ -97,6 +98,7 @@ public final class RemoteOta {
         return j;
     }
     public static synchronized JSONObject request(Context c,String commandId,String target)throws Exception{
+        reconcileInstalledVersion(c);
         if(!allowed(c))throw new SecurityException("remote_ota_not_authorized");
         if(!AppUpdater.pmCanInstall(c))throw new SecurityException("install_sources_permission_required");
         String blocked=prerequisites(c);
@@ -105,41 +107,62 @@ public final class RemoteOta {
             throw new SecurityException("invalid_target_version");
         SharedPreferences p=prefs(c);
         String active=p.getString(COMMAND,""),status=p.getString("stage","idle");
+        if(active.equals(commandId))return new JSONObject().put("submitted",!RemoteOtaPolicy.terminal(status)).put("stage",status);
         if(!active.isEmpty()&&!active.equals(commandId)&&
            !("failed".equals(status)||"succeeded".equals(status)))
             throw new IllegalStateException("ota_already_in_progress");
-        p.edit().putString(COMMAND,commandId).putString("target",target)
+        String operation=java.util.UUID.randomUUID().toString();
+        if(!p.edit().putString(COMMAND,commandId).putString("target",target)
+         .putString("process",PROCESS).putString("operation",operation)
          .putInt("targetCode",0).putInt("sessionId",-1).putBoolean("cancelRequested",false).putString("stage","checking")
-         .putString("error","").putLong("updatedAt",System.currentTimeMillis()/1000).commit();
+         .putString("error","").putLong("updatedAt",System.currentTimeMillis()/1000).commit())
+            throw new IllegalStateException("ota_journal_unavailable");
         dirty(c);
         AppUpdater.check(c,true,(metadata,error)->{
             // Ignore a late release lookup from an earlier/replaced OTA command.
-            if(!commandId.equals(prefs(c).getString(COMMAND,"")) || !"checking".equals(currentStage(c)))return;
-            if(error!=null||metadata==null||!metadata.optBoolean("available")){
-                fail(c,error!=null?"release_unavailable":"no_new_version");return;
+            synchronized(RemoteOta.class){
+                if(!ownsOperation(c,operation)||!"checking".equals(currentStage(c)))return;
+                if(error!=null||metadata==null||!metadata.optBoolean("available")){
+                    fail(c,operation,error!=null?"release_unavailable":"no_new_version");return;
+                }
+                if(!"latest".equals(target)&&!target.equals(metadata.optString("versionName"))){
+                    fail(c,operation,"target_not_latest_channel");return;
+                }
+                if(!prefs(c).edit().putInt("targetCode",metadata.optInt("versionCode"))
+                    .putString("target",metadata.optString("versionName")).commit()){
+                    fail(c,operation,"ota_journal_unavailable");return;
+                }
+                dirty(c);
             }
-            if(!"latest".equals(target)&&!target.equals(metadata.optString("versionName"))){
-                fail(c,"target_not_latest_channel");return;
-            }
-            prefs(c).edit().putInt("targetCode",metadata.optInt("versionCode"))
-              .putString("target",metadata.optString("versionName")).commit();
-            dirty(c);
-            AppUpdater.downloadRemote(c,metadata);
+            AppUpdater.downloadRemote(c,metadata,operation);
         });
         return new JSONObject().put("submitted",true);
     }
     public static boolean cancelRequested(Context c){return prefs(c).getBoolean("cancelRequested",false);}
+    static synchronized boolean ownsOperation(Context c,String operation){
+        SharedPreferences p=prefs(c);
+        return operation!=null&&operation.equals(p.getString("operation",""))
+            &&PROCESS.equals(p.getString("process",""))&&active(c)&&!cancelRequested(c);
+    }
+    public static boolean cancelRequested(Context c,String operation){return !ownsOperation(c,operation);}
     public static synchronized boolean cancel(Context c){
         String status=prefs(c).getString("stage","idle");
-        if(!active(c)||"installing".equals(status)||"awaiting_confirmation".equals(status))return false;
-        prefs(c).edit().putBoolean("cancelRequested",true).commit();dirty(c);
+        if(!active(c)||!RemoteOtaPolicy.requiresWorker(status))return false;
+        prefs(c).edit().putBoolean("cancelRequested",true).commit();
+        // Cancellation is durable and terminal even if the process/worker died.
+        // An old worker's operation id cannot mutate a replacement request.
+        finish(c,"failed","update_cancelled");
         return true;
     }
-    public static void stage(Context c,String stage){
+    public static synchronized void stage(Context c,String stage){
         prefs(c).edit().putString("stage",stage).putLong("updatedAt",System.currentTimeMillis()/1000).commit();
         dirty(c);
     }
-    private static void finish(Context c,String status,String reason){
+    static synchronized void stage(Context c,String operation,String stage){
+        if(!ownsOperation(c,operation))throw new IllegalStateException("ota_operation_inactive");
+        stage(c,stage);
+    }
+    private static synchronized void finish(Context c,String status,String reason){
         SharedPreferences p=prefs(c);
         String id=p.getString(COMMAND,"");
         p.edit().putString("stage",status).putString("error",reason)
@@ -155,17 +178,32 @@ public final class RemoteOta {
         }
     }
     public static void fail(Context c,String reason){finish(c,"failed",reason);}
+    static synchronized void fail(Context c,String operation,String reason){
+        if(ownsOperation(c,operation))finish(c,"failed",reason);
+    }
     /** Check the real package version at every startup, sync and installer callback.
      * Never interpret a submitted PackageInstaller session as installation success. */
     public static synchronized void reconcileInstalledVersion(Context c){
         SharedPreferences p=prefs(c);
         int expected=p.getInt("targetCode",0);
         String status=p.getString("stage","idle");
-        if(expected<=0 || "succeeded".equals(status) || "failed".equals(status))return;
+        if("idle".equals(status)||RemoteOtaPolicy.terminal(status))return;
         int installed=installedVersionCode(c);
         if(RemoteOtaPolicy.installedMatchesTarget(installed,expected,status)){
             finish(c,"succeeded","");
-        }else if("installing".equals(status)){
+        }else if(RemoteOtaPolicy.requiresWorker(status)){
+            if(p.getBoolean("cancelRequested",false))finish(c,"failed","update_cancelled");
+            else if(!PROCESS.equals(p.getString("process","")))
+                finish(c,"failed","update_interrupted_before_install");
+        }else if("installing".equals(status)||"awaiting_confirmation".equals(status)||"verification_pending".equals(status)){
+            // PackageInstaller owns committed work across process death. Never
+            // treat its existence (or submission) as installation success.
+            int session=p.getInt("sessionId",-1);
+            if(!PROCESS.equals(p.getString("process",""))){
+                android.content.pm.PackageInstaller.SessionInfo info=session>0?
+                    c.getPackageManager().getPackageInstaller().getSessionInfo(session):null;
+                if(info==null){finish(c,"failed","install_session_unavailable");return;}
+            }
             long updated=p.getLong("updatedAt",0);
             if(RemoteOtaPolicy.installationNeedsVerification(status,updated,System.currentTimeMillis()/1000)){
                 stage(c,"verification_pending");
@@ -175,6 +213,10 @@ public final class RemoteOta {
     public static void onPackageReplaced(Context c){reconcileInstalledVersion(c);}
     public static synchronized void installSession(Context c,int id){
         prefs(c).edit().putInt("sessionId",id).commit();
+    }
+    static synchronized void installSession(Context c,String operation,int id){
+        if(!ownsOperation(c,operation))throw new IllegalStateException("ota_operation_inactive");
+        if(!prefs(c).edit().putInt("sessionId",id).commit())throw new IllegalStateException("ota_journal_unavailable");
     }
     public static boolean matchesInstallSession(Context c,int id){
         return id>0 && prefs(c).getInt("sessionId",-1)==id;

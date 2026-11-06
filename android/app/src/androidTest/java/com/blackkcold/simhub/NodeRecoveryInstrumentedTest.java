@@ -167,4 +167,38 @@ public class NodeRecoveryInstrumentedTest {
         assertEquals(0,new AgentConfig(c).historyDate());
         SharedPoolClient.clearLocalForReset(c);
     }
+    @Test public void interruptedOtaWorkersBecomeRetryableTerminalFailures()throws Exception{
+        for(String stage:new String[]{"checking","downloading","verified"}){
+            Context c=isolatedContext();String id="ota-recovery-"+UUID.randomUUID();
+            LocalStore local=LocalStore.get(c);assertTrue(local.claimCommand(id,"ota.install"));
+            SharedPreferences state=c.getSharedPreferences("simhub_remote_ota_v1",Context.MODE_PRIVATE);
+            state.edit().putString("command",id).putString("stage",stage).putString("process","dead-process")
+                .putString("operation","interrupted-operation").putInt("targetCode",stage.equals("checking")?0:Integer.MAX_VALUE)
+                .putLong("updatedAt",1).commit();
+            try{
+                RemoteOta.reconcileInstalledVersion(c);
+                assertEquals("failed",RemoteOta.currentStage(c));
+                assertFalse(RemoteOta.active(c));
+                assertEquals("update_interrupted_before_install",state.getString("error",""));
+                assertEquals("failed",local.commandState(id));
+            }finally{
+                local.getWritableDatabase().delete("processed_commands","id=?",new String[]{id});
+                local.getWritableDatabase().delete("command_acks","command_id=?",new String[]{id});
+            }
+        }
+    }
+    @Test public void cancellingOrphanedOtaDoesNotWaitForWorkerAndLateCallbackCannotClobberNext(){
+        Context c=isolatedContext();SharedPreferences state=c.getSharedPreferences("simhub_remote_ota_v1",Context.MODE_PRIVATE);
+        state.edit().putString("command","synthetic-ota-cancel").putString("operation","old-operation")
+            .putString("process","dead-process").putString("stage","checking").commit();
+        assertTrue(RemoteOta.cancel(c));
+        assertEquals("failed",RemoteOta.currentStage(c));assertFalse(RemoteOta.active(c));
+        assertEquals("update_cancelled",state.getString("error",""));
+        state.edit().putString("command","synthetic-new-ota").putString("operation","new-operation")
+            .putString("stage","checking").putBoolean("cancelRequested",false).commit();
+        RemoteOta.fail(c,"old-operation","late-failure");
+        assertEquals("checking",RemoteOta.currentStage(c));
+        try{RemoteOta.stage(c,"old-operation","installing");fail("Old worker changed replacement operation");}
+        catch(IllegalStateException expected){}
+    }
 }

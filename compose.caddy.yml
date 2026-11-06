@@ -3,7 +3,7 @@
 # Docker gateway trust setting covers Docker's loopback port SNAT.
 services:
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:b060aafbec4f8f5404c80273c8d8758248f157920d0a0cdd5cb5656a527f6ec5
     network_mode: host
     restart: unless-stopped
     read_only: true

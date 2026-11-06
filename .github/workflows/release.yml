@@ -83,33 +83,9 @@ jobs:
         with:
           node-version: '22'
       - run: python3 -m pip install -r modem_agent/requirements.txt -r server/requirements.txt
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_v040 server.test_v050
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_sms_companion_state server.test_device_telemetry server.test_device_location
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_passkeys_e2e server.test_hardening server.test_controller_auth server.test_controller_http server.test_global_vault
-      - run: PYTHONPATH=server python3 server/test_auth_stages.py
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_updates server.test_remote_ota
-      - run: PYTHONPATH=server python3 -m unittest -v server.test_command_expiry server.test_schema_rollback
-      - run: python3 scripts/test_updater.py
-      - run: python3 scripts/test_docs.py
+      - name: Discover all Python and Web regression entry points
+        run: python3 scripts/run_regressions.py
       - run: python3 scripts/check_stable_boundary.py
-      - run: python3 scripts/test_release_pipeline.py
-      - run: python3 scripts/test_deployment_bundle.py
-      - run: python3 -m unittest -v scripts.test_release_checks
-      - run: python3 -m unittest -v scripts.test_apk_release_metadata
-      - run: python3 scripts/test_icons.py
-      - run: python3 server/test_simhub.py
-      - run: python3 server/test_surfaces.py
-      - run: PYTHONPATH=server python3 server/test_shared_pool.py
-      - run: PYTHONPATH=server python3 server/test_migration.py
-      - run: PYTHONPATH=server python3 server/test_maintenance.py
-      - run: PYTHONPATH=modem_agent python3 modem_agent/test_modem_agent.py
-      - run: PYTHONPATH=modem_agent python3 -m unittest -v modem_agent.test_recovery
-      - run: node --check web/app.js && node --check web/i18n.js && node --check web/sw.js
-      - run: node web/test_node_dashboard.mjs
-      - run: node web/test_device_location.mjs
-      - run: node web/test_sms_logic.mjs
-      - run: node web/test_crypto_vector.mjs
-      - run: node web/test_bootstrap_vector.mjs
       - run: python3 -m py_compile server/simhub_server.py server/passkeys.py scripts/setup.py scripts/gen_admin_token.py scripts/gen_totp_secret.py modem_agent/simhub_modem_agent.py
       - run: bash -n modem_agent/install.sh scripts/install-updater.sh scripts/deploy-verified.sh
 
@@ -140,24 +116,25 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push prebuilt relay image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: server/Dockerfile
           push: true
           tags: ghcr.io/blackkcold/simhub-relay:v${{ needs.validate.outputs.version }}
           provenance: true
+          sbom: true
           platforms: linux/amd64,linux/arm64
-      - uses: sigstore/cosign-installer@v3.9.0
+      - uses: sigstore/cosign-installer@fb28c2b6339dcd94da6e4cbcbc5e888961f6f8c3
       - name: Sign and verify immutable OCI digest
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}

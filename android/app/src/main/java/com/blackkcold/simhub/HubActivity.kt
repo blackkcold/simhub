@@ -565,6 +565,8 @@ class HubActivity: ComponentActivity(), HubController {
                 }
                 toast(if(status.optBoolean("published",false))
                     actionLabel("加密位置已上传并确认","Encrypted location confirmed by Relay")
+                else if(status.optBoolean("suppressed",false))
+                    actionLabel("位置未发布：服务器隐私设置已阻止该记录，请检查共享授权", "Location was not published: Relay privacy settings suppressed this sample")
                 else actionLabel("位置已加密排队，尚未收到服务器确认","Encrypted location queued; Relay ACK pending"))
             }catch(error:Exception){
                 // Deliberately do not log raw location or errors that may contain coordinates.

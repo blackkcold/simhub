@@ -214,7 +214,7 @@ public final class PeerInstrumentedTest {
             assertTrue(local.claimCommand(id,"sms.send"));
             JSONObject payload=new JSONObject().put("commandId",id).put("body","private pending sandbox SMS");
             JSONObject cipher=com.blackkcold.simhub.PendingSmsCrypto.encrypt(c,payload);
-            assertEquals("p2p-local-pending-v1",cipher.getString("domain"));
+            assertEquals("simhub-pending-sms-v1",cipher.getString("domain"));
             local.createPendingSms(id,"",1,cipher,-1);
             local.queueCommandAck(id,"submitted",new JSONObject());assertEquals(0,local.pendingCommandAckCount());
             local.resetForReenrollment();config.clearEnrollment();

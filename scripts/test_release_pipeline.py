@@ -50,6 +50,21 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn('create("devRelease")',build)
         self.assertIn('applicationIdSuffix = ".dev"',build)
 
+    def test_pinned_actions_and_explicit_security_gate_are_required(self):
+        for path in Path(".github/workflows").glob("*.yml"):
+            for action in re.findall(r"uses:\s*(\S+)", path.read_text("utf-8")):
+                self.assertRegex(action, r"^[^@]+@[0-9a-f]{40}$", str(path))
+        security = Path(".github/workflows/security.yml").read_text("utf-8")
+        self.assertEqual(security.count("scripts/check_codeql.py codeql-results"), 3)
+        for name in ("release.yml", "release-dev.yml"):
+            workflow = Path(".github/workflows", name).read_text("utf-8")
+            self.assertIn("sbom: true", workflow)
+            self.assertIn("scripts/run_regressions.py", workflow)
+        ci = Path(".github/workflows/ci.yml").read_text("utf-8")
+        self.assertIn(":app:lintDebug", ci)
+        self.assertIn("api: [29, 30]", ci)
+        self.assertIn("com.blackkcold.simhub.NodeRecoveryInstrumentedTest", ci)
+
 
 
 if __name__ == "__main__":

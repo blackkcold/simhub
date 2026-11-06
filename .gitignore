@@ -23,3 +23,4 @@ p2p-sandbox-results.json
 
 # Kotlin build session metadata (Kotlin 2.x)
 .kotlin/
+.simhub-backup.lock

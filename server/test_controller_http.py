@@ -27,30 +27,30 @@ def pub(pair):
                                             serialization.PublicFormat.SubjectPublicKeyInfo))
 
 class ControllerHttpTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.work=tempfile.TemporaryDirectory()
+    def setUp(self):
+        # Authentication failure budgets intentionally survive successful
+        # requests. Keep independent negative scenarios on independent Relays.
+        self.work=tempfile.TemporaryDirectory()
         with socket.socket() as s:
-            s.bind(("127.0.0.1",0));cls.port=s.getsockname()[1]
-        cls.url=f"http://127.0.0.1:{cls.port}"
+            s.bind(("127.0.0.1",0));self.port=s.getsockname()[1]
+        self.url=f"http://127.0.0.1:{self.port}"
         env=os.environ.copy()
         env.update(SIMHUB_ADMIN_TOKEN=ADMIN_TOKEN,SIMHUB_BIND="127.0.0.1",
-                   SIMHUB_PORT=str(cls.port),SIMHUB_DB=str(Path(cls.work.name)/"relay.db"),
+                   SIMHUB_PORT=str(self.port),SIMHUB_DB=str(Path(self.work.name)/"relay.db"),
                    SIMHUB_REQUIRE_TOTP="false")
-        cls.proc=subprocess.Popen([sys.executable,str(ROOT/"server"/"simhub_server.py")],
+        self.proc=subprocess.Popen([sys.executable,str(ROOT/"server"/"simhub_server.py")],
             env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
-                urllib.request.urlopen(cls.url+"/readyz",timeout=.2).read()
+                urllib.request.urlopen(self.url+"/readyz",timeout=.2).read()
                 return
             except Exception: time.sleep(.05)
         raise RuntimeError("Controller HTTP relay did not start")
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.proc.terminate()
-        cls.proc.wait(timeout=5)
-        cls.work.cleanup()
+    def tearDown(self):
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        self.work.cleanup()
 
     def call(self,method,path,obj=None,cookie=None,admin=False,csrf=None,poll_token=None,device_token=None):
         headers={"Content-Type":"application/json"}

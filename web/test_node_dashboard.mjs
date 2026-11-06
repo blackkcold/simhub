@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {nodeDashboardModel,renderNodeDashboard,signalBars,wifiArcs,batteryLevel} from './device-dashboard.js';
+import {nodeDashboardModel,renderNodeDashboard,signalBars,wifiArcs,batteryLevel,recoveryActions} from './device-dashboard.js';
 const base={id:'node-1',name:'fold5',model:'vivo',appVersion:'0.16.2',online:true,smsCount:321,
   state:{batteryPct:100,network:'WiFi',smsMode:'companion',smsReadPermission:true,
     smsReceivePermission:true,smsSendPermission:true,pendingEvents:0,pendingCommandAcks:0,
@@ -45,4 +45,10 @@ assert.match(visual,/node-battery-level/);
 assert.match(visual,/node-wifi-arcs/);
 assert.match(visual,/最近采样/);
 assert.match(render({...base,state:{...base.state,sampledAt:1}}),/状态已过期/);
+const recovery=recoveryActions({online:false,pendingTokenRotation:true,state:{smsMode:'default',smsSendPermission:false,
+  nextRetryAt:200,remoteOtaStage:'verification_pending'}},100);
+assert.deepEqual(recovery.map(a=>a.code),['offline','permission','backoff','credentials','ota-confirm']);
+assert.ok(!recoveryActions({online:true,state:{}}).length,'Missing telemetry must not fabricate a failure');
+assert.deepEqual(recoveryActions({revoked:true,online:false,state:{}}).map(a=>a.code),['revoked']);
+assert.match(render({...base,state:{...base.state,oldestPendingEventAt:1}}),/最早事件等待/);
 console.log('SIM node health dashboard model and escaping: OK');

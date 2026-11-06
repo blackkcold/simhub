@@ -4,6 +4,8 @@ import {createToastHost} from './toast.js';
 import {NotificationCenter} from './notifications.js';
 import {bindNotificationUI} from './notification-ui.js';
 import {tr, applyI18n, getLocale, setLocale, localizeMessage} from './i18n.js';
+import {IntentJournal, SendCoordinator} from './send-intents.js';
+import {VaultSettingsClient} from './vault-settings.js';
 const $ = (id) => document.getElementById(id);
 // Resolve the public deployment identity before login; no auth/session data is exposed.
 async function loadChannelBranding(){
@@ -38,6 +40,7 @@ let authenticated=false;
 let passwordConfigured=false;
 const PHONE_OVERRIDES_STORE = 'simhub_phone_overrides_v1';
 let phoneOverrides={};
+let channelAliases={},vaultSettingsClient=null,remoteSettingsAvailable=true;
 let sessionIdleMs = DEFAULT_SESSION_IDLE_MS;
 
 let vaultKey=null,vaultRaw=null,devices=[],events=[],decryptedEvents=[],lastSeq=0,oldestSeq=0,pollTimer=null,eventSource=null,autoLockTimer=null,refreshTimer=null,lastActivity=Date.now();
@@ -52,6 +55,7 @@ let enrollStep=1,enrollMode='package',nodeBaseUrl='',enrollStartingDevices=new S
 const eventIds=new Set();
 let securityEpoch=0;
 let eventDataGeneration=0;
+let intentJournal=null,sendCoordinator=null,recentCommands=[];
 const vaultLockChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('simhub-vault-lock-v1'):null;
 const deviceKeyCache=new Map();
 const titleKeys={inbox:['title_inbox','subtitle_inbox'],send:['title_send','subtitle_send'],devices:['title_devices','subtitle_devices'],settings:['title_settings','subtitle_settings']};
@@ -95,25 +99,34 @@ function clearTrustedVault(){try{localStorage.removeItem(TRUSTED_VAULT_CACHE);}c
 async function storeTrustedVault(){
   const config=trustedOptions();
   if(!config.enabled||!vaultRaw||!authenticated)return;
+  const epoch=securityEpoch,snapshot=vaultKey;
   const secret=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
   try{
     const key=await tabVaultKey();
     const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-trusted-vault-v1')},key,secret);
+    if(epoch!==securityEpoch||snapshot!==vaultKey||!authenticated||!trustedOptions().enabled)return;
     localStorage.setItem(TRUSTED_VAULT_CACHE,JSON.stringify({v:1,iv:b64u(iv),
       ct:b64u(new Uint8Array(ct)),expiresAt:Date.now()+Math.min(config.duration*1000,sessionIdleMs)}));
   }finally{secret.fill(0);}
 }
 async function restoreTrustedVault(){
   if(!authenticated||!trustedOptions().enabled)return false;
+  const epoch=securityEpoch;
+  let raw;
   try{
     const data=JSON.parse(localStorage.getItem(TRUSTED_VAULT_CACHE)||'null');
     if(!data||data.v!==1||Date.now()>=data.expiresAt)throw Error('Expired');
-    const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(data.iv),
-      additionalData:enc.encode('simhub-trusted-vault-v1')},await tabVaultKey(),unb64u(data.ct));
+    raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(data.iv),
+      additionalData:enc.encode('simhub-trusted-vault-v1')},await tabVaultKey(),unb64u(data.ct)));
     if(raw.byteLength!==32)throw Error('Invalid Vault Key');
-    await importVault(raw);await loadPhoneOverrides();showUnlocked();await fullRefresh();
+    if(epoch!==securityEpoch||!authenticated||!trustedOptions().enabled)return false;
+    await importVault(raw,epoch);await loadPhoneOverrides();
+    if(epoch!==securityEpoch||!vaultKey)return false;
+    showUnlocked();await fullRefresh();
+    if(epoch!==securityEpoch||!vaultKey)return false;
     refreshVersionInfo().catch(()=>{});startRealtime();return true;
-  }catch{clearTrustedVault();return false;}
+  }catch{if(epoch===securityEpoch)clearTrustedVault();return false;}
+  finally{raw?.fill(0);}
 }
 async function setAdminPassword(){
   const value=$('newAdminPassword').value;
@@ -165,27 +178,33 @@ function promptLoginTotp(){
 
 async function cacheTabVault(){
   if(!vaultRaw||!vaultKey)return;
-  const snapshot=vaultKey,raw=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
+  const epoch=securityEpoch,snapshot=vaultKey,raw=new Uint8Array(vaultRaw),iv=crypto.getRandomValues(new Uint8Array(12));
   try{
     const key=await tabVaultKey();
     const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-session-tab-v1')},key,raw);
-    if(snapshot===vaultKey)sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify({v:1,iv:b64u(iv),ct:b64u(new Uint8Array(ct)),lastActivity}));
+    if(epoch===securityEpoch&&snapshot===vaultKey)sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify({v:1,iv:b64u(iv),ct:b64u(new Uint8Array(ct)),lastActivity}));
   }catch(e){console.warn('Session vault resume unavailable',e.name);}
   finally{raw.fill(0);}
 }
 async function restoreTabVault(){
+  const epoch=securityEpoch;
   let saved;
   try{saved=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE)||'null');}catch{}
   if(!saved||saved.v!==1||!Number.isFinite(saved.lastActivity)||Date.now()-saved.lastActivity>=sessionIdleMs||saved.lastActivity>Date.now()+60000){clearTabVault();return false;}
+  let raw;
   try{
     const key=await tabVaultKey();
-    const raw=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(saved.iv),additionalData:enc.encode('simhub-session-tab-v1')},key,unb64u(saved.ct));
+    raw=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(saved.iv),additionalData:enc.encode('simhub-session-tab-v1')},key,unb64u(saved.ct)));
     if(raw.byteLength!==32)throw new Error('Invalid vault key length');
-    await importVault(raw);
+    if(epoch!==securityEpoch||!authenticated)return false;
+    await importVault(raw,epoch);
     lastActivity=saved.lastActivity;try{const restored=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE));restored.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(restored));}catch{}armAutoLock();
-    await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
+    await loadPhoneOverrides();if(epoch!==securityEpoch||!vaultKey)return false;
+    showUnlocked();await fullRefresh();if(epoch!==securityEpoch||!vaultKey)return false;
+    refreshVersionInfo().catch(()=>{});startRealtime();
     return true;
-  }catch(e){clearTabVault();if(vaultKey)lockVault();return false;}
+  }catch(e){if(epoch===securityEpoch){clearTabVault();if(vaultKey)lockVault();}return false;}
+  finally{raw?.fill(0);}
 }
 async function resumeExistingSession(){
   try{
@@ -199,33 +218,85 @@ async function resumeExistingSession(){
 async function loadPhoneOverrides(){
   phoneOverrides={};
   if(!vaultKey)return;
+  const epoch=securityEpoch,snapshot=vaultKey;
   try{
     const saved=JSON.parse(localStorage.getItem(PHONE_OVERRIDES_STORE)||'null');if(!saved)return;
     const clear=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64u(saved.iv),additionalData:enc.encode('simhub-phone-overrides-v1')},vaultKey,unb64u(saved.ct));
-    const parsed=JSON.parse(dec.decode(clear));if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))phoneOverrides=parsed;
-  }catch{phoneOverrides={};}
+    const parsed=JSON.parse(dec.decode(clear));if(epoch===securityEpoch&&snapshot===vaultKey&&parsed&&typeof parsed==='object'&&!Array.isArray(parsed))phoneOverrides=parsed;
+  }catch{if(epoch===securityEpoch)phoneOverrides={};}
 }
 async function savePhoneOverrides(){
   if(!vaultKey)throw Error('Vault locked');
+  const epoch=securityEpoch,key=vaultKey;
   const iv=crypto.getRandomValues(new Uint8Array(12));
   const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('simhub-phone-overrides-v1')},vaultKey,enc.encode(JSON.stringify(phoneOverrides)));
+  if(epoch!==securityEpoch||key!==vaultKey)throw Error('Vault locked');
   localStorage.setItem(PHONE_OVERRIDES_STORE,JSON.stringify({v:1,iv:b64u(iv),ct:b64u(new Uint8Array(ct))}));
+}
+function ensureVaultSettings(){
+  if(!vaultKey||!globalVault?.initialized)throw Error('Vault locked');
+  if(!vaultSettingsClient||vaultSettingsClient.key!==vaultKey){
+    const key=vaultKey,epoch=securityEpoch;
+    vaultSettingsClient?.close();
+    vaultSettingsClient=new VaultSettingsClient({vaultId:globalVault.vaultId,keyId:globalVault.keyId,
+      key,api,isCurrent:()=>key===vaultKey&&epoch===securityEpoch});
+  }
+  return vaultSettingsClient;
+}
+async function loadVaultSettings(){
+  if(!vaultKey||!globalVault?.initialized)return;
+  const epoch=securityEpoch;
+  try{
+    const result=await ensureVaultSettings().load({v:1,phoneOverrides,channelAliases});
+    if(epoch!==securityEpoch||!vaultKey)return;
+    phoneOverrides=result.settings.phoneOverrides;channelAliases=result.settings.channelAliases;
+    remoteSettingsAvailable=true;if($('metadataSyncStatus'))$('metadataSyncStatus').textContent=getLocale()==='zh-CN'?'SIM 标签已加密同步':'SIM labels synchronized with end-to-end encryption';
+  }catch(error){
+    if(error.status===404&&error.code==='not_found'){remoteSettingsAvailable=false;return;}
+    throw error;
+  }
+}
+async function updateVaultSetting(section,id,value){
+  const epoch=securityEpoch;
+  const result=await ensureVaultSettings().update(section,id,value,{v:1,phoneOverrides,channelAliases});
+  if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked');
+  phoneOverrides=result.settings.phoneOverrides;channelAliases=result.settings.channelAliases;
+  await savePhoneOverrides();
+  renderDevices();renderDeviceSelectors();renderInbox();updateReplyChannels();
 }
 function phoneOverrideKey(device,ch){return device.id+'|'+ch.id+'|'+String(ch.revision||ch.channelRevision||1);}
 async function editSimPhone(deviceId,channelId){
   const d=devices.find(x=>x.id===deviceId),ch=nodeChannels(d).find(x=>String(x.id)===channelId);
   if(!d||!ch)throw Error('SIM 通道不存在');
-  const input=prompt('设置 SIM 电话号码（仅当前浏览器加密保存；留空清除覆盖值）',ch.phoneNumber||'');
+  const input=prompt(remoteSettingsAvailable?'设置显示号码（加密同步到已授权的管理终端；留空清除）':'设置 SIM 显示号码（当前 Relay 仅支持本机加密保存）',ch.phoneNumber||'');
   if(input===null)return;
   const number=input.trim();
   if(number&&!/^\+?[0-9 ()-]{5,24}$/.test(number))throw Error('电话号码格式无效');
   const key=phoneOverrideKey(d,ch);
+  if(remoteSettingsAvailable){await updateVaultSetting('phoneOverrides',key,number);return;}
   if(number)phoneOverrides[key]=number;else delete phoneOverrides[key];
   await savePhoneOverrides();renderDevices();renderDeviceSelectors();renderInbox();updateReplyChannels();
 }
+async function editSimAlias(deviceId,channelId){
+  const d=devices.find(x=>x.id===deviceId),ch=nodeChannels(d).find(x=>String(x.id)===channelId);
+  if(!d||!ch)throw Error('SIM 通道不存在');
+  const input=prompt('设置 SIM 标签（加密同步到已授权的管理终端；留空恢复设备标签）',channelAliases[phoneOverrideKey(d,ch)]||'');
+  if(input===null)return;
+  await updateVaultSetting('channelAliases',phoneOverrideKey(d,ch),input.trim());
+}
 async function deriveWrapKey(passphrase,salt,iterations=PBKDF2_ITER){const base=await crypto.subtle.importKey('raw',enc.encode(passphrase),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}
 async function wrapVaultRaw(raw,passphrase){if(passphrase.length<10)throw new Error('Use a vault passphrase of at least 10 characters.');const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),wrapKey=await deriveWrapKey(passphrase,salt);const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:enc.encode('simhub-vault-wrap-v1')},wrapKey,raw));localStorage.setItem(VAULT_STORE,JSON.stringify({v:1,kdf:'PBKDF2-SHA256',iterations:PBKDF2_ITER,salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}));}
-async function importVault(raw){if(globalVault?.initialized && await globalKeyId(raw)!==globalVault.keyId)throw Error('Vault 密钥与服务器登记身份不一致');vaultRaw=new Uint8Array(raw);vaultKey=await crypto.subtle.importKey('raw',vaultRaw,{name:'AES-GCM'},false,['encrypt','decrypt']);deviceKeyCache.clear();resetAutoLock();await cacheTabVault();}
+async function importVault(raw,epoch=securityEpoch){
+  const copy=new Uint8Array(raw);
+  try{
+    if(globalVault?.initialized && await globalKeyId(copy)!==globalVault.keyId)throw Error('Vault 密钥与服务器登记身份不一致');
+    const key=await crypto.subtle.importKey('raw',copy,{name:'AES-GCM'},false,['encrypt','decrypt']);
+    if(epoch!==securityEpoch)throw Error('Vault lock cancelled the unlock request');
+    if(vaultRaw)vaultRaw.fill(0);
+    vaultRaw=new Uint8Array(copy);vaultKey=key;deviceKeyCache.clear();resetAutoLock();await cacheTabVault();
+    if(epoch!==securityEpoch||key!==vaultKey)throw Error('Vault lock cancelled the unlock request');
+  }finally{copy.fill(0);}
+}
 async function globalKeyId(raw){return b64u(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)).slice(0,16));}
 async function makeGlobalEnvelope(raw,passphrase){
   if(passphrase.length<10)throw Error('Vault 密码至少 10 位');
@@ -253,6 +324,7 @@ async function unwrapLegacyVault(passphrase){
   catch{throw Error('旧 Vault 密码不正确，无法自动迁移');}
 }
 async function importRecoveryFlow(){
+  const epoch=securityEpoch;
   const text=$('recoveryKey').value.trim(),prefix='SIMHUB-RECOVERY-V1:';
   if(!text.startsWith(prefix))throw Error('恢复密钥格式无效');
   const raw=unb64u(text.slice(prefix.length));
@@ -262,11 +334,12 @@ async function importRecoveryFlow(){
     if(globalVault.initialized){
       if(await globalKeyId(raw)!==globalVault.keyId)throw Error('恢复密钥不属于当前共享 Vault，已阻止混用');
     }else await initGlobalVault(raw,$('passphrase').value);
-    await importVault(raw);$('recoveryKey').value='';$('passphrase').value='';
+    await importVault(raw,epoch);$('recoveryKey').value='';$('passphrase').value='';
     toast('共享 Vault 已通过恢复密钥解锁');
   }finally{raw.fill(0);}
 }
 async function unlockVault(passphrase){
+  const epoch=securityEpoch;
   if(!globalVault)await loadGlobalVault();
   if(!globalVault.initialized)throw Error('尚未初始化共享 Vault');
   const e=globalVault.envelope,wrapKey=await deriveWrapKey(passphrase,unb64u(e.salt),e.iterations);
@@ -276,7 +349,7 @@ async function unlockVault(passphrase){
   catch{throw Error('共享 Vault 密码错误');}
   try{
     if(await globalKeyId(raw)!==globalVault.keyId)throw Error('共享 Vault 密钥指纹不一致，已停止解锁');
-    await importVault(raw);$('passphrase').value='';
+    await importVault(raw,epoch);$('passphrase').value='';
   }finally{raw.fill(0);}
 }
 async function keyIdForRaw(raw){const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',raw));return b64u(digest.slice(0,12));}
@@ -289,7 +362,7 @@ async function encryptBootstrapNodeKey(nodeRaw,bootstrapRaw,kid){
   const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv,additionalData:aad},key,nodeRaw));
   return {v:1,alg:'A256GCM',iv:b64u(iv),ct:b64u(ct)};
 }
-async function deviceCrypto(deviceId){if(deviceKeyCache.has(deviceId))return deviceKeyCache.get(deviceId);const info=devices.find(x=>x.id===deviceId);let out;if(info&&info.keyId&&info.wrappedKey){const raw=await unwrapNodeKey(info.wrappedKey,info.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);out={raw:raw,key:key,kid:info.keyId,mode:'node'};}else out=await deriveLegacyDevice(deviceId);deviceKeyCache.set(deviceId,out);return out;}
+async function deviceCrypto(deviceId){const epoch=securityEpoch,snapshot=vaultKey;if(!snapshot)throw Error('Vault locked');if(deviceKeyCache.has(deviceId))return deviceKeyCache.get(deviceId);const info=devices.find(x=>x.id===deviceId);let out;if(info&&info.keyId&&info.wrappedKey){const raw=await unwrapNodeKey(info.wrappedKey,info.keyId),key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);out={raw:raw,key:key,kid:info.keyId,mode:'node'};}else out=await deriveLegacyDevice(deviceId);if(epoch!==securityEpoch||snapshot!==vaultKey){out.raw.fill(0);throw Error('Vault locked');}deviceKeyCache.set(deviceId,out);return out;}
 /** Safe failure category only: never surface raw ciphertext, plaintext or keys. */
 function decryptFailureCategory(e,error){
   const d=devices.find(x=>x.id===e.deviceId);
@@ -340,7 +413,7 @@ async function api(path,opts){opts=opts||{};const method=opts.method||'GET',body
     }
     await new Promise(resolve=>setTimeout(resolve,250*Math.pow(2,attempt)));
   }
-  let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check'){authenticated=false;lockVault();}throw new Error(data.message||data.error||('HTTP '+res.status));}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;
+  let data={};try{data=await res.json();}catch(e){}if(!res.ok){if(res.status===401&&vaultKey&&path!=='/api/v1/auth/check'){authenticated=false;lockVault();}throw Object.assign(new Error(data.message||data.error||('HTTP '+res.status)),{status:res.status,code:data.error});}if(data.csrfToken)csrfToken=data.csrfToken;if(typeof data.totpRequired==='boolean')secondFactorIsTotp=data.totpRequired;
   if(typeof data.passwordConfigured==='boolean'){passwordConfigured=data.passwordConfigured;
     const status=$('adminPasswordStatus');if(status)status.textContent=passwordConfigured?'已设置独立管理员密码':'未设置独立密码：当前仍使用 Admin Token 登录';}if(typeof data.passkeyCount==='number')passkeyCount=data.passkeyCount;if(typeof data.sessionIdleTtlSeconds==='number')sessionIdleMs=Math.max(60000,data.sessionIdleTtlSeconds*1000);if(data.username&&$('username'))$('username').value=data.username;return data;}
 async function establishSession(){
@@ -464,7 +537,7 @@ async function removePasskey(id){
   toast('通行密钥已移除');
 }
 function setConnected(on){$('relayDot').classList.toggle('ok',on);$('relayText').textContent=tr(on?'relay_connected':'relay_disconnected');}
-function showUnlocked(){notificationCenter.locale=getLocale();notificationCenter.setScope($('username').value||'admin').catch(()=>{});if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);
+function showUnlocked(){if(!vaultKey)return;notificationCenter.locale=getLocale();notificationCenter.setScope($('username').value||'admin').catch(()=>{});if(samePhoneControllerApproval && !samePhoneApprovalOpened){samePhoneApprovalOpened=true;queueMicrotask(()=>{if(!vaultKey)return;document.querySelector('[data-view="devices"]')?.click();openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));});}$('loggedInUser').hidden=false;$('loggedInUser').textContent=$('username').value.trim();$('newSmsBtn').hidden=true;refreshPasskeys().catch(()=>{});$('lockedPanel').hidden=true;$('appContent').hidden=false;$('lockBtn').hidden=false;$('vaultStatus').textContent=tr('vault_unlocked');setConnected(true);
   // Respect a notification deep link after authentication / Vault unlock.
   if(!samePhoneControllerApproval){
     const requested=new URLSearchParams(location.search).get('view');
@@ -478,7 +551,7 @@ function showUnlocked(){notificationCenter.locale=getLocale();notificationCenter
 function purgeSensitiveUI(){
   // Hidden DOM is still observable to local browser extensions and scripts.
   // Wipe all decrypted data and one-time credentials, not merely app arrays.
-  for(const id of ['inboxItems','conversationMessages','deviceList','smsPoolMembers','diagnosticsOutput','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','gateRecoveryKey','newAdminPassword','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary']){
+  for(const id of ['inboxItems','conversationMessages','conversationTitle','conversationMeta','deviceList','smsPoolMembers','diagnosticsOutput','diagnosticsTitle','enrollLink','replyTo','replyBody','sendTo','sendBody','recoveryKey','gateRecoveryKey','newAdminPassword','newVaultPassphrase','confirmVaultPassphrase','adminToken','totp','passphrase','stepupValue','enrollName','search','passkeysList','nodeEndpointValue','deviceDetailContent','deviceDetailTitle','enrollFinishTitle','enrollFinishText','deviceSummary','controllerPending','controllerAuthorized','controllerConnectLink','controllerQr']){
     const el=$(id);if(!el)continue;
     if('value' in el)el.value='';
     if(id==='diagnosticsOutput')el.textContent='';
@@ -495,7 +568,7 @@ function purgeSensitiveUI(){
       if(!known)child.remove();
     }
   }
-  for(const id of ['deviceFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
+  for(const id of ['deviceFilter','simFilter','sendDevice','sendSubscription','replyDevice','replySubscription']){
     const el=$(id);if(el)el.replaceChildren();
   }
   const link=$('openEnroll');if(link){link.removeAttribute('href');link.hidden=true;}
@@ -504,11 +577,12 @@ function purgeSensitiveUI(){
   if($('enrollQr'))$('enrollQr').replaceChildren();
   if($('pairCodeInput'))$('pairCodeInput').value='';
   if($('pairCodeStatus'))$('pairCodeStatus').textContent='';
-  for(const id of ['enrollDialog','deviceDetailDialog','loginOtpDialog']){const d=$(id);if(d?.open)d.close();}
+  for(const id of ['enrollDialog','deviceDetailDialog','loginOtpDialog','controllerConnectDialog','sendCenterDialog']){const d=$(id);if(d?.open)d.close();}
   nodeBaseUrl='';enrollStartingDevices.clear();
   const dialog=$('diagnosticsDialog');if(dialog?.open)dialog.close();
   const stepup=$('stepupDialog');if(stepup?.open){stepup.dispatchEvent(new Event('cancel',{cancelable:true}));if(stepup.open)stepup.close();}
   const operations=$('commandActivity');if(operations)operations.replaceChildren();
+  for(const id of ['sendIntentList','replyDraftStatus','backupStatus','metadataSyncStatus','updateStatus','updateAgentHelp'])$(id)?.replaceChildren();
   const lifecycle=$('lifecycleHistory');if(lifecycle)lifecycle.replaceChildren();
   const badge=$('smsUnreadBadge');if(badge){badge.textContent='';badge.hidden=true;}
   if($('notifyHistoryList'))$('notifyHistoryList').replaceChildren();
@@ -517,19 +591,23 @@ function purgeSensitiveUI(){
 }
 function lockVault(broadcast=true){
   securityEpoch++;androidNativePage=0;
+  intentJournal?.close();intentJournal=null;sendCoordinator=null;recentCommands=[];
+  vaultSettingsClient?.close();vaultSettingsClient=null;channelAliases={};remoteSettingsAvailable=true;
   if(androidShell&&window.SimHubNativeInbox?.postMessage)
     window.SimHubNativeInbox.postMessage(JSON.stringify({type:'locked'}));
   phoneOverrides={};clearTabVault();activeConversationKey=null;diagnosticsDeviceId=null;
   $('smsLayout').classList.remove('conversation-open');
   purgeSensitiveUI();
   $('loggedInUser').hidden=true;$('newSmsBtn').hidden=true;stepUpUntil=0;
-  vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;deviceKeyCache.clear();
+  vaultKey=null;if(vaultRaw)vaultRaw.fill(0);vaultRaw=null;
+  for(const value of deviceKeyCache.values())value.raw?.fill(0);
+  deviceKeyCache.clear();
   poolState=null;devices=[];events=[];decryptedEvents=[];eventIds.clear();
   locationCache.clear();locationMaps.clear();
   simProfileIndex.clear();simProfileIndexVersion='';lastSeq=0;oldestSeq=0;
   initialEventsLoaded=false;olderCursor=null;historyHasMore=true;visibleCount=40;lastAutoScroll=-1;
   clearInterval(pollTimer);pollTimer=null;clearTimeout(autoLockTimer);autoLockTimer=null;
-  clearTimeout(refreshTimer);refreshTimer=null;
+  clearTimeout(refreshTimer);refreshTimer=null;clearTimeout(updatePolling);updatePolling=null;
   if(eventSource){eventSource.close();eventSource=null;}
   $('lockedPanel').hidden=false;$('appContent').hidden=true;$('lockBtn').hidden=true;
   clearTrustedVault();
@@ -539,7 +617,7 @@ function lockVault(broadcast=true){
   if(broadcast)try{vaultLockChannel?.postMessage({action:'lock'});}catch{}
   toast('Vault locked');
 }
-if(vaultLockChannel)vaultLockChannel.onmessage=e=>{if(e.data?.action==='lock'&&vaultKey)lockVault(false);};
+if(vaultLockChannel)vaultLockChannel.onmessage=e=>{if(e.data?.action==='lock')lockVault(false);};
 
 function armAutoLock(){clearTimeout(autoLockTimer);if(!vaultKey)return;const remaining=Math.max(0,sessionIdleMs-(Date.now()-lastActivity));autoLockTimer=setTimeout(()=>enforceAutoLock(),remaining);}
 function resetAutoLock(){lastActivity=Date.now();try{const s=JSON.parse(sessionStorage.getItem(SESSION_VAULT_CACHE)||'null');if(s){s.lastActivity=lastActivity;sessionStorage.setItem(SESSION_VAULT_CACHE,JSON.stringify(s));}}catch{}armAutoLock();}
@@ -569,6 +647,7 @@ async function importGateRecovery(){
 }
 async function createVaultFlow(){
   if(!authenticated)throw Error('请先登录');
+  const epoch=securityEpoch;
   await loadGlobalVault();
   if(globalVault.initialized){showVaultStage();throw Error('共享 Vault 已初始化，只需输入原密码');}
   const passphrase=$('passphrase').value;
@@ -582,7 +661,7 @@ async function createVaultFlow(){
   try{
     await initGlobalVault(raw,passphrase);
     showVaultStage();
-    await importVault(raw);
+    await importVault(raw,epoch);
     $('passphrase').value='';
     await loadPhoneOverrides();showUnlocked();await fullRefresh();refreshVersionInfo().catch(()=>{});startRealtime();
     await storeTrustedVault();
@@ -657,30 +736,34 @@ async function loadDevices(){
   if(epoch!==securityEpoch||!vaultKey)return;
   renderDevices();renderDeviceSelectors();updateReplyDevices();renderInbox();syncSendControls();
 }
-async function ingestEvents(batch,notify=true){
+async function ingestEvents(batch,notify=true,signal){
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
   let changed=false;
   for(const e of batch){
-    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return false;
-    lastSeq=Math.max(lastSeq,e.seq||0);
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey||signal?.aborted)return false;
     // The location endpoint is opt-in: general SMS/event refresh never decrypts coordinates.
     if(e.kind==='device.location')continue;
     const id=e.deviceId+':'+e.eventId;
     if(eventIds.has(id))continue;
     // An SMS uploaded today can carry an older provider timestamp. Keep it visible
     // instead of discarding new Relay sequences solely due to message age.
-    events.push(e);eventIds.add(id);changed=true;
+    let row;
     try{
-      const payload=await decryptEvent(e),row=Object.assign({},e,{payload});
-      if(epoch!==securityEpoch||!vaultKey)return false;
-      decryptedEvents.push(row);if(notify)maybeNotify(row);
-    }catch(err){if(epoch!==securityEpoch||!vaultKey)return false;decryptedEvents.push(Object.assign({},e,{payload:null,decryptError:true,decryptCategory:decryptFailureCategory(e,err)}));}
+      const payload=await decryptEvent(e);row=Object.assign({},e,{payload});
+    }catch(err){row=Object.assign({},e,{payload:null,decryptError:true,decryptCategory:decryptFailureCategory(e,err)});}
+    // Reset and cancellation are independent of Vault lock. Do not restore old
+    // plaintext after a purge or mark an interrupted decryption as ingested.
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey||signal?.aborted)return false;
+    if(eventIds.has(id))continue; // A concurrent incremental page may have won.
+    events.push(e);eventIds.add(id);decryptedEvents.push(row);changed=true;
+    if(notify&&!row.decryptError)maybeNotify(row);
   }
   return changed;
 }
 async function loadEvents(){
   if(!vaultKey)return;
   const epoch=securityEpoch, dataGeneration=eventDataGeneration;
+  const bootstrapping=!initialEventsLoaded;
   if(!initialEventsLoaded){
     const head=await api('/api/v1/events?latest=1&limit=1');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     lastSeq=head.events?.[0]?.seq||0;
@@ -688,23 +771,26 @@ async function loadEvents(){
     olderCursor=first.nextBeforeTime?{time:first.nextBeforeTime,seq:first.nextBeforeSeq}:null;
     historyHasMore=!!first.hasMore;
     await ingestEvents(first.events||[],false);
-    if(epoch!==securityEpoch||!vaultKey)return;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     // Recent uploads can contain old-dated messages excluded by occurredAt paging.
-    // Fetch the latest Relay sequence page too, without losing the original head.
+    // Historical/overlapping pages must never advance the incremental cursor.
+    // Catch up from the head captured BEFORE either initial page was requested.
     // Keep the newest unfiltered page: SIM profile and device events still
     // supply historical source labels and operational notifications.
     const newest=await api('/api/v1/events?latest=1&limit=100');
     if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     await ingestEvents(newest.events||[],false);
-    if(epoch!==securityEpoch||!vaultKey)return;
-    initialEventsLoaded=true;renderInbox();return;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    initialEventsLoaded=true;renderInbox();
   }
   let changed=false,loops=0;
   while(loops++<3){
     const r=await api('/api/v1/events?since='+lastSeq+'&limit=100');if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
     const batch=r.events||[];
     if(!batch.length)break;
-    changed=await ingestEvents(batch)||changed;
+    changed=await ingestEvents(batch,!bootstrapping)||changed;
+    if(epoch!==securityEpoch||dataGeneration!==eventDataGeneration||!vaultKey)return;
+    lastSeq=Math.max(lastSeq,...batch.map(e=>Number(e.seq)||0));
     if(batch.length<100)break;
   }
   if(changed&&epoch===securityEpoch&&vaultKey)renderInbox();
@@ -737,11 +823,11 @@ let refreshing=null;
 async function fullRefresh(){
   if(refreshing)return refreshing;
   const epoch=securityEpoch;
-  refreshing=(async()=>{try{await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
+  refreshing=(async()=>{try{try{await loadVaultSettings();}catch(error){if(epoch===securityEpoch&&vaultKey&&$('metadataSyncStatus'))$('metadataSyncStatus').textContent='SIM 标签同步暂不可用 / SIM label sync unavailable: '+error.message;}if(epoch!==securityEpoch||!vaultKey)return;await loadDevices();if(epoch!==securityEpoch||!vaultKey)return;await loadPool();if(epoch!==securityEpoch||!vaultKey)return;await loadEvents();if(epoch!==securityEpoch||!vaultKey)return;await loadCommandActivity();if(epoch!==securityEpoch||!vaultKey)return;await loadLifecycleHistory();if(epoch===securityEpoch&&vaultKey)setConnected(true);}catch(e){if(epoch===securityEpoch)setConnected(false);throw e;}finally{refreshing=null;}})();
   return refreshing;
 }
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(vaultKey)fullRefresh().catch(e=>toast(e.message));},150);}
-function startRealtime(){if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>setConnected(true);eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
+function startRealtime(){if(!vaultKey)return;if(eventSource)eventSource.close();if('EventSource'in window){eventSource=new EventSource('/api/v1/stream',{withCredentials:true});eventSource.addEventListener('change',scheduleRefresh);eventSource.onopen=()=>{if(vaultKey)setConnected(true);};eventSource.onerror=()=>setConnected(false);}clearInterval(pollTimer);pollTimer=setInterval(()=>{if(vaultKey)fullRefresh().catch(()=>{});},60000);}
 
 function deviceCanSendSms(d){
   if(!d||d.revoked||d.resetRequestedAt)return false;
@@ -765,7 +851,7 @@ function syncSendControls(){
   $('newSmsBtn').hidden=!vaultKey || !document.getElementById('view-inbox').classList.contains('active') || !hasSmsSending();
   if(activeConversationKey && !hasSmsSending())$('replyComposer').hidden=true;
 }
-function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML=sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
+function renderDeviceSelectors(){const filters=$('deviceFilter'),send=$('sendDevice'),oldF=filters.value,oldS=send.value;filters.innerHTML='<option value="">'+escapeHtml(tr('all_devices'))+'</option>'+devices.map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');send.innerHTML='<option value="">'+escapeHtml(tr('sim_node'))+'</option>'+sendingDevices().map(d=>'<option value="'+escapeHtml(d.id)+'">'+escapeHtml(d.name)+'</option>').join('');if(Array.from(filters.options).some(o=>o.value===oldF))filters.value=oldF;if(Array.from(send.options).some(o=>o.value===oldS))send.value=oldS;updateSubscriptionSelector();}
 // Indexed once per event-generation rather than re-sorting every decrypted SMS
 // and SIM source label while rendering a conversation.
 let simProfileIndexVersion='',simProfileIndex=new Map();
@@ -791,7 +877,7 @@ function nodeChannels(d){
   return channels.map(ch=>{
     const found=phones.find(n=>String(n.channelId)===String(ch.id));
     const profile=profiles.get(d.id+'|'+String(ch.id)+'|'+Number(ch.revision||ch.channelRevision||1))?.payload;
-    return {...ch,alias:profile?.tag||ch.alias,
+    return {...ch,alias:channelAliases[phoneOverrideKey(d,ch)]||profile?.tag||ch.alias,
       phoneNumber:String(phoneOverrides[phoneOverrideKey(d,ch)]||found?.number||
         (profile?.tail?'••••'+profile.tail:'')).trim()};
   });
@@ -805,7 +891,12 @@ function messageChannelLabel(e){
     Number(ch.revision||ch.channelRevision||1)===revision);
   return channel?channelTitle(channel):(p.simTag||p.channelId)+' · '+(getLocale()==='zh-CN'?'历史版本':'historical revision');
 }
-function updateSubscriptionSelector(){const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);$('sendSubscription').innerHTML=channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(channelTitle(ch))+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('')||'<option value="">'+escapeHtml(tr('no_active_channel'))+'</option>';}
+function updateSubscriptionSelector(preferred,revision){
+  const el=$('sendSubscription'),selected=preferred??el.value,priorRevision=revision??Number(el.selectedOptions[0]?.dataset.revision||0);
+  const d=devices.find(x=>x.id===$('sendDevice').value),channels=nodeChannels(d);
+  el.innerHTML='<option value="">'+escapeHtml(tr('sim_subscription'))+'</option>'+channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-local-id="'+escapeHtml(String(ch.localId==null?'':ch.localId))+'" data-revision="'+escapeHtml(String(ch.revision||ch.channelRevision||1))+'">'+escapeHtml(channelTitle(ch))+' · '+escapeHtml(ch.carrierName||ch.kind||'')+'</option>').join('');
+  if([...el.options].some(o=>o.value===selected&&Number(o.dataset.revision)===priorRevision))el.value=selected;
+}
 function renderCommandActivity(commands){
   const box=$('commandActivity');if(!box||!vaultKey)return;
   const zh=getLocale()==='zh-CN';
@@ -834,6 +925,7 @@ async function loadCommandActivity(){
   const result=await api('/api/v1/commands/recent?limit=20');
   if(epoch!==securityEpoch||!vaultKey)return;
   const commands=result.commands||[];
+  recentCommands=commands;
   if(commandsSnapshotInitialized){
     for(const c of commands){
       const id=String(c.id||c.commandId||''),state=String(c.state||'');
@@ -851,13 +943,15 @@ async function loadCommandActivity(){
   for(const c of commands)if(c.id||c.commandId)knownCommandStates.set(String(c.id||c.commandId),String(c.state||''));
   commandsSnapshotInitialized=true;
   renderCommandActivity(commands);
+  await renderSendCenter();
 }
 async function loadLifecycleHistory(){
   if(!vaultKey)return;
+  const epoch=securityEpoch;
   const result=await api('/api/v1/audit?limit=200');
   const container=$('lifecycleHistory');
-  if(!container||!vaultKey)return;
-  const relevant=(result.audit||[]).filter(row=>row.action.startsWith('device.reset.')||row.action==='device.sms.purge').slice(0,20);
+  if(!container||!vaultKey||epoch!==securityEpoch)return;
+  const relevant=(result.audit||[]).filter(row=>row.action.startsWith('device.reset.')||row.action.startsWith('device.revoke')||row.action.startsWith('device.token.')||row.action==='device.sms.purge').slice(0,20);
   container.textContent=relevant.map(row=>fmtTime(row.occurred_at)+' · '+row.action+' · '+row.target).join('\n')||'暂无设备清理记录';
 }
 function resetEventCache(){
@@ -871,10 +965,12 @@ function resetEventCache(){
 let updatePolling=null;
 async function refreshUpdateInfo(force=false){
   const zh=getLocale()==='zh-CN', el=$('updateStatus');
-  if(!el)return;
+  if(!el||!vaultKey)return;
+  const epoch=securityEpoch;
   el.textContent=zh?'正在查询版本信息…':'Checking available updates…';
   let result;
-  try{result=await api('/api/v1/update'+(force?'?refresh=1':''));}catch(error){el.textContent=(zh?'检查失败：':'Check failed: ')+error.message;return;}
+  try{result=await api('/api/v1/update'+(force?'?refresh=1':''));}catch(error){if(epoch===securityEpoch&&vaultKey)el.textContent=(zh?'检查失败：':'Check failed: ')+error.message;return;}
+  if(epoch!==securityEpoch||!vaultKey)return;
   const phase=result.phase||'idle', latest=result.latest||null;
   const states={queued:'排队中',checking:'检查版本',downloading:'下载中',
     verifying_image:'验证签名并拉取镜像',verified_image:'已验证镜像',backup:'备份数据',switching:'切换容器',
@@ -902,6 +998,11 @@ async function refreshUpdateInfo(force=false){
     '安全更新未启用：请迁移到 Rootless Docker，以普通用户运行 scripts/install-updater.sh；不支持旧版 root 更新器。':
     'Verified updater unavailable. Configure rootless Docker and run scripts/install-updater.sh without sudo; legacy root updater is disabled.');
   if(result.agentError)$('updateAgentHelp').textContent+=' · '+result.agentError;
+  const backup=result.lastBackup,backupStatus=$('backupStatus');
+  if(backupStatus)backupStatus.textContent=backup?.integrityChecked===true&&/^[a-f0-9]{64}$/.test(backup.sha256||'')?
+    (zh?'最近升级备份：':'Last upgrade backup: ')+fmtTime(backup.createdAt)+' · '+Math.ceil(Number(backup.bytes||0)/1024)+' KiB · '+(zh?'数据库版本 ':'DB schema ')+Number(backup.schemaVersion)+'\nSHA-256: '+backup.sha256+'\n'+
+      (zh?'完整性已校验；恢复演练需在部署主机执行 verify_backup.py --restore-check。':'Integrity checked; run verify_backup.py --restore-check on the deployment host for a restore rehearsal.'):
+    (zh?'更新器尚未报告已校验的备份。可在部署主机运行 scripts/backup.sh，并用 scripts/verify_backup.py --restore-check 验证恢复。':'No verified backup reported by the updater. Run scripts/backup.sh and scripts/verify_backup.py --restore-check on the deployment host.');
   clearTimeout(updatePolling);
   if(['queued','checking','downloading','building','verifying_image','verified_image','backup','switching','verifying','rolling_back'].includes(phase))
     updatePolling=setTimeout(()=>refreshUpdateInfo().catch(e=>toast(e.message)),3500);
@@ -1293,12 +1394,12 @@ function updateReplyDevices(){
   if([...el.options].some(x=>x.value===chosen))el.value=chosen;
   updateReplyChannels();
 }
-function updateReplyChannels(preferred){
+function updateReplyChannels(preferred,revision){
   const d=devices.find(x=>x.id===$('replyDevice').value),channels=nodeChannels(d);
-  const el=$('replySubscription'),selected=preferred||el.value;
+  const el=$('replySubscription'),selected=preferred??el.value,priorRevision=revision??Number(el.selectedOptions[0]?.dataset.revision||0);
   el.innerHTML='<option value="">'+escapeHtml(tr('sim_subscription'))+'</option>'+
-    channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'">'+escapeHtml(channelTitle(ch))+'</option>').join('');
-  if([...el.options].some(x=>x.value===selected))el.value=selected;
+    channels.map(ch=>'<option value="'+escapeHtml(String(ch.id))+'" data-revision="'+Number(ch.revision||ch.channelRevision||1)+'">'+escapeHtml(channelTitle(ch))+'</option>').join('');
+  if([...el.options].some(x=>x.value===selected&&Number(x.dataset.revision)===priorRevision))el.value=selected;
   const selectedChannel=channels.find(ch=>String(ch.id)===el.value);
   $('replyChannelLabel').textContent=selectedChannel?(d.name+' · '+channelTitle(selectedChannel)):tr('choose_channel');
 }
@@ -1381,14 +1482,16 @@ function openConversation(key){
       Number(ch.revision||ch.channelRevision||1)===Number(e.payload?.channelRevision||0);
   });
   const did=eligible?.deviceId||'',channel=eligible?messageChannel(eligible):'';
-  updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel);
+  updateReplyDevices();$('replyDevice').value=did;updateReplyChannels(channel,Number(eligible?.payload?.channelRevision||0));
   $('replyTo').value=number;
+  $('replyBody').value='';updateReplyCount();
   $('replyOptions').open=false;
   const canReply=!!eligible&&replyEligible();
   refreshReplyEligibility();
   if(!canReply && hasSmsSending()){$('replyOptions').open=true;toast('原会话没有可用的发送 SIM；请新建短信并选择有效通道');}
   syncResponsiveConversation();
   renderInbox();
+  restoreComposerDraft(true).catch(e=>toast(e.message));
 }
 function openNewMessage(){
   if(!hasSmsSending())return;
@@ -1400,6 +1503,7 @@ function openNewMessage(){
   $('replyOptions').open=true;
   syncResponsiveConversation();
   renderInbox();$('replyTo').focus();
+  restoreComposerDraft(true).catch(e=>toast(e.message));
 }
 function countSmsSegments(value){
   const basic="@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
@@ -1411,36 +1515,119 @@ function updateReplyCount(){
   const v=$('replyBody').value;
   $('replyCount').textContent=tr('chars_parts',{chars:v.length,parts:countSmsSegments(v)});
 }
+function ensureSendCoordinator(){
+  if(!vaultKey)throw Error('Vault locked');
+  if(!intentJournal||intentJournal.key!==vaultKey){
+    const key=vaultKey,epoch=securityEpoch;
+    intentJournal?.close();
+    intentJournal=new IntentJournal({scope:(globalVault?.vaultId||'local')+':'+(globalVault?.keyId||'vault'),key,
+      isCurrent:()=>vaultKey===key&&securityEpoch===epoch});
+    sendCoordinator=new SendCoordinator({journal:intentJournal,api,encrypt:encryptCommand,validate:validateSmsRoute});
+  }
+  return sendCoordinator;
+}
+function validateSmsRoute(deviceId,payload){
+  const d=devices.find(x=>x.id===deviceId);
+  const ch=nodeChannels(d).find(x=>String(x.id)===String(payload.channelId));
+  if(!deviceCanSendSms(d)||!ch||Number(ch.revision||ch.channelRevision||1)!==Number(payload.channelRevision))
+    throw Error('发送设备或 SIM 版本已改变，请重新选择。 / The saved SIM route is no longer valid.');
+}
+function composerDraftId(reply){return reply?'reply:'+(activeConversationKey||'__new'):'compose';}
+function composerSnapshot(reply){
+  const prefix=reply?'reply':'send',channel=$(prefix+'Subscription');
+  return {deviceId:$(prefix+'Device').value,channelId:channel.value,
+    channelRevision:Number(channel.selectedOptions[0]?.dataset.revision||0),
+    to:$(prefix+'To').value.trim(),body:$(prefix+'Body').value};
+}
+async function saveComposerDraft(reply=true){
+  if(!vaultKey)return;
+  ensureSendCoordinator();const epoch=securityEpoch,id=composerDraftId(reply);
+  const snapshot=composerSnapshot(reply);
+  await intentJournal.saveDraft(id,snapshot);
+  if(epoch===securityEpoch&&reply&&id===composerDraftId(true)&&$('replyDraftStatus'))
+    $('replyDraftStatus').textContent=getLocale()==='zh-CN'?'草稿已在本机加密保存':'Draft encrypted on this device';
+}
+async function restoreComposerDraft(reply=true){
+  if(!vaultKey)return;
+  const originalBody=$(reply?'replyBody':'sendBody').value;
+  ensureSendCoordinator();const epoch=securityEpoch,id=composerDraftId(reply),draft=await intentJournal.draft(id);
+  if(epoch!==securityEpoch||!vaultKey||id!==composerDraftId(reply)||!draft?.body||$(reply?'replyBody':'sendBody').value!==originalBody)return;
+  const prefix=reply?'reply':'send';
+  $(prefix+'Body').value=draft.body;$(prefix+'To').value=draft.to||'';
+  $(prefix+'Device').value=draft.deviceId||'';
+  if(reply)updateReplyChannels(draft.channelId,Number(draft.channelRevision));
+  else updateSubscriptionSelector(draft.channelId,Number(draft.channelRevision));
+  if(reply){updateReplyCount();refreshReplyEligibility();$('replyOptions').open=true;}
+  else updateCharCount();
+  if($('replyDraftStatus'))$('replyDraftStatus').textContent=getLocale()==='zh-CN'?'已恢复加密草稿；发送前核对 SIM':'Encrypted draft restored; verify the SIM before sending';
+}
+function sendStateLabel(state){
+  const zh=getLocale()==='zh-CN';
+  const labels={prepared:['尚未提交','Not submitted'],acceptance_unknown:['接收结果待核对，请勿新建重发','Acceptance unknown; do not create another send'],
+    expired_unconfirmed:['已过期，执行结果待核对','Expired; verify the node outcome'],queued:['等待节点领取','Waiting for node'],
+    dispatched:['节点已领取','Received by node'],submitted:['已提交运营商','Submitted to carrier'],sent:['已发送','Sent'],delivered:['已送达','Delivered'],
+    failed:['发送失败','Failed'],rejected:['已拒绝','Rejected'],expired:['命令已过期','Expired'],outcome_unknown:['执行结果未知，请核对节点','Outcome unknown; check the node']};
+  return labels[state]?.[zh?0:1]||state;
+}
+async function renderSendCenter(){
+  const box=$('sendIntentList');if(!box||!vaultKey)return;
+  ensureSendCoordinator();const epoch=securityEpoch,items=await intentJournal.list(),zh=getLocale()==='zh-CN';
+  if(epoch!==securityEpoch||!vaultKey)return;
+  box.innerHTML=items.length?items.map(item=>{
+    const recent=recentCommands.find(c=>String(c.id||c.commandId)===item.id&&c.deviceId===item.deviceId);
+    const state=recent?.state||item.state;
+    const retry=['prepared','submitting','uncertain'].includes(item.phase)&&item.outer.expiresAt>Date.now()/1000;
+    const archive=item.phase==='observed'&&['sent','delivered','succeeded','failed','rejected','expired'].includes(item.state);
+    return '<article class="send-intent"><div><strong>'+escapeHtml(item.payload.to)+'</strong><p class="hint">'+escapeHtml(deviceName(item.deviceId))+' · '+escapeHtml(item.payload.channelId)+' · v'+Number(item.payload.channelRevision)+' · '+fmtTime(item.createdAt)+'</p><p role="status">'+escapeHtml(sendStateLabel(state))+'</p><small class="hint">'+escapeHtml(item.id)+'</small></div><div class="row wrap"><button class="ghost mini" data-intent-action="check" data-id="'+escapeHtml(item.id)+'">'+(zh?'核对状态':'Check status')+'</button>'+(retry?'<button class="ghost mini" data-intent-action="retry" data-id="'+escapeHtml(item.id)+'">'+(zh?'继续原请求':'Resume same request')+'</button>':'')+(archive?'<button class="ghost mini" data-intent-action="archive" data-id="'+escapeHtml(item.id)+'">'+(zh?'归档本机记录':'Archive local record')+'</button>':'')+'</div></article>';
+  }).join(''):'<p class="hint">'+(zh?'暂无本机发送记录。草稿和发送意图均加密保存在此浏览器。':'No local sends. Drafts and send intents are encrypted in this browser.')+'</p>';
+}
+async function handleSendIntent(button){
+  const coordinator=ensureSendCoordinator(),id=button.dataset.id;
+  button.disabled=true;
+  try{
+    if(button.dataset.intentAction==='archive')await intentJournal.archive(id);
+    else if(button.dataset.intentAction==='retry'){
+      if(!confirm(getLocale()==='zh-CN'?'先核对服务器，再按原设备、SIM、正文和请求编号继续。结果不明时不会新建短信。继续？':'Check the saved command and resume only the same request, SIM and message?'))return;
+      await ensureStepUp();await coordinator.retry(id);
+    }else{
+      const result=await coordinator.reconcile(id);
+      toast(result.command?sendStateLabel(result.item.state):(getLocale()==='zh-CN'?'服务器暂未找到此请求；请保留原记录':'Command not found; retain the original record'));
+    }
+    await renderSendCenter();
+  }finally{button.disabled=false;}
+}
 async function sendConversationReply(){
   const btn=$('replySend');
   if(btn.disabled)return;
   const dest=$('replyTo').value.trim(),device=$('replyDevice').value,channel=$('replySubscription').value;
   if(!replyEligible())throw new Error('历史短信来源或当前 SIM 版本无法验证；请新建短信并显式选择通道');
   const sendDevice=$('sendDevice'),sendSub=$('sendSubscription');
-  sendDevice.value=device;updateSubscriptionSelector();sendSub.value=channel;
+  sendDevice.value=device;updateSubscriptionSelector(channel,Number($('replySubscription').selectedOptions[0]?.dataset.revision||0));
   if(sendSub.value!==channel)throw new Error('该 SIM 通道已失效，重新选择后再发送');
-  $('sendTo').value=dest;$('sendBody').value=$('replyBody').value;
+  const originalBody=$('replyBody').value;
+  $('sendTo').value=dest;$('sendBody').value=originalBody;
   btn.disabled=true;
   try{
-    await sendSms();
+    await sendSms(composerDraftId(true));
     // The existing encrypted command path performs confirmation and step-up.
     // Preserve the draft if user cancels or network fails.
-    if(!$('sendBody').value){
+    if(!$('sendBody').value&&$('replyBody').value===originalBody){
       $('replyBody').value='';updateReplyCount();
     }
-  }finally{btn.disabled=false;}
+  }finally{refreshReplyEligibility();}
 }
-async function queueCommand(deviceId,type,payload,ttl){if(type==='sms.send'&&!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前不允许发送短信');if(type==='sms.send'||type==='sms.restore_history'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install'||type==='ota.cancel')await ensureStepUp();const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
+async function queueCommand(deviceId,type,payload,ttl,draftId='compose'){const epoch=securityEpoch;if(type==='sms.send'||type==='sms.restore_history'||type==='node.rotate_key'||type==='device.network_policy'||type==='ota.install'||type==='ota.cancel')await ensureStepUp();if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked');const target=devices.find(d=>d.id===deviceId),power=target?.state||{};
   const energy=power.effectiveEnergyMode||power.energyMode||'balanced';
   // A compact background policy must not make remote commands expire before
   // the next eligible fetch. Preserve a finite expiry and the encrypted AAD.
   const minimumTtl=(!power.foregroundRelay||energy==='eco')?1200:(energy==='balanced'?300:180);
   ttl=Math.max(ttl||120,minimumTtl);
-  const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
-async function sendSms(){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前是只读短信模式，不能发送');if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
+  if(type==='sms.send')return ensureSendCoordinator().submit({draftId,deviceId,payload,ttl});
+  const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked');return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
+async function sendSms(draftId='compose'){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前是只读短信模式，不能发送');if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
   if(!confirm((getLocale()==='zh-CN'?'该设备使用省电/非前台模式，发送可能延迟约 15 分钟。请确认接收方及发送时效要求。':'This device may check remote commands only every 15 minutes. Confirm the recipient and acceptable delay.')))return;
 }
-if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);await queueCommand(deviceId,'sms.send',payload,180);$('sendBody').value='';updateCharCount();toast('Encrypted SMS command queued');}
+if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);try{const result=await queueCommand(deviceId,'sms.send',payload,180,draftId);if($('sendBody').value===body)$('sendBody').value='';updateCharCount();toast(sendStateLabel(result.state||'queued'));}finally{await renderSendCenter();}}
 async function createEnrollment(){
   if(!vaultRaw)throw new Error('Vault must be unlocked.');
   const epoch=securityEpoch;
@@ -1480,10 +1667,12 @@ async function sha256Hex(text){
 
 /** Encrypted controller grant: plaintext Master Vault never touches the Relay. */
 async function refreshControllerRequests(){
-  if(!authenticated)return;
+  if(!authenticated||!vaultKey)return;
+  const epoch=securityEpoch;
   const [pending,authorized]=await Promise.all([
     api('/api/v1/controllers/pending'),api('/api/v1/controllers')
   ]);
+  if(epoch!==securityEpoch||!vaultKey)return;
   const box=$('controllerPending'),list=pending.pending||[];
   box.replaceChildren();
   if(!list.length){const p=document.createElement('p');p.className='hint';p.textContent='暂无待授权请求';box.append(p);}
@@ -1522,8 +1711,9 @@ async function refreshControllerRequests(){
 }
 async function approveAndroidController(req,pairingCode){
   if(!vaultRaw||vaultRaw.length!==32)throw Error('必须先在本浏览器解锁原 Vault');
+  const epoch=securityEpoch;
   await ensureStepUp();
-  if(!vaultRaw||vaultRaw.length!==32)throw Error('授权期间 Vault 已被锁定');
+  if(epoch!==securityEpoch||!vaultRaw||vaultRaw.length!==32)throw Error('授权期间 Vault 已被锁定');
   const other=await crypto.subtle.importKey('spki',unb64u(req.exchangePublic),
     {name:'ECDH',namedCurve:'P-256'},false,[]);
   const local=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},
@@ -1536,14 +1726,18 @@ async function approveAndroidController(req,pairingCode){
   const key=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,
     info:enc.encode('simhub-controller-grant-v1|'+requestId+'|'+origin)},
     hkdf,{name:'AES-GCM',length:256},false,['encrypt']);
+  if(epoch!==securityEpoch||!vaultKey)throw Error('授权期间 Vault 已被锁定');
   const vaultCopy=new Uint8Array(vaultRaw);
   let ct;
   try{ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,
     additionalData:enc.encode('simhub-controller-vault-v1|'+requestId+'|'+origin)},
     key,vaultCopy));}finally{vaultCopy.fill(0);}
   const epk=new Uint8Array(await crypto.subtle.exportKey('spki',local.publicKey));
+  if(epoch!==securityEpoch||!vaultKey)throw Error('授权期间 Vault 已被锁定');
+  const vaultKeyId=await globalKeyId(vaultRaw);
+  if(epoch!==securityEpoch||!vaultKey)throw Error('授权期间 Vault 已被锁定');
   await api('/api/v1/controllers/approve',{method:'POST',body:{
-    requestId,pairingCode,vaultId:globalVault?.vaultId,vaultKeyId:await globalKeyId(vaultRaw),
+    requestId,pairingCode,vaultId:globalVault?.vaultId,vaultKeyId,
     vaultEnvelope:{v:1,epk:b64u(epk),salt:b64u(salt),iv:b64u(iv),ct:b64u(ct)}
   }});
   toast('管理终端已授权，可在手机继续连接');
@@ -1879,7 +2073,7 @@ async function handleDeviceAction(btn){
     await fullRefresh();
     toast(zh?'服务器设备数据已清除':'Relay device records deleted');
     return;
-  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队'); }else if(action==='restore-history'){
+  }if(action==='edit-sim'){await editSimPhone(id,btn.dataset.channel);return;}if(action==='edit-sim-alias'){await editSimAlias(id,btn.dataset.channel);return;}if(action==='network'){await configureNetworkFallback(id);return;}if(action==='refresh'){await queueCommand(id,'device.refresh_state',{});toast('Refresh queued');}else if(action==='sync-recent'){const d=devices.find(x=>x.id===id);if(!versionAtLeast(d?.appVersion,'0.5.0'))throw new Error('请先升级 Android 节点至 v0.5.0 后再同步最近 100 条');await queueCommand(id,'sms.sync_recent',{maxMessages:100},900);toast('最近 100 条同步请求已入队');}else if(action==='sync-older'){const d=devices.find(x=>x.id===id);await queueCommand(id,versionAtLeast(d?.appVersion,'0.5.0')?'sms.sync_older':'sms.sync_history',{maxMessages:100},900);toast('更早 100 条同步请求已入队'); }else if(action==='restore-history'){
     const d=devices.find(x=>x.id===id);
     if(!d||!versionAtLeast(d.appVersion,'0.17.0'))throw Error('请先更新 Android 节点至 v0.17.0');
     const notice=getLocale()==='zh-CN'
@@ -1949,16 +2143,19 @@ function wire(){
   $('deviceFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('kindFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
   $('simFilter').onchange=()=>{visibleCount=40;lastAutoScroll=-1;renderInbox();};
-  $('sendDevice').onchange=updateSubscriptionSelector;
-  $('sendBody').oninput=updateCharCount;
+  const saveDraft=reply=>saveComposerDraft(reply).catch(e=>{if(vaultKey)toast(e.message);});
+  $('sendDevice').onchange=()=>{updateSubscriptionSelector('',0);saveDraft(false);};
+  $('sendSubscription').onchange=()=>saveDraft(false);
+  $('sendTo').oninput=()=>saveDraft(false);
+  $('sendBody').oninput=()=>{updateCharCount();saveDraft(false);};
   $('newSmsBtn').onclick=openNewMessage;
   $('backConversation').onclick=()=>{activeConversationKey=null;syncResponsiveConversation();renderInbox();$('search').focus({preventScroll:true});};
   window.addEventListener('resize',syncResponsiveConversation,{passive:true});
   window.addEventListener('orientationchange',syncResponsiveConversation,{passive:true});
-  $('replyDevice').onchange=()=>{updateReplyChannels();refreshReplyEligibility();};
-  $('replySubscription').onchange=()=>{updateReplyChannels($('replySubscription').value);refreshReplyEligibility();};
-  $('replyBody').oninput=updateReplyCount;
-  $('replyTo').oninput=refreshReplyEligibility;
+  $('replyDevice').onchange=()=>{updateReplyChannels('',0);refreshReplyEligibility();saveDraft(true);};
+  $('replySubscription').onchange=()=>{updateReplyChannels($('replySubscription').value);refreshReplyEligibility();saveDraft(true);};
+  $('replyBody').oninput=()=>{updateReplyCount();saveDraft(true);};
+  $('replyTo').oninput=()=>{refreshReplyEligibility();saveDraft(true);};
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
   $('conversationMessages').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
@@ -1979,6 +2176,10 @@ function wire(){
   }
   $('loadNewerBtn').onclick=()=>{$('inboxList').scrollTop=0;};
   $('sendBtn').onclick=()=>sendSms().catch(e=>toast(e.message));
+  $('openSendCenter').onclick=()=>{$('sendCenterDialog').showModal();renderSendCenter().catch(e=>toast(e.message));};
+  $('closeSendCenter').onclick=()=>$('sendCenterDialog').close();
+  $('refreshSendCenter').onclick=()=>loadCommandActivity().catch(e=>toast(e.message));
+  $('sendIntentList').onclick=e=>{const b=e.target.closest('[data-intent-action]');if(b)handleSendIntent(b).catch(err=>toast(err.message));};
   $('controllerConnectBtn').onclick=()=>{openControllerConnect();refreshControllerRequests().catch(e=>toast(e.message));};
   $('controllerApprovalRefresh').onclick=()=>refreshControllerRequests().catch(e=>toast(e.message));
   $('controllerConnectClose').onclick=closeControllerConnect;

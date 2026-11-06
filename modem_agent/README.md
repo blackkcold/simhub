@@ -140,3 +140,29 @@ Command outcomes and Relay acknowledgements are committed together. After a cras
 During a transient Relay outage, the Agent continues collecting and encrypting
 SMS locally before retrying the network. Authentication failures and confirmed
 reset requests still stop normal collection.
+
+### Token recovery (v0.3.3)
+
+Token rotation writes a pending credential to the private configuration before
+committing it on the Relay. After a restart or lost response, the Agent resolves
+that journal before ordinary lifecycle and sync requests. The prepare deadline
+does not invalidate a token the Relay already committed. An ambiguous or offline
+response retains both credentials; a rejected pending token is discarded only
+after the old credential is explicitly recognized. A revoked credential may only
+complete local cleanup, while administrator-visible revoked history is retained
+until an explicit reset or deletion.
+
+### Bounded synchronization
+
+Each normal cycle collects locally, uploads a bounded set of durable command
+acknowledgements, polls commands, uploads new acknowledgements, then uploads at
+most two batches of 20 encrypted events. The ACK and event phases also yield
+after a five-second budget between requests; one in-flight request retains its
+15-second transport timeout. A large imported inbox therefore cannot consume
+hundreds of HTTP requests before command polling and health reporting.
+
+Batch retries reuse the original event IDs and ciphertext. Missing, malformed
+or partial receipts never delete unconfirmed local data. Older Relays without
+the batch route use up to ten single-event uploads per cycle. Queue health
+reports exact event/ACK counts and the age metadata of the oldest pending tasks,
+without exposing message IDs, phone numbers or bodies.

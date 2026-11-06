@@ -80,6 +80,12 @@ class SurfaceTest(unittest.TestCase):
         self.assertEqual(self.request("GET","/api/v1/devices",admin)[0],200)
         self.assertEqual(self.request("POST","/api/v1/enroll",node,{"token":"short"},device=True)[0],400)
         self.assertEqual(self.request("POST","/api/v1/enroll",admin,{"token":"short"},device=True)[0],404)
+        for action in ("activate","purge"):
+            path=f"/api/v1/devices/node/location/{action}"
+            # Node consent operations reach device authentication only on the
+            # node origin. They must coexist with Dev peer-signaling routes.
+            self.assertEqual(self.request("POST",path,node,{},device=True)[0],401)
+            self.assertEqual(self.request("POST",path,admin,{},device=True)[0],404)
         self.assertEqual(self.request("GET","/", "unknown.invalid")[0],421)
         self.assertEqual(self.request("GET","/healthz",node)[0],200)  # local health probe remains available
         self.assertEqual(self.request("GET","/readyz","127.0.0.1:"+str(self.port))[0],200)

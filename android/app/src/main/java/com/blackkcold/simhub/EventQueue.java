@@ -14,8 +14,9 @@ public final class EventQueue {
             boolean peerAccepted=com.blackkcold.simhub.p2p.PeerEvents.stage(c,id,kind,occurredAt,payload);
             AgentConfig cfg=new AgentConfig(c);
             if(!cfg.isEnrolled()){if(!peerAccepted)cfg.recordEventQueueError("not_enrolled");return peerAccepted;}
-            if(LocalStore.get(c).hasSeenEvent(id))return true;
-            if("sms.history".equals(kind) && LocalStore.get(c).hasSeenEvent(id))return true;
+            boolean seen=LocalStore.get(c).hasSeenEvent(id);
+            boolean shared="sms.received".equals(kind)||"sms.history".equals(kind)||"sms.sent".equals(kind)||"sms.delivered".equals(kind)||"sim.profile".equals(kind);
+            if(seen&&(!shared||!SharedPoolClient.needsStage(c,id)))return true;
             String sub=String.valueOf(subId);
             if(kind.startsWith("sms.")){
                 payload.put("sourceDeviceName",cfg.deviceName());
@@ -26,16 +27,21 @@ public final class EventQueue {
                     if(!profile.optString("tail","").isBlank())payload.put("simTail",profile.optString("tail",""));
                 }
             }
-            JSONObject cipher=new CryptoBox(c).encryptEvent(payload,id,kind,occurredAt,sub,hasOtp);
-            boolean ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
+            boolean ok=seen;
+            if(!seen){
+                JSONObject cipher=new CryptoBox(c).encryptEvent(payload,id,kind,occurredAt,sub,hasOtp);
+                ok=LocalStore.get(c).queueEvent(id,kind,occurredAt,sub,hasOtp,metadata==null?new JSONObject():metadata,cipher);
+            }
             if(!ok){cfg.recordEventQueueError("database_insert_rejected");cfg.recordQueueFailure();AppLogger.w(c,"EventQueue","Event not staged: database rejected insertion");return false;}
             if(ok){
-                if("sms.received".equals(kind)||"sms.history".equals(kind)||"sms.sent".equals(kind)||"sms.delivered".equals(kind)||"sim.profile".equals(kind)){
+                if(shared){
                     String channel=payload.optString("channelId","");
-                    SharedPoolClient.stage(c,id,occurredAt,channel,payload);
+                    if(!SharedPoolClient.stage(c,id,occurredAt,channel,payload)){
+                        SyncJobService.scheduleNow(c);return false;
+                    }
                 }
-                if("sms.received".equals(kind))cfg.recordSmsReceived(occurredAt);
-                if(!"sms.history".equals(kind))wake(c);
+                if(!seen&&"sms.received".equals(kind))cfg.recordSmsReceived(occurredAt);
+                if(!seen&&!"sms.history".equals(kind))wake(c);
             }
             return ok;
         }catch(Exception failure){AgentConfig cfg=new AgentConfig(c);cfg.recordQueueFailure();cfg.recordEventQueueError(failure.getClass().getSimpleName());AppLogger.e(c,"EventQueue","Encrypted SMS event could not be staged",failure);SyncJobService.scheduleNow(c);return false;}

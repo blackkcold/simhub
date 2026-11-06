@@ -3,6 +3,10 @@ package com.blackkcold.simhub;
 /** Platform gating only. Android 16 is SDK 36; developer override never bypasses Android installer security. */
 public final class RemoteOtaPolicy {
     private RemoteOtaPolicy() {}
+    public static boolean terminal(String stage){return "failed".equals(stage)||"succeeded".equals(stage);}
+    public static boolean requiresWorker(String stage){
+        return "checking".equals(stage)||"downloading".equals(stage)||"verified".equals(stage);
+    }
     public static boolean installedMatchesTarget(int installed,int expected,String stage){
         return expected>0 && installed>=expected && !"failed".equals(stage) && !"succeeded".equals(stage);
     }

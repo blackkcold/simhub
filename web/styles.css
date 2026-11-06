@@ -726,3 +726,14 @@ dialog #toast{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:c
 .topbar .channel-tag{margin-top:6px}
 .gate-mark .channel-tag{margin-left:auto}
 :root[data-channel="dev"] .brand img{filter:drop-shadow(0 8px 14px rgba(180,81,28,.20))}
+.inbox-tools { flex:none;gap:12px;min-width:0;margin:0 0 10px; }
+.inbox-tools .hint { margin:0;min-width:0; }
+.inbox-tools button { flex:none; }
+.send-intent { display:grid;gap:12px;padding:16px 0;border-bottom:1px solid var(--border);min-width:0; }
+.send-intent p { margin:6px 0; }
+.send-intent small { overflow-wrap:anywhere; }
+.draft-status { margin:4px 0;font-size:12px; }
+.node-recovery-actions { padding-inline-start:22px;margin:14px 0; }
+.node-recovery-actions li { margin:8px 0;line-height:1.5; }
+
+.backup-status { white-space:pre-line;overflow-wrap:anywhere; }

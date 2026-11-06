@@ -62,8 +62,10 @@ public final class CommandProcessor {
                     result.put("sampledAt",published.optLong("sampledAt",0))
                         .put("encrypted",true)
                         .put("uploaded",published.optBoolean("published",false))
+                        .put("suppressed",published.optBoolean("suppressed",false))
                         .put("queued",published.optBoolean("queued",false));
-                    ack(id,published.optBoolean("published",false)?"succeeded":"submitted",result);
+                    if(published.optBoolean("suppressed",false))result.put("reason","location_suppressed");
+                    ack(id,published.optBoolean("published",false)?"succeeded":published.optBoolean("suppressed",false)?"failed":"submitted",result);
                 }
                 case "diagnostics.request" -> {JSONObject d=StateCollector.collect(c).put("diagnosticAt",now).put("requestId",id);EventQueue.diagnostics(c,d);result.put("queued",true);ack(id,"succeeded",result);}
                 case "ota.cancel" -> {if(!RemoteOta.cancel(c)){ack(id,"rejected",new JSONObject().put("reason","ota_cannot_cancel_after_install_commit"));return;}ack(id,"succeeded",new JSONObject());}

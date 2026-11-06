@@ -111,20 +111,21 @@ public final class AppUpdater {
             int code=info.optInt("versionCode",0);
             if(!info.optBoolean("available")||code<=installedVersion(c)||code==ignored(c))return;
             if(prefs(c).getBoolean("autoDownload",false))
-                downloadInternal(c,info,msg->AppLogger.i(c,"AppUpdater",msg),false);
+                downloadInternal(c,info,msg->AppLogger.i(c,"AppUpdater",msg),null);
         }catch(Exception error){
             AppLogger.e(c,"AppUpdater","Background update check unavailable",error);
         }
     }
     public static void downloadAndInstall(Context context,JSONObject metadata,Progress callback){
         Context app=context.getApplicationContext();
-        IO.execute(()->downloadInternal(context,metadata,callback,false));
+        IO.execute(()->downloadInternal(context,metadata,callback,null));
     }
-    public static void downloadRemote(Context c,JSONObject metadata){
-        IO.execute(()->downloadInternal(c,metadata,message->AppLogger.i(c,"RemoteOTA",message),true));
+    public static void downloadRemote(Context c,JSONObject metadata,String operation){
+        IO.execute(()->downloadInternal(c,metadata,message->AppLogger.i(c,"RemoteOTA",message),operation));
     }
-    private static void downloadInternal(Context context,JSONObject metadata,Progress callback,boolean remote){
+    private static void downloadInternal(Context context,JSONObject metadata,Progress callback,String operation){
         Context app=context.getApplicationContext();
+        boolean remote=operation!=null;
             File file=null;
             try{
                 int code=metadata.getInt("versionCode");
@@ -136,9 +137,9 @@ public final class AppUpdater {
                 if(!ReleaseUpdateSource.matchesChannel(version) ||
                    !url.startsWith(expectedPrefix) || !url.endsWith(".apk") ||
                    !sha.matches("[a-f0-9]{64}"))throw new SecurityException("Untrusted update metadata");
-                if(remote)RemoteOta.stage(app,"downloading");
+                if(remote)RemoteOta.stage(app,operation,"downloading");
                 if(!pmCanInstall(app)){
-                    if(remote){RemoteOta.fail(app,"install_sources_permission_required");return;}
+                    if(remote){RemoteOta.fail(app,operation,"install_sources_permission_required");return;}
                     MAIN.post(()->callback.onProgress("需要授权此应用安装更新，请在系统设置中允许后重试"));
                     MAIN.post(()->{
                         Intent grant=new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -158,7 +159,7 @@ public final class AppUpdater {
                     byte[] bytes=new byte[65536];
                     int n;
                     while((n=in.read(bytes))!=-1){
-                        if(remote&&RemoteOta.cancelRequested(app))throw new java.io.IOException("remote_ota_cancelled");
+                        if(remote&&RemoteOta.cancelRequested(app,operation))throw new java.io.IOException("remote_ota_cancelled");
                         size+=n;
                         if(size>MAX_APK)throw new SecurityException("APK too large");
                         md.update(bytes,0,n);out.write(bytes,0,n);
@@ -168,14 +169,14 @@ public final class AppUpdater {
                     throw new SecurityException("APK SHA-256 mismatch");
                 MAIN.post(()->callback.onProgress("下载完成，正在验证安装包…"));
                 verifyApk(app,file,metadata);
-                if(remote&&RemoteOta.cancelRequested(app))throw new java.io.IOException("remote_ota_cancelled");
-                if(remote)RemoteOta.stage(app,"verified");
+                if(remote&&RemoteOta.cancelRequested(app,operation))throw new java.io.IOException("remote_ota_cancelled");
+                if(remote)RemoteOta.stage(app,operation,"verified");
                 MAIN.post(()->callback.onProgress("安装已提交至 Android 系统"));
-                if(remote&&RemoteOta.cancelRequested(app))throw new java.io.IOException("remote_ota_cancelled");
-                if(remote)RemoteOta.stage(app,"installing");
-                install(app,file,remote);
+                if(remote&&RemoteOta.cancelRequested(app,operation))throw new java.io.IOException("remote_ota_cancelled");
+                if(remote)RemoteOta.stage(app,operation,"installing");
+                install(app,file,operation);
             }catch(Exception error){
-                if(remote)RemoteOta.fail(app,RemoteOta.cancelRequested(app)?"update_cancelled":
+                if(remote)RemoteOta.fail(app,operation,RemoteOta.cancelRequested(app,operation)?"update_cancelled":
                     (error instanceof SecurityException?"update_security_check_failed":"update_download_or_install_failed"));
                 MAIN.post(()->callback.onProgress("更新失败："+error.getMessage()));
             }finally{
@@ -186,7 +187,8 @@ public final class AppUpdater {
     static boolean pmCanInstall(Context c){
         return Build.VERSION.SDK_INT<26 || c.getPackageManager().canRequestPackageInstalls();
     }
-    private static void install(Context c,File file,boolean remote)throws Exception{
+    private static void install(Context c,File file,String operation)throws Exception{
+        boolean remote=operation!=null;
         PackageInstaller installer=c.getPackageManager().getPackageInstaller();
         PackageInstaller.SessionParams p=new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         p.setAppPackageName(c.getPackageName());
@@ -194,9 +196,9 @@ public final class AppUpdater {
         if(Build.VERSION.SDK_INT>=31)
             p.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
         int id=installer.createSession(p);
-        if(remote)RemoteOta.installSession(c,id);
         boolean committed=false;
         try(PackageInstaller.Session session=installer.openSession(id)){
+            if(remote)RemoteOta.installSession(c,operation,id);
             try(InputStream input=new java.io.FileInputStream(file);
                 java.io.OutputStream output=session.openWrite("simhub-update.apk",0,file.length())){
                 byte[] buf=new byte[65536];int n;

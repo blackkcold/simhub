@@ -30,6 +30,7 @@ public final class EnrollmentManager {
     }
     /** Reset session cadence, not the user's power preference or system SMS data. */
     static void enrollmentActivated(Context c){
+        NodeLocationManager.clearForEnrollment(c);
         EnergyPolicy.resetSchedule(c);
         DeviceMetadataSync.requestFull(c);
         SyncJobService.schedule(c);
@@ -60,6 +61,7 @@ public final class EnrollmentManager {
     public static void reset(Context c){
         RelayForegroundService.stop(c);
         SharedPoolClient.clearLocalForReset(c);
+        NodeLocationManager.clearForEnrollment(c);
         SimTagStore.clearAll(c);
         LocalStore.get(c).resetForReenrollment();
         new AgentConfig(c).clearEnrollment();

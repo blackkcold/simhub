@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ApiClient {
     private static final AtomicBoolean SYNC_BUSY=new AtomicBoolean(false);
+    private static final Object TOKEN_LOCK=new Object();
     private static final long TOKEN_ROTATE_AFTER=60L*86400;
     private static volatile boolean BATCH_SUPPORTED=true;
     private static final int BATCH_SIZE=20;
@@ -23,8 +24,16 @@ public final class ApiClient {
         public final int status,retryAfter;public final String code;
         ApiFailure(int status,String code,String message,int retryAfter){super(message);this.status=status;this.code=code;this.retryAfter=retryAfter;}
     }
+    private static final class EnrollmentEnded extends IOException {
+        EnrollmentEnded(){super("Enrollment reset during credential recovery");}
+    }
+    interface TokenTransport {
+        JSONObject request(String method,String path,JSONObject body,String token)throws Exception;
+    }
     private final Context c;private final AgentConfig cfg;
-    public ApiClient(Context c){this.c=c.getApplicationContext();cfg=new AgentConfig(c);}
+    private final TokenTransport tokenTransport;
+    public ApiClient(Context c){this(c,null);}
+    ApiClient(Context c,TokenTransport transport){this.c=c.getApplicationContext();cfg=new AgentConfig(this.c);tokenTransport=transport;}
     public static JSONObject pairingRequest(String server,String method,String path,JSONObject body,String pairBearer)throws Exception{
         requireHttps(server);
         if(!path.startsWith("/api/v1/pairings/"))throw new SecurityException("Pairing path required");
@@ -73,7 +82,7 @@ public final class ApiClient {
         boolean commandFallback=!RelayForegroundService.isRunning() &&
                 EnergyPolicy.due(c,"command_fallback",EnergyPolicy.commandFallbackIntervalMs(c),now);
         boolean outstanding=NodeLocationManager.purgePending(c) || poolRetry || RemoteOta.needsStateUpload(c) || DeviceMetadataSync.fullDirty(c) || DeviceMetadataSync.needsLight(c) || pendingBefore>0 || store.pendingCommandAckCount()>0 ||
-                !cfg.pendingPairId().isBlank();
+                !cfg.pendingPairId().isBlank() || cfg.tokenRotationPending();
         if(!maintenance&&!reconciliation&&!providerDirty&&!providerFollowup&&!outstanding&&!commandFallback){
             SYNC_BUSY.set(false);return;
         }
@@ -116,6 +125,7 @@ public final class ApiClient {
                 return;
             }
             PairingManager.completePending(c);
+            if(recoverPendingDeviceToken())return;
             if(maintenance&&checkServerReset())return;
             if(maintenance)rotateDeviceTokenIfNeeded();
             store.recoverStaleClaims();
@@ -216,6 +226,7 @@ public final class ApiClient {
     }
     /** Reset notifications outrank normal HTTP backoff and polling intervals. */
     private boolean handleResetConflict(Exception error){
+        if(error instanceof EnrollmentEnded)return true;
         if(!(error instanceof ApiFailure failure))return false;
         if(failure.status==409 && "device_reset_pending".equals(failure.code)){
             cfg.markRemoteResetPending();
@@ -277,6 +288,7 @@ public final class ApiClient {
         if(delay>0){SyncJobService.scheduleAfter(c,delay);return;}
         boolean notifyRemote=cfg.remoteResetPending();
         try{
+            if(recoverPendingDeviceToken())return;
             requireHttps(cfg.server());
             raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/reset","POST",new JSONObject(),
                 "Device "+cfg.deviceToken(),cfg.deviceId());
@@ -322,11 +334,65 @@ public final class ApiClient {
         SyncJobService.scheduleAfter(c,delay);
         AppLogger.e(c,"Enrollment","Device unpair awaiting relay confirmation",reason);
     }
+    /** Resolve the durable candidate before any ordinary request uses an old token.
+     * A local expiry is not proof of rejection: commit may already have succeeded. */
+    boolean recoverPendingDeviceToken()throws Exception{
+        synchronized(TOKEN_LOCK){
+            if(!cfg.tokenRotationPending())return false;
+            String pending=cfg.pendingDeviceToken();
+            if(pending==null||pending.isBlank())throw new IOException("pending_device_token_unavailable");
+            String base="/api/v1/devices/"+cfg.deviceId();
+            try{
+                JSONObject committed=requestWithToken("POST",base+"/token/commit",new JSONObject(),pending);
+                cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",System.currentTimeMillis()/1000));
+                AppLogger.i(c,"ApiClient","Recovered pending device-token rotation");
+                return false;
+            }catch(ApiFailure rejected){
+                if(rejected.status!=401&&rejected.status!=403&&rejected.status!=409)throw rejected;
+                // Revocation is cleanup-only. A recognized candidate can finish
+                // reset, but must never be promoted to ordinary business access.
+                JSONObject candidate=null;
+                try{
+                    candidate=requestWithToken("GET",base+"/lifecycle",null,pending);
+                }catch(ApiFailure candidateStatus){
+                    if(candidateStatus.status==410){completeResetLocally(true);return true;}
+                    if(candidateStatus.status!=401&&candidateStatus.status!=403)throw candidateStatus;
+                }
+                if(candidate!=null){
+                    if(candidate.optBoolean("resetRequired")){
+                        cfg.commitDeviceToken(candidate.optLong("tokenIssuedAt",System.currentTimeMillis()/1000));
+                        cfg.markRemoteResetPending();EnrollmentManager.notifyStateChanged(c);
+                        performPendingReset();return true;
+                    }
+                    throw rejected; // Conflicting server response: retain the journal.
+                }
+                // Only a definitive candidate rejection AND recognized previous
+                // credential allow discarding an uncommitted/expired candidate.
+                JSONObject previous;
+                try{previous=requestWithToken("GET",base+"/lifecycle",null,cfg.deviceToken());}
+                catch(ApiFailure previousStatus){
+                    if(previousStatus.status==410){completeResetLocally(true);return true;}
+                    throw previousStatus;
+                }
+                cfg.discardPendingDeviceToken();
+                if(previous.optBoolean("resetRequired")){
+                    cfg.markRemoteResetPending();EnrollmentManager.notifyStateChanged(c);
+                    performPendingReset();return true;
+                }
+                AppLogger.i(c,"ApiClient","Rejected token candidate cleared after lifecycle verification");
+                return false;
+            }
+        }
+    }
     private void rotateDeviceTokenIfNeeded()throws Exception{
-        long ts=System.currentTimeMillis()/1000;
-        if(cfg.tokenRotationPending()){String pending=cfg.pendingDeviceToken();if(pending==null||pending.isBlank()||cfg.pendingTokenExpiresAt()<=ts){cfg.discardPendingDeviceToken();AppLogger.w(c,"ApiClient","Expired pending device-token rotation discarded");}else{JSONObject committed=requestWithToken("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject(),pending);cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));AppLogger.i(c,"ApiClient","Pending device-token rotation committed");return;}}
-        long issued=cfg.tokenIssuedAt();if(issued>0&&ts-issued<TOKEN_ROTATE_AFTER)return;
-        JSONObject prepared=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/prepare",new JSONObject());String next=prepared.getString("deviceToken");long expiresAt=prepared.optLong("expiresAt",ts+3600);cfg.stageDeviceToken(next,expiresAt);JSONObject committed=requestWithToken("POST","/api/v1/devices/"+cfg.deviceId()+"/token/commit",new JSONObject(),next);cfg.commitDeviceToken(committed.optLong("tokenIssuedAt",ts));AppLogger.i(c,"ApiClient","Device token rotated");
+        synchronized(TOKEN_LOCK){
+            if(recoverPendingDeviceToken())throw new EnrollmentEnded();
+            long ts=System.currentTimeMillis()/1000,issued=cfg.tokenIssuedAt();
+            if(issued>0&&ts-issued<TOKEN_ROTATE_AFTER)return;
+            JSONObject prepared=request("POST","/api/v1/devices/"+cfg.deviceId()+"/token/prepare",new JSONObject());
+            cfg.stageDeviceToken(prepared.getString("deviceToken"),prepared.optLong("expiresAt",ts+3600));
+            if(recoverPendingDeviceToken())throw new EnrollmentEnded();
+        }
     }
     public void flushEvents()throws Exception{
         LocalStore store=LocalStore.get(c);int sent=0;
@@ -343,12 +409,17 @@ public final class ApiClient {
                     if(results==null)throw new IOException("Batch response missing acknowledgements");
                     java.util.Set<String> expected=new java.util.HashSet<>();
                     for(JSONObject e:pending)expected.add(e.getString("eventId"));
+                    java.util.Map<String,String> dispositions=new java.util.LinkedHashMap<>();
                     for(int i=0;i<results.length();i++){
                         JSONObject result=results.getJSONObject(i);String id=result.optString("eventId","");
-                        if(!expected.remove(id)||!result.optBoolean("accepted"))throw new IOException("Invalid batch acknowledgement");
-                        store.markEventSent(id);sent++;
+                        if(!expected.remove(id))throw new IOException("Invalid batch acknowledgement");
+                        dispositions.put(id,EventUploadReceipt.disposition(result));
                     }
                     if(!expected.isEmpty())throw new IOException("Incomplete batch acknowledgement");
+                    for(java.util.Map.Entry<String,String> receipt:dispositions.entrySet()){
+                        store.markEventAccepted(receipt.getKey(),receipt.getValue());
+                        if(EventUploadReceipt.published(receipt.getValue()))sent++;
+                    }
                     continue;
                 }catch(ApiFailure e){
                     if(e.status!=404)throw e;
@@ -357,7 +428,11 @@ public final class ApiClient {
             }
             for(JSONObject e:pending){
                 JSONObject response=request("POST","/api/v1/devices/"+cfg.deviceId()+"/events",e);
-                if(response.optBoolean("accepted")){store.markEventSent(e.getString("eventId"));sent++;}
+                String id=e.getString("eventId");
+                if(!id.equals(response.optString("eventId")))throw new IOException("Event acknowledgement identity mismatch");
+                String disposition=EventUploadReceipt.disposition(response);
+                store.markEventAccepted(id,disposition);
+                if(EventUploadReceipt.published(disposition))sent++;
             }
         }
         cfg.clearUploadError();
@@ -376,6 +451,7 @@ public final class ApiClient {
     }
     public boolean waitForCommands()throws Exception{
         if(!cfg.isEnrolled()||cfg.resetPending())return false;
+        if(recoverPendingDeviceToken())return false;
         requireHttps(cfg.server());
         JSONObject r=raw(cfg.server()+"/api/v1/devices/"+cfg.deviceId()+"/commands/pending?limit=50&wait=15",
             "GET",null,"Device "+cfg.deviceToken(),cfg.deviceId(),22000);
@@ -405,8 +481,13 @@ public final class ApiClient {
         request("POST","/api/v1/devices/"+cfg.deviceId()+"/location/purge",new JSONObject());
     }
     public JSONObject ota()throws Exception{return request("GET","/api/v1/ota",null);}
-    JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
-    private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
+    JSONObject request(String method,String path,JSONObject body)throws Exception{if(!cfg.isEnrolled())throw new IllegalStateException("Not enrolled");if(recoverPendingDeviceToken())throw new EnrollmentEnded();requireHttps(cfg.server());try{return raw(cfg.server()+path,method,body,"Device "+cfg.deviceToken(),cfg.deviceId());}catch(Exception e){AppLogger.e(c,"ApiClient",method+" "+path+" failed",e);throw e;}}
+    private JSONObject requestWithToken(String method,String path,JSONObject body,String token)throws Exception{
+        if(cfg.server().isBlank()||cfg.deviceId().isBlank()||token==null||token.isBlank())throw new IllegalStateException("Device credentials unavailable");
+        requireHttps(cfg.server());
+        if(tokenTransport!=null)return tokenTransport.request(method,path,body,token);
+        return raw(cfg.server()+path,method,body,"Device "+token,cfg.deviceId());
+    }
     private static JSONObject raw(String url,String method,JSONObject body,String auth,String deviceId)throws Exception{
         return raw(url,method,body,auth,deviceId,12000);
     }

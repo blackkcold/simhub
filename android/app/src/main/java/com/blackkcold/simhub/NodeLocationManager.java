@@ -23,8 +23,21 @@ import java.util.concurrent.TimeUnit;
 public final class NodeLocationManager {
     private static final String PREF="simhub_location_privacy_v1";
     private NodeLocationManager(){}
-    private static SharedPreferences prefs(Context c){
-        return c.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE);
+    private static String binding(Context c){
+        AgentConfig cfg=new AgentConfig(c);
+        return cfg.server()+"|"+cfg.deviceId()+"|"+cfg.enrollmentGeneration();
+    }
+    private static synchronized SharedPreferences prefs(Context c){
+        SharedPreferences p=c.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE);
+        String current=binding(c);
+        // Older APKs had a global location switch. Migration, reset and any new
+        // enrollment require fresh local consent, including remote one-shot access.
+        if(!current.equals(p.getString("enrollmentBinding",""))){
+            if(!p.edit().clear().putString("enrollmentBinding",current).commit())
+                throw new IllegalStateException("Unable to bind location consent");
+            LocalStore.get(c).clearPendingLocation();
+        }
+        return p;
     }
     public static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false);}
     public static boolean remoteAllowed(Context c){return enabled(c)&&prefs(c).getBoolean("remoteAllowed",false);}
@@ -39,6 +52,7 @@ public final class NodeLocationManager {
         SharedPreferences.Editor editor=p.edit()
             .putBoolean("enabled",enabled)
             .putBoolean("purgePending",!enabled||purgePending(c));
+        if(!enabled)editor.putLong("purgeRevision",p.getLong("purgeRevision",0)+1);
         if(enabled&&!p.getBoolean("enabled",false)){
             editor.putString("epoch",UUID.randomUUID().toString())
                 .remove("registeredEpoch").putBoolean("remoteAllowed",false);
@@ -52,8 +66,15 @@ public final class NodeLocationManager {
     }
     public static void purgeIfNeeded(Context c,ApiClient api)throws Exception{
         if(!purgePending(c))return;
+        String started=binding(c);long revision=prefs(c).getLong("purgeRevision",0);
         api.purgeLocation();
-        prefs(c).edit().putBoolean("purgePending",false).commit();
+        if(started.equals(binding(c))&&revision==prefs(c).getLong("purgeRevision",0))
+            prefs(c).edit().putBoolean("purgePending",false).commit();
+    }
+    public static synchronized void clearForEnrollment(Context c){
+        if(!c.getApplicationContext().getSharedPreferences(PREF,Context.MODE_PRIVATE).edit().clear().commit())
+            throw new IllegalStateException("Unable to clear location consent");
+        LocalStore.get(c).clearPendingLocation();
     }
     public static boolean permissionGranted(Context c){
         return c.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED
@@ -106,6 +127,7 @@ public final class NodeLocationManager {
         if(!enabled(c))throw new SecurityException("location_sharing_disabled");
         AgentConfig config=new AgentConfig(c);
         if(!config.isEnrolled())throw new IllegalStateException("not_enrolled");
+        String enrollment=binding(c);
         // A prior opt-out must be applied before another point may be published.
         ApiClient api=new ApiClient(c);
         purgeIfNeeded(c,api);
@@ -113,6 +135,8 @@ public final class NodeLocationManager {
         if(consentEpoch.isBlank())throw new SecurityException("location_consent_missing");
         if(!consentEpoch.equals(prefs(c).getString("registeredEpoch",""))){
             api.activateLocation(consentEpoch);
+            if(!enrollment.equals(binding(c))||!enabled(c)||!consentEpoch.equals(epoch(c)))
+                throw new SecurityException("location_consent_changed");
             prefs(c).edit().putString("registeredEpoch",consentEpoch).commit();
         }
         Location location=current(c);
@@ -122,7 +146,7 @@ public final class NodeLocationManager {
         if(!Double.isFinite(location.getLatitude())||!Double.isFinite(location.getLongitude())
                 ||Math.abs(location.getLatitude())>90||Math.abs(location.getLongitude())>180)
             throw new IllegalStateException("invalid_location");
-        if(!consentEpoch.equals(epoch(c)))throw new SecurityException("location_consent_changed");
+        if(!enrollment.equals(binding(c))||!consentEpoch.equals(epoch(c)))throw new SecurityException("location_consent_changed");
         long ts=System.currentTimeMillis()/1000+1;
         JSONObject inner=new JSONObject()
             .put("latitude",location.getLatitude())
@@ -137,6 +161,7 @@ public final class NodeLocationManager {
         api.flushEvents();
         return new JSONObject().put("sampledAt",inner.optLong("sampledAt"))
             .put("published",LocalStore.get(c).hasUploadedReceipt(id))
+            .put("suppressed","suppressed".equals(LocalStore.get(c).eventReceiptDisposition(id)))
             .put("queued",LocalStore.get(c).isEventPending(id));
     }
 }

@@ -30,7 +30,13 @@ public final class SmsHistorySync {
         if(row.type==Telephony.Sms.MESSAGE_TYPE_DRAFT)return true;
         // Reconciliation replays recent Provider rows. Skip expensive contact lookup,
         // key unwrap, JSON construction and AES-GCM for already durable IDs.
-        if(LocalStore.get(c).hasSeenEvent("sms-provider-"+row.id))return true;
+        if(LocalStore.get(c).hasSeenEvent("sms-provider-"+row.id)&&!SharedPoolClient.needsStage(c,"sms-provider-"+row.id))return true;
+        JSONObject payload=payload(c,row);
+        return EventQueue.queue(c,"sms-provider-"+row.id,"sms.history",row.date/1000,row.sub,
+                payload.has("otp"),payload,new JSONObject().put("providerType",row.type).put("history",true));
+    }
+
+    private static JSONObject payload(Context c,SmsRow row)throws Exception{
         String direction=row.type==Telephony.Sms.MESSAGE_TYPE_INBOX?"in":"out";
         OtpParser.Result otp=direction.equals("in")?OtpParser.parse(row.body):new OtpParser.Result(false,null,0f);
         String contact=ContactResolver.lookup(c,row.address);
@@ -43,8 +49,44 @@ public final class SmsHistorySync {
         if(contact!=null)payload.put("contactName",contact);
         if(otp.detected&&direction.equals("in"))
             payload.put("otp",new JSONObject().put("value",otp.value).put("confidence",otp.confidence));
-        return EventQueue.queue(c,"sms-provider-"+row.id,"sms.history",row.date/1000,row.sub,
-                otp.detected&&direction.equals("in"),payload,new JSONObject().put("providerType",row.type).put("history",true));
+        payload.put("sourceDeviceName",new AgentConfig(c).deviceName());
+        if(channel!=null){
+            JSONObject profile=SimTagStore.get(c,channel.channelId,channel.revision);
+            if(!profile.optString("tag").isBlank())payload.put("simTag",profile.optString("tag"));
+            if(!profile.optString("tail").isBlank())payload.put("simTail",profile.optString("tail"));
+        }
+        return payload;
+    }
+
+    /** Sharing has its own durable publication cursor, independent of ordinary upload receipts. */
+    public static synchronized int syncSharedHistory(Context c,int requested){
+        if(!canRead(c))return -1;
+        SharedPoolClient pool=new SharedPoolClient(c);
+        if(!pool.approved()||!new AgentConfig(c).isEnrolled())return 0;
+        boolean initial=!pool.initialHistoryStaged();
+        int limit=Math.max(1,Math.min(PAGE,requested));
+        if(initial)limit=Math.min(limit,pool.initialHistoryRemaining());
+        if(limit==0)return 0;
+        long date=pool.historyDate(),id=pool.historyId();
+        String selection=date>0?"("+Telephony.Sms.DATE+"<?) OR ("+Telephony.Sms.DATE+"=? AND "+BaseColumns._ID+"<?)":null;
+        String[] args=date>0?new String[]{String.valueOf(date),String.valueOf(date),String.valueOf(id)}:null;
+        int count=0;
+        try(Cursor cur=c.getContentResolver().query(Telephony.Sms.CONTENT_URI,PROJECTION,selection,args,
+                Telephony.Sms.DATE+" DESC, "+BaseColumns._ID+" DESC")){
+            if(cur==null)return -1;
+            while(count<limit&&cur.moveToNext()){
+                SmsRow row=new SmsRow(cur);
+                String eventId="sms-provider-"+row.id;
+                if(row.type!=Telephony.Sms.MESSAGE_TYPE_DRAFT&&SharedPoolClient.needsStage(c,eventId)){
+                    JSONObject payload=payload(c,row);
+                    if(!SharedPoolClient.stage(c,eventId,row.date/1000,payload.optString("channelId"),payload))return -1;
+                }
+                // A staging exception never consumes the cursor or completion marker.
+                pool.historyRowStaged(row.date,row.id,initial);count++;
+            }
+            if(count<limit)pool.historyExhausted();
+            return count;
+        }catch(Exception error){scanFailed(c,error,"Shared history");return -1;}
     }
 
     /**
@@ -177,6 +219,9 @@ public final class SmsHistorySync {
     public static synchronized int syncOlder(Context c,int requested) {
         if(!canRead(c))return -1;
         AgentConfig cfg=new AgentConfig(c);if(!cfg.isEnrolled())return 0;
+        // The same explicit history request also progresses the independent
+        // shared publication window, even if ordinary uploads are already seen.
+        if(new SharedPoolClient(c).stageOlderHistory(requested)<0)return -1;
         if(!cfg.historyInitialized())sync(c,PAGE);
         if(!cfg.historyInitialized())return -1;
         long date=cfg.historyBackfillDate(),id=cfg.historyBackfillId();

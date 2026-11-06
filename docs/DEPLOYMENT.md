@@ -209,6 +209,30 @@ The provided Caddy example sets `X-Forwarded-For` explicitly. Never configure `0
 - `scripts/backup.sh`: SQLite online backup.
 - Maintenance continuously removes expired sessions/enrollment tokens and data beyond configured retention.
 
+## v0.19 upgrade sequence
+
+1. Create a private database backup with `scripts/backup.sh`. Run
+   `python3 scripts/verify_backup.py PATH_TO_BACKUP --restore-check` against the
+   resulting backup/checksum pair to rehearse restoration in a disposable local
+   database. Keep the existing `.env`, signing/channel configuration and Vault
+   recovery material; the database backup does not recover a lost Vault key.
+2. Upgrade the Relay through its verified, channel-matched updater or deployment
+   package. The new settings and command-tombstone tables are additive. Existing
+   Global Vault/Node Keys and configured retention remain in place; no re-pairing
+   or key reset is required for this release.
+3. Refresh/reopen Web/PWA clients, install the matching signed Android update,
+   and update modem nodes to agent `0.3.3`. Upgrading Relay first makes exact
+   command reconciliation and encrypted settings available to the new clients.
+4. Let queued events and existing commands reconcile. Persistent send journals
+   protect newly created intents; they cannot reconstruct an old unsaved draft
+   or prove whether an older ambiguous SMS reached the carrier. Check existing
+   command receipts before intentionally creating another send.
+5. Verify ordinary device activity, queue/ACK progress and update status. An
+   integrity-checked backup is shown separately from a restore rehearsal. A
+   code-only Relay rollback preserves the additive replay fence; restoring an
+   older database snapshot may also roll back receipts, so retain newer backup
+   and command evidence when investigating an uncertain send.
+
 ## Linux / DJI Modem Agent
 
 Install from `modem_agent/`. The built-in adapter order is:

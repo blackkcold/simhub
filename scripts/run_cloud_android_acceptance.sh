@@ -24,15 +24,19 @@ trap 'kill "$geo_pid" 2>/dev/null || true' EXIT
 
 device_id=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["deviceId"])' "$RUNNER_TEMP/simhub-ci/enrollment.json")
 device_token=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["deviceToken"])' "$RUNNER_TEMP/simhub-ci/enrollment.json")
+classes=com.blackkcold.simhub.CloudAcceptanceInstrumentedTest,com.blackkcold.simhub.CommandStatusInstrumentedTest,com.blackkcold.simhub.NodeRecoveryInstrumentedTest,com.blackkcold.simhub.ControllerJournalInstrumentedTest
 adb shell am instrument -w \
-  -e class com.blackkcold.simhub.CloudAcceptanceInstrumentedTest,com.blackkcold.simhub.CommandStatusInstrumentedTest \
+  -e class "$classes" \
   -e ciDeviceId "$device_id" -e ciDeviceToken "$device_token" -e ciAdminToken "$SIMHUB_ADMIN_TOKEN" \
   "$package.test/androidx.test.runner.AndroidJUnitRunner" | tee "$RUNNER_TEMP/simhub-ci/instrumentation.log"
 
 # Android's instrumentation command may exit 0 on test failure.
-python3 - "$RUNNER_TEMP/simhub-ci/instrumentation.log" <<'PY'
+python3 - "$RUNNER_TEMP/simhub-ci/instrumentation.log" "$classes" <<'PY'
 import re, sys
 text=open(sys.argv[1],encoding='utf-8').read()
-if 'FAILURES!!!' in text or not re.search(r'OK \(3 tests?\)',text):
-    raise SystemExit('Cloud emulator acceptance did not pass all three tests')
+required=sys.argv[2].split(',')
+passed=re.search(r'OK \(([1-9][0-9]*) tests?\)',text)
+if ('FAILURES!!!' in text or not passed or int(passed[1])<len(required)
+        or any(name not in text for name in required)):
+    raise SystemExit('Cloud emulator acceptance did not pass every required test class')
 PY

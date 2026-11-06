@@ -19,6 +19,8 @@ REQUIRED_CODEQL = (
     "codeql compatibility (python)", "codeql compatibility (javascript-typescript)",
     "codeql compatibility (java-kotlin)",
 )
+REQUIRED_COMPATIBILITY = ("android-min-api (29)", "android-min-api (30)")
+REQUIRED_CHECKS = REQUIRED_CODEQL + REQUIRED_COMPATIBILITY
 FAILURES = {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
 
 
@@ -45,16 +47,16 @@ def verdict(runs: list[dict], checks: list[dict], sha: str, branch: str) -> tupl
     latest_checks = {}
     for check in checks:
         name = check.get("name")
-        if name in REQUIRED_CODEQL and check.get("head_sha") == sha:
+        if name in REQUIRED_CHECKS and check.get("head_sha") == sha:
             if name not in latest_checks or check.get("id", 0) > latest_checks[name].get("id", 0):
                 latest_checks[name] = check
-    for name in REQUIRED_CODEQL:
+    for name in REQUIRED_CHECKS:
         check = latest_checks.get(name)
         if check is None or check.get("status") != "completed":
-            pending.append("CodeQL matrix " + name)
+            pending.append("check " + name)
         elif check.get("conclusion") != "success":
-            return "failed", f"CodeQL matrix {name}: {check.get('conclusion')}"
-    return ("waiting", ", ".join(pending)) if pending else ("ready", "CI, Security scan and all six CodeQL jobs passed on identical SHA")
+            return "failed", f"check {name}: {check.get('conclusion')}"
+    return ("waiting", ", ".join(pending)) if pending else ("ready", "CI, Security scan, all six CodeQL jobs and API29/30 compatibility passed on identical SHA")
 
 
 def fetch(endpoint: str, token: str) -> dict:

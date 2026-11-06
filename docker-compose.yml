@@ -5,6 +5,9 @@ services:
       context: .
       dockerfile: server/Dockerfile
     restart: unless-stopped
+    mem_limit: ${SIMHUB_MEMORY_LIMIT:-512m}
+    cpus: ${SIMHUB_CPU_LIMIT:-2.0}
+    pids_limit: ${SIMHUB_PIDS_LIMIT:-128}
     env_file: .env
     environment:
       SIMHUB_TRUST_DOCKER_GATEWAY: "true"

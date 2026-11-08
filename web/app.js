@@ -1598,6 +1598,8 @@ function openConversation(key){
 }
 function openNewMessage(){
   if(!hasSmsSending())return;
+  // Explicit New SMS detaches the composer from any unresolved old intent.
+  freshReplyDraftSession='reply:new:'+uuid();
   switchView('inbox');activeConversationKey='__new';
   updateReplyDevices();
   $('replyDevice').value='';
@@ -1635,7 +1637,28 @@ function validateSmsRoute(deviceId,payload){
   if(!deviceCanSendSms(d)||!ch||Number(ch.revision||ch.channelRevision||1)!==Number(payload.channelRevision))
     throw Error('发送设备或 SIM 版本已改变，请重新选择。 / The saved SIM route is no longer valid.');
 }
-function composerDraftId(reply){return reply?'reply:'+(activeConversationKey||'__new'):'compose';}
+let composeDraftSession='compose',freshReplyDraftSession='reply:__new';
+const conversationDraftSessions=new Map();
+function composerDraftId(reply){
+  if(!reply)return composeDraftSession;
+  const conversation=activeConversationKey||'__new';
+  if(conversation==='__new')return freshReplyDraftSession;
+  return conversationDraftSessions.get(conversation)||'reply:'+conversation;
+}
+function beginIndependentDraft(reply){
+  // A new SMS is a new local draft, never a retry with a new command ID.
+  // Older uncertain intents stay in the encrypted Send center for reconciliation.
+  const next=uuid();
+  if(reply){
+    const conversation=activeConversationKey||'__new';
+    if(conversation==='__new')freshReplyDraftSession='reply:new:'+next;
+    else conversationDraftSessions.set(conversation,'reply:'+conversation+':new:'+next);
+    $('replyBody').value='';updateReplyCount();
+  }else{
+    composeDraftSession='compose:new:'+next;
+    $('sendTo').value='';$('sendBody').value='';updateCharCount();
+  }
+}
 function composerSnapshot(reply){
   const prefix=reply?'reply':'send',channel=$(prefix+'Subscription');
   return {deviceId:$(prefix+'Device').value,channelId:channel.value,
@@ -1727,7 +1750,7 @@ async function queueCommand(deviceId,type,payload,ttl,draftId='compose'){const e
   ttl=Math.max(ttl||120,minimumTtl);
   if(type==='sms.send')return ensureSendCoordinator().submit({draftId,deviceId,payload,ttl});
   const createdAt=Math.floor(Date.now()/1000),commandId=uuid(),idempotencyKey=commandId,expiresAt=createdAt+ttl,inner=Object.assign({v:2,action:type,commandId:commandId,issuedAt:createdAt,expiresAt:expiresAt},payload),outer={commandId:commandId,idempotencyKey:idempotencyKey,type:type,createdAt:createdAt,expiresAt:expiresAt};outer.ciphertext=await encryptCommand(deviceId,outer,inner);if(epoch!==securityEpoch||!vaultKey)throw Error('Vault locked');return api('/api/v1/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',body:outer});}
-async function sendSms(draftId='compose'){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前是只读短信模式，不能发送');if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
+async function sendSms(draftId=composerDraftId(false)){const deviceId=$('sendDevice').value,select=$('sendSubscription'),channelId=select.value,opt=select.selectedOptions[0],to=$('sendTo').value.trim(),body=$('sendBody').value;if(!deviceCanSendSms(devices.find(d=>d.id===deviceId)))throw new Error('该设备当前是只读短信模式，不能发送');if(!deviceId||!channelId)throw new Error('Choose an online SIM Node and SMS channel.');if(!/^\+?[0-9 ()-]{3,40}$/.test(to))throw new Error('Recipient number format is invalid.');if(!body.trim())throw new Error('Message is empty.');const selected=devices.find(x=>x.id===deviceId);if(selected&&selected.state&&selected.state.smsOperational===false)throw new Error('The selected node reports SMS unavailable. Fix the SMS role, permissions or SIM first.');if(selected?.state?.effectiveEnergyMode==='eco'||selected?.state?.energyMode==='eco'||selected?.state?.foregroundRelay===false){
   if(!confirm((getLocale()==='zh-CN'?'该设备使用省电/非前台模式，发送可能延迟约 15 分钟。请确认接收方及发送时效要求。':'This device may check remote commands only every 15 minutes. Confirm the recipient and acceptable delay.')))return;
 }
 if(!confirm(tr('confirm_send',{device:deviceName(deviceId),to:to})))return;const localId=opt?opt.dataset.localId:'',revision=opt?Number(opt.dataset.revision||1):1,payload={channelId:channelId,channelRevision:revision,to:to,body:body};if(/^\d+$/.test(localId))payload.subscriptionId=Number(localId);try{const result=await queueCommand(deviceId,'sms.send',payload,180,draftId);if($('sendBody').value===body)$('sendBody').value='';updateCharCount();toast(sendStateLabel(result.state||'queued'));}finally{await renderSendCenter();}}
@@ -2252,6 +2275,7 @@ function wire(){
   $('sendTo').oninput=()=>saveDraft(false);
   $('sendBody').oninput=()=>{updateCharCount();saveDraft(false);};
   $('newSmsBtn').onclick=openNewMessage;
+  $('newComposeDraft').onclick=()=>beginIndependentDraft(false);
   $('backConversation').onclick=()=>{activeConversationKey=null;syncResponsiveConversation();renderInbox();$('search').focus({preventScroll:true});};
   window.addEventListener('resize',syncResponsiveConversation,{passive:true});
   window.addEventListener('orientationchange',syncResponsiveConversation,{passive:true});
@@ -2260,6 +2284,7 @@ function wire(){
   $('replyBody').oninput=()=>{updateReplyCount();saveDraft(true);};
   $('replyTo').oninput=()=>{refreshReplyEligibility();saveDraft(true);};
   $('replySend').onclick=()=>sendConversationReply().catch(e=>toast(e.message));
+  $('replyNewDraft').onclick=()=>beginIndependentDraft(true);
   $('conversationMessages').onclick=e=>{const b=e.target.closest('.copy-otp');if(b)copy(b.dataset.otp,tr('otp_copied')).catch(err=>toast(err.message));};
   $('loadOlderBtn').onclick=()=>loadOlder().catch(e=>toast(e.message));
   $('historyLoadAll').onclick=()=>historyBackfill.start().catch(e=>{if(vaultKey)toast(e.message);});

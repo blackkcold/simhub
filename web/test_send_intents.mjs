@@ -63,6 +63,31 @@ accepted.get('intent-1').state='outcome_unknown';
 await coordinator.retry('intent-1');assert.equal(posts.length,2);
 assert.equal((await reloaded.read('intent:intent-1')).state,'outcome_unknown');
 await assert.rejects(reloaded.archive('intent-1'),/Resolve/);
+
+// Explicitly creating a distinct draft must not erase or automatically retry
+// a previous uncertain send. A different payload in the SAME draft still fails.
+const j3=new IntentJournal({scope:'independent-drafts',key,storage:disk,locks});
+const outer=[];
+let newest=0;
+const c3=new SendCoordinator({journal:j3,now:()=>1000,
+  newId:()=>('independent-'+ ++newest),encrypt:async()=>({v:2,ct:'synthetic'}),
+  api:async(path,options)=>{
+    if(options?.method==='POST'){
+      outer.push(options.body.commandId);
+      if(outer.length===1)throw Error('lost command response');
+      return {accepted:true,commandId:options.body.commandId,state:'queued'};
+    }
+    throw Object.assign(Error('Missing'),{status:404,code:'command_not_found'});
+  }});
+await assert.rejects(c3.submit({draftId:'reply:original',deviceId:'node-A',payload,ttl:200}),/lost/);
+await assert.rejects(c3.submit({draftId:'reply:original',deviceId:'node-A',
+  payload:{...payload,body:'different'},ttl:200}),/previous send/);
+await c3.submit({draftId:'reply:original:new:explicit',deviceId:'node-A',
+  payload:{...payload,body:'different'},ttl:200});
+assert.equal(outer.length,2);
+assert.equal((await j3.read('intent:independent-1')).state,'acceptance_unknown');
+assert.equal((await j3.read('intent:independent-2')).state,'queued');
+
 // Tampering is detected; locking destroys journal access.
 const name=[...disk.map.keys()].find(k=>k.includes('second-vault')&&k.includes('intent:'));
 const envelope=JSON.parse(disk.getItem(name)),tampered=Buffer.from(envelope.ct,'base64');tampered[0]^=1;envelope.ct=tampered.toString('base64');disk.setItem(name,JSON.stringify(envelope));

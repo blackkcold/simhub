@@ -26,30 +26,36 @@ def pub(pair):
                                             serialization.PublicFormat.SubjectPublicKeyInfo))
 
 class ControllerHttpTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.work=tempfile.TemporaryDirectory()
-        with socket.socket() as s:
-            s.bind(("127.0.0.1",0));cls.port=s.getsockname()[1]
-        cls.url=f"http://127.0.0.1:{cls.port}"
+    def setUp(self):
+        # Each case needs a fresh relay, database and IP-rate budget. A shared
+        # server made unrelated security regression tests consume the fixed
+        # preflight quota needed by the 2,000-event pagination scenario.
+        self.work=tempfile.TemporaryDirectory()
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1",0))
+            self.port=sock.getsockname()[1]
+        self.url=f"http://127.0.0.1:{self.port}"
         env=os.environ.copy()
         env.update(SIMHUB_ADMIN_TOKEN=ADMIN_TOKEN,SIMHUB_BIND="127.0.0.1",
-                   SIMHUB_PORT=str(cls.port),SIMHUB_DB=str(Path(cls.work.name)/"relay.db"),
+                   SIMHUB_PORT=str(self.port),SIMHUB_DB=str(Path(self.work.name)/"relay.db"),
                    SIMHUB_REQUIRE_TOTP="false")
-        cls.proc=subprocess.Popen([sys.executable,str(ROOT/"server"/"simhub_server.py")],
+        self.proc=subprocess.Popen([sys.executable,str(ROOT/"server"/"simhub_server.py")],
             env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
-                urllib.request.urlopen(cls.url+"/readyz",timeout=.2).read()
+                urllib.request.urlopen(self.url+"/readyz",timeout=.2).read()
                 return
-            except Exception: time.sleep(.05)
+            except Exception:
+                time.sleep(.05)
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        self.work.cleanup()
         raise RuntimeError("Controller HTTP relay did not start")
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.proc.terminate()
-        cls.proc.wait(timeout=5)
-        cls.work.cleanup()
+    def tearDown(self):
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        self.work.cleanup()
 
     def call(self,method,path,obj=None,cookie=None,admin=False,csrf=None,poll_token=None):
         headers={"Content-Type":"application/json"}

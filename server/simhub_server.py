@@ -571,6 +571,7 @@ def run_maintenance() -> dict[str,int]:
         con.execute("DELETE FROM peer_rpc_responses WHERE expires_at<?",(ts,))
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
         result["commandTombstones"]=con.execute("DELETE FROM command_tombstones WHERE retain_until<=?",(ts,)).rowcount
+        result["notificationTombstones"]=notification_outbox.maintenance(con,ts)
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         con.execute("DELETE FROM admin_login_challenges WHERE expires_at<=?",(ts,))
         controller_auth.maintenance(con,ts)
@@ -1080,7 +1081,8 @@ def notification_loop() -> None:
                     log.warning("notification_delivery_retry channel=%s reason=%s",
                                 entry["channel"],error)
                 with open_db() as con:
-                    notification_outbox.finish(con,entry["id"],success,now(),error)
+                    notification_outbox.finish(con,entry["id"],success,now(),error,
+                                               expected_attempt=entry["attempts"])
         except Exception:
             log.exception("notification_outbox_worker_failed")
         time.sleep(5 if due else 15)

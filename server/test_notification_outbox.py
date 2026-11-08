@@ -36,6 +36,18 @@ class NotificationOutboxTest(unittest.TestCase):
         self.assertEqual(outbox.summary(self.db)["delivered"],1)
         self.assertEqual(outbox.claim(self.db,1030),[])
 
+    def test_reclaimed_lease_rejects_late_ack_from_previous_worker(self):
+        outbox.enqueue(self.db,"node-a","event-lease","webhook",{},1000,10000)
+        first=outbox.claim(self.db,1001)[0]
+        second=outbox.claim(self.db,1032)[0]
+        self.assertEqual(second["attempts"],first["attempts"]+1)
+        outbox.finish(self.db,first["id"],True,1033,
+                      expected_attempt=first["attempts"])
+        self.assertEqual(outbox.summary(self.db)["inflight"],1)
+        outbox.finish(self.db,second["id"],True,1034,
+                      expected_attempt=second["attempts"])
+        self.assertEqual(outbox.summary(self.db)["delivered"],1)
+
     def test_expiry_and_device_deletion(self):
         self.assertTrue(outbox.enqueue(self.db,"node-a","event-b","bark",{"hasOtp":False},1000,1004))
         self.assertEqual(outbox.claim(self.db,1005),[])

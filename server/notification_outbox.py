@@ -68,6 +68,9 @@ def enqueue(con: sqlite3.Connection, device_id: str, event_id: str,
 def claim(con: sqlite3.Connection, ts: int, limit: int = 8) -> list[dict[str,Any]]:
     # Caller acquires BEGIN IMMEDIATE before this SELECT/UPDATE lease pair.
     con.execute("UPDATE notification_outbox SET state='expired' WHERE expires_at<=? AND state IN ('pending','retry','inflight')",(ts,))
+    # A worker crash after the last claim must not create infinite retries.
+    con.execute("UPDATE notification_outbox SET state='failed',lease_until=0 WHERE state='inflight' AND attempts>=? AND lease_until<=?",
+                (MAX_ATTEMPTS,ts))
     rows=con.execute(
         """SELECT * FROM notification_outbox
            WHERE expires_at>? AND
@@ -84,9 +87,12 @@ def claim(con: sqlite3.Connection, ts: int, limit: int = 8) -> list[dict[str,Any
     return result
 
 def finish(con: sqlite3.Connection, delivery_id: int, success: bool,
-           ts: int, error: str = "") -> None:
+           ts: int, error: str = "", expected_attempt: int | None = None) -> None:
     row=con.execute("SELECT attempts,expires_at,state FROM notification_outbox WHERE id=?",(delivery_id,)).fetchone()
-    if not row or row["state"]!="inflight":
+    # Leased work may be reclaimed while an older HTTP response arrives. Only
+    # the current lease owner may transition the outbox state.
+    if not row or row["state"]!="inflight" or (expected_attempt is not None
+                                                and row["attempts"]!=expected_attempt):
         return
     if success:
         con.execute("UPDATE notification_outbox SET state='delivered',lease_until=0,last_error='' WHERE id=?",
@@ -96,6 +102,12 @@ def finish(con: sqlite3.Connection, delivery_id: int, success: bool,
     state="failed" if row["attempts"]>=MAX_ATTEMPTS or ts+delay>=row["expires_at"] else "retry"
     con.execute("UPDATE notification_outbox SET state=?,lease_until=0,next_attempt_at=?,last_error=? WHERE id=?",
                 (state,ts+delay,str(error)[:60],delivery_id))
+
+def maintenance(con: sqlite3.Connection, ts: int) -> int:
+    # Keep tombstones long enough to prevent repeat notification of a delayed
+    # duplicate event, then reclaim storage in the regular maintenance cycle.
+    return con.execute("DELETE FROM notification_outbox WHERE state IN ('delivered','failed','expired') AND created_at<?",
+                       (ts-86400,)).rowcount
 
 def summary(con: sqlite3.Connection) -> dict[str,int]:
     counts={"pending":0,"retry":0,"inflight":0,"delivered":0,"failed":0,"expired":0}

@@ -4,7 +4,7 @@ from pathlib import Path
 import simhub_server as srv
 
 class MaintenanceTest(unittest.TestCase):
-    def test_retention_cleans_terminal_data_but_keeps_pending(self):
+    def test_retention_advances_expired_and_keeps_only_unexpired_pending(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/"maintenance.db"
             old_db=srv.DB_PATH
@@ -24,14 +24,19 @@ class MaintenanceTest(unittest.TestCase):
                     con.execute("INSERT INTO audit(occurred_at,action,result) VALUES(?,?,?)",(cutoff,'old','ok'))
                     con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json,state) VALUES('done','d','sms.send',?,?,?,?,'sent')",(cutoff,cutoff+10,'done','{"v":1,"alg":"A256GCM","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
                     con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json,state) VALUES('pending','d','sms.send',?,?,?,?,'queued')",(cutoff,cutoff+10,'pending','{"v":1,"alg":"A256GCM","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
+                    # A genuinely unexpired queued request remains eligible
+                    # for delivery even while retention cleans older records.
+                    con.execute("INSERT INTO commands(id,device_id,type,created_at,expires_at,idempotency_key,ciphertext_json,state) VALUES('live','d','sms.send',?,?,?,?,'queued')",(int(time.time()),int(time.time())+600,'live','{"v":1,"alg":"A256GCM","iv":"AAAAAAAAAAAAAAAA","ct":"AAAAAAAAAAAAAAAA"}'))
                 removed=srv.run_maintenance()
                 self.assertGreaterEqual(removed['events'],1)
                 self.assertGreaterEqual(removed['audit'],1)
-                self.assertGreaterEqual(removed['commands'],1)
+                self.assertGreaterEqual(removed['commands'],2)
+                self.assertGreaterEqual(removed['expiredCommands'],1)
                 with sqlite3.connect(db) as con:
                     self.assertEqual(con.execute("SELECT COUNT(*) FROM events WHERE id='old'").fetchone()[0],0)
                     self.assertEqual(con.execute("SELECT COUNT(*) FROM commands WHERE id='done'").fetchone()[0],0)
-                    self.assertEqual(con.execute("SELECT COUNT(*) FROM commands WHERE id='pending'").fetchone()[0],1)
+                    self.assertEqual(con.execute("SELECT COUNT(*) FROM commands WHERE id='pending'").fetchone()[0],0)
+                    self.assertEqual(con.execute("SELECT COUNT(*) FROM commands WHERE id='live' AND state='queued'").fetchone()[0],1)
                     token=con.execute("SELECT token_hash,pending_token_hash,pending_token_expires_at FROM devices WHERE id='d'").fetchone()
                     self.assertEqual(token[0],'h')
                     self.assertEqual(token[1],'')

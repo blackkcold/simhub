@@ -1,5 +1,6 @@
 """Exercise the controller pairing protocol through HTTP and the existing auth gate."""
 import base64
+import hashlib
 import json
 import sqlite3
 import os

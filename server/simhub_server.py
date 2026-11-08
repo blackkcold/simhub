@@ -1081,6 +1081,9 @@ def notification_loop() -> None:
                     log.warning("notification_delivery_retry channel=%s reason=%s",
                                 entry["channel"],error)
                 with open_db() as con:
+                    # Pair the lease attempt check and final state update in
+                    # one writer transaction, even with multiple relay workers.
+                    con.execute("BEGIN IMMEDIATE")
                     notification_outbox.finish(con,entry["id"],success,now(),error,
                                                expected_attempt=entry["attempts"])
         except Exception:
@@ -2360,33 +2363,38 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not sets:
             self.send_error_json(400,"no_changes","No supported fields supplied"); return
         vals.append(device_id)
-        with open_db() as con:
-            con.execute("BEGIN IMMEDIATE")
-            if "pendingKeyId" in body or "pendingWrappedKey" in body:
-                current=con.execute(
-                    "SELECT pending_key_id,pending_wrapped_key_json,revoked_at,reset_requested_at FROM devices WHERE id=?",
-                    (device_id,)).fetchone()
-                if not current:
-                    self.send_error_json(404,"device_not_found","Device not found");return
-                if current["revoked_at"] is not None or current["reset_requested_at"]:
-                    self.send_error_json(409,"device_not_active","Device is not active");return
-                # A different envelope under the same key ID is also a
-                # conflicting rotation; only an identical retry is idempotent.
-                if current["pending_key_id"] and (
-                    current["pending_key_id"]!=kid or
-                    current["pending_wrapped_key_json"]!=json.dumps(wrapped,separators=(",",":"))):
-                    self.send_error_json(409,"key_rotation_in_progress",
-                                         "A different node-key rotation is already pending");return
-            cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
-            if cur.rowcount and body.get("revoke") is True:
-                shared_pool.member_departure(con,device_id)
-                peer_signaling.forget_device(con,device_id)
-                # A command already handed out may have reached the radio.
-                # Only commands never dispatched can be called rejected.
-                con.execute("UPDATE commands SET state='rejected',ack_at=?,result_json=? WHERE device_id=? AND state='queued'",
-                    (now(),json.dumps({"reason":"device_revoked"}),device_id))
-                con.execute("UPDATE commands SET state='outcome_unknown',ack_at=?,result_json=? WHERE device_id=? AND state='dispatched'",
-                    (now(),json.dumps({"reason":"device_revoked_after_dispatch"}),device_id))
+        class RotationPrecondition(Exception): pass
+        try:
+            with open_db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                if "pendingKeyId" in body or "pendingWrappedKey" in body:
+                    current=con.execute(
+                        "SELECT pending_key_id,pending_wrapped_key_json,revoked_at,reset_requested_at FROM devices WHERE id=?",
+                        (device_id,)).fetchone()
+                    if not current:
+                        raise RotationPrecondition(404,"device_not_found","Device not found")
+                    if current["revoked_at"] is not None or current["reset_requested_at"]:
+                        raise RotationPrecondition(409,"device_not_active","Device is not active")
+                    # A different envelope under the same key ID is also a
+                    # conflicting rotation; only an identical retry is idempotent.
+                    if current["pending_key_id"] and (
+                        current["pending_key_id"]!=kid or
+                        current["pending_wrapped_key_json"]!=json.dumps(wrapped,separators=(",",":"))):
+                        raise RotationPrecondition(409,"key_rotation_in_progress",
+                                             "A different node-key rotation is already pending")
+                cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
+                if cur.rowcount and body.get("revoke") is True:
+                    shared_pool.member_departure(con,device_id)
+                    peer_signaling.forget_device(con,device_id)
+                    # A command already handed out may have reached the radio.
+                    # Only commands never dispatched can be called rejected.
+                    con.execute("UPDATE commands SET state='rejected',ack_at=?,result_json=? WHERE device_id=? AND state='queued'",
+                        (now(),json.dumps({"reason":"device_revoked"}),device_id))
+                    con.execute("UPDATE commands SET state='outcome_unknown',ack_at=?,result_json=? WHERE device_id=? AND state='dispatched'",
+                        (now(),json.dumps({"reason":"device_revoked_after_dispatch"}),device_id))
+        except RotationPrecondition as error:
+            # Do not perform HTTP I/O while holding BEGIN IMMEDIATE.
+            self.send_error_json(*error.args);return
         if not cur.rowcount:
             self.send_error_json(404,"device_not_found","Device not found"); return
         audit("device.patch",device_id,"ok",self.ip); signal_stream()

@@ -35,6 +35,7 @@ import vault_settings
 from argon2 import PasswordHasher, exceptions as argon2_errors
 import shared_pool
 import update_bridge
+import notification_outbox
 from typing import Any
 
 APP_VERSION = "0.19.0"
@@ -547,6 +548,7 @@ def init_db() -> None:
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         shared_pool.init(con)
         controller_auth.init(con)
+        notification_outbox.init(con)
         peer_signaling.init(con)
         global_vault.init(con)
         vault_settings.init(con)
@@ -1006,54 +1008,82 @@ def signal_stream() -> None:
         _stream_condition.notify_all()
 
 
-def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occurred_at: int) -> None:
-    if not (NOTIFY_WEBHOOK or NOTIFY_BARK_URL or NOTIFY_NTFY_URL) or kind != "sms.received":
-        return
-    if abs(now()-occurred_at) > NOTIFY_MAX_AGE:
+def queue_sms_notification(con: sqlite3.Connection, event_id: str, device_id: str,
+                           device_name: str, has_otp: bool, occurred_at: int) -> None:
+    """Enqueue delivery in the SAME transaction that accepts a new SMS event."""
+    providers=[channel for channel,configured in (
+        ("webhook",NOTIFY_WEBHOOK),("bark",NOTIFY_BARK_URL),("ntfy",NOTIFY_NTFY_URL))
+        if configured]
+    if not providers or abs(now()-occurred_at)>NOTIFY_MAX_AGE:
         return
     if NOTIFY_OTP_ONLY and not has_otp:
         return
     if NOTIFY_DEVICE_IDS and device_id not in NOTIFY_DEVICE_IDS:
         return
-    payload = {
-        "source":"simhub",
-        "kind":kind,
-        "title":"SIM Hub",
-        "message":"New OTP received" if has_otp else "New SMS received",
-        "device":device_name,
-        "occurredAt":occurred_at,
-    }
-    def send() -> None:
-        # Notification providers receive only generic metadata, never sender/body/OTP.
-        if NOTIFY_WEBHOOK:
-            try:
-                req=urllib.request.Request(
-                    NOTIFY_WEBHOOK,data=json.dumps(payload).encode(),
-                    headers={"Content-Type":"application/json", **({"Authorization":f"Bearer {NOTIFY_BEARER}"} if NOTIFY_BEARER else {})},method="POST",
-                )
-                urllib.request.urlopen(req,timeout=5).read(1024)
-            except Exception as exc:
-                log.warning("notification_webhook_failed %s",type(exc).__name__)
-        if NOTIFY_BARK_URL:
-            try:
-                body={"title":"SIM Hub","body":payload["message"],"group":"SIM Hub"}
-                req=urllib.request.Request(NOTIFY_BARK_URL,data=json.dumps(body).encode(),
-                    headers={"Content-Type":"application/json"},method="POST")
-                urllib.request.urlopen(req,timeout=5).read(1024)
-            except Exception as exc:
-                log.warning("notification_bark_failed %s",type(exc).__name__)
-        if NOTIFY_NTFY_URL:
-            try:
-                headers={"Title":"SIM Hub","Priority":"4" if has_otp else "3","Content-Type":"text/plain; charset=utf-8"}
-                if NOTIFY_NTFY_TOKEN:
-                    headers["Authorization"]="Bearer "+NOTIFY_NTFY_TOKEN
-                req=urllib.request.Request(NOTIFY_NTFY_URL,data=payload["message"].encode("utf-8"),
-                    headers=headers,method="POST")
-                urllib.request.urlopen(req,timeout=5).read(1024)
-            except Exception as exc:
-                log.warning("notification_ntfy_failed %s",type(exc).__name__)
-    if not _outbound_executor.submit(send):
-        log.warning("notification_dropped queue_full")
+    meta={"device":device_name,"hasOtp":has_otp,"occurredAt":occurred_at}
+    ts=now()
+    for channel in providers:
+        if not notification_outbox.enqueue(con,device_id,event_id,channel,
+                                           meta,ts,occurred_at+NOTIFY_MAX_AGE):
+            log.warning("notification_outbox_not_enqueued channel=%s",channel)
+
+
+def deliver_notification(entry: dict[str,Any]) -> None:
+    """Perform one provider request; caller persists success/retry separately."""
+    channel=entry["channel"];payload=entry["payload"]
+    message=payload["message"]
+    if channel=="webhook" and NOTIFY_WEBHOOK:
+        headers={"Content-Type":"application/json",
+                 "X-SimHub-Delivery-Id":str(entry["id"])}
+        if NOTIFY_BEARER:
+            headers["Authorization"]="Bearer "+NOTIFY_BEARER
+        request=urllib.request.Request(NOTIFY_WEBHOOK,
+            data=json.dumps({k:v for k,v in payload.items() if k!="hasOtp"}).encode("utf-8"),
+            headers=headers,method="POST")
+    elif channel=="bark" and NOTIFY_BARK_URL:
+        request=urllib.request.Request(NOTIFY_BARK_URL,
+            data=json.dumps({"title":"SIM Hub","body":message,"group":"SIM Hub"}).encode("utf-8"),
+            headers={"Content-Type":"application/json"},method="POST")
+    elif channel=="ntfy" and NOTIFY_NTFY_URL:
+        headers={"Title":"SIM Hub","Priority":"4" if payload.get("hasOtp") else "3",
+                 "Content-Type":"text/plain; charset=utf-8"}
+        if NOTIFY_NTFY_TOKEN:
+            headers["Authorization"]="Bearer "+NOTIFY_NTFY_TOKEN
+        request=urllib.request.Request(NOTIFY_NTFY_URL,data=message.encode("utf-8"),
+                                       headers=headers,method="POST")
+    else:
+        raise ValueError("notification_provider_not_configured")
+    with urllib.request.urlopen(request,timeout=5) as response:
+        response.read(1024)
+
+
+def notification_loop() -> None:
+    """Durable provider acceptance with bounded retry and crash recovery.
+
+    An external provider may receive the same event twice if the process exits
+    after HTTP success but before the local ACK. Never claim exactly-once.
+    """
+    while True:
+        due=[]
+        try:
+            with open_db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                due=notification_outbox.claim(con,now(),limit=8)
+            for entry in due:
+                error=""
+                try:
+                    deliver_notification(entry)
+                    success=True
+                except Exception as exc:
+                    success=False
+                    error=type(exc).__name__
+                    log.warning("notification_delivery_retry channel=%s reason=%s",
+                                entry["channel"],error)
+                with open_db() as con:
+                    notification_outbox.finish(con,entry["id"],success,now(),error)
+        except Exception:
+            log.exception("notification_outbox_worker_failed")
+        time.sleep(5 if due else 15)
 
 
 def push_tickle_async(device_id: str, reason: str) -> None:
@@ -2366,6 +2396,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(409,"device_reset_pending","Device reset in progress"); return
             deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind LIKE 'sms.%'",(device_id,)).rowcount
             shared_deleted=con.execute("DELETE FROM sms_pool_messages WHERE device_id=?",(device_id,)).rowcount
+            con.execute("DELETE FROM notification_outbox WHERE device_id=?",(device_id,))
             con.execute("""INSERT INTO command_tombstones
                 (id,device_id,command_seq,type,created_at,expires_at,idempotency_key,state,ack_at,purged_at,retain_until)
                 SELECT id,device_id,seq,type,created_at,expires_at,idempotency_key,
@@ -2599,13 +2630,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if kind=="device.location":con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
                 d=con.execute("SELECT name FROM devices WHERE id=?",(device_id,)).fetchone()
+                if kind=="sms.received":
+                    queue_sms_notification(con,event_id,device_id,
+                        d["name"] if d else "SIM Node",has_otp,occurred)
         except sqlite3.IntegrityError:
             with open_db() as con:
                 row=con.execute("SELECT seq FROM events WHERE id=? AND device_id=?",(event_id,device_id)).fetchone()
             if row:
                 self.send_json(200,event_receipt(event_id,row["seq"],"duplicate")); return
             self.send_error_json(409,"event_conflict","Event identity conflicts with existing data"); return
-        notify_async(kind,device_id,d["name"] if d else "SIM Node",has_otp,occurred)
         signal_stream()
         self.send_json(201,event_receipt(event_id,seq,"stored"))
 
@@ -2662,10 +2695,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if row[2]=="device.location" and not duplicate:
                     con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 results.append(event_receipt(row[0],seq,"duplicate" if duplicate else "stored"))
-                if not duplicate and row[2]=="sms.received": notifications.append((bool(row[6]),row[3]))
+                if not duplicate and row[2]=="sms.received":
+                    notifications.append((row[0],bool(row[6]),row[3]))
+            for event_id,has_otp,occurred in notifications:
+                queue_sms_notification(con,event_id,device_id,
+                    d["name"] if d else "SIM Node",has_otp,occurred)
             con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
-        for has_otp,occurred in notifications:
-            notify_async("sms.received",device_id,d["name"] if d else "SIM Node",has_otp,occurred)
         if any(not x.get("duplicate") and not x.get("suppressed") for x in results):signal_stream()
         self.send_json(200,{"accepted":True,"results":results})
 
@@ -3127,6 +3162,7 @@ def main() -> None:
     global DEPLOYED_AT
     DEPLOYED_AT=load_deployment_timestamp()
     threading.Thread(target=maintenance_loop,name="simhub-maintenance",daemon=True).start()
+    threading.Thread(target=notification_loop,name="simhub-notification-outbox",daemon=True).start()
     if SEPARATE_SURFACES and (not MANAGEMENT_ORIGIN.startswith("https://") or not PUBLIC_BASE_URL.startswith("https://") or MANAGEMENT_ORIGIN == PUBLIC_BASE_URL):
         raise SystemExit("Separated origins require distinct HTTPS management and node URLs")
     server=BoundedHTTPServer((BIND,PORT),SimHubHandler)

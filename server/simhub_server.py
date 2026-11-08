@@ -1497,6 +1497,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if path=="/api/v1/version":
             if not self.require_admin(): return
             self.send_json(200,{"version":APP_VERSION,"channel":RELEASE_CHANNEL,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None,"nodeBaseUrl":PUBLIC_BASE_URL or (MANAGEMENT_ORIGIN if not SEPARATE_SURFACES else None),"separateSurfaces":bool(SEPARATE_SURFACES)}); return
+        if path=="/api/v1/notifications/outbox":
+            if not self.require_admin(): return
+            with open_db() as con:
+                result=notification_outbox.summary(con)
+            # Aggregate provider acceptance only: no SMS content, event IDs,
+            # endpoints, secrets or per-device identifiers are exposed.
+            self.send_json(200,{"providers":"webhook,bark,ntfy","counts":result});return
         if path=="/api/v1/update":
             if not self.require_admin(): return
             # Explicit administrator checks bypass the normal background cache.

@@ -155,6 +155,35 @@ class ControllerHttpTest(unittest.TestCase):
         self.assertNotIn("payload",json.dumps(body))
         self.assertNotIn("token",json.dumps(body).lower())
 
+    def test_parallel_key_rotations_cannot_replace_another_envelope(self):
+        from concurrent.futures import ThreadPoolExecutor
+        db=str(Path(self.work.name)/"relay.db")
+        device="parallel-rotation-node"
+        with sqlite3.connect(db) as con:
+            con.execute("INSERT INTO devices(id,token_hash,name,created_at) VALUES(?,?,?,?)",
+                        (device,"synthetic-token","Key rotation test",int(time.time())))
+        path="/api/v1/devices/"+device
+        envelopes=[
+            {"v":1,"alg":"A256GCM","iv":"0123456789abcdef",
+             "ct":"a"*40},
+            {"v":1,"alg":"A256GCM","iv":"fedcba9876543210",
+             "ct":"b"*40}
+        ]
+        requests=[{"pendingKeyId":"rotation-key-a","pendingWrappedKey":envelopes[0]},
+                  {"pendingKeyId":"rotation-key-b","pendingWrappedKey":envelopes[1]}]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes=list(pool.map(lambda request:self.call("PATCH",path,request,admin=True)[0],requests))
+        self.assertEqual(sorted(outcomes),[200,409])
+        with sqlite3.connect(db) as con:
+            row=con.execute("SELECT pending_key_id,pending_wrapped_key_json FROM devices WHERE id=?",
+                            (device,)).fetchone()
+        winner=0 if row[0]=="rotation-key-a" else 1
+        self.assertEqual(json.loads(row[1]),envelopes[winner])
+        self.assertEqual(self.call("PATCH",path,requests[winner],admin=True)[0],200)
+        altered={"pendingKeyId":requests[winner]["pendingKeyId"],
+                 "pendingWrappedKey":envelopes[1-winner]}
+        self.assertEqual(self.call("PATCH",path,altered,admin=True)[0],409)
+
     def test_first_use_approval_session_and_server_revocation(self):
         identity=ec.generate_private_key(ec.SECP256R1())
         exchange=ec.generate_private_key(ec.SECP256R1())

@@ -1,3 +1,12 @@
+## v0.19.1 — Security transaction boundaries and reliable SMS status
+
+- Serialize Controller challenge consumption, active authorization and session issuance with revocation; failed signatures cannot reuse an authentication challenge.
+- Prevent shared-pool ciphertext reinsertion across cleanup/epoch transitions and enforce atomic Node Key pending-rotation conflict checks.
+- Interpret SMS delivery reports from genuine status-report PDUs, with unique per-part PendingIntent identities and truthful pending/unknown states.
+- Preserve uncertain SMS intents while allowing independently created drafts; reclaim positively expired native journal entries and stop inactive-node polling loops.
+- Repair command maintenance expiry, SIM slot zero, rootless updater recovery and no-newline deployment configuration.
+- Add persistent privacy-bounded external notification retries and administrator-visible provider queue diagnostics. Provider acceptance is not equivalent to handset display.
+
 ## v0.19.0 — Recoverable sending, private search and lifecycle safety
 
 - Add encrypted persistent Web and native send centers: keep one immutable command and SIM route through lost responses, process restarts and explicit retries; reconcile the original receipt before resubmission and display uncertain outcomes honestly.

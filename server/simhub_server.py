@@ -527,6 +527,8 @@ def init_db() -> None:
 def run_maintenance() -> dict[str,int]:
     ts=now(); result={"events":0,"audit":0,"commands":0,"commandTombstones":0,"sessions":0,"enrollments":0,"pendingTokens":0,"resetTombstones":0}
     with open_db() as con:
+        con.execute("BEGIN IMMEDIATE")
+        result["expiredCommands"]=expire_commands(con,ts)
         if EVENT_RETENTION_DAYS>0:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
         if AUDIT_RETENTION_DAYS>0:
@@ -638,8 +640,19 @@ def session_valid(headers) -> bool:
     ts = now()
     digest = sha256_text(token)
     with open_db() as con:
-        row = con.execute("SELECT expires_at,last_seen_at,admin_fingerprint FROM admin_sessions WHERE token_hash=?", (digest,)).fetchone()
-        if not row or row["expires_at"] <= ts or ts-row["last_seen_at"] >= SESSION_IDLE_TTL or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint()):
+        # Controller sessions must remain coupled to the live grant. Deleting
+        # sessions during revoke alone cannot close a concurrent login window.
+        row = con.execute(
+            """SELECT s.expires_at,s.last_seen_at,s.admin_fingerprint,s.controller_id,
+                      c.id AS live_controller
+               FROM admin_sessions s LEFT JOIN controllers c
+                 ON c.id=s.controller_id AND c.revoked_at IS NULL
+                AND c.admin_fingerprint=s.admin_fingerprint
+               WHERE s.token_hash=?""", (digest,)).fetchone()
+        if (not row or row["expires_at"] <= ts
+                or ts-row["last_seen_at"] >= SESSION_IDLE_TTL
+                or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint())
+                or (row["controller_id"] and not row["live_controller"])):
             if row:
                 con.execute("DELETE FROM admin_sessions WHERE token_hash=?", (digest,))
             return False
@@ -685,16 +698,34 @@ def auth_rate_success(ip: str) -> None:
         _auth_failures.pop(ip, None)
 
 
-def create_session(ip: str, controller_id: str = "") -> tuple[str,int]:
+def create_session(ip: str, controller_id: str = "",
+                   con: sqlite3.Connection | None = None) -> tuple[str,int]:
+    """Issue a session. Controller callers supply their BEGIN IMMEDIATE login
+    transaction so challenge consumption, live grant check and session issuance
+    share a single serialization boundary with revocation.
+    """
     token = new_token(48)
     ts = now()
     exp = ts + SESSION_TTL
-    with open_db() as con:
-        con.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
-        con.execute(
+    def insert(db: sqlite3.Connection) -> None:
+        db.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
+        if controller_id:
+            live = db.execute(
+                "SELECT 1 FROM controllers WHERE id=? AND revoked_at IS NULL AND admin_fingerprint=?",
+                (controller_id,session_fingerprint())).fetchone()
+            if not live:
+                raise ValueError("Controller authorization was revoked")
+        db.execute(
             "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint,controller_id) VALUES(?,?,?,?,?,?,?)",
             (sha256_text(token),ts,exp,ts,ip[:80],session_fingerprint(),controller_id),
         )
+    if con is None:
+        with open_db() as db:
+            if controller_id:
+                db.execute("BEGIN IMMEDIATE")
+            insert(db)
+    else:
+        insert(con)
     return token, exp
 
 
@@ -922,14 +953,15 @@ def normalize_wrapped_key(key_id: Any, wrapped: Any) -> tuple[str,dict[str,Any]]
     return kid,wrapped
 
 
-def expire_commands(con: sqlite3.Connection, ts: int, device_id: str | None = None) -> None:
+def expire_commands(con: sqlite3.Connection, ts: int, device_id: str | None = None) -> int:
     """Stop delivery at expiry without asserting that a dispatched command did not run."""
     scope = " AND device_id=?" if device_id is not None else ""
     args = (ts, ts, device_id) if device_id is not None else (ts, ts)
-    con.execute("UPDATE commands SET state='expired',ack_at=? "
-                "WHERE state='queued' AND expires_at<=?" + scope, args)
-    con.execute("UPDATE commands SET state='outcome_unknown',ack_at=? "
-                "WHERE state='dispatched' AND expires_at<=?" + scope, args)
+    queued=con.execute("UPDATE commands SET state='expired',ack_at=? "
+                "WHERE state='queued' AND expires_at<=?" + scope, args).rowcount
+    uncertain=con.execute("UPDATE commands SET state='outcome_unknown',ack_at=? "
+                "WHERE state='dispatched' AND expires_at<=?" + scope, args).rowcount
+    return queued+uncertain
 
 
 def signal_stream() -> None:
@@ -1413,6 +1445,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             try:
+                session = exp = None
                 with open_db() as con:
                     if path.endswith("/pair"):
                         result=controller_auth.start(con,body,self.ip,now())
@@ -1423,10 +1456,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     elif path.endswith("/challenge"):
                         result=controller_auth.challenge(con,str(body.get("controllerId","")),now(),session_fingerprint())
                     else:
-                        controller_id=controller_auth.verify_login(con,body,now(),session_fingerprint())
+                        con.execute("BEGIN IMMEDIATE")
+                        try:
+                            controller_id=controller_auth.verify_login(con,body,now(),session_fingerprint())
+                        except (ValueError,TypeError):
+                            con.commit()  # persist failed one-time nonce consumption
+                            raise
+                        session,exp=create_session(self.ip,controller_id,con=con)
                         result={"_controller_id":controller_id}
                 if "_controller_id" in result:
-                    session,exp=create_session(self.ip,result["_controller_id"])
                     auth_rate_success(self.ip)
                     audit("auth.controller.login",result["_controller_id"],"ok",self.ip)
                     cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
@@ -1544,6 +1582,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None:return
             try:
                 with open_db() as con:
+                    con.execute("BEGIN IMMEDIATE")  # serialize membership and key epoch
                     if path.endswith("/authorize"): result=shared_pool.provision(con,body)
                     elif path.endswith("/revoke"):result=shared_pool.revoke(con,str(body.get("deviceId","")))
                     else:result=shared_pool.rotate(con,body)
@@ -1557,14 +1596,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None:return
             if type(body.get("enabled")) is not bool:
                 self.send_error_json(400,"invalid_request","enabled must be boolean");return
-            with open_db() as con: result=shared_pool.request(con,p[3],body["enabled"])
+            with open_db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                result=shared_pool.request(con,p[3],body["enabled"])
             signal_stream();self.send_json(200,result);return
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["pool","messages"]:
             if not self.require_device(p[3]):return
             body=self.read_json()
             if body is None:return
             try:
-                with open_db() as con: result=shared_pool.put_messages(con,p[3],body)
+                with open_db() as con:
+                    # Purge and upload must share one write reservation before inspection.
+                    con.execute("BEGIN IMMEDIATE")
+                    result=shared_pool.put_messages(con,p[3],body)
                 if result["inserted"]:signal_stream()
                 self.send_json(200,result)
             except (ValueError,PermissionError) as err:
@@ -2087,12 +2131,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(400,"invalid_key",str(exc)); return
             if not kid:
                 self.send_error_json(400,"invalid_key","pendingKeyId and pendingWrappedKey are required"); return
-            with open_db() as check:
-                current=check.execute("SELECT pending_key_id FROM devices WHERE id=?",(device_id,)).fetchone()
-            if not current:
-                self.send_error_json(404,"device_not_found","Device not found"); return
-            if current["pending_key_id"] and current["pending_key_id"]!=kid:
-                self.send_error_json(409,"key_rotation_in_progress","A different node-key rotation is already pending"); return
+            # Compare current key in the write transaction, not a prior read.
             sets.extend(["pending_key_id=?","pending_wrapped_key_json=?"])
             vals.extend([kid,json.dumps(wrapped,separators=(",",":"))])
         if body.get("revoke") is True: sets.append("revoked_at=?"); vals.append(now())
@@ -2103,6 +2142,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
         vals.append(device_id)
         with open_db() as con:
             con.execute("BEGIN IMMEDIATE")
+            if "pendingKeyId" in body or "pendingWrappedKey" in body:
+                current=con.execute(
+                    "SELECT pending_key_id,pending_wrapped_key_json,revoked_at,reset_requested_at FROM devices WHERE id=?",
+                    (device_id,)).fetchone()
+                if not current:
+                    self.send_error_json(404,"device_not_found","Device not found");return
+                if current["revoked_at"] is not None or current["reset_requested_at"]:
+                    self.send_error_json(409,"device_not_active","Device is not active");return
+                if current["pending_key_id"] and (
+                    current["pending_key_id"]!=kid or
+                    current["pending_wrapped_key_json"]!=json.dumps(wrapped,separators=(",",":"))):
+                    self.send_error_json(409,"key_rotation_in_progress",
+                                         "A different node-key rotation is already pending");return
             cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
             if cur.rowcount and body.get("revoke") is True:
                 shared_pool.member_departure(con,device_id)
@@ -2541,7 +2593,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     """INSERT INTO channels(id,device_id,local_id,kind,revision,slot_index,carrier_name,display_name,state_json,first_seen_at,last_seen_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(device_id,id) DO UPDATE SET local_id=excluded.local_id,kind=excluded.kind,revision=excluded.revision,slot_index=excluded.slot_index,carrier_name=excluded.carrier_name,display_name=excluded.display_name,state_json=excluded.state_json,last_seen_at=excluded.last_seen_at""",
-                    (cid,device_id,str(item.get("localId",""))[:120],str(item.get("kind","sim"))[:40],max(1,int(item.get("revision",1) or 1)),int(item.get("slotIndex",-1) or -1),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],json.dumps(item,separators=(",",":")),ts,ts),
+                    (cid,device_id,str(item.get("localId",""))[:120],str(item.get("kind","sim"))[:40],max(1,int(item.get("revision",1) or 1)),int(item.get("slotIndex") if item.get("slotIndex") is not None else -1),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],json.dumps(item,separators=(",",":")),ts,ts),
                 )
         signal_stream()
         self.send_json(200,{"ok":True,"updatedAt":ts})

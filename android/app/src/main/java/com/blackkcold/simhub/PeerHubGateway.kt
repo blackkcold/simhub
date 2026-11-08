@@ -15,9 +15,21 @@ object PeerHubGateway {
             row?:throw IllegalStateException("peer_outbox_missing")
         }
         if(prepared.optString("state")=="expired"){
-            val status=request(c,peerId,java.util.UUID.randomUUID().toString(),JSONObject().put("action","command.status").put("commandId",id))
-            if(status.optString("state") in listOf("unknown","claimed","indeterminate"))return JSONObject().put("state","indeterminate").put("reason","expired_dispatch_unconfirmed")
-            store.clearOutbound(peerId,id);return status
+            // Reuse one query identity on every retry and after process death.
+            // An asynchronous RelayLite response can then be recovered from
+            // its encrypted cache, instead of accumulating new status queries.
+            val queryId=java.util.UUID.nameUUIDFromBytes(
+                "simhub-status-v1|$peerId|$id".toByteArray(Charsets.UTF_8)).toString()
+            val status=request(c,peerId,queryId,JSONObject()
+                .put("action","command.status").put("commandId",id))
+            val resolved=status.optString("commandId")==id &&
+                status.optString("state") in listOf("submitted","sent","succeeded","failed","rejected","expired","delivered") &&
+                !status.optBoolean("relayAccepted") && !status.optBoolean("relayRejected")
+            if(!resolved)return JSONObject().put("state","indeterminate")
+                .put("reason","expired_dispatch_unconfirmed")
+                .put("statusQuery",status.optString("state","unknown"))
+            store.clearOutbound(peerId,id)
+            return status
         }
         val payload=prepared.getJSONObject("request")
         for(field in listOf("action","to","body","channelId","channelRevision"))if(payload.optString(field)!=draft.optString(field))throw SecurityException("peer_request_id_reused")

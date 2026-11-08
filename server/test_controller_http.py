@@ -153,6 +153,15 @@ class ControllerHttpTest(unittest.TestCase):
         self.assertEqual(self.call("PATCH",path,altered,admin=True)[0],409)
 
 
+    def test_outbox_summary_is_authenticated_and_metadata_only(self):
+        self.assertEqual(self.call("GET","/api/v1/notifications/outbox")[0],401)
+        status,body,_=self.call("GET","/api/v1/notifications/outbox",admin=True)
+        self.assertEqual(status,200)
+        self.assertEqual(set(body["counts"]),{"pending","retry","inflight","delivered","failed","expired"})
+        self.assertNotIn("payload",json.dumps(body))
+        self.assertNotIn("token",json.dumps(body).lower())
+
+
     def test_first_use_approval_session_and_server_revocation(self):
         identity=ec.generate_private_key(ec.SECP256R1())
         exchange=ec.generate_private_key(ec.SECP256R1())

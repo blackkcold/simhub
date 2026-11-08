@@ -2311,12 +2311,8 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(400,"invalid_key",str(exc)); return
             if not kid:
                 self.send_error_json(400,"invalid_key","pendingKeyId and pendingWrappedKey are required"); return
-            with open_db() as check:
-                current=check.execute("SELECT pending_key_id FROM devices WHERE id=?",(device_id,)).fetchone()
-            if not current:
-                self.send_error_json(404,"device_not_found","Device not found"); return
-            if current["pending_key_id"] and current["pending_key_id"]!=kid:
-                self.send_error_json(409,"key_rotation_in_progress","A different node-key rotation is already pending"); return
+            # Only validate the envelope here. The pending rotation comparison
+            # must run inside the subsequent BEGIN IMMEDIATE transaction.
             sets.extend(["pending_key_id=?","pending_wrapped_key_json=?"])
             vals.extend([kid,json.dumps(wrapped,separators=(",",":"))])
         if body.get("revoke") is True: sets.append("revoked_at=?"); vals.append(now())
@@ -2327,6 +2323,21 @@ class SimHubHandler(BaseHTTPRequestHandler):
         vals.append(device_id)
         with open_db() as con:
             con.execute("BEGIN IMMEDIATE")
+            if "pendingKeyId" in body or "pendingWrappedKey" in body:
+                current=con.execute(
+                    "SELECT pending_key_id,pending_wrapped_key_json,revoked_at,reset_requested_at FROM devices WHERE id=?",
+                    (device_id,)).fetchone()
+                if not current:
+                    self.send_error_json(404,"device_not_found","Device not found");return
+                if current["revoked_at"] is not None or current["reset_requested_at"]:
+                    self.send_error_json(409,"device_not_active","Device is not active");return
+                # A different envelope under the same key ID is also a
+                # conflicting rotation; only an identical retry is idempotent.
+                if current["pending_key_id"] and (
+                    current["pending_key_id"]!=kid or
+                    current["pending_wrapped_key_json"]!=json.dumps(wrapped,separators=(",",":"))):
+                    self.send_error_json(409,"key_rotation_in_progress",
+                                         "A different node-key rotation is already pending");return
             cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
             if cur.rowcount and body.get("revoke") is True:
                 shared_pool.member_departure(con,device_id)

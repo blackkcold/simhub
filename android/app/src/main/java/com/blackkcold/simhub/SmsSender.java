@@ -66,9 +66,15 @@ public final class SmsSender {
         // The telephony stack must add the delivery status-report PDU. The
         // SENT callback never needs fill-in data and stays immutable.
         boolean delivery=SmsStatusReceiver.ACTION_DELIVERED.equals(action);
-        int flags=PendingIntent.FLAG_UPDATE_CURRENT |
-            (delivery && Build.VERSION.SDK_INT>=31 ?
-                PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_IMMUTABLE);
+        // Before Android 12, omitting FLAG_IMMUTABLE keeps the delivery
+        // PendingIntent mutable so Telephony can add the status-report PDU.
+        // On API 31+ mutability must be declared explicitly.
+        int flags=PendingIntent.FLAG_UPDATE_CURRENT;
+        if(delivery){
+            if(Build.VERSION.SDK_INT>=31)flags|=PendingIntent.FLAG_MUTABLE;
+        }else{
+            flags|=PendingIntent.FLAG_IMMUTABLE;
+        }
         return PendingIntent.getBroadcast(c,0,i,flags);
     }
     private SmsSender(){}

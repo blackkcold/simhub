@@ -32,9 +32,10 @@ import vault_settings
 from argon2 import PasswordHasher, exceptions as argon2_errors
 import shared_pool
 import update_bridge
+import notification_outbox
 from typing import Any
 
-APP_VERSION = "0.19.0"
+APP_VERSION = "0.19.1"
 # The image version is immutable in source; a signed Dev manifest may provide its exact pre-release identity.
 APP_VERSION = os.getenv("SIMHUB_RELEASE_VERSION", "").strip() or APP_VERSION
 RELEASE_CHANNEL = os.getenv("SIMHUB_CHANNEL", "stable").strip()
@@ -516,6 +517,7 @@ def init_db() -> None:
         con.executescript(SCHEMA_PATH.read_text("utf-8"))
         shared_pool.init(con)
         controller_auth.init(con)
+        notification_outbox.init(con)
         global_vault.init(con)
         vault_settings.init(con)
         _add_column(con,"admin_sessions","controller_id","TEXT NOT NULL DEFAULT ''")
@@ -527,12 +529,15 @@ def init_db() -> None:
 def run_maintenance() -> dict[str,int]:
     ts=now(); result={"events":0,"audit":0,"commands":0,"commandTombstones":0,"sessions":0,"enrollments":0,"pendingTokens":0,"resetTombstones":0}
     with open_db() as con:
+        con.execute("BEGIN IMMEDIATE")
+        result["expiredCommands"]=expire_commands(con,ts)
         if EVENT_RETENTION_DAYS>0:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
         if AUDIT_RETENTION_DAYS>0:
             result["audit"]=con.execute("DELETE FROM audit WHERE occurred_at<?",(ts-AUDIT_RETENTION_DAYS*86400,)).rowcount
         result["commands"]=con.execute("DELETE FROM commands WHERE created_at<? AND state NOT IN ('queued','dispatched')",(ts-COMMAND_RETENTION_DAYS*86400,)).rowcount
         result["commandTombstones"]=con.execute("DELETE FROM command_tombstones WHERE retain_until<=?",(ts,)).rowcount
+        result["notificationTombstones"]=notification_outbox.maintenance(con,ts)
         result["sessions"]=con.execute("DELETE FROM admin_sessions WHERE expires_at<=? OR last_seen_at<=? OR admin_fingerprint!=?",(ts,ts-SESSION_IDLE_TTL,session_fingerprint())).rowcount
         con.execute("DELETE FROM admin_login_challenges WHERE expires_at<=?",(ts,))
         controller_auth.maintenance(con,ts)
@@ -638,8 +643,19 @@ def session_valid(headers) -> bool:
     ts = now()
     digest = sha256_text(token)
     with open_db() as con:
-        row = con.execute("SELECT expires_at,last_seen_at,admin_fingerprint FROM admin_sessions WHERE token_hash=?", (digest,)).fetchone()
-        if not row or row["expires_at"] <= ts or ts-row["last_seen_at"] >= SESSION_IDLE_TTL or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint()):
+        # Controller sessions must remain coupled to the live grant. Deleting
+        # sessions during revoke alone cannot close a concurrent login window.
+        row = con.execute(
+            """SELECT s.expires_at,s.last_seen_at,s.admin_fingerprint,s.controller_id,
+                      c.id AS live_controller
+               FROM admin_sessions s LEFT JOIN controllers c
+                 ON c.id=s.controller_id AND c.revoked_at IS NULL
+                AND c.admin_fingerprint=s.admin_fingerprint
+               WHERE s.token_hash=?""", (digest,)).fetchone()
+        if (not row or row["expires_at"] <= ts
+                or ts-row["last_seen_at"] >= SESSION_IDLE_TTL
+                or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint())
+                or (row["controller_id"] and not row["live_controller"])):
             if row:
                 con.execute("DELETE FROM admin_sessions WHERE token_hash=?", (digest,))
             return False
@@ -685,16 +701,34 @@ def auth_rate_success(ip: str) -> None:
         _auth_failures.pop(ip, None)
 
 
-def create_session(ip: str, controller_id: str = "") -> tuple[str,int]:
+def create_session(ip: str, controller_id: str = "",
+                   con: sqlite3.Connection | None = None) -> tuple[str,int]:
+    """Issue a session. Controller callers supply their BEGIN IMMEDIATE login
+    transaction so challenge consumption, live grant check and session issuance
+    share a single serialization boundary with revocation.
+    """
     token = new_token(48)
     ts = now()
     exp = ts + SESSION_TTL
-    with open_db() as con:
-        con.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
-        con.execute(
+    def insert(db: sqlite3.Connection) -> None:
+        db.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
+        if controller_id:
+            live = db.execute(
+                "SELECT 1 FROM controllers WHERE id=? AND revoked_at IS NULL AND admin_fingerprint=?",
+                (controller_id,session_fingerprint())).fetchone()
+            if not live:
+                raise ValueError("Controller authorization was revoked")
+        db.execute(
             "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint,controller_id) VALUES(?,?,?,?,?,?,?)",
             (sha256_text(token),ts,exp,ts,ip[:80],session_fingerprint(),controller_id),
         )
+    if con is None:
+        with open_db() as db:
+            if controller_id:
+                db.execute("BEGIN IMMEDIATE")
+            insert(db)
+    else:
+        insert(con)
     return token, exp
 
 
@@ -922,14 +956,15 @@ def normalize_wrapped_key(key_id: Any, wrapped: Any) -> tuple[str,dict[str,Any]]
     return kid,wrapped
 
 
-def expire_commands(con: sqlite3.Connection, ts: int, device_id: str | None = None) -> None:
+def expire_commands(con: sqlite3.Connection, ts: int, device_id: str | None = None) -> int:
     """Stop delivery at expiry without asserting that a dispatched command did not run."""
     scope = " AND device_id=?" if device_id is not None else ""
     args = (ts, ts, device_id) if device_id is not None else (ts, ts)
-    con.execute("UPDATE commands SET state='expired',ack_at=? "
-                "WHERE state='queued' AND expires_at<=?" + scope, args)
-    con.execute("UPDATE commands SET state='outcome_unknown',ack_at=? "
-                "WHERE state='dispatched' AND expires_at<=?" + scope, args)
+    queued=con.execute("UPDATE commands SET state='expired',ack_at=? "
+                "WHERE state='queued' AND expires_at<=?" + scope, args).rowcount
+    uncertain=con.execute("UPDATE commands SET state='outcome_unknown',ack_at=? "
+                "WHERE state='dispatched' AND expires_at<=?" + scope, args).rowcount
+    return queued+uncertain
 
 
 def signal_stream() -> None:
@@ -939,54 +974,86 @@ def signal_stream() -> None:
         _stream_condition.notify_all()
 
 
-def notify_async(kind: str, device_id: str, device_name: str, has_otp: bool, occurred_at: int) -> None:
-    if not (NOTIFY_WEBHOOK or NOTIFY_BARK_URL or NOTIFY_NTFY_URL) or kind != "sms.received":
-        return
-    if abs(now()-occurred_at) > NOTIFY_MAX_AGE:
+def queue_sms_notification(con: sqlite3.Connection, event_id: str, device_id: str,
+                           device_name: str, has_otp: bool, occurred_at: int) -> None:
+    """Enqueue delivery in the SAME transaction that accepts a new SMS event."""
+    providers=[channel for channel,configured in (
+        ("webhook",NOTIFY_WEBHOOK),("bark",NOTIFY_BARK_URL),("ntfy",NOTIFY_NTFY_URL))
+        if configured]
+    if not providers or abs(now()-occurred_at)>NOTIFY_MAX_AGE:
         return
     if NOTIFY_OTP_ONLY and not has_otp:
         return
     if NOTIFY_DEVICE_IDS and device_id not in NOTIFY_DEVICE_IDS:
         return
-    payload = {
-        "source":"simhub",
-        "kind":kind,
-        "title":"SIM Hub",
-        "message":"New OTP received" if has_otp else "New SMS received",
-        "device":device_name,
-        "occurredAt":occurred_at,
-    }
-    def send() -> None:
-        # Notification providers receive only generic metadata, never sender/body/OTP.
-        if NOTIFY_WEBHOOK:
-            try:
-                req=urllib.request.Request(
-                    NOTIFY_WEBHOOK,data=json.dumps(payload).encode(),
-                    headers={"Content-Type":"application/json", **({"Authorization":f"Bearer {NOTIFY_BEARER}"} if NOTIFY_BEARER else {})},method="POST",
-                )
-                urllib.request.urlopen(req,timeout=5).read(1024)
-            except Exception as exc:
-                log.warning("notification_webhook_failed %s",type(exc).__name__)
-        if NOTIFY_BARK_URL:
-            try:
-                body={"title":"SIM Hub","body":payload["message"],"group":"SIM Hub"}
-                req=urllib.request.Request(NOTIFY_BARK_URL,data=json.dumps(body).encode(),
-                    headers={"Content-Type":"application/json"},method="POST")
-                urllib.request.urlopen(req,timeout=5).read(1024)
-            except Exception as exc:
-                log.warning("notification_bark_failed %s",type(exc).__name__)
-        if NOTIFY_NTFY_URL:
-            try:
-                headers={"Title":"SIM Hub","Priority":"4" if has_otp else "3","Content-Type":"text/plain; charset=utf-8"}
-                if NOTIFY_NTFY_TOKEN:
-                    headers["Authorization"]="Bearer "+NOTIFY_NTFY_TOKEN
-                req=urllib.request.Request(NOTIFY_NTFY_URL,data=payload["message"].encode("utf-8"),
-                    headers=headers,method="POST")
-                urllib.request.urlopen(req,timeout=5).read(1024)
-            except Exception as exc:
-                log.warning("notification_ntfy_failed %s",type(exc).__name__)
-    if not _outbound_executor.submit(send):
-        log.warning("notification_dropped queue_full")
+    meta={"device":device_name,"hasOtp":has_otp,"occurredAt":occurred_at}
+    ts=now()
+    for channel in providers:
+        if not notification_outbox.enqueue(con,device_id,event_id,channel,
+                                           meta,ts,occurred_at+NOTIFY_MAX_AGE):
+            log.warning("notification_outbox_not_enqueued channel=%s",channel)
+
+
+def deliver_notification(entry: dict[str,Any]) -> None:
+    """Perform one provider request; caller persists success/retry separately."""
+    channel=entry["channel"];payload=entry["payload"]
+    message=payload["message"]
+    if channel=="webhook" and NOTIFY_WEBHOOK:
+        headers={"Content-Type":"application/json",
+                 "X-SimHub-Delivery-Id":str(entry["id"])}
+        if NOTIFY_BEARER:
+            headers["Authorization"]="Bearer "+NOTIFY_BEARER
+        request=urllib.request.Request(NOTIFY_WEBHOOK,
+            data=json.dumps({k:v for k,v in payload.items() if k!="hasOtp"}).encode("utf-8"),
+            headers=headers,method="POST")
+    elif channel=="bark" and NOTIFY_BARK_URL:
+        request=urllib.request.Request(NOTIFY_BARK_URL,
+            data=json.dumps({"title":"SIM Hub","body":message,"group":"SIM Hub"}).encode("utf-8"),
+            headers={"Content-Type":"application/json"},method="POST")
+    elif channel=="ntfy" and NOTIFY_NTFY_URL:
+        headers={"Title":"SIM Hub","Priority":"4" if payload.get("hasOtp") else "3",
+                 "Content-Type":"text/plain; charset=utf-8"}
+        if NOTIFY_NTFY_TOKEN:
+            headers["Authorization"]="Bearer "+NOTIFY_NTFY_TOKEN
+        request=urllib.request.Request(NOTIFY_NTFY_URL,data=message.encode("utf-8"),
+                                       headers=headers,method="POST")
+    else:
+        raise ValueError("notification_provider_not_configured")
+    with urllib.request.urlopen(request,timeout=5) as response:
+        response.read(1024)
+
+
+def notification_loop() -> None:
+    """Durable provider acceptance with bounded retry and crash recovery.
+
+    An external provider may receive the same event twice if the process exits
+    after HTTP success but before the local ACK. Never claim exactly-once.
+    """
+    while True:
+        due=[]
+        try:
+            with open_db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                due=notification_outbox.claim(con,now(),limit=8)
+            for entry in due:
+                error=""
+                try:
+                    deliver_notification(entry)
+                    success=True
+                except Exception as exc:
+                    success=False
+                    error=type(exc).__name__
+                    log.warning("notification_delivery_retry channel=%s reason=%s",
+                                entry["channel"],error)
+                with open_db() as con:
+                    # Pair the lease attempt check and final state update in
+                    # one writer transaction, even with multiple relay workers.
+                    con.execute("BEGIN IMMEDIATE")
+                    notification_outbox.finish(con,entry["id"],success,now(),error,
+                                               expected_attempt=entry["attempts"])
+        except Exception:
+            log.exception("notification_outbox_worker_failed")
+        time.sleep(5 if due else 15)
 
 
 def push_tickle_async(device_id: str, reason: str) -> None:
@@ -1280,6 +1347,13 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if path=="/api/v1/version":
             if not self.require_admin(): return
             self.send_json(200,{"version":APP_VERSION,"channel":RELEASE_CHANNEL,"startedAt":SERVER_STARTED_AT,"deployedAt":DEPLOYED_AT or None,"nodeBaseUrl":PUBLIC_BASE_URL or (MANAGEMENT_ORIGIN if not SEPARATE_SURFACES else None),"separateSurfaces":bool(SEPARATE_SURFACES)}); return
+        if path=="/api/v1/notifications/outbox":
+            if not self.require_admin(): return
+            with open_db() as con:
+                result=notification_outbox.summary(con)
+            # Aggregate provider acceptance only: no SMS content, event IDs,
+            # endpoints, secrets or per-device identifiers are exposed.
+            self.send_json(200,{"providers":"webhook,bark,ntfy","counts":result});return
         if path=="/api/v1/update":
             if not self.require_admin(): return
             # Explicit administrator checks bypass the normal background cache.
@@ -1413,6 +1487,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             try:
+                session = exp = None
                 with open_db() as con:
                     if path.endswith("/pair"):
                         result=controller_auth.start(con,body,self.ip,now())
@@ -1423,10 +1498,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     elif path.endswith("/challenge"):
                         result=controller_auth.challenge(con,str(body.get("controllerId","")),now(),session_fingerprint())
                     else:
-                        controller_id=controller_auth.verify_login(con,body,now(),session_fingerprint())
+                        con.execute("BEGIN IMMEDIATE")
+                        try:
+                            controller_id=controller_auth.verify_login(con,body,now(),session_fingerprint())
+                        except (ValueError,TypeError):
+                            con.commit()  # persist failed one-time nonce consumption
+                            raise
+                        session,exp=create_session(self.ip,controller_id,con=con)
                         result={"_controller_id":controller_id}
                 if "_controller_id" in result:
-                    session,exp=create_session(self.ip,result["_controller_id"])
                     auth_rate_success(self.ip)
                     audit("auth.controller.login",result["_controller_id"],"ok",self.ip)
                     cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"
@@ -1544,6 +1624,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None:return
             try:
                 with open_db() as con:
+                    con.execute("BEGIN IMMEDIATE")  # serialize membership and key epoch
                     if path.endswith("/authorize"): result=shared_pool.provision(con,body)
                     elif path.endswith("/revoke"):result=shared_pool.revoke(con,str(body.get("deviceId","")))
                     else:result=shared_pool.rotate(con,body)
@@ -1557,14 +1638,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None:return
             if type(body.get("enabled")) is not bool:
                 self.send_error_json(400,"invalid_request","enabled must be boolean");return
-            with open_db() as con: result=shared_pool.request(con,p[3],body["enabled"])
+            with open_db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                result=shared_pool.request(con,p[3],body["enabled"])
             signal_stream();self.send_json(200,result);return
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["pool","messages"]:
             if not self.require_device(p[3]):return
             body=self.read_json()
             if body is None:return
             try:
-                with open_db() as con: result=shared_pool.put_messages(con,p[3],body)
+                with open_db() as con:
+                    # Purge and upload must share one write reservation before inspection.
+                    con.execute("BEGIN IMMEDIATE")
+                    result=shared_pool.put_messages(con,p[3],body)
                 if result["inserted"]:signal_stream()
                 self.send_json(200,result)
             except (ValueError,PermissionError) as err:
@@ -2087,12 +2173,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(400,"invalid_key",str(exc)); return
             if not kid:
                 self.send_error_json(400,"invalid_key","pendingKeyId and pendingWrappedKey are required"); return
-            with open_db() as check:
-                current=check.execute("SELECT pending_key_id FROM devices WHERE id=?",(device_id,)).fetchone()
-            if not current:
-                self.send_error_json(404,"device_not_found","Device not found"); return
-            if current["pending_key_id"] and current["pending_key_id"]!=kid:
-                self.send_error_json(409,"key_rotation_in_progress","A different node-key rotation is already pending"); return
+            # Compare current key in the write transaction, not a prior read.
             sets.extend(["pending_key_id=?","pending_wrapped_key_json=?"])
             vals.extend([kid,json.dumps(wrapped,separators=(",",":"))])
         if body.get("revoke") is True: sets.append("revoked_at=?"); vals.append(now())
@@ -2101,17 +2182,35 @@ class SimHubHandler(BaseHTTPRequestHandler):
         if not sets:
             self.send_error_json(400,"no_changes","No supported fields supplied"); return
         vals.append(device_id)
-        with open_db() as con:
-            con.execute("BEGIN IMMEDIATE")
-            cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
-            if cur.rowcount and body.get("revoke") is True:
-                shared_pool.member_departure(con,device_id)
-                # A command already handed out may have reached the radio.
-                # Only commands never dispatched can be called rejected.
-                con.execute("UPDATE commands SET state='rejected',ack_at=?,result_json=? WHERE device_id=? AND state='queued'",
-                    (now(),json.dumps({"reason":"device_revoked"}),device_id))
-                con.execute("UPDATE commands SET state='outcome_unknown',ack_at=?,result_json=? WHERE device_id=? AND state='dispatched'",
-                    (now(),json.dumps({"reason":"device_revoked_after_dispatch"}),device_id))
+        class RotationPrecondition(Exception): pass
+        try:
+            with open_db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                if "pendingKeyId" in body or "pendingWrappedKey" in body:
+                    current=con.execute(
+                        "SELECT pending_key_id,pending_wrapped_key_json,revoked_at,reset_requested_at FROM devices WHERE id=?",
+                        (device_id,)).fetchone()
+                    if not current:
+                        raise RotationPrecondition(404,"device_not_found","Device not found")
+                    if current["revoked_at"] is not None or current["reset_requested_at"]:
+                        raise RotationPrecondition(409,"device_not_active","Device is not active")
+                    if current["pending_key_id"] and (
+                        current["pending_key_id"]!=kid or
+                        current["pending_wrapped_key_json"]!=json.dumps(wrapped,separators=(",",":"))):
+                        raise RotationPrecondition(409,"key_rotation_in_progress",
+                                             "A different node-key rotation is already pending")
+                cur=con.execute(f"UPDATE devices SET {','.join(sets)} WHERE id=?",vals)
+                if cur.rowcount and body.get("revoke") is True:
+                    shared_pool.member_departure(con,device_id)
+                    # A command already handed out may have reached the radio.
+                    # Only commands never dispatched can be called rejected.
+                    con.execute("UPDATE commands SET state='rejected',ack_at=?,result_json=? WHERE device_id=? AND state='queued'",
+                        (now(),json.dumps({"reason":"device_revoked"}),device_id))
+                    con.execute("UPDATE commands SET state='outcome_unknown',ack_at=?,result_json=? WHERE device_id=? AND state='dispatched'",
+                        (now(),json.dumps({"reason":"device_revoked_after_dispatch"}),device_id))
+        except RotationPrecondition as error:
+            # Do not perform HTTP I/O while holding BEGIN IMMEDIATE.
+            self.send_error_json(*error.args);return
         if not cur.rowcount:
             self.send_error_json(404,"device_not_found","Device not found"); return
         audit("device.patch",device_id,"ok",self.ip); signal_stream()
@@ -2130,6 +2229,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(409,"device_reset_pending","Device reset in progress"); return
             deleted=con.execute("DELETE FROM events WHERE device_id=? AND kind LIKE 'sms.%'",(device_id,)).rowcount
             shared_deleted=con.execute("DELETE FROM sms_pool_messages WHERE device_id=?",(device_id,)).rowcount
+            con.execute("DELETE FROM notification_outbox WHERE device_id=?",(device_id,))
             con.execute("""INSERT INTO command_tombstones
                 (id,device_id,command_seq,type,created_at,expires_at,idempotency_key,state,ack_at,purged_at,retain_until)
                 SELECT id,device_id,seq,type,created_at,expires_at,idempotency_key,
@@ -2363,13 +2463,15 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if kind=="device.location":con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
                 d=con.execute("SELECT name FROM devices WHERE id=?",(device_id,)).fetchone()
+                if kind=="sms.received":
+                    queue_sms_notification(con,event_id,device_id,
+                        d["name"] if d else "SIM Node",has_otp,occurred)
         except sqlite3.IntegrityError:
             with open_db() as con:
                 row=con.execute("SELECT seq FROM events WHERE id=? AND device_id=?",(event_id,device_id)).fetchone()
             if row:
                 self.send_json(200,event_receipt(event_id,row["seq"],"duplicate")); return
             self.send_error_json(409,"event_conflict","Event identity conflicts with existing data"); return
-        notify_async(kind,device_id,d["name"] if d else "SIM Node",has_otp,occurred)
         signal_stream()
         self.send_json(201,event_receipt(event_id,seq,"stored"))
 
@@ -2426,10 +2528,12 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 if row[2]=="device.location" and not duplicate:
                     con.execute("DELETE FROM events WHERE device_id=? AND kind='device.location' AND seq<>?",(device_id,seq))
                 results.append(event_receipt(row[0],seq,"duplicate" if duplicate else "stored"))
-                if not duplicate and row[2]=="sms.received": notifications.append((bool(row[6]),row[3]))
+                if not duplicate and row[2]=="sms.received":
+                    notifications.append((row[0],bool(row[6]),row[3]))
+            for event_id,has_otp,occurred in notifications:
+                queue_sms_notification(con,event_id,device_id,
+                    d["name"] if d else "SIM Node",has_otp,occurred)
             con.execute("UPDATE devices SET last_seen_at=? WHERE id=?",(received,device_id))
-        for has_otp,occurred in notifications:
-            notify_async("sms.received",device_id,d["name"] if d else "SIM Node",has_otp,occurred)
         if any(not x.get("duplicate") and not x.get("suppressed") for x in results):signal_stream()
         self.send_json(200,{"accepted":True,"results":results})
 
@@ -2541,7 +2645,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     """INSERT INTO channels(id,device_id,local_id,kind,revision,slot_index,carrier_name,display_name,state_json,first_seen_at,last_seen_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(device_id,id) DO UPDATE SET local_id=excluded.local_id,kind=excluded.kind,revision=excluded.revision,slot_index=excluded.slot_index,carrier_name=excluded.carrier_name,display_name=excluded.display_name,state_json=excluded.state_json,last_seen_at=excluded.last_seen_at""",
-                    (cid,device_id,str(item.get("localId",""))[:120],str(item.get("kind","sim"))[:40],max(1,int(item.get("revision",1) or 1)),int(item.get("slotIndex",-1) or -1),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],json.dumps(item,separators=(",",":")),ts,ts),
+                    (cid,device_id,str(item.get("localId",""))[:120],str(item.get("kind","sim"))[:40],max(1,int(item.get("revision",1) or 1)),int(item.get("slotIndex") if item.get("slotIndex") is not None else -1),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],json.dumps(item,separators=(",",":")),ts,ts),
                 )
         signal_stream()
         self.send_json(200,{"ok":True,"updatedAt":ts})
@@ -2880,6 +2984,7 @@ def main() -> None:
     global DEPLOYED_AT
     DEPLOYED_AT=load_deployment_timestamp()
     threading.Thread(target=maintenance_loop,name="simhub-maintenance",daemon=True).start()
+    threading.Thread(target=notification_loop,name="simhub-notification-outbox",daemon=True).start()
     if SEPARATE_SURFACES and (not MANAGEMENT_ORIGIN.startswith("https://") or not PUBLIC_BASE_URL.startswith("https://") or MANAGEMENT_ORIGIN == PUBLIC_BASE_URL):
         raise SystemExit("Separated origins require distinct HTTPS management and node URLs")
     server=BoundedHTTPServer((BIND,PORT),SimHubHandler)

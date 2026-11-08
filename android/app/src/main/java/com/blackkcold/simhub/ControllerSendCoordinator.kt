@@ -79,7 +79,7 @@ internal class ControllerSendCoordinator(
         val index=all.indexOfFirst{it.optString("id")==intent.getString("id")}
         if(index>=0)all[index]=intent else{
             while(all.size>=100){
-                val removable=all.indexOfFirst{it.optString("phase")=="observed"&&it.optString("state") in setOf("delivered","succeeded","failed","rejected")}
+                val removable=all.indexOfFirst{it.optString("phase")=="observed"&&it.optString("state") in setOf("delivered","succeeded","failed","rejected","expired")}
                 require(removable>=0){"发送中心已达到 100 条未完成任务上限，请先核实任务状态"}
                 all.removeAt(removable)
             }

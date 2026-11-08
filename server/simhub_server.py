@@ -559,6 +559,9 @@ def init_db() -> None:
 def run_maintenance() -> dict[str,int]:
     ts=now(); result={"events":0,"audit":0,"commands":0,"commandTombstones":0,"sessions":0,"enrollments":0,"pendingTokens":0,"resetTombstones":0}
     with open_db() as con:
+        # Maintenance must advance expired commands without a controller read.
+        con.execute("BEGIN IMMEDIATE")
+        result["expiredCommands"]=expire_commands(con,ts)
         if EVENT_RETENTION_DAYS>0:
             result["events"]=con.execute("DELETE FROM events WHERE received_at<?",(ts-EVENT_RETENTION_DAYS*86400,)).rowcount
         if AUDIT_RETENTION_DAYS>0:
@@ -985,14 +988,15 @@ def normalize_wrapped_key(key_id: Any, wrapped: Any) -> tuple[str,dict[str,Any]]
     return kid,wrapped
 
 
-def expire_commands(con: sqlite3.Connection, ts: int, device_id: str | None = None) -> None:
+def expire_commands(con: sqlite3.Connection, ts: int, device_id: str | None = None) -> int:
     """Stop delivery at expiry without asserting that a dispatched command did not run."""
     scope = " AND device_id=?" if device_id is not None else ""
     args = (ts, ts, device_id) if device_id is not None else (ts, ts)
-    con.execute("UPDATE commands SET state='expired',ack_at=? "
-                "WHERE state='queued' AND expires_at<=?" + scope, args)
-    con.execute("UPDATE commands SET state='outcome_unknown',ack_at=? "
-                "WHERE state='dispatched' AND expires_at<=?" + scope, args)
+    queued=con.execute("UPDATE commands SET state='expired',ack_at=? "
+                "WHERE state='queued' AND expires_at<=?" + scope, args).rowcount
+    uncertain=con.execute("UPDATE commands SET state='outcome_unknown',ack_at=? "
+                "WHERE state='dispatched' AND expires_at<=?" + scope, args).rowcount
+    return queued+uncertain
 
 
 def signal_stream() -> None:
@@ -1711,7 +1715,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                 self.send_error_json(400,"invalid_version","Version must be a string");return
             try:
                 if path.endswith("/apply"):
-                    if not version or not update_bridge.VERSION.fullmatch(version):
+                    if not version or not update_bridge.CHANNEL_VERSION.fullmatch(version):
                         raise ValueError("Specify a valid version")
                     result=update_bridge.host("apply",version)
                     if not result.get("ok"):
@@ -1746,6 +1750,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None:return
             try:
                 with open_db() as con:
+                    con.execute("BEGIN IMMEDIATE")  # serialize membership and key epoch
                     if path.endswith("/authorize"): result=shared_pool.provision(con,body)
                     elif path.endswith("/revoke"):result=shared_pool.revoke(con,str(body.get("deviceId","")))
                     else:result=shared_pool.rotate(con,body)
@@ -1759,14 +1764,19 @@ class SimHubHandler(BaseHTTPRequestHandler):
             if body is None:return
             if type(body.get("enabled")) is not bool:
                 self.send_error_json(400,"invalid_request","enabled must be boolean");return
-            with open_db() as con: result=shared_pool.request(con,p[3],body["enabled"])
+            with open_db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                result=shared_pool.request(con,p[3],body["enabled"])
             signal_stream();self.send_json(200,result);return
         if len(p)==6 and p[:3]==["api","v1","devices"] and p[4:6]==["pool","messages"]:
             if not self.require_device(p[3]):return
             body=self.read_json()
             if body is None:return
             try:
-                with open_db() as con: result=shared_pool.put_messages(con,p[3],body)
+                with open_db() as con:
+                    # Purge and upload must share one write reservation before inspection.
+                    con.execute("BEGIN IMMEDIATE")
+                    result=shared_pool.put_messages(con,p[3],body)
                 if result["inserted"]:signal_stream()
                 self.send_json(200,result)
             except (ValueError,PermissionError) as err:

@@ -267,6 +267,10 @@ def update_env(image, version):
     text = ENV_FILE.read_text("utf-8").splitlines(keepends=True)
     text = [line for line in text if not line.startswith((
         "SIMHUB_IMAGE_REF=", "SIMHUB_INSTALLED_VERSION="))]
+    # Preserve all unrelated values, but never concatenate an added key
+    # onto a final line whose source .env omitted its trailing newline.
+    if text and not text[-1].endswith(("\n","\r")):
+        text[-1] += "\n"
     text += ["SIMHUB_IMAGE_REF=" + image + "\n",
              "SIMHUB_INSTALLED_VERSION=" + version.removeprefix("v") + "\n"]
     with tempfile.NamedTemporaryFile(mode="w", dir=ROOT, prefix=".simhub-env-",
@@ -482,8 +486,9 @@ def main():
             old = json.loads(STATUS.read_text("utf-8"))
             if isinstance(old, dict):
                 state.update(old)
-            if state.get("phase") in {"queued", "checking", "verifying_image", "backup",
-                                      "switching", "verifying", "rolling_back"}:
+            if state.get("phase") in {"queued", "checking", "verifying_image",
+                                      "verified_image", "backup", "switching",
+                                      "verifying", "rolling_back"}:
                 # No blind restart rollback on a partially switched rootless daemon.
                 save("interrupted", error="Updater restarted: inspect deployment and recover manually")
         except (OSError, ValueError):

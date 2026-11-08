@@ -2777,7 +2777,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     """INSERT INTO channels(id,device_id,local_id,kind,revision,slot_index,carrier_name,display_name,state_json,first_seen_at,last_seen_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(device_id,id) DO UPDATE SET local_id=excluded.local_id,kind=excluded.kind,revision=excluded.revision,slot_index=excluded.slot_index,carrier_name=excluded.carrier_name,display_name=excluded.display_name,state_json=excluded.state_json,last_seen_at=excluded.last_seen_at""",
-                    (cid,device_id,str(item.get("localId",""))[:120],str(item.get("kind","sim"))[:40],max(1,int(item.get("revision",1) or 1)),int(item.get("slotIndex",-1) or -1),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],json.dumps(item,separators=(",",":")),ts,ts),
+                    (cid,device_id,str(item.get("localId",""))[:120],str(item.get("kind","sim"))[:40],max(1,int(item.get("revision",1) or 1)),int(item.get("slotIndex") if item.get("slotIndex") is not None else -1),str(item.get("carrierName",""))[:120],str(item.get("displayName",""))[:120],json.dumps(item,separators=(",",":")),ts,ts),
                 )
         signal_stream()
         self.send_json(200,{"ok":True,"updatedAt":ts})

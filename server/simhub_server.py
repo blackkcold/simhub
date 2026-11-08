@@ -1046,6 +1046,9 @@ def notification_loop() -> None:
                     log.warning("notification_delivery_retry channel=%s reason=%s",
                                 entry["channel"],error)
                 with open_db() as con:
+                    # Pair the lease attempt check and final state update in
+                    # one writer transaction, even with multiple relay workers.
+                    con.execute("BEGIN IMMEDIATE")
                     notification_outbox.finish(con,entry["id"],success,now(),error,
                                                expected_attempt=entry["attempts"])
         except Exception:

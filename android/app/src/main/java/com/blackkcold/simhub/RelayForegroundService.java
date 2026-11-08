@@ -145,7 +145,10 @@ public final class RelayForegroundService extends Service {
         scheduleCommand(0);
     }
     private synchronized void scheduleCommand(long delayMs){
-        if(exec.isShutdown()||!new AgentConfig(this).alwaysOn())return;
+        // A reset/unpaired node retains credentials for recovery, but it
+        // must not busy-loop on the ordinary business command poll path.
+        AgentConfig config=new AgentConfig(this);
+        if(exec.isShutdown()||!config.alwaysOn()||!config.isEnrolled())return;
         long plannedEpoch=policyEpoch;
         commandTask=exec.schedule(()->{
             // A running user-enabled foreground relay uses server-held long polling.
@@ -170,7 +173,8 @@ public final class RelayForegroundService extends Service {
                 next=Math.max(next,backoff);
             }finally{
                 // On an active relay, the server holds the request up to 15 s.
-                if(plannedEpoch==policyEpoch)scheduleCommand(next);
+                if(plannedEpoch==policyEpoch&&new AgentConfig(this).isEnrolled())
+                    scheduleCommand(next);
             }
         },Math.max(0,delayMs),TimeUnit.MILLISECONDS);
     }

@@ -87,6 +87,24 @@ export function bindNotificationUI({center,getLocale,tr,toast,switchView,isUnloc
   document.querySelectorAll('[data-notify-pref]').forEach(el=>el.onchange=()=>{
     setNotificationPref(el.dataset.notifyPref,el.checked);render();
   });
+  async function refreshOutbox(){
+    const box=$('notifyOutboxStatus'),button=$('notifyOutboxRefresh');
+    if(!box||!isUnlocked())return;
+    button.disabled=true;
+    try{
+      const response=await fetch('/api/v1/notifications/outbox',
+        {credentials:'same-origin',cache:'no-store'});
+      if(!response.ok)throw Error('Provider status unavailable');
+      const {counts:c}=await response.json();
+      const zh=getLocale()!=='en';
+      box.textContent=zh
+        ? '待投递 '+(c.pending||0)+' · 重试中 '+(c.retry||0)+' · 处理中 '+(c.inflight||0)+' · 已被服务商接收 '+(c.delivered||0)+' · 失败 '+(c.failed||0)
+        : 'Pending '+(c.pending||0)+' · Retry '+(c.retry||0)+' · In flight '+(c.inflight||0)+' · Provider accepted '+(c.delivered||0)+' · Failed '+(c.failed||0);
+    }catch(error){
+      box.textContent=getLocale()==='en'?'Unable to read provider queue status':'无法查询外部通知队列';
+    }finally{button.disabled=false;}
+  }
+  $('notifyOutboxRefresh').onclick=()=>refreshOutbox().catch(()=>{});
   $('notifyHistoryFilter').onchange=render;
   $('notifyMarkAll').onclick=()=>center.markRead().catch(e=>toast(e.message,{kind:'error'}));
   $('notifyClearHistory').onclick=()=>{

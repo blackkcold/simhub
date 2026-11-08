@@ -81,7 +81,22 @@ class PeerActivity:ComponentActivity(){
         // PeerService owns NSD for the entire user-authorized listener lifetime.
         // Multiple activity-owned discovery sessions can contend on Android NSD.
         lifecycleScope.launch{repeatOnLifecycle(Lifecycle.State.STARTED){
-            while(isActive){delay(12000);reload();if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)}
+            var consecutiveFailures=0
+            while(isActive){
+                val backoff=(12000L shl consecutiveFailures.coerceAtMost(3)).coerceAtMost(120000L)
+                delay(backoff)
+                try{
+                    reload()
+                    if(selected!=null&&tab==1&&!busy&&!historyMode)load(false)
+                    consecutiveFailures=0
+                }catch(cancelled:CancellationException){throw cancelled}
+                catch(error:Exception){
+                    // Keep the last encrypted inbox snapshot and retry on the
+                    // next interval. One failed refresh must never kill polling.
+                    consecutiveFailures=(consecutiveFailures+1).coerceAtMost(4)
+                    notice="自动刷新暂时失败，将在网络恢复后继续；已有缓存不受影响"
+                }
+            }
         }}
     }
     override fun onStop(){super.onStop();peerEpoch++;selectionRefresh?.cancel();ControllerAccessGate.clearAll();inbox.clear();remoteState=null}

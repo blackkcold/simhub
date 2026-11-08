@@ -178,7 +178,6 @@ def challenge(con: sqlite3.Connection, controller_id: str, now: int, fingerprint
 def verify_login(con: sqlite3.Connection, body: dict, now: int, fingerprint: str) -> str:
     controller_id=str(body.get("controllerId",""))
     nonce=str(body.get("challenge",""))
-    signature=b64decode(body.get("signature"),300)
     if len(nonce)!=43 or len(controller_id)!=36: raise ValueError("Invalid challenge")
     import hashlib
     digest=hashlib.sha256(nonce.encode()).hexdigest()
@@ -189,6 +188,9 @@ def verify_login(con: sqlite3.Connection, body: dict, now: int, fingerprint: str
     # Consume even a failed signature to prevent online replay.
     con.execute("DELETE FROM controller_challenges WHERE digest=?", (digest,))
     if not row: raise ValueError("Controller challenge expired or revoked")
+    # Decode after consuming a valid nonce; even malformed signatures cannot
+    # turn the challenge into a reusable online guessing oracle.
+    signature=b64decode(body.get("signature"),300)
     signed=f"simhub-controller-login-v1|{controller_id}|{nonce}".encode()
     try:
         public_key(row["identity_public"]).verify(signature,signed,ec.ECDSA(hashes.SHA256()))

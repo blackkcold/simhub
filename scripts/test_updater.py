@@ -127,6 +127,17 @@ class UpdaterTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     updater.update_env("evil/relay:latest", "0.10.0")
 
+    def test_environment_update_repairs_missing_final_newline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/".env"
+            path.write_text("ADMIN_TOKEN=synthetic",encoding="utf-8")
+            with patch.object(updater,"ENV_FILE",path),patch.object(updater,"ROOT",Path(tmp)):
+                updater.update_env(IMAGE,"0.11.0")
+                result=path.read_text("utf-8")
+                self.assertIn("ADMIN_TOKEN=synthetic\nSIMHUB_IMAGE_REF=",result)
+                self.assertIn("\nSIMHUB_INSTALLED_VERSION=0.11.0\n",result)
+                self.assertEqual(updater.current_version(),"0.11.0")
+
     def test_fetch_manifest_rejects_invalid_metadata(self):
         with patch.object(updater, "fetch_json", return_value={
                 "tag_name": "v0.11.0", "draft": False, "prerelease": True,

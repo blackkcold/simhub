@@ -192,5 +192,55 @@ class ControllerHttpTest(unittest.TestCase):
         s,_,_=self.call("POST","/api/v1/controllers/login/challenge",{"controllerId":cid})
         self.assertEqual(s,401)
 
+    def test_rejected_signature_consumes_challenge_and_revoked_session_cannot_reappear(self):
+        identity=ec.generate_private_key(ec.SECP256R1())
+        exchange=ec.generate_private_key(ec.SECP256R1())
+        _,pair,_=self.call("POST","/api/v1/controllers/pair",{
+            "label":"Nonce regression","identityPublic":pub(identity),
+            "exchangePublic":pub(exchange),"pairingProtocolVersion":2})
+        envelope={"v":1,"epk":pub(ec.generate_private_key(ec.SECP256R1())),
+                  "salt":b64(bytes(16)),"iv":b64(bytes(12)),"ct":b64(bytes(48))}
+        status,grant,_=self.call("POST","/api/v1/controllers/approve",{
+            "requestId":pair["requestId"],"pairingCode":pair["pairingCode"],
+            "vaultEnvelope":envelope},admin=True)
+        self.assertEqual(status,200)
+        cid=grant["controllerId"]
+        status,challenge,_=self.call("POST","/api/v1/controllers/login/challenge",{"controllerId":cid})
+        self.assertEqual(status,200)
+        nonce=challenge["challenge"]
+        message=f"simhub-controller-login-v1|{cid}|{nonce}".encode()
+        other=ec.generate_private_key(ec.SECP256R1())
+        bad=other.sign(message,ec.ECDSA(hashes.SHA256()))
+        good=identity.sign(message,ec.ECDSA(hashes.SHA256()))
+        bad_request={"controllerId":cid,"challenge":nonce,"signature":b64(bad)}
+        self.assertEqual(self.call("POST","/api/v1/controllers/login/verify",bad_request)[0],401)
+        # A rollback must not resurrect a failed one-time challenge.
+        self.assertEqual(self.call("POST","/api/v1/controllers/login/verify",{
+            **bad_request,"signature":b64(good)})[0],401)
+        status,challenge,_=self.call("POST","/api/v1/controllers/login/challenge",{"controllerId":cid})
+        self.assertEqual(status,200)
+        nonce=challenge["challenge"]
+        good=identity.sign(f"simhub-controller-login-v1|{cid}|{nonce}".encode(),
+                           ec.ECDSA(hashes.SHA256()))
+        status,_,headers=self.call("POST","/api/v1/controllers/login/verify",{
+            "controllerId":cid,"challenge":nonce,"signature":b64(good)})
+        self.assertEqual(status,201)
+        cookie=headers["Set-Cookie"].split(";",1)[0]
+        self.assertEqual(self.call("POST","/api/v1/controllers/revoke",{
+            "controllerId":cid},admin=True)[0],200)
+        # A session row artificially restored after revocation must still
+        # fail the live-grant check even when its cookie has not expired.
+        db=str(Path(self.work.name)/"relay.db")
+        with sqlite3.connect(db) as con:
+            fingerprint=con.execute("SELECT admin_fingerprint FROM controllers WHERE id=?",
+                                    (cid,)).fetchone()[0]
+            ts=int(time.time())
+            con.execute("""INSERT INTO admin_sessions
+                (token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint,controller_id)
+                VALUES(?,?,?,?,?,?,?)""",(
+                hashlib.sha256(cookie.split("=",1)[1].encode()).hexdigest(),
+                ts,ts+3600,ts,"127.0.0.1",fingerprint,cid))
+        self.assertEqual(self.call("GET","/api/v1/devices",cookie=cookie)[0],401)
+
 if __name__=="__main__":
     unittest.main()

@@ -672,8 +672,19 @@ def session_valid(headers) -> bool:
     ts = now()
     digest = sha256_text(token)
     with open_db() as con:
-        row = con.execute("SELECT expires_at,last_seen_at,admin_fingerprint FROM admin_sessions WHERE token_hash=?", (digest,)).fetchone()
-        if not row or row["expires_at"] <= ts or ts-row["last_seen_at"] >= SESSION_IDLE_TTL or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint()):
+        # Controller sessions must remain coupled to the live grant. Deleting
+        # sessions during revoke alone cannot close a concurrent login window.
+        row = con.execute(
+            """SELECT s.expires_at,s.last_seen_at,s.admin_fingerprint,s.controller_id,
+                      c.id AS live_controller
+               FROM admin_sessions s LEFT JOIN controllers c
+                 ON c.id=s.controller_id AND c.revoked_at IS NULL
+                AND c.admin_fingerprint=s.admin_fingerprint
+               WHERE s.token_hash=?""", (digest,)).fetchone()
+        if (not row or row["expires_at"] <= ts
+                or ts-row["last_seen_at"] >= SESSION_IDLE_TTL
+                or not hmac.compare_digest(row["admin_fingerprint"], session_fingerprint())
+                or (row["controller_id"] and not row["live_controller"])):
             if row:
                 con.execute("DELETE FROM admin_sessions WHERE token_hash=?", (digest,))
             return False
@@ -719,16 +730,34 @@ def auth_rate_success(ip: str) -> None:
         _auth_failures.pop(ip, None)
 
 
-def create_session(ip: str, controller_id: str = "") -> tuple[str,int]:
+def create_session(ip: str, controller_id: str = "",
+                   con: sqlite3.Connection | None = None) -> tuple[str,int]:
+    """Issue a session. Controller callers supply their BEGIN IMMEDIATE login
+    transaction so challenge consumption, live grant check and session issuance
+    share a single serialization boundary with revocation.
+    """
     token = new_token(48)
     ts = now()
     exp = ts + SESSION_TTL
-    with open_db() as con:
-        con.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
-        con.execute(
+    def insert(db: sqlite3.Connection) -> None:
+        db.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (ts,))
+        if controller_id:
+            live = db.execute(
+                "SELECT 1 FROM controllers WHERE id=? AND revoked_at IS NULL AND admin_fingerprint=?",
+                (controller_id,session_fingerprint())).fetchone()
+            if not live:
+                raise ValueError("Controller authorization was revoked")
+        db.execute(
             "INSERT INTO admin_sessions(token_hash,created_at,expires_at,last_seen_at,ip,admin_fingerprint,controller_id) VALUES(?,?,?,?,?,?,?)",
             (sha256_text(token),ts,exp,ts,ip[:80],session_fingerprint(),controller_id),
         )
+    if con is None:
+        with open_db() as db:
+            if controller_id:
+                db.execute("BEGIN IMMEDIATE")
+            insert(db)
+    else:
+        insert(con)
     return token, exp
 
 
@@ -1576,6 +1605,7 @@ class SimHubHandler(BaseHTTPRequestHandler):
             body=self.read_json()
             if body is None:return
             try:
+                session = exp = None
                 with open_db() as con:
                     if path.endswith("/pair"):
                         result=controller_auth.start(con,body,self.ip,now())
@@ -1586,10 +1616,17 @@ class SimHubHandler(BaseHTTPRequestHandler):
                     elif path.endswith("/challenge"):
                         result=controller_auth.challenge(con,str(body.get("controllerId","")),now(),session_fingerprint())
                     else:
-                        controller_id=controller_auth.verify_login(con,body,now(),session_fingerprint())
+                        # Serialize challenge consumption AND session issuance with
+                        # revoke. A rejected signature also consumes its nonce.
+                        con.execute("BEGIN IMMEDIATE")
+                        try:
+                            controller_id=controller_auth.verify_login(con,body,now(),session_fingerprint())
+                        except (ValueError,TypeError):
+                            con.commit()  # persist the one-use nonce deletion
+                            raise
+                        session,exp=create_session(self.ip,controller_id,con=con)
                         result={"_controller_id":controller_id}
                 if "_controller_id" in result:
-                    session,exp=create_session(self.ip,result["_controller_id"])
                     auth_rate_success(self.ip)
                     audit("auth.controller.login",result["_controller_id"],"ok",self.ip)
                     cookie=f"{SESSION_COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={SESSION_TTL}"

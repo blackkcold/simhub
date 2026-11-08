@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.Telephony;
+import android.telephony.SmsMessage;
 import org.json.JSONObject;
 
 public final class SmsStatusReceiver extends BroadcastReceiver {
@@ -44,7 +45,16 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                     SyncJobService.scheduleNow(c);
                 }
             }else if(ACTION_DELIVERED.equals(i.getAction())){
-                boolean ok=resultCode==Activity.RESULT_OK;
+                SmsDeliveryPolicy.Result outcome=deliveryReport(i,resultCode);
+                if(outcome==SmsDeliveryPolicy.Result.PENDING ||
+                   outcome==SmsDeliveryPolicy.Result.UNKNOWN){
+                    // A RESULT_OK broadcast does not by itself prove delivery.
+                    // Leave each multipart part unresolved for a later report,
+                    // timeout or an explicit outcome-unconfirmed investigation.
+                    AppLogger.w(c,"SmsStatus","Delivery report unconfirmed: "+outcome);
+                    return;
+                }
+                boolean ok=outcome==SmsDeliveryPolicy.Result.DELIVERED;
                 LocalStore.PendingStatus st=store.recordDeliveredPart(id,partIndex,ok,resultCode);
                 if(!st.exists)return;
                 long pid=providerId(st.providerUri);
@@ -62,6 +72,26 @@ public final class SmsStatusReceiver extends BroadcastReceiver {
                 }
             }
         }catch(Exception error){AppLogger.e(c,"SmsStatus","SMS status processing failed",error);SyncJobService.scheduleNow(c);}
+    }
+    @SuppressWarnings("deprecation")
+    private static SmsDeliveryPolicy.Result deliveryReport(Intent intent,int resultCode){
+        if(resultCode!=Activity.RESULT_OK)return SmsDeliveryPolicy.Result.FAILED;
+        byte[] pdu=intent.getByteArrayExtra("pdu");
+        if(pdu==null||pdu.length==0||pdu.length>512)
+            return SmsDeliveryPolicy.Result.UNKNOWN;
+        String format=intent.getStringExtra("format");
+        if(!"3gpp".equals(format)&&!"3gpp2".equals(format))
+            format="auto";
+        try{
+            SmsMessage report="auto".equals(format) ? SmsMessage.createFromPdu(pdu)
+                : SmsMessage.createFromPdu(pdu,format);
+            if(report==null||!report.isStatusReportMessage())
+                return SmsDeliveryPolicy.Result.UNKNOWN;
+            return SmsDeliveryPolicy.classify(format,report.getStatus());
+        }catch(RuntimeException invalid){
+            // Malformed or unrecognized reports must never be labelled delivered.
+            return SmsDeliveryPolicy.Result.UNKNOWN;
+        }
     }
     private static long providerId(String value){
         if(value==null||value.isBlank())return -1L;

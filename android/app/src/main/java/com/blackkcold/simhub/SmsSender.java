@@ -41,7 +41,7 @@ public final class SmsSender {
         try{
             JSONObject localCipher=PendingSmsCrypto.encrypt(c,eventPayload);
             LocalStore.get(c).createPendingSms(commandId,provider==null?"":provider.toString(),parts.size(),localCipher,subId);
-            ArrayList<PendingIntent> sent=new ArrayList<>(),delivered=new ArrayList<>();for(int i=0;i<parts.size();i++){sent.add(pi(c,SmsStatusReceiver.ACTION_SENT,commandId,i,i));delivered.add(pi(c,SmsStatusReceiver.ACTION_DELIVERED,commandId,i,1000+i));}
+            ArrayList<PendingIntent> sent=new ArrayList<>(),delivered=new ArrayList<>();for(int i=0;i<parts.size();i++){sent.add(pi(c,SmsStatusReceiver.ACTION_SENT,commandId,i));delivered.add(pi(c,SmsStatusReceiver.ACTION_DELIVERED,commandId,i));}
             if(parts.size()==1)sms.sendTextMessage(to,null,body,sent.get(0),delivered.get(0));else sms.sendMultipartTextMessage(to,null,parts,sent,delivered);AppLogger.i(c,"SmsSender","SMS submitted subscription="+subId+" parts="+parts.size());}
         catch(Exception e){if(provider!=null){ContentValues fail=new ContentValues();fail.put(Telephony.Sms.TYPE,Telephony.Sms.MESSAGE_TYPE_FAILED);try{c.getContentResolver().update(provider,fail,null,null);}catch(SecurityException denied){AppLogger.w(c,"SmsSender","SMS provider update denied after role change");}}EventQueue.queue(c,providerId>=0?"sms-provider-"+providerId+"-failed":"sms-command-"+commandId+"-failed","sms.failed",System.currentTimeMillis()/1000,subId,false,eventPayload,new JSONObject().put("stage","submit"));LocalStore.get(c).removePendingSms(commandId);AppLogger.e(c,"SmsSender","SMS submission failed subscription="+subId+" parts="+parts.size(),e);throw e;}
     }
@@ -54,6 +54,22 @@ public final class SmsSender {
         }
         return SmsManager.getSmsManagerForSubscriptionId(subId);
     }
-    private static PendingIntent pi(Context c,String action,String commandId,int partIndex,int request){Intent i=new Intent(c,SmsStatusReceiver.class).setAction(action).putExtra("command_id",commandId).putExtra("part_index",partIndex);return PendingIntent.getBroadcast(c,(commandId.hashCode()*31)^request,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
+    private static PendingIntent pi(Context c,String action,String commandId,int partIndex){
+        // Extras are NOT part of PendingIntent identity. Give each command,
+        // callback kind and multipart segment a unique explicit URI, avoiding
+        // hash collisions between unrelated sends.
+        Intent i=new Intent(c,SmsStatusReceiver.class).setAction(action)
+            .setData(new Uri.Builder().scheme("simhub-sms").authority("status")
+                .appendPath(action).appendPath(commandId)
+                .appendPath(Integer.toString(partIndex)).build())
+            .putExtra("command_id",commandId).putExtra("part_index",partIndex);
+        // The telephony stack must add the delivery status-report PDU. The
+        // SENT callback never needs fill-in data and stays immutable.
+        boolean delivery=SmsStatusReceiver.ACTION_DELIVERED.equals(action);
+        int flags=PendingIntent.FLAG_UPDATE_CURRENT |
+            (delivery && Build.VERSION.SDK_INT>=31 ?
+                PendingIntent.FLAG_MUTABLE : PendingIntent.FLAG_IMMUTABLE);
+        return PendingIntent.getBroadcast(c,0,i,flags);
+    }
     private SmsSender(){}
 }

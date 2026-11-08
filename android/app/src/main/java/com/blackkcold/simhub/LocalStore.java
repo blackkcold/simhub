@@ -264,7 +264,9 @@ public final class LocalStore extends SQLiteOpenHelper {
         PendingStatus current=status(id);if(!current.exists)return current;
         if(partIndex<0||partIndex>=current.totalParts)return current;
         ContentValues v=new ContentValues();v.put("delivery_state",ok?1:2);v.put("delivery_result_code",resultCode);v.put("updated_at",System.currentTimeMillis()/1000);
-        getWritableDatabase().update("sms_part_status",v,"command_id=? AND part_index=?",new String[]{id,String.valueOf(partIndex)});
+        // Only an undecided part can accept its final delivery result.
+        // Duplicate/late broadcasts cannot overwrite a confirmed part.
+        getWritableDatabase().update("sms_part_status",v,"command_id=? AND part_index=? AND delivery_state=0",new String[]{id,String.valueOf(partIndex)});
         return status(id);
     }
 
